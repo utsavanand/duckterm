@@ -66,7 +66,9 @@ def test_http_snapshot_matches_existing_keys_and_reuses_without_mutable_read(
             ),
         ):
             assert server._session_messages_response("test") is first
-        status, payload = dispatch(server, "GET", "/sessions/test/messages", {})
+        status, payload = dispatch(
+            server, "GET", "/sessions/test/messages", {"x-duckterm-token": server.token}
+        )
         assert status == 200
         assert payload == json.loads(expected)
         payload["messages"][0]["blocks"][0]["text"] = "poison"

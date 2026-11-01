@@ -48,7 +48,7 @@ info = {
     "CFBundleExecutable": "DuckTerm",
     "CFBundlePackageType": "APPL",
     "DucktermTestBuild": True,
-    "DucktermTestPort": port,
+    "DucktermPort": port,
 }
 (contents / "Info.plist").write_bytes(plistlib.dumps(info))
 js = (

@@ -24,13 +24,15 @@ def _decode_text_frame(data: bytes) -> tuple[dict, bytes]:
 def test_handshake_and_event_delivery(tmp_path: Path) -> None:
     async def scenario() -> tuple[str, dict]:
         store = HistoryStore(tmp_path / "db.sqlite")
-        srv = await asyncio.start_server(Server(history=store).handle, "127.0.0.1", 0)
+        server = Server(history=store)
+        srv = await asyncio.start_server(server.handle, "127.0.0.1", 0)
         port = srv.sockets[0].getsockname()[1]
         async with srv:
             reader, writer = await asyncio.open_connection("127.0.0.1", port)
             client_key = "dGhlIHNhbXBsZSBub25jZQ=="
             writer.write(
                 f"GET /ws HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\n"
+                f"X-Duckterm-Token: {server.token}\r\n"
                 f"Sec-WebSocket-Key: {client_key}\r\n\r\n".encode()
             )
             await writer.drain()

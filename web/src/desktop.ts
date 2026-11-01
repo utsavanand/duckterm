@@ -7,6 +7,7 @@ type Desktop = {
   testBuild?: boolean;
   canReportBug?: boolean;
   canCollaborate?: boolean;
+  canApprove?: boolean;
   targets: { id: string; name: string }[];
   draft?: LaunchDraft;
   selectedSession?: string;
@@ -19,6 +20,7 @@ declare global {
       messageHandlers?: {
         remoteSession?: { postMessage: (message: unknown) => void };
         launchRequest?: { postMessage: (message: unknown) => Promise<unknown> };
+        approval?: { postMessage: (message: unknown) => Promise<unknown> };
       };
     };
   }
@@ -28,6 +30,13 @@ declare global {
 // exist for this dashboard; every host list, launch target and remote poll
 // reads them through desktop().
 let remoteWorkspaces: boolean | null = null;
+let collaboration = false;
+
+// The bridge advertises native support, but the active server may not provide
+// collaboration. Core folder actions must then use their ordinary HTTP routes.
+export function allowCollaboration(allowed: boolean): void {
+  collaboration = allowed;
+}
 
 export function allowRemoteWorkspaces(allowed: boolean | null): void {
   if (allowed === remoteWorkspaces) return;
@@ -43,8 +52,10 @@ export function hiddenHost(host: string): "pending" | "hidden" | null {
 
 export function desktop(): Desktop | undefined {
   const bridge = window.__rubbertermDesktop;
-  if (!bridge || remoteWorkspaces === true) return bridge;
-  return { ...bridge, currentTarget: "local", launchTarget: undefined, targets: bridge.targets.filter(t => t.id === "local") };
+  if (!bridge) return bridge;
+  const available = { ...bridge, canCollaborate: bridge.canCollaborate === true && collaboration };
+  if (remoteWorkspaces === true) return available;
+  return { ...available, currentTarget: "local", launchTarget: undefined, targets: bridge.targets.filter(t => t.id === "local") };
 }
 
 export function clearLaunchDraft(): void {
@@ -75,4 +86,15 @@ export function openNativeBugReport(): boolean {
   if (!desktop()?.canReportBug || !bridge) return false;
   bridge.postMessage({ action: "report-bug" });
   return true;
+}
+
+// Touch ID approval lives in the Mac app: the Secure Enclave key signs one
+// server challenge per click. Browsers have no bridge and cannot approve.
+export function approvalSigner(): { publicKey: () => Promise<string>; sign: (payload: string) => Promise<string> } | null {
+  const bridge = window.webkit?.messageHandlers?.approval;
+  if (!desktop()?.canApprove || !bridge) return null;
+  return {
+    publicKey: async () => await bridge.postMessage({ operation: "public-key" }) as string,
+    sign: async (payload: string) => await bridge.postMessage({ operation: "sign", payload }) as string,
+  };
 }

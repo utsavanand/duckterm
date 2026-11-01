@@ -117,7 +117,9 @@ def offline(monkeypatch):
 def test_unknown_resume_identity_still_offers_switch(rig, monkeypatch):
     server, _, _, calls = rig
     monkeypatch.setattr(server.history, "session_id_for", lambda _: None)
-    status, result = dispatch(server, "GET", "/sessions/a/restart-options", {})
+    status, result = dispatch(
+        server, "GET", "/sessions/a/restart-options", {"x-duckterm-token": server.token}
+    )
     assert status == 200
     assert not result["resume_restart"]["available"]
     assert "Cannot verify" in result["resume_restart"]["reason"]
@@ -460,6 +462,7 @@ def test_real_hook_forwards_switch_generation_without_network(tmp_path, with_jq)
         **os.environ,
         "PATH": str(tools),
         "DUCKTERM_HOME": str(tmp_path / "duckterm"),
+        "DUCKTERM_URL": "http://127.0.0.1:49111",
         "DUCKTERM_SESSION_KEY": "synthetic-test",
         "DUCKTERM_HARNESS_GENERATION": "b" * 32,
     }

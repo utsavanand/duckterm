@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { apiPost, base, seedSession } from "./helpers";
+import { api, apiPost, base, seedSession } from "./helpers";
 
 // Oracle Relay, through the real server: a blocking permission request shows
 // up as a note in the control tower's chat, and Approve there reaches the
@@ -24,6 +24,6 @@ test("a permission request becomes an Oracle note and is approved from the chat"
   await note.getByRole("button", { name: "Approve", exact: true }).click();
   await expect(note).toContainText("You approved. Relayed through the approval request.");
 
-  const res = await fetch(`${base()}/approvals/${id}/decision`);
+  const res = await api(`/approvals/${id}/decision`);
   expect(((await res.json()) as { status: string }).status).toBe("approve");
 });

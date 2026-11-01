@@ -64,19 +64,19 @@ _CODE_MODULE = re.compile(
     r"(?:credentials|secrets?|tokens?)\.(?:py|pyi|js|jsx|ts|tsx|go|rs|java|kt|cs|rb|swift|c|h|cpp|hpp)",
     re.I,
 )
-# A quoted marker in source code is not key material. Keep rejecting standalone
-# headers (including truncated keys) and encoded payloads embedded in strings.
+# Exempt only marker literals immediately enclosed by the same quote. Other headers
+# remain blocked regardless of comment syntax; embedded payloads still match.
 _KEY_HEADER = rb"-----BEGIN (?:PRIVATE KEY|OPENSSH PRIVATE KEY|RSA PRIVATE KEY)-----"
 _KEY_SPACE = rb"(?:[ \t\r\n]|\\r|\\n)*"
 PRIVATE_KEY = re.compile(
-    rb"(?m)^[ \t]*"
-    + _KEY_HEADER
-    + rb"[ \t]*\r?$|"
-    + _KEY_HEADER
-    + _KEY_SPACE
-    + rb"(?:[A-Za-z0-9+/=]"
-    + _KEY_SPACE
-    + rb"){32}"
+    rb"|".join(
+        [rb"""(?<!["'`])""" + _KEY_HEADER]
+        + [
+            b"(?<=" + quote + b")" + _KEY_HEADER + b"(?!" + quote + b")"
+            for quote in (b'"', b"'", b"`")
+        ]
+        + [_KEY_HEADER + _KEY_SPACE + rb"(?:[A-Za-z0-9+/=]" + _KEY_SPACE + rb"){32}"]
+    )
 )
 VERSIONS = {"claude-code": "2.1.267", "codex": "0.155.1"}
 

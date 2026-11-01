@@ -8,12 +8,14 @@ import urllib.request
 from typing import Any
 
 from duckterm import __version__, build_info
+from duckterm.helpers import instance
 
 RELEASES = "https://github.com/utsavanand/duckterm/releases"
 REASON = "In-app installation is not available yet. Download the release to update manually."
 
 
 def status() -> dict[str, Any]:
+    profile = instance.configured_profile()
     result: dict[str, Any] = {
         "installed_version": __version__,
         **build_info.installed(),
@@ -26,6 +28,21 @@ def status() -> dict[str, Any]:
         "check_error": None,
         "operation": None,
     }
+    if profile is not None:
+        result.update(edition=profile["edition"], profile=profile["profile_id"])
+        if profile["edition"] in {"code", "full"}:
+            result.update(
+                release_url="https://duckterm.utsava.xyz/",
+                check_status="unavailable",
+                reason=f"Duckterm {profile['edition'].title()} updates use your invite-only "
+                "download. Replace only this edition's app; its workspace stays in place.",
+            )
+            return result
+        result.update(
+            release_url="https://duckterm.utsava.xyz/",
+            reason="Download Duckterm Lite and replace DuckTerm Lite.app. "
+            "Its workspace stays in place; other editions keep their own apps and data.",
+        )
     if os.environ.get("DUCKTERM_RELEASE_CHECK") == "off":
         result["check_error"] = "Release checks are disabled in this test instance."
         return result
@@ -61,6 +78,25 @@ def status() -> dict[str, Any]:
                 else None
             ),
         )
+        if profile is not None:
+            # A new source wheel doesn't prove a matching native app exists.
+            asset = f"DuckTerm-Lite-{tag.removeprefix('v')}-macos-arm64.zip"
+            assets = release.get("assets", [])
+            available = isinstance(assets, list) and any(
+                isinstance(item, dict) and item.get("name") == asset for item in assets
+            )
+            result["release_url"] = (
+                RELEASES + "/download/" + tag + "/" + asset
+                if available
+                else "https://duckterm.utsava.xyz/"
+            )
+            if not available:
+                result.update(
+                    latest_version=None,
+                    update_available=None,
+                    reason="A matching Duckterm Lite app is not available in the latest release. "
+                    "Use the verified Lite download on the website.",
+                )
     except (OSError, ValueError, urllib.error.URLError) as exc:
         result["check_error"] = str(exc)
     return result

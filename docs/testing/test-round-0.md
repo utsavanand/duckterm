@@ -60,7 +60,7 @@ CLI server you install separately. Both steps below are required.
    ```sh
    pipx install https://github.com/utsavanand/duckterm/releases/download/v0.4.168/duckterm-0.4.168-py3-none-any.whl
    ```
-4. From the releases page download `DuckTerm-macos-arm64.zip`.
+4. From the releases page download the zip for your edition, for example `DuckTerm-Lite-macos-arm64.zip`.
 5. **Unzip it by double-clicking in Finder**, not with a terminal `unzip`
    command. (Command-line unzip adds hidden files that break the signature
    check — a known trap, not a product bug.)

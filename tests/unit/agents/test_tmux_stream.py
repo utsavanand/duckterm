@@ -158,3 +158,98 @@ def test_snapshot_at_right_margin_retains_pending_wrap():
     snapshot = frame(decoder, 5)
     assert snapshot.endswith(b"12345")
     assert decoder.accept(b"%output %7 6") == b"6"
+
+
+def test_buffered_burst_survives_websocket_task_scheduling(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+
+    from duckterm.agents import tmux_stream
+
+    async def scenario():
+        stdout = asyncio.StreamReader()
+        frames = []
+        for number, rows in enumerate([[], [b"%7 0 0 80 1 0"], [b"READY"], [b"READY"], []], 1):
+            frames.extend(
+                [f"%begin 123 {number} 0".encode(), *rows, f"%end 123 {number} 0".encode()]
+            )
+        expected = b"".join(f"R{i:06d}\n".encode() for i in range(1024))
+        for line in expected.splitlines():
+            frames.append(b"%output %7 " + line + rb"\012")
+        stdout.feed_data(b"\n".join(frames) + b"\n")
+        stdout.feed_eof()
+
+        async def communicate():
+            return b"", b""
+
+        async def create(*args, **kwargs):
+            return SimpleNamespace(stdout=stdout, stdin=None, returncode=0, communicate=communicate)
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", create)
+        feed = tmux_stream.stream("rd_test")
+        incoming = asyncio.get_running_loop().create_future()
+        chunks = []
+        try:
+            while True:
+                # Match the terminal WebSocket's pending outgoing/incoming tasks.
+                # A network drain that is ready adds no artificial sleep here.
+                outgoing = asyncio.ensure_future(anext(feed))
+                await asyncio.wait({incoming, outgoing}, return_when=asyncio.FIRST_COMPLETED)
+                try:
+                    chunks.append(outgoing.result())
+                except StopAsyncIteration:
+                    break
+        finally:
+            incoming.cancel()
+            await feed.aclose()
+        assert isinstance(chunks[0], tmux_stream.Snapshot)
+        assert b"READY" in chunks[0]
+        assert b"".join(chunks[1:]) == expected
+
+    asyncio.run(scenario())
+
+
+def test_stalled_viewer_still_closes_its_tmux_reader(monkeypatch):
+    import asyncio
+    from types import SimpleNamespace
+
+    from duckterm.agents import tmux_stream
+
+    async def scenario():
+        stdout = asyncio.StreamReader()
+        frames = []
+        for number, rows in enumerate([[], [b"%7 0 0 80 1 0"], [b"READY"], [b"READY"], []], 1):
+            frames.extend(
+                [f"%begin 123 {number} 0".encode(), *rows, f"%end 123 {number} 0".encode()]
+            )
+        stdout.feed_data(b"\n".join(frames) + b"\n")
+        cleaned = asyncio.Event()
+        terminated = []
+
+        async def communicate():
+            cleaned.set()
+            return b"", b""
+
+        async def create(*args, **kwargs):
+            return SimpleNamespace(
+                stdout=stdout,
+                stdin=None,
+                returncode=None,
+                communicate=communicate,
+                terminate=lambda: terminated.append(True),
+            )
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", create)
+        feed = tmux_stream.stream("rd_test")
+        try:
+            assert isinstance(await anext(feed), tmux_stream.Snapshot)
+            stdout.feed_data((b"%output %7 LIVE\n") * 1000)
+            # No EOF and no further reads by the viewer: the independent drain
+            # must close its tmux attachment rather than block or grow forever.
+            await asyncio.wait_for(cleaned.wait(), 1)
+            assert terminated == [True]
+            assert [chunk async for chunk in feed] == []
+        finally:
+            await feed.aclose()
+
+    asyncio.run(scenario())

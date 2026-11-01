@@ -100,6 +100,11 @@ export function reduce(state: State, action: Action): State {
       // Active lineage is DB-owned. Historical fork events retain provenance,
       // but cannot override a parent that was deleted while this page was away.
       merged.parentKey = persisted.parentKey;
+      // Context is a server-owned snapshot. A hook event carries the previous
+      // values, which must not override a new model/window or cleared evidence.
+      merged.contextTokens = persisted.contextTokens;
+      merged.contextWindowTokens = persisted.contextWindowTokens;
+      merged.model = persisted.model;
       next.set(s.session_key, withoutDeletedParent(merged, tombstoned));
     }
     return { sessions: next, tombstoned };

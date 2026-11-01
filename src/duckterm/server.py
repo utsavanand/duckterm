@@ -22,6 +22,10 @@
     PUT  /review/:repo/:ref/viewed    mark a file viewed or move it to another bucket
     GET  /review/:repo/:ref/cards     review cards (generation starts on first open)
     POST /review/:repo/:ref/cards/regenerate, chat, ask, send, draft-review, github-review
+    GET  /review/:repo/:ref/approval            Touch ID approval state and preconditions
+    POST /review/:repo/:ref/approval/challenge  a single-use payload for the Mac app to sign
+    POST /review/:repo/:ref/approval/submit     signed approval: hand to the release session
+    GET  /approval-key                          the bound Secure Enclave public key (read-only)
     GET  /review/:repo/:ref/releases, compare?older=&newer=, archmap/:tag   release history
     GET  /folders/:path/prs           pull requests across the folder's sessions
     GET  /sessions/:key/output        SSE: live agent output (PTY) lines
@@ -41,11 +45,13 @@ wants direct control of the response stream. Zero runtime dependencies.
 
 import asyncio
 import contextlib
+import fcntl
 import hashlib
 import json
 import os
 import re
 import shlex
+import socket
 import sys
 import tempfile
 import time
@@ -54,7 +60,7 @@ import urllib.parse
 import uuid
 from collections.abc import Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, TextIO
 
 from duckterm import bug_reports, connectors, editions, suites, zsh_themes
 from duckterm.agents import tmux
@@ -113,6 +119,7 @@ from duckterm.persistence.saved_state import (
 )
 from duckterm.persistence.snapshots import SnapshotManager, restore_command_for
 from duckterm.review import git as git_review
+from duckterm.review.approvals import ApprovalError
 from duckterm.review.git import ReviewGitError as GitErrorReview
 from duckterm.runtimes import native_history, opencode_options
 from duckterm.runtimes.base import AT_REST_STATES, AgentRuntime, plain_screen
@@ -216,7 +223,13 @@ def _mid(prefix: str, suffix: str) -> dict[str, str]:
 # GETs that require the owner token despite the open-read policy. /connectors
 # reports which providers the owner connected, under which identity, and when
 # each was last used — a description of the owner, not of the UI's own state.
-_OWNER_READS = frozenset({"/connectors", "/checkpoint-settings", "/edition"})
+# The bundle and icons carry no owner data, and the locked page needs them.
+_PUBLIC_ICONS = frozenset({"/favicon.svg", "/favicon.ico"})
+
+_LOCKED_PAGE = """<!doctype html><meta charset="utf-8"><title>DuckTerm</title>
+<body style="font:15px -apple-system,system-ui,sans-serif;margin:3em">
+<p>DuckTerm is running, but this page needs your sign-in link.</p>
+<p>Open DuckTerm from the app, or run <code>duckterm dashboard</code>.</p></body>"""
 
 
 # fmt: off
@@ -249,6 +262,7 @@ _ROUTES: list[Route] = [
           **_mid("/approvals/", "/decision")),
     Route("GET", "/terminals", lambda s, r, w, h, b, seg: s._terminals(w)),
     Route("GET", "/tasks", lambda s, r, w, h, b, seg: s._folder_tasks(w, h)),
+    Route("GET", "/approval-key", lambda s, r, w, h, b, seg: s._approval_key(w, h)),
     Route("GET", "/update/status", lambda s, r, w, h, b, seg: s._update_status(w, h)),
     Route("GET", "/snapshots", lambda s, r, w, h, b, seg: s._list_snapshots(w)),
     Route("GET", "", lambda s, r, w, h, b, seg: s._session_events(w, seg),
@@ -418,6 +432,7 @@ class Server:
         edition: editions.EditionConfig | None = None,
     ) -> None:
         self.edition = edition or editions.configured()
+        instance.validate_desktop_context(self.edition.name)
         self._lifecycle_locks: dict[str, asyncio.Lock] = {}
         self._transfer_sources: set[str] = set()
         self._transfer_launches: set[str] = set()
@@ -651,17 +666,30 @@ class Server:
                 writer, 403, {"error": "session credentials cannot access owner routes"}
             )
             return
-        # State-changing requests additionally require the per-install secret,
-        # which a blind CSRF can't read and therefore can't forge. GETs (the
-        # dashboard, static assets, read-only data) stay open so the browser can
-        # load the UI; they're already protected by the same-origin check above.
-        # _OWNER_READS are the exceptions: reads whose body describes the owner
-        # rather than the UI's own state, so they are worth the token even
-        # though the listener is loopback-only.
-        if (method != "GET" or path in _OWNER_READS) and not security.token_valid(
-            headers, self.token
-        ):
-            await _write_json(writer, 401, {"error": "missing or invalid token"})
+        # Every owner route needs the per-install secret, reads included: the
+        # origin check stops browsers, not other local callers (another macOS
+        # user, a sandboxed agent with loopback access, an SSH-forwarded port).
+        # Open GETs used to serve the token itself in index.html, any file under
+        # $HOME via /file, and keystrokes into agent panes via the terminal WS.
+        route_path = urllib.parse.urlsplit(path).path
+        if method == "GET" and route_path == "/login":
+            await self._login(writer, headers, path)
+            return
+        if not security.owner_authenticated(headers, self.token):
+            if method == "GET" and route_path == "/":
+                await _write_response(
+                    writer,
+                    401,
+                    _LOCKED_PAGE,
+                    content_type="text/html",
+                    extra_headers={SELF_PROBE_HEADER: "1", "Cache-Control": "no-store"},
+                )
+            elif method == "GET" and (
+                route_path in _PUBLIC_ICONS or route_path.startswith("/assets/")
+            ):
+                await self._dashboard(writer, route_path)
+            else:
+                await _write_json(writer, 401, {"error": "missing or invalid token"})
             return
 
         for feature in editions.request_features(method, path, body):
@@ -710,7 +738,8 @@ class Server:
 
         memory_url = urllib.parse.urlsplit(path)
         memory_view_route = re.fullmatch(
-            r"/sessions/([A-Za-z0-9._-]{1,128})/memory(?:/(read|related))?", memory_url.path
+            r"/sessions/([A-Za-z0-9._-]{1,128})/memory(?:/(read|related|revisions))?",
+            memory_url.path,
         )
         if memory_view_route:
             from duckterm.memory_view_http import handle as memory_view_handle
@@ -803,7 +832,8 @@ class Server:
         review_url = urllib.parse.urlsplit(path)
         review_match = re.fullmatch(
             r"/review/([^/]+)/([^/]+)(?:/(diff|viewed|cards|cards/regenerate|chat|ask|send|"
-            r"draft-review|github-review|releases|compare|archmap/[^/]+))?",
+            r"draft-review|github-review|approval|approval/challenge|approval/submit|"
+            r"releases|compare|archmap/[^/]+))?",
             review_url.path,
         )
         if review_match:
@@ -918,11 +948,44 @@ class Server:
         return _ROUTES
 
     async def _edition(self, writer: asyncio.StreamWriter) -> None:
-        await _write_json(writer, 200, self.edition.description())
+        identity = instance.description()
+        identity["port"] = getattr(self, "_bound_port", instance.port())
+        identity["url"] = f"http://127.0.0.1:{identity['port']}"
+        await _write_json(writer, 200, {**self.edition.description(), "instance": identity})
 
     def require_feature(self, feature: str) -> None:
         if not self.edition.includes(feature):
             raise APIError(403, f"{feature} is unavailable in Duckterm {self.edition.name.title()}")
+
+    async def _login(
+        self, writer: asyncio.StreamWriter, headers: dict[str, str], path: str
+    ) -> None:
+        """Trade the token in ?token= for an HttpOnly cookie, then drop it from
+        the address bar. Browsers send the cookie on navigations, EventSource and
+        WebSockets, none of which can carry the header."""
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(path).query)
+        supplied = query.get("token", [""])[0]
+        if not security.token_valid({security.TOKEN_HEADER: supplied}, self.token):
+            await _write_response(
+                writer,
+                401,
+                _LOCKED_PAGE,
+                content_type="text/html",
+                extra_headers={SELF_PROBE_HEADER: "1", "Cache-Control": "no-store"},
+            )
+            return
+        name = security.owner_cookie_name(headers.get("host", ""))
+        await _write_response(
+            writer,
+            303,
+            "",
+            extra_headers={
+                "Location": "/",
+                "Set-Cookie": f"{name}={supplied}; Path=/; HttpOnly; SameSite=Strict",
+                "Cache-Control": "no-store",
+                "Referrer-Policy": "no-referrer",
+            },
+        )
 
     async def _dashboard(self, writer: asyncio.StreamWriter, path: str) -> None:
         """Serve the built React dashboard so there's one URL. The self-probe
@@ -949,7 +1012,10 @@ class Server:
         rel = "index.html" if path == "/" else path.lstrip("/")
         target = (dist / rel).resolve()
         if not target.is_relative_to(dist.resolve()) or not target.is_file():
-            target = dist / "index.html"  # SPA fallback
+            # A missing asset is a 404, never index.html: assets are public, and
+            # index.html carries the owner token.
+            await _write_response(writer, 404, "not found")
+            return
         if target.name == "index.html":
             # Inject the per-install token so the dashboard's fetches can send it.
             # Same-origin script can read it; a cross-origin attacker can't.
@@ -1614,6 +1680,9 @@ class Server:
             "send": "POST",
             "draft-review": "POST",
             "github-review": "POST",
+            "approval": "GET",
+            "approval/challenge": "POST",
+            "approval/submit": "POST",
             "releases": "GET",
             "compare": "GET",
         }
@@ -1647,6 +1716,8 @@ class Server:
                 result = await asyncio.to_thread(workspace.mark_viewed, target, payload)
             elif part in ("releases", "compare") or part.startswith("archmap/"):
                 result = await self._review_history(target, part, query)
+            elif part.startswith("approval"):
+                result = await self._review_approval(target, part, payload)
             else:
                 result = await self._review_cards(target, part, payload)
         except workspace.ReviewError as exc:
@@ -1657,6 +1728,9 @@ class Server:
             return
         except GitErrorReview as exc:
             await _write_json(writer, 500, {"error": str(exc)})
+            return
+        except ApprovalError as exc:
+            await _write_json(writer, exc.status, {"error": str(exc)})
             return
         await _write_json(writer, 200, result)
 
@@ -1686,6 +1760,7 @@ class Server:
             "key": row["session_key"],
             "name": row.get("name") or row["session_key"],
             "progress": row.get("progress"),
+            "folder": row.get("grp") or "",
         }
 
     async def _review_cards(self, target: Any, part: str, payload: dict[str, Any]) -> Any:
@@ -1754,11 +1829,13 @@ class Server:
         if part == "github-review":
             event = payload.get("event")
             review_body = payload.get("body")
-            if event not in ("APPROVE", "REQUEST_CHANGES", "COMMENT"):
+            # Approval is Touch ID merge-and-release (approval/submit); this route
+            # holds only the install token, which agents also hold.
+            if event not in ("REQUEST_CHANGES", "COMMENT"):
                 raise workspace.ReviewError(
-                    400, "event must be APPROVE, REQUEST_CHANGES or COMMENT"
+                    400, "event must be REQUEST_CHANGES or COMMENT; approve with Touch ID"
                 )
-            if not isinstance(review_body, str) or (event != "APPROVE" and not review_body.strip()):
+            if not isinstance(review_body, str) or not review_body.strip():
                 raise workspace.ReviewError(400, "a review body is required")
             if not target.pr or not target.slug:
                 raise workspace.ReviewError(409, "This branch has no pull request on GitHub")
@@ -1772,6 +1849,159 @@ class Server:
             except github.GitHubError as exc:
                 raise workspace.ReviewError(502, str(exc)) from exc
         raise workspace.ReviewError(404, "unknown review route")
+
+    async def _approval_key(self, writer: asyncio.StreamWriter, headers: dict[str, str]) -> None:
+        """The bound Secure Enclave public key, read-only. Binding never goes
+        over HTTP: the Mac app writes the key file (see review/approvals.py)."""
+        from duckterm.review import approvals
+
+        if not security.token_valid(headers, self.token):
+            await _write_json(writer, 401, {"error": "owner credential required"})
+            return
+        await _write_json(writer, 200, await asyncio.to_thread(approvals.key_status))
+
+    async def _approval_context(self, target: Any) -> dict[str, Any]:
+        """Everything Approve depends on, read fresh: the header row from git
+        and GitHub, the authoring and release sessions, and card 9's flags."""
+        from duckterm.review import approvals, cards, workspace
+
+        header = await asyncio.to_thread(workspace.header, target)
+        author = await self._review_author(target.branch)
+        release_row = (
+            approvals.release_session(self.history.sessions(), author["folder"]) if author else None
+        )
+        release = (
+            {
+                "key": release_row["session_key"],
+                "name": release_row.get("name") or release_row["session_key"],
+                "folder": release_row.get("grp") or "",
+            }
+            if release_row
+            else None
+        )
+        # Card 9's path rules over the changed file names, not the full diff,
+        # since this runs on every open, challenge and submit.
+        paths = (
+            await asyncio.to_thread(
+                git_review.run, target.repo, "diff", "--name-only", target.base_sha, target.head_ref
+            )
+        ).splitlines()
+        flags = [
+            {"name": name, "hits": hits[:6]}
+            for name, rule in (
+                ("Schema or data path", cards.SCHEMA_PATH),
+                ("Installer, updater or build path", cards.OPS_PATH),
+                ("Security or credential path", cards.SECURITY_PATH),
+            )
+            if (hits := [p for p in paths if rule.search(p)])
+        ]
+        checks = approvals.preconditions(header, author, release)
+        return {
+            "header": header,
+            "author": author,
+            "release": release,
+            "checks": checks,
+            "ready": all(c["ok"] for c in checks),
+            "flags": flags,
+        }
+
+    def _approval_progress(self, record: dict[str, Any] | None) -> dict[str, Any] | None:
+        """The approval record with its release task's live status and note."""
+        if not record:
+            return None
+        try:
+            task = self.history.folder_tasks.get(record["task_id"])
+        except APIError:
+            return {**record, "task": None}
+        return {**record, "task": {k: task[k] for k in ("status", "note", "updated_at")}}
+
+    async def _review_approval(self, target: Any, part: str, payload: dict[str, Any]) -> Any:
+        """Approve = merge and release, signed with Touch ID in the Mac app
+        (docs/specs/pr-widget-approve-delta-spec.md)."""
+        from duckterm.review import approvals, workspace
+
+        number = target.pr["number"] if target.pr else None
+        if part == "approval":
+            context = await self._approval_context(target)
+            record = (
+                await asyncio.to_thread(approvals.load_record, target.repo, target.slug, number)
+                if number
+                else None
+            )
+            return {
+                "checks": context["checks"],
+                "ready": context["ready"],
+                "flags": context["flags"],
+                "release": context["release"],
+                "author": context["author"]
+                and {k: context["author"][k] for k in ("key", "name", "folder")},
+                "head_sha": target.head_sha,
+                "key": await asyncio.to_thread(approvals.key_status),
+                "record": self._approval_progress(record),
+            }
+        if number is None:
+            raise ApprovalError(409, "This branch has no pull request on GitHub")
+        if part == "approval/challenge":
+            context = await self._approval_context(target)
+            failing = next((c for c in context["checks"] if not c["ok"]), None)
+            if failing:
+                raise ApprovalError(409, f"{failing['name']}: {failing['note']}")
+            if not (await asyncio.to_thread(approvals.key_status))["enrolled"]:
+                raise ApprovalError(409, "No Touch ID key is bound; open DuckTerm on this Mac")
+            issued = approvals.challenge(
+                {
+                    "repo": target.repo,
+                    "github": target.slug or "",
+                    "pr": str(number),
+                    "head": target.head_sha,
+                    "folder": context["author"]["folder"],
+                    "release": context["release"]["key"],
+                }
+            )
+            return {"payload": issued}
+        # approval/submit
+        payload_text = payload.get("payload")
+        if not isinstance(payload_text, str):
+            raise ApprovalError(400, "payload must be an approval challenge")
+        fields = approvals.take_challenge(payload_text)
+        if fields["repo"] != target.repo or fields["pr"] != str(number):
+            raise ApprovalError(409, "That approval was for a different pull request")
+        if not await asyncio.to_thread(approvals.verify, payload_text, payload.get("signature")):
+            raise ApprovalError(403, "The signature does not match this Mac's Touch ID key")
+        fresh = await asyncio.to_thread(workspace.resolve, target.repo, target.ref, refresh=True)
+        if fresh.head_sha != fields["head"]:
+            raise ApprovalError(409, "Head changed since approval; nothing was merged")
+        context = await self._approval_context(fresh)
+        failing = next((c for c in context["checks"] if not c["ok"]), None)
+        if failing:
+            raise ApprovalError(409, f"{failing['name']}: {failing['note']}")
+        if context["release"]["key"] != fields["release"]:
+            raise ApprovalError(409, "The release session changed since approval; approve again")
+        release_folder = context["release"]["folder"]
+        with self.history._conn:
+            task = self.history.folder_tasks.start(
+                release_folder,
+                fields["release"],
+                f"Merge and release PR #{fields['pr']} at {fields['head'][:12]}",
+                identity=approvals.task_id(),
+            )
+            self.history.folder_tasks.update(task["id"], {"note": "approved with Touch ID"})
+        message_id = self.history.session_api.owner_message(
+            fields["release"],
+            approvals.release_message(fields, task["id"], fields["release"]),
+            request_key=f"approve:{fields['github']}:{fields['pr']}:{fields['head']}",
+        )
+        record = {
+            "pr": number,
+            "head_sha": fields["head"],
+            "release": context["release"],
+            "task_id": task["id"],
+            "message_id": message_id,
+            "approved_at": time.time(),
+            "fingerprint": (await asyncio.to_thread(approvals.key_status))["fingerprint"],
+        }
+        await asyncio.to_thread(approvals.save_record, target.repo, target.slug, number, record)
+        return self._approval_progress(record)
 
     async def _review_history(self, target: Any, part: str, query: dict[str, list[str]]) -> Any:
         """Releases, module maps and comparisons (spec §7). Maps for the newest
@@ -1871,6 +2101,7 @@ class Server:
         query: str,
     ) -> None:
         """Pull request rows for one session or one folder (docs/pr-review-platform-spec.md)."""
+        from duckterm.review import approvals
         from duckterm.review import lists as review_lists
 
         if not security.token_valid(headers, self.token):
@@ -1894,6 +2125,14 @@ class Server:
                 return
             members = review_lists.folder_members(self.history, target)
         result = await asyncio.to_thread(review_lists.build, members, refresh=refresh)
+        for item in result["rows"]:
+            number = (item.get("pr") or {}).get("number")
+            record = (
+                await asyncio.to_thread(approvals.load_record, item["repo"], item["github"], number)
+                if number
+                else None
+            )
+            item["approval"] = self._approval_progress(record)
         await _write_json(writer, 200, result)
 
     async def _artifacts(
@@ -2183,12 +2422,13 @@ class Server:
                     k: transfer.get(k) for k in ("id", "stage", "target", "session_key")
                 }
             s["subagents"] = subagents.get(str(s.get("session_key") or ""), [])
-            stats = self._transcript_stats_for(s)
+            stats = await self._transcript_stats_for(s)
             s["context_tokens"] = stats.get("context_tokens")
+            s["context_window_tokens"] = stats.get("context_window_tokens")
             live_model = stats.get("model")
             if live_model and live_model != s.get("model"):
                 # Persist so rule scopes like "claude-code/fable-5" still match
-                # after the transcript is gone (codex exposes none -> stays NULL).
+                # after the transcript is gone.
                 self.history.set_model(str(s["session_key"]), str(live_model))
             s["model"] = live_model or s.get("model")
             s["suites"] = self._suites_for(s.get("worktree_path") or s.get("cwd"))
@@ -2256,9 +2496,24 @@ class Server:
         ):
             row["state"] = "busy"
 
-    def _transcript_stats_for(self, row: dict[str, Any]) -> dict[str, Any]:
-        """Live transcript-tail stats for a claude-code session: current
-        context size (the checkpoint/compact signal) and the model in use."""
+    async def _transcript_stats_for(self, row: dict[str, Any]) -> dict[str, Any]:
+        """Current context size and model from the recorded conversation."""
+        if row.get("runtime") == "codex":
+            from duckterm import context_evidence
+
+            key = str(row["session_key"])
+            identity = self.history.native_identity(key)
+            evidence = await asyncio.to_thread(context_evidence.project, row, identity)
+            current = self.history.session(key)
+            if self.history.native_identity(key) != identity or any(
+                (current or {}).get(k) != row.get(k)
+                for k in ("runtime", "cwd", "worktree_path", "restart_json")
+            ):
+                return {}
+            return {
+                field: evidence.get(field)
+                for field in ("context_tokens", "context_window_tokens", "model")
+            }
         if row.get("runtime") == "opencode":
             control = self.history.restart_control(str(row["session_key"]))
             observation = control.get("opencode_observation") or {}
@@ -3260,9 +3515,23 @@ class Server:
         if row is None:
             return None
         wt = row.get("worktree_path")
-        if not wt or "/.duckterm/worktrees/" not in str(wt):
+        if not isinstance(wt, str) or not wt:
             return None
-        return Path(str(wt))
+        managed_root = paths.worktrees_dir()
+        if managed_root.is_symlink():
+            return None
+        root = managed_root.resolve()
+        candidate = Path(wt)
+        if not candidate.is_absolute():
+            return None
+        try:
+            resolved = candidate.resolve()
+            relative = resolved.relative_to(root)
+        except (OSError, ValueError, RuntimeError):
+            return None
+        # Neither a lookalike path nor a symlink escaping our managed root is
+        # authority to delete a checkout. Never remove the managed root itself.
+        return resolved if relative.parts else None
 
     def _worktree_unmerged(self, row: dict[str, Any] | None) -> int:
         """Count commits on the worktree branch not yet in main. Returns -1 when
@@ -3518,7 +3787,7 @@ class Server:
         name = str(row.get("name") or row.get("source_app") or key)
         # A question that names a session gets a deeper look at that session.
         focus = name.lower() in question.lower()
-        stats = self._transcript_stats_for(row)
+        stats = await self._transcript_stats_for(row)
         meta = [
             f"folder: {row.get('grp') or '-'}",
             f"state: {row.get('state') or '?'}",
@@ -5564,9 +5833,37 @@ class Server:
         if supervisor is None:
             await _write_json(writer, 404, {"error": "no live session (not launched by Duckterm)"})
             return
-        text = json.loads(body or b"{}").get("text", "")
-        wrote = await asyncio.to_thread(supervisor.write_input, text)
-        await _write_json(writer, 200 if wrote else 409, {"written": wrote})
+        request = json.loads(body or b"{}")
+        text = request.get("text", "")
+        submit = request.get("submit", False)
+        if not isinstance(text, str) or not isinstance(submit, bool):
+            await _write_json(writer, 400, {"error": "text must be a string; submit a boolean"})
+            return
+        if submit:
+            if not text.strip() or len(text.encode()) > 16384:
+                await _write_json(writer, 400, {"error": "text must be 1 to 16384 bytes"})
+                return
+            # A multiline paste is one prompt. Enter must arrive separately once
+            # the harness has left paste mode, not in the same tmux/PTY burst.
+            wrote = await supervisor.write_queued_bytes(b"\x1b[200~" + text.encode() + b"\x1b[201~")
+            if wrote:
+                await asyncio.sleep(Server._SUBMIT_GAP_S)
+                wrote = await supervisor.write_queued_bytes(b"\r")
+            if not wrote:
+                await _write_json(
+                    writer,
+                    409,
+                    {
+                        "written": False,
+                        "error": "Could not submit. Check the terminal before retrying.",
+                    },
+                )
+                return
+        else:
+            wrote = await asyncio.to_thread(supervisor.write_input, text)
+        await _write_json(
+            writer, 200 if wrote else 409, {"written": wrote, "submitted": submit and wrote}
+        )
 
     async def _output(
         self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter, session_key: str
@@ -5615,14 +5912,7 @@ class Server:
         method: str,
         body: bytes,
     ) -> None:
-        # Browsers cannot set custom WebSocket headers; use a subprotocol token
-        # only on this route, never URL query credentials or ambient session auth.
-        auth = dict(headers)
-        if terminal and "x-duckterm-token" not in auth:
-            for protocol in headers.get("sec-websocket-protocol", "").split(","):
-                if protocol.strip().startswith("duckterm-owner."):
-                    auth["x-duckterm-token"] = protocol.strip()[len("duckterm-owner.") :]
-        if not security.token_valid(auth, self.token):
+        if not security.owner_authenticated(headers, self.token):
             await _write_json(writer, 401, {"error": "owner credential required"})
             return
         try:
@@ -6010,6 +6300,9 @@ class Server:
         host: str,
         port: int,
         on_listening: Callable[[str, int], None] | None = None,
+        *,
+        reserved_socket: socket.socket | None = None,
+        home_lock: Path | None = None,
     ) -> None:
         if host not in {"127.0.0.1", "localhost", "::1"}:
             raise ValueError("Duckterm must bind a loopback host (127.0.0.1, localhost, or ::1)")
@@ -6019,18 +6312,47 @@ class Server:
         # first's live agents. The pidfile turns that silent corruption into a
         # clear error. (Per-instance home/socket/port normally prevent overlap;
         # this guards the case where they were misconfigured to collide.)
-        lock = _acquire_home_lock()
+        lock = home_lock or _acquire_home_lock()
+        server: asyncio.Server | None = None
         try:
+            # CLI startup also reserves the port before opening the database.
+            server = (
+                await asyncio.start_server(self.handle, sock=reserved_socket, start_serving=False)
+                if reserved_socket is not None
+                else await asyncio.start_server(self.handle, host, port, start_serving=False)
+            )
+            self._bound_port = server.sockets[0].getsockname()[1]
             refreshed = session_instructions.refresh_guides(
                 collaboration=self.edition.includes("inbox"),
                 artifacts=self.edition.includes("artifacts"),
             )
             if refreshed:
                 print(f"refreshed {refreshed} stale session instruction file(s)")
+            from duckterm.agents.hooks_install import repair_moved_app_hooks
+
+            try:
+                projects = {
+                    Path(value)
+                    for row in self.history.sessions()
+                    for key in ("cwd", "worktree_path")
+                    if isinstance(value := row.get(key), str) and Path(value).is_absolute()
+                }
+                for path in repair_moved_app_hooks(project_dirs=projects):
+                    print(f"repointed DuckTerm hooks in {path} at the shared handler")
+            except (OSError, ValueError) as exc:  # a user's own config; never block startup
+                print(f"left hook configuration unchanged: {exc}", file=sys.stderr)
+            if self.edition.includes("connectors"):
+                try:
+                    connectors.refresh_runtime_registration()
+                except (OSError, ValueError, RuntimeError) as exc:
+                    print(
+                        f"could not refresh connector launch paths: {exc}; "
+                        "reconnect the affected connector from this workspace",
+                        file=sys.stderr,
+                    )
             adopted = await self.orchestrator.reconcile()
             if adopted:
                 print(f"re-adopted {len(adopted)} tmux session(s): {', '.join(adopted)}")
-            server = await asyncio.start_server(self.handle, host, port)
             try:
                 editions.remember(self.edition)
             except BaseException:
@@ -6040,6 +6362,7 @@ class Server:
             actual_port = server.sockets[0].getsockname()[1]
             if self.edition.includes("inbox"):
                 self.history.session_api.set_url(f"http://127.0.0.1:{actual_port}")
+            await server.start_serving()
             if on_listening is not None:
                 on_listening(host, port)
             self.archives.recover()
@@ -6078,7 +6401,11 @@ class Server:
                     await self.restarts.close()
                     await self.progress_coordinator.close()
         finally:
-            _release_home_lock(lock)
+            if server is not None:
+                server.close()
+                await server.wait_closed()
+            if home_lock is None:
+                _release_home_lock(lock)
 
     # ── Oracle voice ──
     # Speech runs in a separately installed worker (duckterm/voice/service.py);
@@ -6327,6 +6654,9 @@ def _pid_alive(pid: int) -> bool:
     return True
 
 
+_HOME_LOCKS: dict[Path, TextIO] = {}
+
+
 def _acquire_home_lock() -> Path:
     """Claim this DUCKTERM_HOME for one server. Writes a pidfile; if it already
     names a live process, raise so the second server fails loudly instead of
@@ -6334,18 +6664,30 @@ def _acquire_home_lock() -> Path:
     home = instance.home()
     home.mkdir(parents=True, exist_ok=True)
     lock = home / "server.pid"
+    guard = (home / "server.lock").open("a+")
+    try:
+        fcntl.flock(guard, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        guard.close()
+        raise SystemExit(f"duckterm: another DuckTerm server already owns {home}") from None
     if lock.exists():
         try:
             other = int(lock.read_text().strip() or "0")
         except ValueError:
             other = 0
         if other and other != os.getpid() and _pid_alive(other):
+            guard.close()
             raise SystemExit(
-                f"another DuckTerm server (pid {other}) already owns "
+                f"duckterm: another DuckTerm server (pid {other}) already owns "
                 f"{home} — run it with a distinct DUCKTERM_INSTANCE, or stop that one."
             )
         # Stale pidfile (process gone / crashed): reclaim it.
-    lock.write_text(str(os.getpid()))
+    try:
+        lock.write_text(str(os.getpid()))
+    except BaseException:
+        guard.close()
+        raise
+    _HOME_LOCKS[lock] = guard
     return lock
 
 
@@ -6355,6 +6697,9 @@ def _release_home_lock(lock: Path) -> None:
     with contextlib.suppress(OSError, ValueError):
         if int(lock.read_text().strip() or "0") == os.getpid():
             lock.unlink()
+    guard = _HOME_LOCKS.pop(lock, None)
+    if guard is not None:
+        guard.close()
 
 
 def _branch_name(name: str | None) -> str:

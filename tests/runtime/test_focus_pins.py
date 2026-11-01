@@ -76,7 +76,7 @@ def test_persistence_lifecycle_and_existing_session_payload(scenario, tmp_path):
         assert pinned_keys(reopened) == set("ab")
         assert reopened.session("a")["state"] == "stopped"
         assert reopened.session("b")["state"] == "archived"
-        status, payload = dispatch(Server(history=reopened), "GET", "/sessions", {})
+        status, payload = dispatch(Server(history=reopened), "GET", "/sessions", owner)
         assert status == 200
         assert {s["session_key"] for s in payload["sessions"] if s["pinned"]} == set("ab")
     finally:

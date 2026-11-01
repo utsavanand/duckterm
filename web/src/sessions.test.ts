@@ -271,3 +271,28 @@ it("keeps lost native status unknown until a verified update and honors owner St
   state = applyEvent(state, ev({ event_type: "NativeStatus", runtime: "opencode", native_state: "busy" }));
   expect(state.get("s1")!.state).toBe("stopped");
 });
+
+
+describe("reported context capacity", () => {
+  it("uses the reported window for an unlisted model at warning boundaries", () => {
+    expect(contextWindowFor("unlisted-codex-model", 128_000)).toBe(128_000);
+    expect(contextWindowIsAssumed("unlisted-codex-model", 110_000, 128_000)).toBe(false);
+    expect(contextLevel(70_399, "unlisted-codex-model", 128_000)).toBeNull();
+    expect(contextLevel(70_400, "unlisted-codex-model", 128_000)).toBe("warm");
+    expect(contextLevel(102_400, "unlisted-codex-model", 128_000)).toBe("high");
+    expect(contextLevel(102_400, undefined, 128_000)).toBe("high");
+  });
+  it("prefers evidence over a model-table capacity and handles usage above the report", () => {
+    expect(contextLevel(110_000, "claude-opus-5", 128_000)).toBe("high");
+    expect(contextLevel(130_000, "unlisted-codex-model", 128_000)).toBe("high");
+    expect(contextLevel(110_000, "unlisted-codex-model")).toBeNull();
+  });
+  it.each([undefined, 0, -1, NaN, Infinity, 1.5])("does not turn invalid capacity %s into a warning", capacity => {
+    expect(contextLevel(110_000, "unlisted-codex-model", capacity)).toBeNull();
+    expect(contextWindowIsAssumed("unlisted-codex-model", 110_000, capacity)).toBe(true);
+    expect(contextLevel(820_000, "claude-opus-5", capacity)).toBe("high");
+  });
+  it.each([undefined, 0, -1, NaN, Infinity])("does not warn for invalid usage %s", tokens => {
+    expect(contextLevel(tokens, "unlisted-codex-model", 128_000)).toBeNull();
+  });
+});

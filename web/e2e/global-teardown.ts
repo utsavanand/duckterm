@@ -2,7 +2,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { readOwnedState, statePath } from "./run-state";
+import { authStatePath, readOwnedState, statePath } from "./run-state";
 
 function alive(pid: number): boolean {
   try { process.kill(pid, 0); return true; }
@@ -80,4 +80,5 @@ export default async function globalTeardown() {
   if (tmuxSocket) await stopTmux(tmuxSocket, home);
   if (home) rmSync(home, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
   rmSync(path, { force: true });
+  rmSync(authStatePath(), { force: true });
 }

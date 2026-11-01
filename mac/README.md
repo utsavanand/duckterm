@@ -13,15 +13,19 @@ mac/build.sh --test --run
 
 The result is `mac/build/DuckTerm Test.app`, with a purple duck and **TEST**
 badge. Its Dock name, app menu, and window titles identify it as DuckTerm Test.
-Its bundle ID is `com.rubberduckhq.rubberterm.test`, so it can run alongside
-DuckTerm with separate saved host preferences, notifications, and WebKit data.
+Add `--edition=lite` or `--edition=code` for DuckTerm Lite Test or Code Test.
+Every edition and its Test build has its own bundle ID, home, tmux socket and
+port, resolved by `src/duckterm/helpers/instance.py --desktop-profile` and written
+to Info.plist, so all six can run side by side with separate saved host
+preferences, notifications, and WebKit data.
 
-The test build snapshots this worktree's Python backend and built dashboard into
-the bundle. Build the dashboard first when changing frontend code (`scripts/check.sh`
-builds and verifies it). The local backend uses `DUCKTERM_INSTANCE=test`, with
+Both production and Test builds package the private Python runtime, this
+worktree's backend, a fresh dashboard, tmux and hook tools. The local Test
+Full backend uses the `test` profile, with
 `~/.duckterm-test`, its own derived port, and the `duckterm-test` tmux socket.
-It never falls back to the installed production CLI. The build uses this Mac's
-Python interpreter and is for local QA, not redistribution.
+It never falls back to the installed production CLI. Test bundles are for local
+QA, not redistribution; their backend runs with the same private interpreter
+and dependency layout as production.
 
 Model logins and provider CLI configuration remain those of the current Mac
 user. Connecting to a remote host shows that host's actual sessions and
@@ -69,9 +73,15 @@ See [remote workspace operations](../docs/remote-workspace-operations.md).
 
 ## Build requirements and checks
 
-Use a Swift toolchain with the macOS SDK, preferably full Xcode. The build
-compiles with `swiftc` and ad-hoc signs the app. Distribution signing and
-notarization belong to the release process.
+Build on Apple Silicon with a Swift toolchain and macOS SDK, preferably full
+Xcode, plus the repository's `.venv` and `web/node_modules`. The first build
+downloads pinned, checksum-verified CPython and native dependency archives.
+It compiles tmux and jq for macOS 13 with static third-party dependencies and
+retains their licenses. Later builds reuse verified source archives.
+
+The build checks every native component's architecture, minimum macOS version
+and library references, then ad-hoc signs nested code and the app. Developer ID
+signing uses `mac/sign-bundle.sh APP IDENTITY`; notarization remains a release step.
 
 ```sh
 swift test --package-path mac
@@ -79,16 +89,31 @@ mac/build.sh --test
 mac/build.sh
 ```
 
-The icon generator requires Node and `web/node_modules/playwright`. Test icon
-rendering must succeed or have a previously generated `AppIconTest.icns`; the
-build must not silently use the production icon.
+Native builds copy the checked-in icon for the selected edition and Test flag.
+Lite uses the duckling, Code uses the laptop duck, and Full keeps the original.
+Test icons retain the purple duck and **TEST** badge. A missing selected icon
+stops the build; another edition's icon is never substituted. Builds do not
+regenerate or modify tracked icon resources.
+
+When changing an approved SVG, regenerate its production and Test resources
+with Node and `web/node_modules/playwright` (including its Chromium browser):
+
+```sh
+node mac/make-icon.mjs --edition=lite
+node mac/make-icon.mjs --edition=lite --test
+```
+
+Use `--edition=code` or `--edition=full` for the others. The edition argument is
+required. Add `--output=/absolute/path/review.icns` to render a review copy
+without replacing the checked-in resource.
 
 ## Install
 
 Use the [README Mac app instructions](../README.md#mac-app). The published
-Apple Silicon archive requires macOS 13+ and the separately installed `duckterm`
-CLI, tmux, and your agent CLIs. It is signed with a Developer ID and notarized
-by Apple. The app and CLI should come from the same release.
+Apple Silicon archive requires macOS 13+ and your separately installed coding
+agents. Python, tmux, hook tools and the backend are included. It is signed with
+a Developer ID and notarized by Apple. The app leaves project Python environments
+and a separately installed global DuckTerm CLI unchanged.
 
 ## Production build from source
 
@@ -100,13 +125,13 @@ Tools). From the repository root:
 open mac/build/DuckTerm.app
 ```
 
-The build uses `swiftc` for the current machine's architecture and reads its
-version from `src/duckterm/__init__.py`. It produces an ad-hoc-signed app at
-`mac/build/DuckTerm.app`. Building on Intel produces an Intel app; the
-published arm64 archive is for Apple Silicon only.
+The build targets arm64 macOS 13 and reads its version from
+`src/duckterm/__init__.py`. It produces an ad-hoc-signed app at
+`mac/build/DuckTerm.app`. Use `--edition=lite` or `--edition=code` for the other
+named bundles. Intel users can use the browser-only Python installation.
 
 If the SDK reports duplicate `SwiftBridging` modules, select a compatible Xcode
-toolchain. The Python CLI must be installed before the app can start its server.
+toolchain. No separately installed Python CLI is used by the built app.
 
 ## Verify
 

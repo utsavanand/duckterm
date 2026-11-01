@@ -160,6 +160,7 @@ export function applyEvent(
     // mount a dead black terminal for a session running in iTerm/Terminal.
     ptyOwned: prev?.ptyOwned || (e.launched === true && e.pty_owned !== false),
     contextTokens: prev?.contextTokens,
+    contextWindowTokens: prev?.contextWindowTokens,
     model: prev?.model,
     metaHarnesses: prev?.metaHarnesses,
     conversationIdentity: prev?.conversationIdentity,
@@ -186,7 +187,12 @@ const MODEL_WINDOWS: [RegExp, number][] = [
 
 export const DEFAULT_WINDOW = 200_000;
 
-export function contextWindowFor(model?: string): number {
+function validReportedWindow(capacity?: number): capacity is number {
+  return capacity !== undefined && Number.isSafeInteger(capacity) && capacity > 0;
+}
+
+export function contextWindowFor(model?: string, reportedCapacity?: number): number {
+  if (validReportedWindow(reportedCapacity)) return reportedCapacity;
   for (const [re, win] of MODEL_WINDOWS) {
     if (model && re.test(model)) return win;
   }
@@ -200,24 +206,25 @@ export function contextWindowFor(model?: string): number {
  * 200k window, clamped to zero — and the same assumption drove a permanent
  * "high" context warning. Used exceeding the window is itself proof the
  * guess is wrong, so that counts as unknown too. */
-export function contextWindowIsAssumed(model?: string, tokens?: number): boolean {
+export function contextWindowIsAssumed(model?: string, tokens?: number, reportedCapacity?: number): boolean {
+  if (validReportedWindow(reportedCapacity)) return false;
   const matched = MODEL_WINDOWS.some(([re]) => model && re.test(model));
   if (!matched) return true;
   return tokens != null && tokens > contextWindowFor(model);
 }
 
-// Context-size thresholds (claude's window is ~200k): "warm" = start thinking
-// about a checkpoint; "high" = checkpoint or /compact now, quality degrades
-// as the auto-compact cliff approaches.
+// Apply existing warning thresholds to reported capacity first, then a known
+// model window. Unknown windows never produce a capacity warning.
 export function contextLevel(
   tokens?: number,
   model?: string,
+  reportedCapacity?: number,
 ): "warm" | "high" | null {
-  if (!tokens) return null;
+  if (tokens === undefined || !Number.isFinite(tokens) || tokens <= 0) return null;
   // Never warn off an assumed window: that fired "high" on every opus-5
   // session past 160k against a window that was actually 1M.
-  if (contextWindowIsAssumed(model, tokens)) return null;
-  const win = contextWindowFor(model);
+  if (contextWindowIsAssumed(model, tokens, reportedCapacity)) return null;
+  const win = contextWindowFor(model, reportedCapacity);
   if (tokens >= win * 0.8) return "high";
   if (tokens >= win * 0.55) return "warm";
   return null;

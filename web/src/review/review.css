@@ -275,3 +275,16 @@
 .rd-archmap-legend .is-added::before { border-color: var(--brand-green-strong); }
 .rd-archmap-legend .is-changed::before { border-color: var(--wait); }
 .rd-archmap-legend .is-removed::before { border-color: var(--danger); border-style: dashed; }
+
+/* Touch ID approval: merge and release. */
+.rd-approve { display: flex; flex-direction: column; gap: 12px; min-width: 0; }
+.rd-approve-checks { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; font-size: 0.8125rem; }
+.rd-approve-checks li { display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap; }
+.rd-approve-checks li.is-ok > span { color: var(--brand-green-strong); }
+.rd-approve-checks li.is-fail > span, .rd-approve-checks li.is-fail strong { color: var(--danger); }
+.rd-approve-checks small { color: var(--muted); }
+.rd-approve-flags { padding: 8px 12px; border-radius: 8px; border: 1px solid var(--amber-border); background: var(--amber-bg); color: var(--amber-text); font-size: 0.75rem; }
+.rd-approve-flags ul { margin: 4px 0 0; padding-left: 18px; }
+.rd-approve-flags code { word-break: break-all; }
+.rd-pr-approval { display: block; margin-top: 2px; font-size: 0.6875rem; color: var(--text-soft); }
+.rd-review-title .rd-pr-approval { display: inline; margin: 0; }

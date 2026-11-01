@@ -1,6 +1,6 @@
-import { writeOwnedState } from "./run-state";
+import { authStatePath, writeOwnedState } from "./run-state";
 import { spawn } from "node:child_process";
-import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -89,6 +89,15 @@ export default async function globalSetup() {
   try {
     await waitForOwnedServer(proc, home, `http://127.0.0.1:${PORT}`);
     writeOwnedState({ home, pid: proc.pid!, port: PORT, tmuxSocket });
+    // The same cookie /login sets, so pages open signed in like the app's.
+    const token = readFileSync(join(home, "token"), "utf8").trim();
+    writeFileSync(authStatePath(), JSON.stringify({
+      cookies: [{
+        name: `duckterm_owner_${PORT}`, value: token, domain: "127.0.0.1", path: "/",
+        expires: -1, httpOnly: true, secure: false, sameSite: "Strict",
+      }],
+      origins: [],
+    }), { mode: 0o600 });
   } catch (error) {
     if (proc.pid && proc.exitCode === null && proc.signalCode === null) {
       await new Promise<void>((resolve) => {

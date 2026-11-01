@@ -21,11 +21,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var capturingReport = false
     private var notified: [String: Set<String>] = [:]
     private var edition: DesktopEdition?
+    private let launchAdmission = WorkspaceLaunchAdmission()
 
     func applicationDidFinishLaunching(_ note: Notification) {
+        guard launchAdmission.decide(
+            notice: LegacyWorkspaceNotice.detect(profile: AppIdentity.profile, isTest: AppIdentity.isTest),
+            present: { LegacyWorkspaceNoticeController(notice: $0).runModal() }
+        ) else {
+            NSApp.terminate(nil)
+            return
+        }
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
 
         AppDiagnostics.shared.record("Application launched")
+        Task.detached(priority: .utility) {
+            do {
+                if let bound = try ApprovalSigner.bindIfUnbound() { AppDiagnostics.shared.record("Approval key bound: \(bound)") }
+            } catch { AppDiagnostics.shared.record("Approval key not bound") }
+        }
         window = DashboardWindow(url: server.url)
         window?.onReportBug = { [weak self] in self?.reportBug(nil) }
         window?.desktopHosts = []
@@ -242,11 +255,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     // Quit when the dashboard window is closed — it's the whole app.
     func applicationShouldTerminateAfterLastWindowClosed(_ app: NSApplication) -> Bool {
-        true
+        launchAdmission.canStart
     }
 
     // Re-open the window if the user clicks the Dock icon after closing it.
     func applicationShouldHandleReopen(_ app: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
+        guard launchAdmission.canStart else { return false }
         if !flag {
             Task {
                 if await ensureLocalServer() { window?.show() }
@@ -257,6 +271,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func ensureLocalServer() async -> Bool {
+        guard launchAdmission.canStart else { return false }
         if let localStart { return await localStart.value }
         let pending = Task { await server.start() }
         localStart = pending
@@ -265,6 +280,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func startPolling(host: String = "local", base: URL? = nil) {
+        guard launchAdmission.canStart else { return }
         guard host == "local" || edition?.includes("remote_workspaces") == true else { return }
         guard pollers[host] == nil else { return }
         let p = SessionPoller(base: base ?? server.url)
@@ -384,7 +400,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             let response = try await launchAPI.perform(base: server.url, operation: "edition", params: [:])
             let current = try DesktopEdition(response: response)
-            try current.validate(expected: AppIdentity.edition)
+            try current.validate(edition: AppIdentity.edition, profile: AppIdentity.profile)
             applyEdition(current)
             return current
         } catch {
@@ -426,7 +442,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func reportBug(_ sender: Any?) {
-        guard !capturingReport else { return }
+        guard launchAdmission.canStart, !capturingReport else { return }
         if let bugReport, bugReport.isOpen { bugReport.show(); return }
         capturingReport = true
         window?.captureForReport { [weak self] image in
@@ -489,8 +505,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                         }
                         return
                     }
-                    let home = ProcessInfo.processInfo.environment["DUCKTERM_HOME"] ?? (NSHomeDirectory() + "/.duckterm")
-                    let path = try ClipboardImage.save(png, in: URL(fileURLWithPath: home).appendingPathComponent("pastes"))
+                    let path = try ClipboardImage.save(png, in: AppIdentity.home.appendingPathComponent("pastes"))
                     let data = try JSONSerialization.data(withJSONObject: [path.path, target])
                     let json = String(decoding: data, as: UTF8.self)
                     self.window?.evaluate("window.__rtPasteImage && window.__rtPasteImage(...\(json))") { accepted in

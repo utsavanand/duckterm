@@ -15,6 +15,11 @@ export function statePath(env = process.env): string {
   return env.RD_TEST_STATE_FILE;
 }
 
+/** Playwright storage state carrying the owner login cookie for this run. */
+export function authStatePath(env = process.env): string {
+  return `${statePath(env)}.auth.json`;
+}
+
 export interface RunState {
   runId: string;
   home: string;

@@ -318,7 +318,12 @@ def test_broken_optional_bridge_does_not_stop_the_desktop(app, monkeypatch):
         try:
             port = await asyncio.wait_for(listening, 5)
             reader, writer = await asyncio.open_connection("127.0.0.1", port)
-            writer.write(f"GET /sessions HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n\r\n".encode())
+            writer.write(
+                (
+                    f"GET /sessions HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n"
+                    f"X-Duckterm-Token: {server.token}\r\n\r\n"
+                ).encode()
+            )
             await writer.drain()
             response = await asyncio.wait_for(reader.read(), 5)
             assert response.startswith(b"HTTP/1.1 200")

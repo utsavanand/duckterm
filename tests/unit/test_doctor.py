@@ -2,6 +2,8 @@
 fixed. These drive the check functions with controlled paths so they don't
 depend on the host's actual install."""
 
+import http.server
+import threading
 from pathlib import Path
 
 import pytest
@@ -9,11 +11,49 @@ import pytest
 from duckterm import doctor
 
 
+@pytest.fixture(autouse=True)
+def isolated_shared_hook(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    # A real Mac installation may already provide jq in ~/.duckterm-hooks.
+    # Missing-dependency probes must never consult that host-owned runtime.
+    monkeypatch.setattr(doctor, "shared_script_path", lambda: tmp_path / "hooks/duckterm-hook.sh")
+
+
+def test_shared_hook_jq_satisfies_dependency(monkeypatch: pytest.MonkeyPatch) -> None:
+    shared = doctor.shared_script_path().with_name("jq")
+    shared.parent.mkdir(parents=True)
+    shared.write_text("#!/bin/sh\n")
+    shared.chmod(0o755)
+    monkeypatch.delenv("DUCKTERM_BUNDLED_JQ", raising=False)
+    monkeypatch.setattr(
+        doctor.shutil, "which", lambda tool: None if tool == "jq" else "/usr/bin/" + tool
+    )
+    jq = next(r for r in doctor._check_system_deps() if "jq" in r.title)
+    assert jq.status == "ok"
+    assert "shared hook runtime" in jq.title
+
+
 def test_missing_jq_is_a_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DUCKTERM_BUNDLED_JQ", raising=False)
     monkeypatch.setattr(doctor.shutil, "which", lambda t: None if t == "jq" else "/usr/bin/" + t)
     jq = next(r for r in doctor._check_system_deps() if "jq" in r.title)
     assert jq.status == "fail"
     assert "brew install jq" in jq.detail
+
+
+def test_bundled_jq_satisfies_a_mac_without_jq(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    bundled = tmp_path / "DuckTerm Lite.app/Contents/Resources/jq/bin/jq"
+    bundled.parent.mkdir(parents=True)
+    bundled.write_text("#!/bin/sh\n")
+    bundled.chmod(0o755)
+    monkeypatch.setattr(doctor.shutil, "which", lambda t: None if t == "jq" else "/usr/bin/" + t)
+    monkeypatch.setenv("DUCKTERM_BUNDLED_JQ", str(bundled))
+    jq = next(r for r in doctor._check_system_deps() if "jq" in r.title)
+    assert jq.status == "ok"
+    monkeypatch.setenv("DUCKTERM_BUNDLED_JQ", str(tmp_path / "missing/jq"))
+    jq = next(r for r in doctor._check_system_deps() if "jq" in r.title)
+    assert jq.status == "fail"
 
 
 def test_all_deps_present_is_ok(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -26,6 +66,34 @@ def test_server_unreachable_is_a_failure() -> None:
     r = doctor._check_server("http://127.0.0.1:1/")
     assert r.status == "fail"
     assert "duckterm serve" in r.detail
+
+
+@pytest.mark.parametrize(("status", "probe", "verdict"), [(401, "1", "ok"), (401, None, "fail")])
+def test_the_locked_page_still_identifies_duckterm(
+    status: int, probe: str | None, verdict: str
+) -> None:
+    """GET / without the owner token is a 401; its self-probe header still
+    tells a running DuckTerm apart from another program on the port."""
+
+    class Locked(http.server.BaseHTTPRequestHandler):
+        def do_GET(self) -> None:
+            self.send_response(status)
+            if probe:
+                self.send_header("X-Duckterm", probe)
+            self.end_headers()
+
+        def log_message(self, *args: object) -> None:
+            pass
+
+    httpd = http.server.HTTPServer(("127.0.0.1", 0), Locked)
+    thread = threading.Thread(target=httpd.handle_request)
+    thread.start()
+    try:
+        r = doctor._check_server(f"http://127.0.0.1:{httpd.server_port}/")
+    finally:
+        thread.join(5)
+        httpd.server_close()
+    assert r.status == verdict
 
 
 def test_token_missing_is_a_warning(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:

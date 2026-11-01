@@ -104,7 +104,10 @@ def test_agents_md_cannot_follow_symlink_outside_roots(
         server, "_agents_md_dir_allowed", lambda p: Path(p).resolve().is_relative_to(allowed)
     )
     if action == "read":
-        raw = f"GET /agents-md?dir={allowed} HTTP/1.1\r\nHost: localhost\r\n\r\n".encode()
+        raw = (
+            f"GET /agents-md?dir={allowed} HTTP/1.1\r\nHost: localhost\r\n"
+            f"X-Duckterm-Token: {server.token}\r\n\r\n"
+        ).encode()
     else:
         endpoint = "/agents-md/suggest" if action == "suggest" else "/agents-md"
         body = json.dumps({"dir": str(allowed), "text": "OVERWRITTEN"}).encode()

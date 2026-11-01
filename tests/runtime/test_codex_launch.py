@@ -34,7 +34,14 @@ def _post(port: int, path: str, payload: dict[str, object]) -> dict[str, object]
 
 
 def _get(port: int, path: str) -> dict[str, object]:
-    return json.loads(urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=5).read())  # type: ignore[no-any-return]
+    return json.loads(
+        urllib.request.urlopen(
+            urllib.request.Request(
+                f"http://127.0.0.1:{port}{path}", headers={"X-Duckterm-Token": _token()}
+            ),
+            timeout=5,
+        ).read()
+    )  # type: ignore[no-any-return]
 
 
 def test_codex_session_tracked_with_runtime_and_worktree(git_repo: Path, tmp_path: Path) -> None:

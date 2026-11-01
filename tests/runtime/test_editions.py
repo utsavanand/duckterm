@@ -60,6 +60,8 @@ def test_description_cannot_mutate_the_shared_feature_set():
 
 
 def test_edition_route_is_owner_read_only_and_preserves_data(memory_rig):
+    from duckterm.helpers import instance
+
     server, agent, _, _ = memory_rig
     owner = {"x-duckterm-token": server.token}
     assert dispatch(server, "GET", "/edition", {})[0] == 401
@@ -67,9 +69,10 @@ def test_edition_route_is_owner_read_only_and_preserves_data(memory_rig):
     assert status(server, "GET", {**owner, "origin": "https://evil.test"}) == 403
     before_changes = server.history._conn.total_changes
     before_schema = server.history._conn.execute("PRAGMA user_version").fetchone()[0]
-    assert dispatch(server, "GET", "/edition", owner) == (200, FULL.description())
+    expected = {**FULL.description(), "instance": instance.description()}
+    assert dispatch(server, "GET", "/edition", owner) == (200, expected)
     assert status(server, "POST", owner, json.dumps({"id": "lite"}).encode()) == 404
-    assert dispatch(server, "GET", "/edition", owner) == (200, FULL.description())
+    assert dispatch(server, "GET", "/edition", owner) == (200, expected)
     assert server.history._conn.total_changes == before_changes
     assert server.history._conn.execute("PRAGMA user_version").fetchone()[0] == before_schema
 

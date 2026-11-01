@@ -35,7 +35,7 @@ test("computer pairing reviews sharing and preserves the dashboard", async ({ pa
   await expect(page.getByText("Personal session · This Mac — Ungrouped (private)")).toBeVisible();
   await page.screenshot({ path: "/tmp/duckterm-collaboration-preview.png", fullPage: true });
   await page.getByRole("button", { name: "Connect computers" }).click();
-  await expect(page.getByRole("status")).toContainText("Computer connected");
+  await expect(page.getByRole("status").filter({ hasText: "Computer connected" })).toBeVisible();
   expect(page.url()).toBe(original);
 });
 

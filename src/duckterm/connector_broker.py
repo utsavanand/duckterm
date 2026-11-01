@@ -10,13 +10,13 @@ import json
 import os
 import signal
 import ssl
-import sys
 import tempfile
 from pathlib import Path
 from typing import Any
 
 from duckterm import connectors
 from duckterm.helpers.private_files import private_write
+from duckterm.helpers.runtime import module_command
 from duckterm.helpers.secret_store import GcpSecretStore, SecretStore
 
 MAX_CONNECTIONS = 8
@@ -149,7 +149,7 @@ class Broker:
             if github_projects:
                 # The same GitHub grant controls repository reads and clones.
                 # Provider tokens remain in this broker-side worker only.
-                argv = [sys.executable, "-m", "duckterm.github_projects"]
+                argv = module_command("duckterm.github_projects")
                 env["DUCKTERM_GITHUB_IDENTITY"] = str(entry.get("identity") or "")
                 # The broker owns cleanup even when revocation kills the worker.
                 env["TMPDIR"] = resources.enter_context(

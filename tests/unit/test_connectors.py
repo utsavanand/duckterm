@@ -345,7 +345,10 @@ def test_a_connector_predating_the_setting_reports_what_is_registered(
     """Without a stored choice, read the configs: claiming Codex when only
     Claude Code was ever registered is the false checkmark we are removing."""
     _gh_ready(isolated_env, monkeypatch)
-    connectors.mcp_install.claude_install("github", "duckterm", ["connector-run"], home=tmp_path)
+    monkeypatch.setenv("DUCKTERM_HOME", str(tmp_path / ".duckterm"))
+    connectors.mcp_install.claude_install(
+        "github", "duckterm", ["connector-run", "github"], home=tmp_path
+    )
     connectors._save_policy("github", {"enabled": True, "source": "gh-cli"})
     assert connectors.harness_choice("github", home=tmp_path) == ["claude-code"]
 

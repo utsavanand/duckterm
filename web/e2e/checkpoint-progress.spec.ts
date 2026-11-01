@@ -53,7 +53,7 @@ test("checkpoint progress opens the Session panel immediately and survives navig
     release();
     await expect(progress.getByRole("status")).toHaveText("Summary update failed");
     await expect(progress.getByRole("progressbar")).toHaveCount(0);
-    await expect(progress.getByText(/Any previously saved summary is unchanged/)).toBeVisible();
+    await expect(progress.getByRole("button", { name: "Details ↗" })).toBeVisible();
     const records = await checkpoints(key);
     expect(records).toHaveLength(2);
     expect(records.find(cp => cp.id === earlier.id)).toEqual(earlier);
@@ -91,7 +91,7 @@ test("a saved partial checkpoint reports incomplete failure instead of success",
     const progress = page.getByRole("region", { name: "Checkpoint progress" });
     await expect(progress.getByRole("status")).toHaveText("Checkpoint failed · summary incomplete");
     await expect(progress).toHaveClass(/rd-checkpoint-progress-failure/);
-    await expect(progress.getByText(/saved text is available for inspection/)).toBeVisible();
+    await expect(progress.getByRole("button", { name: "Details ↗" })).toBeVisible();
     await expect(progress.getByRole("progressbar")).toHaveCount(0);
     for (const colorScheme of ["dark", "light"] as const) {
       await page.emulateMedia({ colorScheme });
@@ -135,7 +135,7 @@ test("checkpoint displays checked work instead of elapsed time at real panel siz
     const bar = progress.getByRole("progressbar");
     await expect(bar).toHaveAttribute("aria-valuenow", "12");
     await expect(bar).toHaveAttribute("aria-valuemax", "40");
-    await expect(progress.getByRole("status")).toHaveText("Reviewing summary…");
+    await expect(progress.getByRole("status")).toHaveText("Reviewing summary… · 12 of 40 records");
     await expect(progress.getByLabel("Elapsed time")).toHaveCount(0);
     await expect(bar.locator("span")).toHaveCSS("animation-name", "none");
     for (const colorScheme of ["dark", "light"] as const) {
@@ -149,7 +149,7 @@ test("checkpoint displays checked work instead of elapsed time at real panel siz
     await page.screenshot({ path: "/tmp/checkpoint-measured-mobile.png" });
     expect(await progress.evaluate(el => el.scrollWidth <= el.clientWidth)).toBe(true);
     completed = 40; stage = "saving";
-    await expect(progress.getByRole("status")).toHaveText("Saving checkpoint…");
+    await expect(progress.getByRole("status")).toHaveText("Saving checkpoint… · 40 of 40 records");
     await expect(progress.getByText(/Summary updated/)).toHaveCount(0);
     release();
     await expect(progress.getByRole("status")).toHaveText("Summary update failed");

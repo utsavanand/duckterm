@@ -1,0 +1,11 @@
+.rd-session-family { position: relative; }
+.rd-order-grip { flex: 0 0 10px; width: 10px; color: var(--text-soft); opacity: 0; font-size: 15px; touch-action: none; }
+.rd-row:hover .rd-order-grip, .rd-row:focus-visible .rd-order-grip { opacity: 1; }
+.rd-row[data-sidebar-order-key] { cursor: grab; user-select: none; }
+.rd-row[data-sidebar-order-key]:active { cursor: grabbing; }
+.rd-order-dragging { opacity: .35; }
+.rd-order-before::before, .rd-order-after::after { content: ""; position: absolute; z-index: 4; left: 12px; right: 12px; height: 2px; background: var(--green, #2cc58b); pointer-events: none; }
+.rd-order-before::before { top: -1px; }
+.rd-order-after::after { bottom: -1px; }
+.rd-order-announcement { position: absolute; width: 1px; height: 1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+.rd-order-error { color: var(--text); font-size: .8rem; padding: 8px 12px; }

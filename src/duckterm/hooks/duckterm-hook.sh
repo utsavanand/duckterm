@@ -22,6 +22,25 @@ EVENT_TYPE="${1:-Unknown}"
 # Which agent this hook is for (claude-code | codex | copilot). Defaults to
 # claude-code so older installs that pass only the event type keep working.
 RUNTIME="${2:-claude-code}"
+# A partial target must never pair another edition's URL with Full's token (or
+# another edition's token with Full's URL). The launcher supplies the complete
+# instance context. Older explicit HOME+URL pairs remain compatible. An
+# unscoped external agent always retains the legacy Full destination.
+if [ -z "${DUCKTERM_INSTANCE:-}${DUCKTERM_DESKTOP_PROFILE:-}${DUCKTERM_HOME:-}" ] \
+  && [ "${DUCKTERM_URL:-}" = "http://127.0.0.1:4300" ] \
+  && [ "${DUCKTERM_PORT:-4300}" = "4300" ] \
+  && [ "${DUCKTERM_TMUX_SOCKET:-duckterm}" = "duckterm" ]; then
+  # Already-running legacy Full panes received only the default URL. Their
+  # destination is unambiguous; preserve them across the first parallel upgrade.
+  DUCKTERM_HOME="$HOME/.duckterm"
+fi
+if [ -n "${DUCKTERM_INSTANCE:-}${DUCKTERM_DESKTOP_PROFILE:-}" ]; then
+  [ -n "${DUCKTERM_HOME:-}" ] && [ -n "${DUCKTERM_URL:-}" ] \
+    && [ -n "${DUCKTERM_PORT:-}" ] || exit 0
+fi
+if [ -n "${DUCKTERM_HOME:-}${DUCKTERM_URL:-}${DUCKTERM_PORT:-}${DUCKTERM_TMUX_SOCKET:-}" ]; then
+  [ -n "${DUCKTERM_HOME:-}" ] && [ -n "${DUCKTERM_URL:-}" ] || exit 0
+fi
 INPUT=$(cat)
 URL="${DUCKTERM_URL:-http://127.0.0.1:4300}"
 # Set by Duckterm when it launches the agent in a terminal, so the agent's
@@ -29,10 +48,30 @@ URL="${DUCKTERM_URL:-http://127.0.0.1:4300}"
 # a duplicate session under Claude's own id. Empty for self-started sessions.
 SESSION_KEY="${DUCKTERM_SESSION_KEY:-}"
 
-if command -v jq >/dev/null 2>&1; then
+# A bundled DuckTerm app ships its own jq, so blocking approvals and Stop
+# notices work on a Mac without jq. Prefer the jq beside this script when the
+# script sits in an app bundle: a pane started before an upgrade or a move has
+# no DUCKTERM_BUNDLED_JQ, or one naming a path that is gone. Then the app's
+# named jq, then PATH.
+JQ=""
+SHARED_HOME=$(cd -- "$HOME" 2>/dev/null && pwd -P)
+if [ -n "$SHARED_HOME" ] \
+  && [ "${BASH_SOURCE[0]}" = "$SHARED_HOME/.duckterm-hooks/v1/duckterm-hook.sh" ] \
+  && [ -x "$SHARED_HOME/.duckterm-hooks/v1/jq" ]; then
+  JQ="$SHARED_HOME/.duckterm-hooks/v1/jq"
+elif [[ "${BASH_SOURCE[0]}" =~ ^(/.+\.app/Contents/Resources)/python/lib/python[0-9]+\.[0-9]+/site-packages/duckterm/hooks/duckterm-hook\.sh$ ]] \
+  && [ -x "${BASH_REMATCH[1]}/jq/bin/jq" ]; then
+  JQ="${BASH_REMATCH[1]}/jq/bin/jq"
+elif [ -n "${DUCKTERM_BUNDLED_JQ:-}" ] && [ -x "$DUCKTERM_BUNDLED_JQ" ]; then
+  JQ="$DUCKTERM_BUNDLED_JQ"
+elif command -v jq >/dev/null 2>&1; then
+  JQ=jq
+fi
+
+if [ -n "$JQ" ]; then
   # Field names differ across agents: Claude/Codex use snake_case (session_id,
   # tool_name); Copilot uses camelCase (sessionId, toolName). Accept either.
-  PAYLOAD=$(printf '%s' "$INPUT" | jq -c \
+  PAYLOAD=$(printf '%s' "$INPUT" | "$JQ" -c \
     --arg etype "$EVENT_TYPE" --arg skey "$SESSION_KEY" --arg rt "$RUNTIME" \
     --arg generation "${DUCKTERM_HARNESS_GENERATION:-}" \
     --argjson apid "$PPID" '
@@ -86,10 +125,10 @@ TOKEN=$(cat "$TOKEN_FILE" 2>/dev/null)
 
 # A turn-end notice travels through the runtime hook response, never terminal input.
 # The server decides capability and eligibility. Bound failure to two seconds.
-if [ "$EVENT_TYPE" = "Stop" ] && command -v jq >/dev/null 2>&1; then
+if [ "$EVENT_TYPE" = "Stop" ] && [ -n "$JQ" ]; then
   curl -s -m 2 -X POST "$URL/events" \
     -H 'Content-Type: application/json' -H "X-Duckterm-Token: $TOKEN" \
-    -d "$PAYLOAD" 2>/dev/null | jq -c 'select(.hook_output | type == "object") | .hook_output' 2>/dev/null
+    -d "$PAYLOAD" 2>/dev/null | "$JQ" -c 'select(.hook_output | type == "object") | .hook_output' 2>/dev/null
   exit 0
 fi
 
@@ -123,10 +162,10 @@ case "$PAYLOAD" in *'"tool_name":"AskUserQuestion"'*) exit 0 ;; esac
 
 # Register the request; get an id to poll. (jq required for the blocking path;
 # without it we just fall through.)
-command -v jq >/dev/null 2>&1 || exit 0
+[ -n "$JQ" ] || exit 0
 RID=$(printf '%s' "$PAYLOAD" | curl -s -m 5 -X POST "$URL/approvals" \
   -H 'Content-Type: application/json' -H "X-Duckterm-Token: $TOKEN" \
-  -d @- 2>/dev/null | jq -r '.id // empty')
+  -d @- 2>/dev/null | "$JQ" -r '.id // empty')
 [ -z "$RID" ] && exit 0
 
 # Long-poll for the decision. Cap total wait so the agent isn't blocked forever
@@ -134,7 +173,7 @@ RID=$(printf '%s' "$PAYLOAD" | curl -s -m 5 -X POST "$URL/approvals" \
 DEADLINE=$(( $(date +%s) + 180 ))
 while [ "$(date +%s)" -lt "$DEADLINE" ]; do
   STATUS=$(curl -s -m 5 "$URL/approvals/$RID/decision" \
-    -H "X-Duckterm-Token: $TOKEN" 2>/dev/null | jq -r '.status // "gone"')
+    -H "X-Duckterm-Token: $TOKEN" 2>/dev/null | "$JQ" -r '.status // "gone"')
   case "$STATUS" in
     approve)
       # Per-harness allow shape.

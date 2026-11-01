@@ -77,7 +77,7 @@ def server(tmp_path, monkeypatch):
 
 
 def choices(server, key):
-    notes = dispatch(server, "GET", "/relay", {})[1]["notes"]
+    notes = dispatch(server, "GET", "/relay", {"x-duckterm-token": server.token})[1]["notes"]
     return [(n["status"], n["questions"]) for n in notes if n["session_key"] == key]
 
 
@@ -96,7 +96,9 @@ def test_codex_question_is_a_note_until_a_prompt_is_submitted(server) -> None:
     assert choices(server, "ui") == [
         ("open", [{"question": question["title"], "options": question["options"]}])
     ]
-    assert dispatch(server, "GET", "/relay/count", {})[1] == {"open": 1}  # Needs you
+    assert dispatch(server, "GET", "/relay/count", {"x-duckterm-token": server.token})[1] == {
+        "open": 1
+    }  # Needs you
 
     answer = f"> {question['title']}\n\nYes, publish both branches and open PRs"
     server.bus.publish(event("ui", "UserPromptSubmit", prompt=answer))
@@ -188,6 +190,7 @@ def test_the_hook_forwards_copilots_tool_args(tmp_path) -> None:
             "PATH": str(binary) + os.pathsep + os.environ["PATH"],
             "DUCKTERM_INTERNAL": "",
             "DUCKTERM_HOME": str(tmp_path),
+            "DUCKTERM_URL": "http://127.0.0.1:49111",
             "CAPTURE": str(capture),
         },
     )
@@ -220,7 +223,9 @@ def test_queued_codex_questions_each_get_a_note_and_close_one_by_one(server) -> 
 
     server.bus.publish(event("ui", "UserPromptSubmit", prompt="> Pick a colour\n\nRed"))
     assert open_questions(server) == ["Pick a size"]
-    assert dispatch(server, "GET", "/relay/count", {})[1] == {"open": 1}
+    assert dispatch(server, "GET", "/relay/count", {"x-duckterm-token": server.token})[1] == {
+        "open": 1
+    }
 
 
 def test_any_other_prompt_discards_every_queued_codex_question(server) -> None:

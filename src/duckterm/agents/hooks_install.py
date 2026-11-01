@@ -22,10 +22,12 @@ import json
 import os
 import re
 import shlex
+from collections.abc import Iterable
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
+from duckterm.agents import hook_dispatch
 from duckterm.core import events
 from duckterm.runtimes.base import HookSpec
 
@@ -63,13 +65,35 @@ def _hook_invocation(command: str) -> Path | None:
     return None
 
 
+def _in_app_bundle(path: Path) -> bool:
+    """The exact hook script location inside a DuckTerm app bundle, wherever the app is."""
+    return (
+        path.is_absolute()
+        and ".." not in path.parts
+        and re.fullmatch(
+            r"/.+\.app/Contents/Resources/python/lib/python[0-9]+\.[0-9]+"
+            r"/site-packages/duckterm/hooks/duckterm-hook\.sh",
+            path.as_posix(),
+        )
+        is not None
+    )
+
+
 def _is_ours(command: str) -> bool:
-    """Require our loaded script or the exact package path in a known pipx venv."""
+    """Require our loaded script, the exact package path in a known pipx venv, or
+    the exact package path inside a DuckTerm app bundle at any location."""
     path = _hook_invocation(command)
-    if path is None or not path.is_absolute():
+    if path is None or not path.is_absolute() or ".." in path.parts:
         return False
-    if path == hook_script_path():
+    if path in {hook_script_path(), hook_dispatch.shared_script_path()}:
         return True
+    # A moved or renamed app, or another edition's app, left hooks at its old
+    # bundle path; without this a reinstall would add a second set beside them.
+    return _in_app_bundle(path) or _in_pipx_venv(path)
+
+
+def _in_pipx_venv(path: Path) -> bool:
+    """The exact hook script location inside a known pipx venv for duckterm."""
     roots = [Path.home() / ".local/pipx", Path.home() / ".local/share/pipx"]
     if os.environ.get("PIPX_HOME"):
         roots.append(Path(os.environ["PIPX_HOME"]))
@@ -108,7 +132,7 @@ def claude_style_build(config: dict[str, Any], script: str, runtime: str) -> dic
         plain_timeout = 3 if runtime == "codex" else 5
         hook: dict[str, Any] = {
             "type": "command",
-            "command": f'"{script}" {event} {runtime}',
+            "command": shlex.join([script, event, runtime]),
             "timeout": _BLOCKING_TIMEOUT if blocking else plain_timeout,
         }
         if supports_async:
@@ -180,7 +204,7 @@ def copilot_build(config: dict[str, Any], script: str, runtime: str) -> dict[str
                 # `command` is Copilot's cross-platform fallback; pass the
                 # canonical event name (so the server's vocabulary is uniform)
                 # and the runtime so events are attributed to copilot.
-                "command": f'"{script}" {canonical} {runtime}',
+                "command": shlex.join([script, canonical, runtime]),
                 "timeoutSec": 5,
             }
         )
@@ -231,52 +255,177 @@ def _spec(agent: str) -> tuple[str, HookSpec]:
 
 def settings_path(*, global_scope: bool, project_dir: Path, agent: str = "claude-code") -> Path:
     _, spec = _spec(agent)
+    # The selected project is a trusted root, like the user's home. Resolve its
+    # ancestors before guarding the configuration directories underneath it.
+    if not global_scope:
+        project_dir = project_dir.resolve()
     return spec.path(global_scope=global_scope, project_dir=project_dir)
 
 
 def install(*, global_scope: bool, project_dir: Path, agent: str = "claude-code") -> Path:
-    name, spec = _spec(agent)
-    path = spec.path(global_scope=global_scope, project_dir=project_dir)
-    if spec.transport == "file-drop":
-        from duckterm.agents.hook_files import install_file
+    from duckterm.agents.hook_files import _lock, _read, _write, install_file
 
-        if spec.payload is None:
-            raise ValueError("file-drop hook has no payload")
-        install_file(path, spec.payload())
-        return path
-    if spec.build is None:
-        raise ValueError("config-entry hook has no builder")
-    config = spec.build(_load(path), str(hook_script_path()), name)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(config, indent=2) + "\n")
+    name, spec = _spec(agent)
+    path = settings_path(global_scope=global_scope, project_dir=project_dir, agent=agent)
+    owner = hook_dispatch.profile_key()
+    with hook_dispatch.registrations(create=True) as registry:
+        if spec.transport == "file-drop":
+            if spec.payload is None:
+                raise ValueError("file-drop hook has no payload")
+            members = registry.members(path, name, legacy=path.exists())
+            install_file(path, spec.payload())
+        else:
+            if spec.build is None:
+                raise ValueError("config-entry hook has no builder")
+            with _lock(path, create=True) as directory:
+                assert directory is not None
+                raw = _read(path.name, directory)
+                config = json.loads(raw) if raw is not None else {}
+                if not isinstance(config, dict):
+                    raise ValueError("Hook configuration must be an object")
+                members = registry.members(path, name, legacy=_has_owned_hooks(config))
+                script = hook_dispatch.ensure_shared_script(hook_script_path())
+                result = spec.build(config, str(script), name)
+                _write(path.name, (json.dumps(result, indent=2) + "\n").encode(), directory)
+        registry.save(path, name, members | {owner})
     return path
 
 
-def uninstall(*, global_scope: bool, project_dir: Path, agent: str = "claude-code") -> Path:
-    _, spec = _spec(agent)
-    path = spec.path(global_scope=global_scope, project_dir=project_dir)
-    if spec.transport == "file-drop":
-        from duckterm.agents.hook_files import uninstall_file
+def _has_owned_hooks(config: dict[str, Any]) -> bool:
+    def visit(entry: Any) -> bool:
+        if not isinstance(entry, dict):
+            return False
+        if any(_is_ours(entry.get(key, "")) for key in ("command", "bash", "powershell")):
+            return True
+        children = entry.get("hooks", [])
+        return isinstance(children, list) and any(visit(child) for child in children)
 
-        uninstall_file(path)
-        return path
-    if spec.strip is None:
-        raise ValueError("config-entry hook has no stripper")
+    return any(visit(entry) for entries in _hook_groups(config).values() for entry in entries)
+
+
+def _repoint(config: dict[str, Any], script: Path) -> bool:
+    """Rewrite managed hook commands (another app bundle, or a known pipx venv) to
+    `script`, in place. Event, runtime, ordering and every other field stay as
+    registered."""
+    hooks = _hook_groups(config)
+    changed = False
+
+    def visit(entry: Any) -> None:
+        nonlocal changed
+        if not isinstance(entry, dict):
+            return
+        for key in ("command", "bash", "powershell"):
+            command = entry.get(key)
+            if not isinstance(command, str):
+                continue
+            path = _hook_invocation(command)
+            if path is None or path == script:
+                continue
+            if not _is_ours(command):
+                continue
+            _, event, runtime = shlex.split(command)
+            # A relocated app's name may hold $, ` or quotes; keep the argv as data.
+            entry[key] = shlex.join([str(script), event, runtime])
+            changed = True
+        for child in entry.get("hooks", []) if isinstance(entry.get("hooks"), list) else []:
+            visit(child)
+
+    for entries in hooks.values():
+        for entry in entries:
+            visit(entry)
+    return changed
+
+
+def repair_moved_app_hooks(project_dirs: Iterable[Path] = ()) -> list[Path]:
+    """Repair already-registered global hooks to the stable shared v1 handler.
+
+    Production apps may repair hooks left by any old app, without changing the
+    legacy Full destination for unscoped agents or enrolling a new profile.
+    Test/custom instances and pipx startups never touch agent configuration.
+    """
+    from duckterm.agents.hook_files import _lock, _read, _write
+    from duckterm.harnesses import REGISTRY
+    from duckterm.helpers import instance
+
+    source = hook_script_path()
+    if not _in_app_bundle(source):
+        return []
+    profile = instance.configured_profile()
+    if profile is not None:
+        if profile["profile_id"] not in {"full", "lite", "code"}:
+            return []
+        instance.validate_desktop_context(profile["edition"])
+    elif instance.instance_id() is not None or instance.home() != Path.home() / ".duckterm":
+        return []
+    repaired = []
+    known_projects = tuple(project_dirs)
+    for runtime in REGISTRY.values():
+        spec = runtime.hook_spec
+        if spec is None or spec.transport != "config-entry":
+            continue
+        paths = [spec.path(global_scope=True, project_dir=Path.home())]
+        paths.extend(
+            spec.path(global_scope=False, project_dir=project.resolve())
+            for project in known_projects
+        )
+        for path in dict.fromkeys(paths):
+            if not path.is_file():
+                continue  # never leave a lock beside a missing configuration
+            with (
+                hook_dispatch.registrations(create=True) as registry,
+                _lock(path, create=False) as directory,
+            ):
+                if directory is None:
+                    continue
+                raw = _read(path.name, directory)
+                if raw is None:
+                    continue
+                config = json.loads(raw)
+                if not isinstance(config, dict) or not _has_owned_hooks(config):
+                    continue
+                members = registry.members(path, runtime.name, legacy=True)
+                script = hook_dispatch.ensure_shared_script(source)
+                if _repoint(config, script):
+                    _write(path.name, (json.dumps(config, indent=2) + "\n").encode(), directory)
+                    repaired.append(path)
+                registry.save(path, runtime.name, members)
+    return repaired
+
+
+def uninstall(*, global_scope: bool, project_dir: Path, agent: str = "claude-code") -> Path:
+    name, spec = _spec(agent)
+    path = settings_path(global_scope=global_scope, project_dir=project_dir, agent=agent)
     # Reuse the existing descriptor-based lock/write implementation. This refuses
     # symlink parents and replaces the file atomically without truncating it.
-    from duckterm.agents.hook_files import _lock, _read, _write
+    from duckterm.agents.hook_files import _lock, _read, _write, uninstall_file
 
-    with _lock(path, create=False) as directory:
-        if directory is None:
-            return path
-        raw = _read(path.name, directory)
-        if raw is None:
-            return path
-        config = json.loads(raw)
-        if not isinstance(config, dict):
-            raise ValueError("Hook configuration must be an object")
-        original = json.dumps(config, sort_keys=True)
-        result = spec.strip(config)
-        if json.dumps(result, sort_keys=True) != original:
-            _write(path.name, (json.dumps(result, indent=2) + "\n").encode(), directory)
+    owner = hook_dispatch.profile_key()
+    with hook_dispatch.registrations(create=False) as registry:
+        if spec.transport == "file-drop":
+            members = registry.members(path, name, legacy=path.exists())
+            if owner not in members:
+                return path
+            if members == {owner}:
+                uninstall_file(path)
+        else:
+            if spec.strip is None:
+                raise ValueError("config-entry hook has no stripper")
+            with _lock(path, create=False) as directory:
+                if directory is None:
+                    return path
+                raw = _read(path.name, directory)
+                if raw is None:
+                    return path
+                config = json.loads(raw)
+                if not isinstance(config, dict):
+                    raise ValueError("Hook configuration must be an object")
+                members = registry.members(path, name, legacy=_has_owned_hooks(config))
+                if owner not in members:
+                    return path
+                if members == {owner}:
+                    original = json.dumps(config, sort_keys=True)
+                    result = spec.strip(config)
+                    if json.dumps(result, sort_keys=True) != original:
+                        _write(path.name, (json.dumps(result, indent=2) + "\n").encode(), directory)
+        registry.save(path, name, members - {owner})
     return path

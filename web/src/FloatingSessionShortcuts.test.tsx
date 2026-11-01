@@ -70,7 +70,7 @@ it("keeps colors and order tied to host-qualified identity across rename, reload
   fireEvent.click(screen.getByRole("button", { name: "Red" }));
   expect(screen.getByRole("button", { name: "Color for Local / Agent: None" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Color for Cloud / Agent: Red" })).toHaveFocus();
-  fireEvent.keyDown(screen.getByRole("button", { name: "Reorder Cloud / Agent" }), { key: "ArrowUp", altKey: true });
+  fireEvent.keyDown(screen.getByRole("button", { name: "Reorder folder Cloud · cloud" }), { key: "ArrowUp", altKey: true });
   fireEvent.change(screen.getByRole("combobox", { name: "Shortcut display" }), { target: { value: "expanded" } });
   expect(screen.getByRole("navigation")).toHaveClass("always-expanded");
   expect(onOpen).not.toHaveBeenCalled(); expect(onToggle).not.toHaveBeenCalled();
@@ -116,4 +116,34 @@ it("recovers malformed stored preferences, follows another window and reports a 
   fireEvent.change(screen.getByRole("combobox"), { target: { value: "hover" } });
   expect(screen.getByRole("alert")).toHaveTextContent("could not be saved");
   expect(screen.getByRole("combobox")).toHaveValue("hover");
+});
+
+it("groups by folder and host, keeps names separate, and only reorders siblings", () => {
+  const a = session("a", { pinned: true, group: "Core" }), b = session("b", { pinned: true, group: "Other" });
+  const c = session("c", { pinned: true, group: "Core" }), remote = session(sessionRef("cloud", "a"), { pinned: true, group: "Core", label: "Remote" });
+  render(<FloatingSessionShortcuts sessions={[a,b,c,remote]} selected={a} onOpen={vi.fn()} onToggle={vi.fn()} />);
+  const names = () => screen.getAllByRole("button", { name: /Open pinned/ }).map(e => e.getAttribute("aria-label"));
+  expect(names()).toEqual(["Open pinned a", "Open pinned c", "Open pinned b", "Open pinned Remote"]);
+  expect(document.querySelectorAll(".rd-shortcut-group")).toHaveLength(3);
+  expect(document.querySelector(".rd-shortcut-name")).toHaveTextContent(/^a$/);
+  fireEvent.keyDown(screen.getByRole("button", { name:"Reorder Core / c" }), { key:"ArrowDown",altKey:true });
+  expect(names()[1]).toBe("Open pinned c");
+  fireEvent.keyDown(screen.getByRole("button", { name:"Reorder folder Other · This Mac" }), { key:"ArrowUp",altKey:true });
+  expect(names()).toEqual(["Open pinned b", "Open pinned a", "Open pinned c", "Open pinned Remote"]);
+});
+
+it("keeps hover open through gaps, the safe margin, and 700ms away", () => {
+  vi.useFakeTimers();
+  try {
+    const a = session("a", { pinned: true });
+    render(<FloatingSessionShortcuts sessions={[a]} selected={a} onOpen={vi.fn()} onToggle={vi.fn()} />);
+    const rail = screen.getByRole("navigation");
+    vi.spyOn(rail, "getBoundingClientRect").mockReturnValue({left:100,right:360,top:10,bottom:400} as DOMRect);
+    const move = (x: number, y: number) => fireEvent(document, new MouseEvent("pointermove", {clientX:x,clientY:y,bubbles:true}));
+    move(200,100); expect(rail).toHaveClass("is-hovered");
+    move(91,100); act(() => vi.advanceTimersByTime(900)); expect(rail).toHaveClass("is-hovered");
+    move(60,100); act(() => vi.advanceTimersByTime(699)); expect(rail).toHaveClass("is-hovered");
+    move(200,100); act(() => vi.advanceTimersByTime(900)); expect(rail).toHaveClass("is-hovered");
+    move(60,100); act(() => vi.advanceTimersByTime(700)); expect(rail).not.toHaveClass("is-hovered");
+  } finally { vi.useRealTimers(); }
 });

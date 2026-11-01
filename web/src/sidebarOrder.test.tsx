@@ -1,0 +1,52 @@
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, expect, it, vi } from "vitest";
+import { AgentTree } from "./AgentTree";
+import { EMPTY_FILTERS } from "./sidebarFilterState";
+import { edition, FULL } from "./test/editions";
+import { viewFromPersisted } from "./types";
+import { readSidebarOrder, SIDEBAR_ORDER_KEY } from "./sidebarOrder";
+const session = (key: string) => viewFromPersisted({ session_key: key, name: key, state: "idle", event_count: 1, started_at: 1, updated_at: 2 });
+const filters = { filters: EMPTY_FILTERS, toggle: vi.fn(), clear: vi.fn(), saveError: false, expanded: false, toggleExpanded: vi.fn() };
+const props = { now: 3, folders: [], selectedKey: "a", filterControls: filters, onOpen: vi.fn(), onFoldersChanged: vi.fn(), onSessionMoved: vi.fn(), onOpenGrid: vi.fn(), onNewSessionIn: vi.fn(), folderThemes: {} };
+const keys = (container: HTMLElement) => [...container.querySelectorAll('.rd-row')].map(r => r.getAttribute('data-session-key'));
+afterEach(() => { cleanup(); localStorage.clear(); vi.restoreAllMocks(); });
+it("keeps manual sibling order across status sorting and reload, appending new sessions", () => {
+  const a = session('a'), b = session('b'), c = session('c');
+  const ui = render(<AgentTree {...props} sessions={[a,b]} />, { wrapper: edition(FULL) });
+  fireEvent.keyDown(screen.getByLabelText('b session'), { key: 'ArrowUp', altKey: true });
+  expect(keys(ui.container)).toEqual(['b','a']);
+  expect(props.onOpen).not.toHaveBeenCalled();
+  expect(screen.getByLabelText('a session')).toHaveClass('selected');
+  ui.rerender(<AgentTree {...props} sessions={[c,a,b]} />);
+  expect(keys(ui.container)).toEqual(['b','a','c']);
+  ui.unmount();
+  const again = render(<AgentTree {...props} sessions={[a,c,b]} />, { wrapper: edition(FULL) });
+  expect(keys(again.container)).toEqual(['b','a','c']);
+});
+it("moves a parent with its forks and reorders forks only under that parent", () => {
+  const a=session('a'), b=session('b'), child=session('child'), sibling=session('sibling');
+  child.parentKey='a'; sibling.parentKey='a';
+  const ui=render(<AgentTree {...props} sessions={[a,b,child,sibling]} />, {wrapper:edition(FULL)});
+  fireEvent.keyDown(screen.getByLabelText('b session'),{key:'ArrowUp',altKey:true});
+  expect(keys(ui.container)).toEqual(['b','a','child','sibling']);
+  fireEvent.keyDown(screen.getByLabelText('sibling session'),{key:'ArrowUp',altKey:true});
+  expect(keys(ui.container)).toEqual(['b','a','sibling','child']);
+  fireEvent.keyDown(screen.getByLabelText('sibling session'),{key:'ArrowUp',altKey:true});
+  expect(keys(ui.container)).toEqual(['b','a','sibling','child']);
+});
+it("retains unavailable host identities and responds to another window's saved order",()=>{
+  localStorage.setItem(SIDEBAR_ORDER_KEY,JSON.stringify(['remote:x','a','b']));
+  const ui=render(<AgentTree {...props} sessions={[session('a'),session('b')]} />,{wrapper:edition(FULL)});
+  fireEvent.keyDown(screen.getByLabelText('b session'),{key:'ArrowUp',altKey:true});
+  expect(readSidebarOrder()).toEqual(['remote:x','b','a']);
+  act(()=>{localStorage.setItem(SIDEBAR_ORDER_KEY,JSON.stringify(['a','remote:x','b']));window.dispatchEvent(new StorageEvent('storage',{key:SIDEBAR_ORDER_KEY}));});
+  expect(keys(ui.container)).toEqual(['a','b']);
+});
+it("ignores malformed preferences and reports a failed save without undoing the local order",()=>{
+  localStorage.setItem(SIDEBAR_ORDER_KEY,'broken');
+  const ui=render(<AgentTree {...props} sessions={[session('a'),session('b')]} />,{wrapper:edition(FULL)});
+  vi.spyOn(Storage.prototype,'setItem').mockImplementation(()=>{throw new Error('quota');});
+  fireEvent.keyDown(screen.getByLabelText('b session'),{key:'ArrowUp',altKey:true});
+  expect(keys(ui.container)).toEqual(['b','a']);
+  expect(screen.getByRole('alert')).toHaveTextContent('could not be saved');
+});

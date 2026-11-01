@@ -103,7 +103,7 @@ jobs:
           if-no-files-found: warn
 
   native:
-    runs-on: macos-14
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - name: Native transport and launch contracts
@@ -112,9 +112,11 @@ jobs:
         run: |
           scripts/test_mac_bug_report.sh
           scripts/test_mac_clipboard.sh
+      - name: Signed app archive extraction
+        run: python3 mac/Tests/archive-bundle.py
 
   ducky-protocol:
-    runs-on: macos-14
+    runs-on: macos-15
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4

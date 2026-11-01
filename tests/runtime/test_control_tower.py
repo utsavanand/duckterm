@@ -110,7 +110,7 @@ def test_control_tower_reports_mail_nudges_backup_and_tokens(tower, monkeypatch,
             "session_key": "shared",
         }
     )
-    status, body = dispatch(server, "GET", "/control-tower", {})
+    status, body = dispatch(server, "GET", "/control-tower", {"x-duckterm-token": server.token})
     assert status == 200
     assert body["mail"]["nudges"] == 1
     assert body["backup"] == {"destination": None, "status": None, "finished_at": None}

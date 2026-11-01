@@ -1,0 +1,19 @@
+#!/bin/sh
+# App-local CLI. Resolve symlinks without installing or replacing a global CLI.
+set -eu
+ENTRY="$0"
+while [ -L "$ENTRY" ]; do
+  BASE=$(CDPATH= cd -- "$(dirname -- "$ENTRY")" && pwd)
+  LINK=$(readlink "$ENTRY")
+  case "$LINK" in /*) ENTRY="$LINK" ;; *) ENTRY="$BASE/$LINK" ;; esac
+done
+RESOURCES=$(CDPATH= cd -- "$(dirname -- "$ENTRY")/.." && pwd)
+export DUCKTERM_BUNDLED_TMUX="$RESOURCES/tmux/bin/tmux"
+export DUCKTERM_BUNDLED_CLI="$RESOURCES/bin/duckterm"
+export DUCKTERM_BUNDLED_JQ="$RESOURCES/jq/bin/jq"
+# build.sh stamps this app's desktop profile. The CLI applies it only when the
+# caller has no explicit target and no verified enrolled session.
+export DUCKTERM_APP_PROFILE=@DESKTOP_PROFILE@
+# -I ignores user Python variables and site packages without changing the
+# environment inherited by coding agents. -B keeps the signed bundle immutable.
+exec "$RESOURCES/python/bin/python3.13" -I -B -m duckterm.cli "$@"

@@ -111,7 +111,10 @@ def test_certificate_required_and_disable_closes_stdio(
 
     async def spawn(*argv, **kwargs):
         if protocol == "github-projects":
-            assert argv == (sys.executable, "-m", "duckterm.github_projects")
+            assert argv[0] == sys.executable
+            assert argv[-2:] == ("-m", "duckterm.github_projects")
+            assert ("-I" in argv) == bool(sys.flags.isolated)
+            assert ("-B" in argv) == sys.dont_write_bytecode
             assert kwargs["env"]["DUCKTERM_GITHUB_IDENTITY"] == "test-user"
             temporary = Path(kwargs["env"]["TMPDIR"])
             assert temporary.is_dir()

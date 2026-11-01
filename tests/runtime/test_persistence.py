@@ -31,7 +31,12 @@ def _post_event(port: int, payload: dict[str, object]) -> None:
 
 
 def _get(port: int, path: str) -> dict[str, object]:
-    body = urllib.request.urlopen(f"http://127.0.0.1:{port}{path}", timeout=2).read()
+    body = urllib.request.urlopen(
+        urllib.request.Request(
+            f"http://127.0.0.1:{port}{path}", headers={"X-Duckterm-Token": _token()}
+        ),
+        timeout=2,
+    ).read()
     return json.loads(body)  # type: ignore[no-any-return]
 
 

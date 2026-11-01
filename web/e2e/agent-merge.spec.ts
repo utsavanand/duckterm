@@ -5,11 +5,11 @@ import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import { apiDelete, apiPatch, apiPost, base, expandFolder, seedSession } from "./helpers";
 
-test("configure a child-to-parent merge, recover a lost response and preserve both sessions", async ({ page }) => {
+test("configure a root-to-agent merge, recover a lost response and preserve both sessions", async ({ page }) => {
   const folder = `Merge agents ${Date.now()}`, source = `agent-source-${Date.now()}`, target = `agent-target-${Date.now()}`;
   try {
     await seedSession(target, { name: "Main development", runtime: "generic", group: folder, test: true });
-    await seedSession(source, { name: "Feature implementation", runtime: "generic", group: folder, test: true, parent_session_key: target });
+    await seedSession(source, { name: "Feature implementation", runtime: "generic", group: folder, test: true });
     await apiPatch(`/sessions/${source}`, { notes: "Preserve the public API." });
     await apiPatch(`/sessions/${target}`, { notes: "Existing destination notes." });
     expect((await apiPost(`/sessions/${target}/collaboration`, { root: folder })).status).toBe(200);
@@ -18,9 +18,10 @@ test("configure a child-to-parent merge, recover a lost response and preserve bo
     await page.locator(".rd-row-name", { hasText: "Main development" }).click();
     const row = page.locator(".rd-row", { has: page.getByText("Feature implementation", { exact: true }) });
     await row.click({ button: "right" });
+    await expect(page.getByRole("menuitem", { name: "Merge back", exact: true })).toHaveCount(0);
     await page.getByRole("menuitem", { name: "Merge with agent", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Merge with agent", exact: true });
-    await expect(dialog.getByLabel("Destination agent").locator("option")).toHaveCount(2);
+    await expect(dialog.getByLabel("Destination agent").locator(`option[value="${target}"]`)).toBeEnabled();
     await dialog.getByLabel("Destination agent").selectOption(target);
     await expect(dialog.getByLabel("Notes to append")).toHaveValue("Preserve the public API.");
     await dialog.getByRole("checkbox", { name: /Conversation context/ }).check();
@@ -81,7 +82,7 @@ test("different worktrees offer the exact committed code for review without chan
     await page.locator(".rd-row", { has: page.getByText("Feature worktree", { exact: true }) }).click({ button: "right" });
     await page.getByRole("menuitem", { name: "Merge with agent", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Merge with agent" });
-    await expect(dialog.getByLabel("Destination agent").locator("option")).toHaveCount(2);
+    await expect(dialog.getByLabel("Destination agent").locator(`option[value="${target}"]`)).toBeEnabled();
     await dialog.getByLabel("Destination agent").selectOption(target);
     const option = dialog.getByRole("checkbox", { name: /Code from/ });
     await expect(option).toBeEnabled(); await expect(option).not.toBeChecked();
@@ -124,7 +125,7 @@ test("empty context recovery keeps drafts, isolates count selection, and never a
     await page.locator(".rd-row", { has: page.getByText("Recovery notes", { exact: true }) }).click({ button: "right" });
     await page.getByRole("menuitem", { name: "Merge with agent", exact: true }).click();
     const dialog = page.getByRole("dialog", { name: "Merge with agent", exact: true });
-    await expect(dialog.getByLabel("Destination agent").locator("option")).toHaveCount(2);
+    await expect(dialog.getByLabel("Destination agent").locator(`option[value="${target}"]`)).toBeEnabled();
     await dialog.getByLabel("Destination agent").selectOption(target);
     await expect(dialog.getByText(/No saved conversation summary/)).toBeVisible();
     await dialog.getByRole("checkbox", { name: /^Conversation context/ }).check();
@@ -177,5 +178,46 @@ test("empty context recovery keeps drafts, isolates count selection, and never a
     expect(mergeCalls).toBe(0);
   } finally {
     await apiDelete(`/sessions/${source}`); await apiDelete(`/sessions/${target}`); await apiDelete(`/folders/${encodeURIComponent(folder)}`);
+  }
+});
+
+
+test("a child can merge back to its parent or send context to another agent", async ({ page }) => {
+  const id = Date.now(), folder = `Both merge actions ${id}`;
+  const source = `merge-child-${id}`, parent = `merge-parent-${id}`, target = `merge-other-${id}`;
+  try {
+    await seedSession(parent, { name: "Recorded parent", runtime: "generic", group: folder, test: true });
+    await seedSession(target, { name: "Unrelated destination", runtime: "generic", group: folder, test: true });
+    await seedSession(source, { name: "Child with both actions", runtime: "generic", group: folder, test: true, parent_session_key: parent });
+    for (const key of [parent, target]) expect((await apiPost(`/sessions/${key}/collaboration`, { root: folder })).status).toBe(200);
+    await page.setViewportSize({ width: 1440, height: 1050 });
+    await page.goto(base()); await expandFolder(page, folder);
+    const row = page.locator(".rd-row", { has: page.getByText("Child with both actions", { exact: true }) });
+    await row.click({ button: "right" });
+    await expect(page.getByRole("menuitem", { name: "Merge with agent", exact: true })).toBeEnabled();
+    await page.getByRole("menuitem", { name: "Merge back", exact: true }).click();
+    const back = page.getByRole("dialog", { name: "Merge back to parent", exact: true });
+    await expect(back.getByText("Recorded parent", { exact: true })).toBeVisible();
+    await expect(back.getByRole("combobox")).toHaveCount(0);
+    await page.screenshot({ path: "/tmp/duckterm-restored-merge-back.png" });
+    await back.getByRole("button", { name: "Cancel", exact: true }).click();
+    await row.click({ button: "right" });
+    await page.getByRole("menuitem", { name: "Merge with agent", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Merge with agent", exact: true });
+    await expect(dialog.getByLabel("Destination agent").locator(`option[value="${target}"]`)).toBeEnabled();
+    await dialog.getByLabel("Destination agent").selectOption(target);
+    await dialog.getByRole("checkbox", { name: /^Conversation context/ }).check();
+    await dialog.getByLabel("Context to send").fill("Reviewed context for the unrelated destination.");
+    await expect(dialog.getByRole("checkbox", { name: /^Notes/ })).not.toBeChecked();
+    await page.screenshot({ path: "/tmp/duckterm-restored-general-merge.png" });
+    await dialog.getByRole("button", { name: "Review merge", exact: true }).click();
+    await expect(dialog.locator(".rd-merge-route")).toHaveText("Child with both actions→Unrelated destination");
+    await dialog.getByRole("button", { name: "Send merge request", exact: true }).click();
+    await expect(dialog.getByRole("region", { name: "Saved merge request" })).toContainText("Unrelated destination");
+    const data = await (await page.request.get(`${base()}/sessions`)).json();
+    for (const key of [source, parent, target]) expect(data.sessions.find((s: { session_key: string }) => s.session_key === key).state).not.toBe("merged");
+  } finally {
+    for (const key of [source, target, parent]) await apiDelete(`/sessions/${key}`);
+    await apiDelete(`/folders/${encodeURIComponent(folder)}`);
   }
 });

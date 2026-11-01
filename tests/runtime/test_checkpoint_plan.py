@@ -170,7 +170,9 @@ def test_http_plan_is_read_only_and_submit_keeps_write_auth(memory_rig, monkeypa
     history(tmp, 3)
     calls, _ = model_provider(monkeypatch)
     path = "/sessions/agent/checkpoint-plan"
-    status, plan = dispatch(server, "GET", path, {})
+    owner = {"x-duckterm-token": server.token}
+    assert dispatch(server, "GET", path, {})[0] == 401
+    status, plan = dispatch(server, "GET", path, owner)
     assert status == 200 and plan["pending_records"] == 3
     assert not calls and not server.checkpoint_requests._receipts("agent")
     assert dispatch(server, "GET", path, headers)[0] == 403
@@ -183,12 +185,11 @@ def test_http_plan_is_read_only_and_submit_keeps_write_auth(memory_rig, monkeypa
 
     asyncio.run(cross_origin())
     assert int(writer.data.split(b"\r\n", 1)[0].split()[1]) == 403
-    assert dispatch(server, "GET", "/sessions/absent/checkpoint-plan", {})[0] == 404
+    assert dispatch(server, "GET", "/sessions/absent/checkpoint-plan", owner)[0] == 404
     payload = json.dumps(
         {"request_id": "http-plan", "selection": {"plan": plan["selection_plan"], "records": 2}}
     ).encode()
     assert dispatch(server, "POST", "/sessions/agent/checkpoint", {}, payload)[0] == 401
-    owner = {"x-duckterm-token": server.token}
     status, result = dispatch(server, "POST", "/sessions/agent/checkpoint", owner, payload)
     assert status == 200 and result["summary_update"]["state"] == "updated", result
     assert writer_texts(calls) == [["Record 1", "Record 2"]]

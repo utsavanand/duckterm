@@ -17,6 +17,7 @@ _GUARD = re.compile(rb"%(begin|end|error) (\d+ \d+ \d+)\Z")
 _ESCAPE = re.compile(rb"\\(?:([0-3][0-7]{2})|(\\))")
 _MAX_SNAPSHOT = 8 * 1024 * 1024
 _MAX_QUEUED_CHUNKS = 32
+_COALESCE_BYTES = 64 * 1024
 _SGR = re.compile(rb"\x1b\[[0-9;:]*m")
 
 
@@ -181,8 +182,10 @@ async def stream(target: str) -> AsyncGenerator[bytes, None]:
     """
     pane_target = tmux.exact_target(target, pane=True)
     target = tmux.exact_target(target)
-    proc = await asyncio.create_subprocess_exec(
-        *tmux.client_command(
+    # A cold client selection probes the socket; keep the event loop draining output.
+    try:
+        command = await asyncio.to_thread(
+            tmux.client_command,
             "-C",
             "attach-session",
             "-f",
@@ -223,7 +226,12 @@ async def stream(target: str) -> AsyncGenerator[bytes, None]:
             "-C",
             "-t",
             pane_target,
-        ),
+        )
+    except RuntimeError as exc:
+        print(f"[duckterm] terminal stream unavailable: {exc}", file=sys.stderr)
+        return
+    proc = await asyncio.create_subprocess_exec(
+        *command,
         stdin=asyncio.subprocess.PIPE,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.DEVNULL,
@@ -288,7 +296,28 @@ async def stream(target: str) -> AsyncGenerator[bytes, None]:
             chunk = await queue.get()
             if chunk is None:
                 break
-            yield chunk
+            if isinstance(chunk, Snapshot):
+                # Keep the repaint separate: its dimensions precede its bytes
+                # on the WebSocket, and live output must not lose that boundary.
+                yield chunk
+                continue
+            # The WebSocket consumer uses __anext__ tasks and asyncio.wait;
+            # handing it one chunk per turn lets a buffered producer outrun a
+            # fast network reader. Drain already-ready bytes together, without
+            # waiting for more output or increasing the stalled-viewer queue.
+            chunks = [chunk]
+            size = len(chunk)
+            ended = False
+            while size < _COALESCE_BYTES and not queue.empty():
+                following = queue.get_nowait()
+                if following is None:
+                    ended = True
+                    break
+                chunks.append(following)
+                size += len(following)
+            yield b"".join(chunks)
+            if ended:
+                break
     finally:
         if not reader.done():
             reader.cancel()

@@ -18,12 +18,15 @@ import subprocess
 import sys
 import time
 import uuid
+from functools import lru_cache
 from pathlib import Path
 
 from duckterm.helpers import instance, pane_log
 from duckterm.helpers.private_files import private_write
+from duckterm.helpers.runtime import module_command
 
 _PREFIX = "rd_"
+_BUNDLED_TOOLS = ("DUCKTERM_BUNDLED_CLI", "DUCKTERM_BUNDLED_JQ", "DUCKTERM_BUNDLED_TMUX")
 
 
 def socket_name() -> str:
@@ -39,18 +42,77 @@ def socket_name() -> str:
     return instance.tmux_socket()
 
 
+def _no_server(error: str) -> bool:
+    return "no server running on " in error or (
+        "error connecting to " in error and "(No such file or directory)" in error
+    )
+
+
+@lru_cache(maxsize=16)
+def _bundled_selection(bundle: str, system: str | None, socket: str) -> tuple[str, str]:
+    """Probe once per client pair and socket, without creating or replacing a server.
+
+    A protocol mismatch may use the system client on the SAME socket, so panes
+    started by an older system tmux stay reachable. Unknown socket errors are
+    not evidence that existing sessions have disappeared.
+    """
+    candidates = ((bundle if os.path.isabs(bundle) else None, "bundled"), (system, "system"))
+    for binary, source in candidates:
+        if not binary:
+            continue
+        try:
+            if subprocess.run([binary, "-V"], capture_output=True, timeout=3).returncode:
+                continue
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        try:
+            result = subprocess.run(
+                [binary, "-L", socket, "list-sessions"], capture_output=True, text=True, timeout=3
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            raise RuntimeError(f"cannot probe existing tmux server: {exc}") from exc
+        if result.returncode == 0 or _no_server(result.stderr):
+            print(f"[duckterm] tmux client: {source} {binary}", file=sys.stderr)
+            return binary, source
+        if "protocol version mismatch" in result.stderr:
+            continue
+        raise RuntimeError(f"cannot probe existing tmux server: {result.stderr.strip()}")
+    # Exceptions are not cached, so installing tmux lets a later check succeed.
+    raise FileNotFoundError("No usable tmux client (bundled or system)")
+
+
+def selected_client() -> tuple[str, str]:
+    """The Mac app sets DUCKTERM_BUNDLED_TMUX; source installs keep PATH tmux."""
+    bundle = os.environ.get("DUCKTERM_BUNDLED_TMUX")
+    if bundle:
+        return _bundled_selection(bundle, shutil.which("tmux"), socket_name())
+    return "tmux", "system"
+
+
 def has_tmux() -> bool:
-    return shutil.which("tmux") is not None
+    if not os.environ.get("DUCKTERM_BUNDLED_TMUX"):
+        return shutil.which("tmux") is not None
+    try:
+        selected_client()
+    except FileNotFoundError:
+        return False
+    except RuntimeError:
+        pass  # A client exists; its commands report the socket error instead.
+    return True
 
 
 def client_command(*args: str) -> list[str]:
     """One client/socket selection for commands and ordered terminal streams."""
-    return ["tmux", "-L", socket_name(), *args]
+    return [selected_client()[0], "-L", socket_name(), *args]
 
 
 def _tmux(*args: str) -> tuple[bool, str]:
+    try:
+        command = client_command(*args)
+    except RuntimeError as exc:
+        return False, str(exc)
     result = subprocess.run(
-        client_command(*args),
+        command,
         capture_output=True,
         text=True,
     )
@@ -84,11 +146,18 @@ def spawn(
     under claude's own session_id and the launched-only ingest drops those
     events as foreign."""
     target = target_for(session_id)
+    # The persistent tmux server keeps the environment of whichever backend
+    # started it. Name this backend's app tools explicitly, and drop ones it
+    # lacks, so a moved, translocated or replaced app never leaves new panes
+    # pointing at a vanished bundle. These are paths, never secrets.
+    tools = {name: os.environ[name] for name in _BUNDLED_TOOLS if os.environ.get(name)}
+    env = {**tools, **instance.launch_env(), **(env or {})}
     # Automated callers often export NO_COLOR for their own command logs.
     # A persistent tmux server retains it even after that caller is gone.
     # Interactive panes should use ANSI colors unless this launch opts out.
-    if "NO_COLOR" not in (env or {}):
-        command = "unset NO_COLOR; " + command
+    unset = [name for name in ("NO_COLOR", *_BUNDLED_TOOLS) if name not in env]
+    if unset:
+        command = f"unset {' '.join(unset)}; " + command
     env_args: list[str] = []
     for k, v in (env or {}).items():
         env_args += ["-e", f"{k}={v}"]
@@ -169,9 +238,7 @@ def spawn_piped(
             "-t",
             exact_target(target, pane=True),
             "-o",
-            shlex.join(
-                [sys.executable, "-m", "duckterm.helpers.pane_log", pipe_path, str(completion)]
-            ),
+            shlex.join(module_command("duckterm.helpers.pane_log", pipe_path, str(completion))),
         )
         if not ok:
             raise ValueError(f"Cannot attach terminal output: {error.strip()}")
@@ -196,9 +263,7 @@ def list_duckterm_sessions() -> list[str]:
         "list-panes", "-a", "-F", "#{session_name}\t#{pane_dead}\t#{@duckterm_owner_shell}"
     )
     if not ok:
-        if "no server running on " in out or (
-            "error connecting to " in out and "(No such file or directory)" in out
-        ):
+        if _no_server(out):
             return []
         raise RuntimeError(f"cannot discover tmux sessions: {out.strip()}")
     live = []
@@ -306,9 +371,7 @@ def session_targets() -> set[str]:
     ok, out = _tmux("list-sessions", "-F", "#{session_name}")
     if ok:
         return set(out.splitlines())
-    if "no server running on " in out or (
-        "error connecting to " in out and "(No such file or directory)" in out
-    ):
+    if _no_server(out):
         return set()
     raise RuntimeError(f"cannot discover tmux sessions: {out.strip()}")
 
