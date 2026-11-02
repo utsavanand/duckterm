@@ -45,7 +45,20 @@ class Grants:
                 if raw
                 else {"version": 1, "host_id": uuid.uuid4().hex, "invites": {}, "devices": {}}
             )
-            if not isinstance(state, dict) or state.get("version") != 1:
+            if (
+                not isinstance(state, dict)
+                or state.get("version") != 1
+                or not isinstance(state.get("host_id"), str)
+                or not state["host_id"]
+                or any(
+                    not isinstance(state.get(section), dict)
+                    or any(
+                        not isinstance(key, str) or not isinstance(value, dict)
+                        for key, value in state[section].items()
+                    )
+                    for section in ("invites", "devices")
+                )
+            ):
                 raise ValueError("Invalid Ducky grant store")
             yield state
             if write:
@@ -103,6 +116,7 @@ class Grants:
                 "status": "pending",
                 "created_at": now,
                 "expires_at": now + 600,
+                "last_seen_at": None,
             }
             grant["claimed_by"] = identifier
             return {"id": identifier, "status": "pending", "host_id": state["host_id"]}
@@ -120,6 +134,12 @@ class Grants:
                 active = device["status"] == "active"
                 awaiting = pending and device["status"] == "pending" and device["expires_at"] > now
                 if active or awaiting:
+                    # A foreground viewer polls frequently. Persist at most once
+                    # a minute per device, under the same lock as revocation.
+                    seen = device.get("last_seen_at")
+                    if seen is None or now - seen >= 60:
+                        device["last_seen_at"] = now
+                        private_write(self.path, json.dumps(state))
                     return {
                         "id": identifier,
                         "name": device["name"],
@@ -137,6 +157,7 @@ class Grants:
                         field: value[field]
                         for field in ("name", "status", "created_at", "expires_at")
                     },
+                    "last_seen_at": value.get("last_seen_at"),
                 }
                 for key, value in state["devices"].items()
             ]
@@ -149,6 +170,44 @@ class Grants:
                 raise Denied("No unexpired pending device with that identifier")
             device["status"] = "active"
             device["expires_at"] = 0
+
+    def pending_invitation(self, invite: str, *, now: int | None = None) -> dict[str, Any] | None:
+        """Only the phone which claimed this ceremony's invitation may be offered."""
+        now = int(time.time()) if now is None else now
+        with self.locked() as state:
+            invitation = state["invites"].get(digest(invite))
+            if not invitation or invitation["expires_at"] <= now:
+                return None
+            identifier = invitation.get("claimed_by")
+            device = state["devices"].get(identifier)
+            if not device or device["status"] != "pending" or device["expires_at"] <= now:
+                return None
+            return {"id": identifier, "name": device["name"], "expires_at": device["expires_at"]}
+
+    def approve_invitation(self, invite: str, identifier: str, *, now: int | None = None) -> None:
+        now = int(time.time()) if now is None else now
+        with self.locked(write=True) as state:
+            invitation = state["invites"].get(digest(invite))
+            device = state["devices"].get(identifier)
+            if (
+                not invitation
+                or invitation["expires_at"] <= now
+                or invitation.get("claimed_by") != identifier
+                or not device
+                or device["status"] != "pending"
+                or device["expires_at"] <= now
+            ):
+                raise Denied("No unexpired pending device for this invitation")
+            device.update(status="active", expires_at=0)
+
+    def cancel_invitation(self, invite: str) -> None:
+        with self.locked(write=True) as state:
+            invitation = state["invites"].pop(digest(invite), None)
+            if invitation:
+                identifier = invitation.get("claimed_by")
+                device = state["devices"].get(identifier)
+                if device and device["status"] == "pending":
+                    state["devices"].pop(identifier)
 
     def revoke(self, identifier: str) -> None:
         with self.locked(write=True) as state:

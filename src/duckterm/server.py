@@ -6447,21 +6447,18 @@ class Server:
                 else None
             )
             async with server:
-                mobile_bridge = None
+                from duckterm.mobile.manager import Manager as MobileManager
+
+                mobile_manager = asyncio.create_task(MobileManager(self).run())
                 try:
                     # The optional phone listener has a separate TLS identity
                     # and read-only credential space. Failure cannot take down
                     # the loopback desktop or its process reconciliation.
-                    try:
-                        from duckterm.mobile.bridge import start as start_mobile
-
-                        mobile_bridge = await start_mobile(self)
-                    except Exception as exc:
-                        print(f"Ducky bridge unavailable: {type(exc).__name__}", file=sys.stderr)
                     await server.serve_forever()
                 finally:
-                    if mobile_bridge is not None:
-                        await mobile_bridge.close()
+                    mobile_manager.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await mobile_manager
                     sweeper.cancel()
                     if collaboration_worker is not None:
                         collaboration_worker.cancel()

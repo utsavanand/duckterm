@@ -26,6 +26,7 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
     var launchTarget: String?
     var onPageReset: (() -> Void)?
     var onReportBug: (() -> Void)?
+    var onClose: (() -> Void)?
     var launchDraft: [String: String]?
     var selectedSession: String?
     var onChooseLaunchTarget: ((String, [String: String], String?) -> Void)?
@@ -342,6 +343,7 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
     }
 
     func windowWillClose(_ notification: Notification) {
+        onClose?()
         window = nil  // rebuild fresh next open so it reloads the dashboard
         web = nil
     }

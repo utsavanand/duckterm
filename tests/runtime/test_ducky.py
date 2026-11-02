@@ -298,11 +298,11 @@ def test_unconfigured_bridge_creates_no_identity_or_listener(app):
 def test_broken_optional_bridge_does_not_stop_the_desktop(app, monkeypatch):
     from unittest.mock import AsyncMock
 
-    server, _ = app
+    server, root = app
+    configure(root, "127.0.0.1", 4430)
     monkeypatch.setattr(server.orchestrator, "reconcile", AsyncMock(return_value=[]))
-    monkeypatch.setattr(
-        "duckterm.mobile.bridge.start", AsyncMock(side_effect=ValueError("bad TLS identity"))
-    )
+    broken_start = AsyncMock(side_effect=ValueError("bad TLS identity"))
+    monkeypatch.setattr("duckterm.mobile.manager.start", broken_start)
     original_start = asyncio.start_server
 
     async def run():
@@ -328,6 +328,7 @@ def test_broken_optional_bridge_does_not_stop_the_desktop(app, monkeypatch):
             response = await asyncio.wait_for(reader.read(), 5)
             assert response.startswith(b"HTTP/1.1 200")
             assert b"Coding agent" in response
+            assert broken_start.called
             writer.close()
             await writer.wait_closed()
         finally:
