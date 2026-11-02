@@ -45,7 +45,12 @@ final class ViewerTests: XCTestCase {
         capture("pairing")
 
         _ = try await command("approve")
-        XCTAssertTrue(app.staticTexts["payments-review"].waitForExistence(timeout: 25))
+        let checkout = app.buttons["folder:Checkout"]
+        XCTAssertTrue(checkout.waitForExistence(timeout: 25))
+        XCTAssertFalse(app.staticTexts["payments-review"].exists, "Folders begin collapsed")
+        capture("collapsed")
+        checkout.tap()
+        XCTAssertTrue(app.staticTexts["payments-review"].waitForExistence(timeout: 5))
         XCTAssertTrue(app.staticTexts["discounts"].exists)
         XCTAssertTrue(app.staticTexts["Needs you"].exists)
         capture("agents")
@@ -68,7 +73,7 @@ final class ViewerTests: XCTestCase {
 
         _ = try await command("empty")
         _ = try await command("online")
-        XCTAssertTrue(app.staticTexts["No running agents"].firstMatch.waitForExistence(timeout: 25))
+        XCTAssertTrue(app.staticTexts["No sessions"].firstMatch.waitForExistence(timeout: 25))
         capture("empty")
 
         _ = try await command("restore")

@@ -79,11 +79,16 @@ final class DuckyPairingProcess: DuckyPairingTransport {
         }
     }
 
-    func send(action: String, deviceID: String?) throws {
+    func send(action: String, deviceID: String?, capabilities: [String]? = nil) throws {
         guard !cancelled, !terminal, process?.isRunning == true, let input else { throw DuckyPairingEvent.Failure.invalid }
-        var body = ["action": action]
+        var body: [String: Any] = ["action": action]
         if let deviceID { body["device_id"] = deviceID }
         guard action == "cancel" || (["approve", "deny"].contains(action) && deviceID?.range(of: "^[a-f0-9]{32}\\z", options: .regularExpression) != nil) else { throw DuckyPairingEvent.Failure.invalid }
+        if let capabilities {
+            guard action == "approve", Set(capabilities).count == capabilities.count,
+                  Set(capabilities).isSubset(of: DuckyPairingModel.conversationCapabilities) else { throw DuckyPairingEvent.Failure.invalid }
+            body["capabilities"] = capabilities
+        }
         var data = try JSONSerialization.data(withJSONObject: body)
         data.append(10)
         try input.write(contentsOf: data)

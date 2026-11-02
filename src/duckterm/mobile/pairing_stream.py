@@ -21,7 +21,7 @@ from pathlib import Path
 from typing import Any
 
 from duckterm.mobile.cli import invitation_link, invitation_payload
-from duckterm.mobile.grants import Denied, Grants
+from duckterm.mobile.grants import Denied, Grants, capabilities
 from duckterm.mobile.pairing import pairing_lock, prepare, wait_for_listener
 
 
@@ -64,9 +64,18 @@ class Commands:
         action = command.get("action")
         if action == "cancel" and set(command) == {"action"}:
             return command
+        expected = {"action", "device_id"}
+        if action == "approve" and "capabilities" in command:
+            expected.add("capabilities")
+            if not isinstance(command["capabilities"], list):
+                raise CeremonyError("invalid_command")
+            try:
+                command["capabilities"] = capabilities(command["capabilities"], strict=True)
+            except ValueError as exc:
+                raise CeremonyError("invalid_command") from exc
         if (
             action not in ("approve", "deny")
-            or set(command) != {"action", "device_id"}
+            or set(command) != expected
             or not isinstance(command["device_id"], str)
         ):
             raise CeremonyError("invalid_command")
@@ -137,10 +146,20 @@ def ceremony(directory: Path, incoming: Commands) -> int:
                 raise CeremonyError("approval_unavailable")
             if command["action"] == "approve":
                 try:
-                    grants.approve_invitation(payload["invite"], offered["id"])
+                    approved = capabilities(command.get("capabilities"), strict=True)
+                    grants.approve_invitation(
+                        payload["invite"], offered["id"], capabilities=approved
+                    )
                 except Denied as exc:
                     raise CeremonyError("approval_unavailable") from exc
-                emit("approved", device={"id": offered["id"], "name": offered["name"]})
+                emit(
+                    "approved",
+                    device={
+                        "id": offered["id"],
+                        "name": offered["name"],
+                        "capabilities": approved,
+                    },
+                )
             else:
                 emit("denied", device={"id": offered["id"], "name": offered["name"]})
             return 0

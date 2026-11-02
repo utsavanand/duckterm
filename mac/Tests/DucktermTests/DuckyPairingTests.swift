@@ -67,6 +67,65 @@ final class DuckyPairingTests: XCTestCase {
         XCTAssertEqual(transport.commands, [])
     }
 
+    @MainActor func testConversationSelectionIsExplicitAndFrozenDuringAuthentication() async {
+        let transport = FakePairingTransport(), auth = SuspendedPairingAuthentication()
+        var reasons: [String] = []
+        let model = DuckyPairingModel(makeTransport: { transport }, authenticate: { reason in
+            reasons.append(reason); return await auth.wait()
+        }, now: { self.now })
+        model.start(); transport.onEvent?(.invitation(invite)); transport.onEvent?(.pending(device))
+        XCTAssertFalse(model.allowsConversations)
+        model.setAllowsConversations(true); model.approve()
+        await settle { auth.continuation != nil }
+        model.setAllowsConversations(false)
+        XCTAssertTrue(model.allowsConversations, "Scope cannot change underneath authentication")
+        auth.finish(true)
+        await settle { transport.commands.count == 1 }
+        XCTAssertEqual(transport.scopes, [DuckyPairingModel.conversationCapabilities.sorted()])
+        XCTAssertTrue(reasons.first?.contains("read conversations and send messages") == true)
+        let confirmed = DuckyPairingDevice(id: deviceID, name: device.name, expiresAt: nil,
+                                          capabilities: DuckyPairingModel.conversationCapabilities.sorted())
+        transport.onEvent?(.approved(confirmed))
+        XCTAssertEqual(model.state, .approved(confirmed))
+        model.start()
+        XCTAssertFalse(model.allowsConversations, "Each new ceremony starts status-only")
+        model.close()
+    }
+
+    @MainActor func testUncheckedApprovalIsStatusOnlyAndRejectsExpandedConfirmation() async {
+        let transport = FakePairingTransport()
+        let model = DuckyPairingModel(makeTransport: { transport }, authenticate: { _ in true }, now: { self.now })
+        model.start(); transport.onEvent?(.invitation(invite)); transport.onEvent?(.pending(device)); model.approve()
+        await settle { transport.commands.count == 1 }
+        XCTAssertEqual(transport.scopes, [["status:read"]])
+        transport.onEvent?(.approved(.init(id: deviceID, name: device.name, expiresAt: nil,
+                                          capabilities: DuckyPairingModel.conversationCapabilities.sorted())))
+        XCTAssertEqual(model.state, .error("approval_unavailable"))
+    }
+
+    @MainActor func testRejectedAuthenticationAndDeviceReplacementCannotApproveConversations() async {
+        let transport = FakePairingTransport(), auth = SuspendedPairingAuthentication()
+        let model = DuckyPairingModel(makeTransport: { transport }, authenticate: { _ in await auth.wait() }, now: { self.now })
+        model.start(); transport.onEvent?(.invitation(invite)); transport.onEvent?(.pending(device))
+        model.setAllowsConversations(true); model.approve()
+        await settle { auth.continuation != nil }; auth.finish(false)
+        await settle { !model.busy }
+        XCTAssertTrue(transport.commands.isEmpty)
+        model.approve(); await settle { auth.continuation != nil }
+        transport.onEvent?(.pending(.init(id: String(repeating: "b", count: 32), name: "Other phone", expiresAt: 1090)))
+        auth.finish(true); await Task.yield()
+        XCTAssertTrue(transport.commands.isEmpty)
+        XCTAssertEqual(model.state, .error("pairing_failed"))
+    }
+
+    func testUnknownOrDuplicatedConfirmationScopesAreRejected() throws {
+        for scopes in [["status:read", "admin"], ["session:send", "session:send"]] {
+            let data = try JSONSerialization.data(withJSONObject: ["version": 1, "state": "approved",
+                "device": ["id": deviceID, "name": "Phone", "capabilities": scopes]])
+            XCTAssertThrowsError(try DuckyPairingEvent.decode(data))
+        }
+    }
+
     @MainActor func testExpiryDuringAuthenticationCannotApprove() async {
         let transport = FakePairingTransport(), auth = SuspendedPairingAuthentication()
         var clock = now
@@ -124,6 +183,22 @@ final class DuckyPairingTests: XCTestCase {
         XCTAssertNil(view.window, "View inspection must never create a window")
         let busy = DuckyPairingView(state: .pending(device), busy: true, icon: nil, now: now)
         XCTAssertFalse((busy.subviews.first { $0.identifier?.rawValue == "approve" } as? NSButton)?.isEnabled ?? true)
+        let checkbox = controls.first { $0.identifier?.rawValue == "conversations" }
+        XCTAssertEqual(checkbox?.state, .off)
+        XCTAssertEqual(checkbox?.title, "Allow conversations with agents")
+        XCTAssertFalse((busy.subviews.first { $0.identifier?.rawValue == "conversations" } as? NSButton)?.isEnabled ?? true)
+        let checked = DuckyPairingView(state: .pending(device), allowsConversations: true, icon: nil, now: now)
+        XCTAssertEqual((checked.subviews.first { $0.identifier?.rawValue == "conversations" } as? NSButton)?.state, .on)
+        var changed = false
+        checked.onConversationsChanged = { changed = $0 }
+        let checkedControl = checked.subviews.first { $0.identifier?.rawValue == "conversations" } as? NSButton
+        checkedControl?.state = .off
+        if let control = checkedControl, let action = control.action { checked.perform(action, with: control) }
+        XCTAssertFalse(changed)
+        checkedControl?.state = .on
+        if let control = checkedControl, let action = control.action { checked.perform(action, with: control) }
+        XCTAssertTrue(changed)
+        XCTAssertTrue(view.subviews.allSatisfy { view.bounds.contains($0.frame) })
     }
 
     @MainActor func testEnvironmentDoesNotInheritSessionCredentialsOrForeignProfiles() async {
@@ -168,6 +243,38 @@ final class DuckyPairingTests: XCTestCase {
         let data = try Data(contentsOf: marker)
         let command = try JSONSerialization.jsonObject(with: data) as? [String: String]
         XCTAssertEqual(command, ["action": "cancel"])
+        let pid = try XCTUnwrap(Int32(String(contentsOf: pidFile, encoding: .utf8)))
+        await settle { kill(pid, 0) == -1 && errno == ESRCH }
+    }
+
+    @MainActor func testOwnedSubprocessGetsOnlyExplicitApprovedScopes() async throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("pairing-scopes-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: root, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let marker = root.appendingPathComponent("command.json"), pidFile = root.appendingPathComponent("child.pid")
+        let script = #"""
+        printf '%s' "$$" > "$2"
+        printf '%s\n' '{"version":1,"state":"invitation","link":"ducky://pair?invite=PREVIEW_ONLY","expires_at":1100}'
+        IFS= read -r command
+        printf '%s' "$command" > "$1"
+        printf '%s\n' '{"version":1,"state":"cancelled"}'
+        """#
+        let transport = DuckyPairingProcess(command: {
+            .init(executable: URL(fileURLWithPath: "/bin/sh"), arguments: ["-c", script, "pairing-test", marker.path, pidFile.path],
+                  environment: ["PATH": "/usr/bin:/bin", "HOME": root.path])
+        })
+        var events: [DuckyPairingEvent] = []
+        transport.onEvent = { events.append($0) }
+        try await transport.start(); await settle { events == [.invitation(self.invite)] }
+        XCTAssertThrowsError(try transport.send(action: "approve", deviceID: deviceID, capabilities: ["admin"]))
+        XCTAssertThrowsError(try transport.send(action: "deny", deviceID: deviceID, capabilities: ["session:send"]))
+        try transport.send(action: "approve", deviceID: deviceID, capabilities: DuckyPairingModel.conversationCapabilities.sorted())
+        await settle { events.last == .cancelled }
+        let body = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: marker)) as? [String: Any])
+        XCTAssertEqual(Set(body.keys), ["action", "device_id", "capabilities"])
+        XCTAssertEqual(body["action"] as? String, "approve")
+        XCTAssertEqual(body["device_id"] as? String, deviceID)
+        XCTAssertEqual(body["capabilities"] as? [String], DuckyPairingModel.conversationCapabilities.sorted())
         let pid = try XCTUnwrap(Int32(String(contentsOf: pidFile, encoding: .utf8)))
         await settle { kill(pid, 0) == -1 && errno == ESRCH }
     }
@@ -234,8 +341,11 @@ final class DuckyPairingTests: XCTestCase {
     var onEvent: ((DuckyPairingEvent) -> Void)?
     var commands: [String] = []
     var cancelled = false
+    var scopes: [[String]?] = []
     func start() async throws {}
-    func send(action: String, deviceID: String?) throws { commands.append("\(action):\(deviceID ?? "")") }
+    func send(action: String, deviceID: String?, capabilities: [String]?) throws {
+        commands.append("\(action):\(deviceID ?? "")"); scopes.append(capabilities)
+    }
     func cancel() { cancelled = true }
 }
 

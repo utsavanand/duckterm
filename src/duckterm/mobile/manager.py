@@ -17,6 +17,7 @@ from duckterm.helpers.private_files import private_read, private_write
 from duckterm.mobile import network
 from duckterm.mobile.bridge import Bridge, start
 from duckterm.mobile.cli import address, local_name
+from duckterm.mobile.messages import Messages
 
 if TYPE_CHECKING:
     from duckterm.server import Server
@@ -29,6 +30,7 @@ class Manager:
         self.bridge: Bridge | None = None
         self.signature: tuple[str, str, str, int] | None = None
         self.status: dict[str, Any] | None = None
+        self.messages = Messages(server, self.directory)
 
     def desired(self) -> tuple[tuple[str, str, str, int], dict[str, Any]] | None:
         raw = private_read(self.directory / "ducky-bridge.json")
@@ -75,6 +77,7 @@ class Manager:
         try:
             desired = await asyncio.to_thread(self.desired)
             if desired is None:
+                await self.messages.disable()
                 await self.close_listener()
                 if self.status is not None:
                     await self.report({"state": "disabled"})
@@ -84,7 +87,10 @@ class Manager:
                 return
             await self.close_listener()
             self.bridge = await start(
-                self.server, directory=self.directory, bind_address=status["address"]
+                self.server,
+                directory=self.directory,
+                bind_address=status["address"],
+                messages=self.messages,
             )
             if self.bridge is None:
                 return  # Disabled while the new listener was being prepared.
@@ -93,6 +99,7 @@ class Manager:
             if await asyncio.to_thread(self.desired) != desired:
                 await self.close_listener()
                 return
+            await self.messages.start()
             self.signature = signature
             await self.report({"state": "ready", **status})
         except (OSError, ValueError, KeyError, TypeError):
@@ -110,6 +117,7 @@ class Manager:
                     await self.close_listener()
                 await asyncio.sleep(2)
         finally:
+            await self.messages.close()
             await self.close_listener()
             if self.status is not None:
                 with contextlib.suppress(OSError, ValueError):

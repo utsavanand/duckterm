@@ -41,9 +41,32 @@ public final class DuckyClient {
         return status
     }
     public func snapshot(cursor: String?) async throws -> HostSnapshot {
-        let result: HostSnapshot = try await request(path: "/v1/snapshot", cursor: cursor)
+        let result: HostSnapshot
+        do { result = try await request(path: "/v2/snapshot", query: cursor.map { [URLQueryItem(name: "cursor", value: $0)] } ?? []) }
+        catch DuckyError.unavailable(404) {
+            result = try await request(path: "/v1/snapshot", query: cursor.map { [URLQueryItem(name: "cursor", value: $0)] } ?? [])
+        }
         try result.validate(hostID: host.hostID)
         return result
+    }
+    public func conversation(sessionID: String) async throws -> ConversationSnapshot {
+        let result: ConversationSnapshot = try await request(path: "/v2/conversation", query: [URLQueryItem(name: "session_id", value: sessionID)])
+        try result.validate(hostID: host.hostID, sessionID: sessionID)
+        return result
+    }
+    public func send(_ message: OutgoingMessage) async throws -> MessageReceipt {
+        guard OutgoingMessage.validText(message.text), !message.sendContext.isEmpty,
+              UUID(uuidString: message.requestID) != nil else { throw DuckyError.invalidResponse }
+        let body = try JSONSerialization.data(withJSONObject: ["session_id": message.sessionID,
+            "send_context": message.sendContext, "request_id": message.requestID, "text": message.text])
+        let result: ReceiptResponse = try await request(path: "/v2/messages", body: body)
+        try result.validate(hostID: host.hostID, sessionID: message.sessionID, requestID: message.requestID)
+        return result.receipt
+    }
+    public func receipt(requestID: String, sessionID: String) async throws -> MessageReceipt {
+        let result: ReceiptResponse = try await request(path: "/v2/messages", query: [URLQueryItem(name: "request_id", value: requestID)])
+        try result.validate(hostID: host.hostID, sessionID: sessionID, requestID: requestID)
+        return result.receipt
     }
     public func close() {
         lock.lock()
@@ -62,7 +85,7 @@ public final class DuckyClient {
         lock.lock(); defer { lock.unlock() }
         sessions.removeValue(forKey: id)
     }
-    private func request<T: Decodable>(path: String, body: Data? = nil, cursor: String? = nil) async throws -> T {
+    private func request<T: Decodable>(path: String, body: Data? = nil, query: [URLQueryItem] = []) async throws -> T {
         try Task.checkCancellation()
         let addresses = try await LocalEndpoint.addresses(for: host.url, resolver: resolver)
         let deadline = ProcessInfo.processInfo.systemUptime + 10
@@ -71,7 +94,7 @@ public final class DuckyClient {
             let remaining = deadline - ProcessInfo.processInfo.systemUptime
             guard remaining > 0 else { throw URLError(.timedOut) }
             do {
-                return try await attempt(path: path, body: body, cursor: cursor, address: address,
+                return try await attempt(path: path, body: body, query: query, address: address,
                                          timeout: remaining)
             } catch let error as URLError where index + 1 < addresses.count &&
                         [.cannotConnectToHost, .notConnectedToInternet].contains(error.code) {
@@ -82,11 +105,11 @@ public final class DuckyClient {
         }
         throw URLError(.cannotConnectToHost)
     }
-    private func attempt<T: Decodable>(path: String, body: Data?, cursor: String?, address: String, timeout: TimeInterval) async throws -> T {
+    private func attempt<T: Decodable>(path: String, body: Data?, query: [URLQueryItem], address: String, timeout: TimeInterval) async throws -> T {
         var parts = URLComponents(url: host.url, resolvingAgainstBaseURL: false)!
         parts.host = address.contains(":") ? "[\(address)]" : address
         parts.path = path
-        parts.queryItems = cursor.map { [URLQueryItem(name: "cursor", value: $0)] }
+        parts.queryItems = query.isEmpty ? nil : query
         guard let url = parts.url, LocalEndpoint.privateLiteral(LocalEndpoint.hostname(url)) != nil else { throw DuckyError.invalidInvitation }
         var request = URLRequest(url: url)
         request.httpMethod = body == nil ? "GET" : "POST"

@@ -20,10 +20,12 @@ import shlex
 import shutil
 import signal
 import sys
+import threading
 import time
 import uuid
 from collections import deque
 from collections.abc import AsyncGenerator, Callable
+from dataclasses import dataclass
 from pathlib import Path
 
 from duckterm.agents import tmux, tmux_stream
@@ -61,6 +63,16 @@ _TERMINAL_REPORTS = re.compile(rb"\x1b\[(?:[IO]|<[\d;]*[Mm]|M[\s\S]{3})")
 
 def is_terminal_report(data: bytes) -> bool:
     return not _TERMINAL_REPORTS.sub(b"", data)
+
+
+@dataclass
+class _InputAction:
+    action: Callable[[], bool]
+    ready: Callable[[], bool]
+    result: asyncio.Future[bool]
+
+
+_InputBytes = tuple[bytes, asyncio.Future[bool] | None]
 
 
 class SessionSupervisor:
@@ -106,8 +118,9 @@ class SessionSupervisor:
         self._byte_tail = deque[bytes](maxlen=2000)  # recent raw chunks, for replay
         self._byte_subs: set[asyncio.Queue[bytes]] = set()
         # Terminal keystrokes: drained by one task so writes stay ordered.
-        self._input_queue: asyncio.Queue[tuple[bytes, asyncio.Future[bool] | None]] | None = None
+        self._input_queue: asyncio.Queue[_InputBytes | _InputAction] | None = None
         self._input_task: asyncio.Task[None] | None = None
+        self._write_lock = threading.RLock()
         self._last_input = 0.0
         # Wall-clock ms of the owner's last keystroke, for Oracle: no nudge is
         # pasted while someone may be typing into this terminal.
@@ -637,6 +650,10 @@ class SessionSupervisor:
         write_input (line/key semantics for the approval flow), this passes
         keystrokes through verbatim so the agent's TUI sees exactly what was
         typed (arrow keys, ctrl chars, partial input)."""
+        with self._write_lock:
+            return self._write_bytes(data)
+
+    def _write_bytes(self, data: bytes) -> bool:
         if self._preparing:
             return False
         if self._tmux_target is not None and self.running:
@@ -681,19 +698,69 @@ class SessionSupervisor:
             self._input_task = asyncio.create_task(self._drain_input())
         self._input_queue.put_nowait((data, result))
 
+    async def write_queued_action(
+        self, action: Callable[[], bool], ready: Callable[[], bool]
+    ) -> bool:
+        """Run one bounded compound write between accepted terminal byte batches.
+
+        Readiness runs on the owner loop immediately before the off-loop action;
+        the action must recheck its authority and target before writing anything.
+        Cancellation never authorizes replay of a possibly started action.
+        """
+        if self._preparing or (
+            self._preparation is not None and not self._preparation.allow_automation
+        ):
+            return False
+        if self._input_task is not None and (
+            self._input_task.done() or self._input_task.cancelling()
+        ):
+            return False
+        result: asyncio.Future[bool] = asyncio.get_running_loop().create_future()
+        if self._input_queue is None:
+            self._input_queue = asyncio.Queue()
+            self._input_task = asyncio.create_task(self._drain_input())
+        self._input_queue.put_nowait(_InputAction(action, ready, result))
+        return await result
+
+    def _write_action(self, action: Callable[[], bool]) -> bool:
+        # Direct owner/automation input also uses this lock. A compound paste
+        # and Enter must not be split by a caller outside the websocket FIFO.
+        with self._write_lock:
+            return action()
+
     async def _drain_input(self) -> None:
         assert self._input_queue is not None
-        batch: list[tuple[bytes, asyncio.Future[bool] | None]] = []
+        batch: list[_InputBytes] = []
+        following: _InputAction | None = None
+        current: _InputAction | None = None
         try:
             while True:
-                batch = [await self._input_queue.get()]
-                size = len(batch[0][0])
-                # Drain already accepted bytes without adding a batching delay.
-                # Bound each batch so busy sessions yield to other loop work.
+                item = following if following is not None else await self._input_queue.get()
+                following = None
+                if isinstance(item, _InputAction):
+                    current = item
+                    wrote = False
+                    try:
+                        if not item.result.cancelled() and item.ready():
+                            wrote = await asyncio.to_thread(self._write_action, item.action)
+                    except Exception:
+                        # The caller journals uncertain delivery independently.
+                        # A failed optional action must not stop desktop typing.
+                        wrote = False
+                    if not item.result.done():
+                        item.result.set_result(wrote)
+                    current = None
+                    continue
+                batch = [item]
+                size = len(item[0])
+                # Preserve existing batching without crossing a compound action.
                 while size < 4096 and len(batch) < 256 and not self._input_queue.empty():
-                    item = self._input_queue.get_nowait()
-                    batch.append(item)
-                    size += len(item[0])
+                    queued = self._input_queue.get_nowait()
+                    if isinstance(queued, _InputAction):
+                        following = queued
+                        break
+                    batch.append(queued)
+                    size += len(queued[0])
                 try:
                     wrote = await asyncio.to_thread(
                         self.write_bytes, b"".join(data for data, _ in batch)
@@ -705,22 +772,29 @@ class SessionSupervisor:
                         result.set_result(wrote)
                 batch = []
         finally:
-            # Stop/cancellation must not leave feedback requests waiting forever.
             for _, result in batch:
                 if result is not None and not result.done():
                     result.set_result(False)
+            for action in (following, current):
+                if action is not None and not action.result.done():
+                    action.result.set_result(False)
             self._fail_pending_input()
 
     def _fail_pending_input(self) -> None:
         if self._input_queue is not None:
             while not self._input_queue.empty():
-                _, pending = self._input_queue.get_nowait()
+                item = self._input_queue.get_nowait()
+                pending = item.result if isinstance(item, _InputAction) else item[1]
                 if pending is not None and not pending.done():
                     pending.set_result(False)
 
     def write_input(self, text: str) -> bool:
         """Write to the agent's stdin (terminal-attach / approvals). Routes to
         tmux send-keys or the PTY depending on how the session is backed."""
+        with self._write_lock:
+            return self._write_input(text)
+
+    def _write_input(self, text: str) -> bool:
         if self._preparing or (
             self._preparation is not None and not self._preparation.allow_automation
         ):

@@ -18,8 +18,10 @@ def snapshot(
     cursor: str | None = None,
     *,
     initial_cursor: str | None = None,
+    include_inactive: bool = False,
 ) -> dict[str, Any]:
-    rows = [row for row in server.history.sessions() if row["state"] not in AT_REST_STATES]
+    hidden = {"archived", "merged"} if include_inactive else set(AT_REST_STATES)
+    rows = [row for row in server.history.sessions() if row["state"] not in hidden]
     rows.sort(
         key=lambda row: (
             row["state"] != "waiting",
@@ -49,7 +51,8 @@ def snapshot(
     if initial_cursor is not None and cursor == initial_cursor and len(recent) < 500:
         position = -1
     reset = cursor is not None and position is None
-    live = {row["session_key"] for row in rows}
+    # Showing resumable history must not revive old attention/completion notices.
+    live = {row["session_key"] for row in rows if row["state"] not in AT_REST_STATES}
     notices = []
     # Initial pairing, lost cursors and restarts take a fresh snapshot, not a
     # burst of historical notifications. Exact event IDs deduplicate retries.

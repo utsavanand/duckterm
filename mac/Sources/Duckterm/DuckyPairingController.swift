@@ -73,7 +73,8 @@ final class DuckyPairingController: NSObject, NSWindowDelegate {
         }
         let previous = panel.frame
         let focusedID = (panel.firstResponder as? NSButton)?.identifier
-        let view = DuckyPairingView(state: model.state, busy: model.busy, icon: icon)
+        let view = DuckyPairingView(state: model.state, busy: model.busy, allowsConversations: model.allowsConversations, icon: icon)
+        view.onConversationsChanged = { [weak self] allowed in self?.model.setAllowsConversations(allowed) }
         view.onAction = { [weak self] action in
             guard let self else { return }
             switch action {

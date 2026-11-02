@@ -74,6 +74,52 @@ private actor AddressSequence {
 }
 
 final class TLSIntegrationTests: XCTestCase {
+    func testScopedConversationReadsRealFixtureAndDurablyQueuesBusyMessage() async throws {
+        let fixture = try TLSFixture(mode: "conversations")
+        defer { fixture.close() }
+        let host = PairedHost(invitation: fixture.invitation, token: try DuckyClient.newCredential())
+        let client = try DuckyClient(host: host)
+        defer { client.close() }
+        let status = try await client.claim(fixture.invitation, name: "Conversation test iPhone")
+        try fixture.command("approve-conversations " + status.id)
+        let snapshot = try await client.snapshot(cursor: nil)
+        XCTAssertEqual(snapshot.version, 2); XCTAssertTrue(snapshot.allows("session:send"))
+        let conversation = try await client.conversation(sessionID: "test-agent")
+        XCTAssertEqual(conversation.messages.map(\.text), ["Fixture question", "Fixture reply"])
+        XCTAssertTrue(conversation.canSend)
+        let message = OutgoingMessage(sessionID: "test-agent", sendContext: conversation.sendContext!, text: "Phone fixture message")
+        let queued = try await client.send(message)
+        XCTAssertEqual(queued.status, "queued")
+        let repeated = try await client.send(message)
+        XCTAssertEqual(repeated.requestID, queued.requestID)
+        let found = try await client.receipt(requestID: message.requestID, sessionID: message.sessionID)
+        XCTAssertEqual(found.status, "queued")
+        let withReceipt = try await client.conversation(sessionID: "test-agent")
+        XCTAssertEqual(withReceipt.receipts.first?.requestID, message.requestID)
+        try fixture.command("stop-session -")
+        let inactive = try await client.conversation(sessionID: "test-agent")
+        XCTAssertFalse(inactive.canSend); XCTAssertEqual(inactive.messages.count, 2)
+        try fixture.command("remove-history -")
+        do { _ = try await client.conversation(sessionID: "test-agent"); XCTFail("Missing source fabricated a reply") }
+        catch DuckyError.unavailable(let code) { XCTAssertEqual(code, 503) }
+    }
+
+    func testNewClientFallsBackToActualV1OnlyServerWithoutConversationPermissions() async throws {
+        let fixture = try TLSFixture(mode: "v1")
+        defer { fixture.close() }
+        let host = PairedHost(invitation: fixture.invitation, token: try DuckyClient.newCredential())
+        let client = try DuckyClient(host: host)
+        defer { client.close() }
+        let status = try await client.claim(fixture.invitation, name: "Legacy test iPhone")
+        try fixture.command("approve " + status.id)
+        let result = try await client.snapshot(cursor: nil)
+        XCTAssertEqual(result.version, 1)
+        XCTAssertFalse(result.supportsConversations)
+        XCTAssertFalse(result.allows("session:send"))
+        XCTAssertEqual(result.sessions.first?.name, "Native protocol test")
+        XCTAssertEqual(try fixture.counts().requests, 3, "Claim, v2 404, v1 success")
+    }
+
     func testNativeClientPairsWithRealTLSHostAndHonorsRevocation() async throws {
         let fixture = try TLSFixture()
         defer { fixture.close() }
@@ -89,6 +135,9 @@ final class TLSIntegrationTests: XCTestCase {
         let snapshot = try await client.snapshot(cursor: nil)
         XCTAssertEqual(snapshot.sessions.first?.name, "Native protocol test")
         XCTAssertEqual(snapshot.folders, ["Test folder"])
+        XCTAssertFalse(snapshot.allows("conversation:read"))
+        do { _ = try await client.conversation(sessionID: "test-agent"); XCTFail("Status-only grant read conversation") }
+        catch DuckyError.unavailable(let code) { XCTAssertEqual(code, 403) }
         XCTAssertEqual(try fixture.command("revoke \(pending.id)"), "ok")
         do { _ = try await client.snapshot(cursor: nil); XCTFail("Revoked device read status") }
         catch DuckyError.unavailable(let code) { XCTAssertEqual(code, 403) }

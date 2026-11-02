@@ -106,6 +106,67 @@ def test_all_editions_provide_only_the_phone_projection(app):
     assert snapshot(server, "host", 100)["sessions"] == []
 
 
+@pytest.mark.parametrize("edition", [LITE, CODE, FULL])
+@pytest.mark.parametrize(
+    "state",
+    [
+        "busy",
+        "waiting",
+        "idle",
+        "unknown",
+        "terminated",
+        "stopped",
+        "interrupted",
+        "archived",
+        "merged",
+    ],
+)
+def test_optional_inactive_projection_matches_desktop_without_changing_v1(app, edition, state):
+    server, _ = app
+    server.edition = edition
+    server.history.set_meta("a", group="Work/Nested")
+    server.history.set_state("a", state, now=2)
+    old = snapshot(server, "host", 100)
+    expanded = snapshot(server, "host", 100, include_inactive=True)
+    assert bool(old["sessions"]) == (state in {"busy", "waiting", "idle", "unknown"})
+    assert bool(expanded["sessions"]) == (state not in {"archived", "merged"})
+    assert expanded["version"] == 1  # Bridge owns the v2 envelope, not this projection.
+    if expanded["sessions"]:
+        item = expanded["sessions"][0]
+        assert item["state"] == state and item["folder"] == "Work/Nested"
+        assert set(item) == {
+            "id",
+            "name",
+            "folder",
+            "runtime",
+            "state",
+            "observed_at",
+            "approval_visibility",
+        }
+    assert expanded["folders"] == ["Work", "Work/Nested"]
+
+
+@pytest.mark.parametrize("state", ["terminated", "stopped", "interrupted"])
+def test_inactive_rows_do_not_gain_live_notifications(app, state):
+    server, _ = app
+    marker = server.bus.publish(
+        {"event_type": "UserPromptSubmit", "session_key": "a", "test": True}
+    )
+    server.bus.publish({"event_type": "Stop", "session_key": "a", "hook_event": True, "test": True})
+    server.bus.publish(
+        {
+            "event_type": "Notification",
+            "notification_type": "permission_prompt",
+            "session_key": "a",
+            "test": True,
+        }
+    )
+    server.history.set_state("a", state, now=2)
+    result = snapshot(server, "host", 100, marker["_id"], include_inactive=True)
+    assert len(result["sessions"]) == 1
+    assert result["notices"] == [] and result["reset"] is False
+
+
 def test_notifications_are_observed_turns_and_attention_with_replay_detection(app):
     server, _ = app
     initial = server.bus.publish(

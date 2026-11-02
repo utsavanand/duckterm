@@ -4,12 +4,18 @@ struct DuckyPairingDevice: Decodable, Equatable {
     let id: String
     let name: String
     let expiresAt: Int?
-    enum CodingKeys: String, CodingKey { case id, name; case expiresAt = "expires_at" }
+    let capabilities: [String]?
+    init(id: String, name: String, expiresAt: Int?, capabilities: [String]? = nil) {
+        self.id = id; self.name = name; self.expiresAt = expiresAt; self.capabilities = capabilities
+    }
+    enum CodingKeys: String, CodingKey { case id, name, capabilities; case expiresAt = "expires_at" }
+    var grantedCapabilities: Set<String> { Set(capabilities ?? ["status:read"]) }
     var valid: Bool {
         id.range(of: "^[a-f0-9]{32}\\z", options: .regularExpression) != nil &&
             !name.isEmpty && name.count <= 80 && name.unicodeScalars.allSatisfy {
                 ![.control, .format, .lineSeparator, .paragraphSeparator].contains($0.properties.generalCategory)
-            }
+            } && (capabilities == nil || (Set(capabilities!).count == capabilities!.count &&
+                grantedCapabilities.isSubset(of: DuckyPairingModel.conversationCapabilities)))
     }
 }
 
@@ -90,18 +96,26 @@ struct DuckyPairingFrames {
 protocol DuckyPairingTransport: AnyObject {
     var onEvent: ((DuckyPairingEvent) -> Void)? { get set }
     func start() async throws
-    func send(action: String, deviceID: String?) throws
+    func send(action: String, deviceID: String?, capabilities: [String]?) throws
     func cancel()
+}
+
+extension DuckyPairingTransport {
+    func send(action: String, deviceID: String?) throws {
+        try send(action: action, deviceID: deviceID, capabilities: nil)
+    }
 }
 
 @MainActor
 final class DuckyPairingModel {
+    nonisolated static let conversationCapabilities: Set<String> = ["status:read", "conversation:read", "session:send"]
     enum State: Equatable {
         case opening, invitation(DuckyPairingInvitation), pending(DuckyPairingDevice)
         case approved(DuckyPairingDevice), denied, expired(pending: Bool), error(String), closed
     }
     private(set) var state: State = .opening
     private(set) var busy = false
+    private(set) var allowsConversations = false
     var onChange: (() -> Void)?
     private let makeTransport: () -> DuckyPairingTransport
     private let authenticate: (String) async -> Bool
@@ -112,6 +126,7 @@ final class DuckyPairingModel {
     private var generation = 0
     private var invitationExpiry: Int?
     private var decision: String?
+    private var decisionCapabilities: Set<String>?
     private var startedAt: Date?
     private var decisionSentAt: Date?
 
@@ -126,7 +141,8 @@ final class DuckyPairingModel {
         stopTransport()
         generation += 1
         let current = generation
-        state = .opening; busy = false; decision = nil; decisionSentAt = nil; invitationExpiry = nil; startedAt = now()
+        state = .opening; busy = false; allowsConversations = false; decision = nil; decisionCapabilities = nil
+        decisionSentAt = nil; invitationExpiry = nil; startedAt = now()
         let next = makeTransport()
         transport = next
         next.onEvent = { [weak self] event in
@@ -156,7 +172,7 @@ final class DuckyPairingModel {
             state = .pending(device)
         case .approved(let device):
             guard case .pending(let expected) = state, decision == "approve", expected.id == device.id,
-                  expected.name == device.name else { fail("approval_unavailable"); return }
+                  expected.name == device.name, device.grantedCapabilities == decisionCapabilities else { fail("approval_unavailable"); return }
             state = .approved(device); busy = false; stopTransport()
         case .denied(let device):
             guard case .pending(let expected) = state, decision == "deny", expected.id == device.id else { fail("approval_unavailable"); return }
@@ -177,20 +193,30 @@ final class DuckyPairingModel {
         guard case .pending(let device) = state, !busy, valid(device) else { tick(); return }
         busy = true; onChange?()
         let current = generation
+        let scopes: Set<String> = allowsConversations ? Self.conversationCapabilities : ["status:read"]
+        let reason = allowsConversations ?
+            "allow \(device.name) to read conversations and send messages to your DuckTerm agents" :
+            "allow \(device.name) to view your DuckTerm agents"
         authentication = Task { [weak self] in
             guard let self else { return }
-            let accepted = await self.authenticate("allow \(device.name) to view your DuckTerm agents")
+            let accepted = await self.authenticate(reason)
             guard self.generation == current, self.state == .pending(device), self.decision == nil else { return }
             self.authentication = nil
             guard self.valid(device) else { self.tick(); return }
             guard accepted, !Task.isCancelled else { self.busy = false; self.onChange?(); return }
-            self.decision = "approve"; self.decisionSentAt = self.now()
+            self.decision = "approve"; self.decisionCapabilities = scopes; self.decisionSentAt = self.now()
             do {
                 guard let transport = self.transport else { throw DuckyPairingEvent.Failure.invalid }
-                try transport.send(action: "approve", deviceID: device.id)
+                try transport.send(action: "approve", deviceID: device.id, capabilities: scopes.sorted())
             }
             catch { self.fail("approval_unavailable") }
         }
+    }
+
+    func setAllowsConversations(_ allowed: Bool) {
+        guard case .pending = state, !busy, decision == nil else { return }
+        allowsConversations = allowed
+        onChange?()
     }
 
     func deny() {
