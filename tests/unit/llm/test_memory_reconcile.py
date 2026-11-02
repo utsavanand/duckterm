@@ -167,3 +167,71 @@ def test_a_later_fact_supersedes_a_contradicting_rule_across_categories(store, l
     else:
         assert result["rejected_ops"] == 1
         assert len(remaining) == 2
+
+
+def seeded(store, count, start=0, name="l1"):
+    kinds = ["task", "decision", "known_issue"]
+    items = [(kinds[n % 3], f"Item {n} detail", f"src:v:r{n}") for n in range(start, count)]
+    asyncio.run(
+        memory_reconcile.reconcile(store, "s", "scope", [leaf(name, *items)], provider([])[1])
+    )
+    return memory_reconcile.latest(store, "s", "scope")
+
+
+def clean(store, replies):
+    prompts = []
+
+    async def generate(prompt):
+        prompts.append(prompt)
+        category = json.loads(prompt.split("INPUT:\n", 1)[1])["category"]
+        reply = replies[category]
+        return reply if isinstance(reply, str) else json.dumps({"ops": reply})
+
+    summaries = [{"id": "rev-1", "summary": "Item 2 was fixed."}]
+    result = asyncio.run(memory_reconcile.clean_up(store, "s", "scope", summaries, generate))
+    return result, prompts, memory_reconcile.latest(store, "s", "scope")
+
+
+def test_clean_up_waits_for_the_threshold(store):
+    seeded(store, memory_reconcile.CLEANUP_AT - 1)
+    result, prompts, _ = clean(store, {})
+    assert result["state"] == "skipped" and prompts == []
+
+
+def test_clean_up_merges_and_closes_with_evidence_and_leaves_failures_alone(store):
+    saved = seeded(store, 160)
+    ref = {i["text"]: f"o{n}" for n, i in enumerate(saved["items"], 1)}
+    result, prompts, after = clean(
+        store,
+        {
+            "facts": [
+                {"op": "done", "id": ref["Item 2 detail"], "by": "s1"},
+                {
+                    "op": "merge",
+                    "ids": [ref["Item 5 detail"], ref["Item 8 detail"]],
+                    "kind": "known_issue",
+                    "text": "Items 5 and 8 are one issue.",
+                },
+            ],
+            # An id from another category is not this call's to close.
+            "rules": [{"op": "done", "id": ref["Item 2 detail"], "by": "s1"}],
+            "intent": "not json",
+        },
+    )
+    assert len(prompts) == 4  # intent failed twice
+    assert result["state"] == "cleaned" and result["failed_categories"] == ["intent"]
+    assert (result["before"], result["after"], result["closed"]) == (160, 158, 3)
+    remaining = {i["text"] for i in after["items"]}
+    assert "Item 2 detail" not in remaining and "Items 5 and 8 are one issue." in remaining
+    assert {"Item 0 detail", "Item 1 detail"} <= remaining
+    assert after["absorbed"] == saved["absorbed"] and after["base"] == saved["id"]
+    done = next(c for c in after["closed"] if c["text"] == "Item 2 detail")
+    assert done["op"] == "done" and done["by"] == "rev-1"
+
+
+def test_clean_up_reruns_only_after_the_list_grows(store):
+    seeded(store, 160)
+    assert clean(store, {"intent": [], "rules": [], "facts": []})[0]["state"] == "cleaned"
+    assert clean(store, {})[0]["state"] == "skipped"
+    seeded(store, 160 + memory_reconcile.CLEANUP_GROWTH, start=160, name="l2")
+    assert clean(store, {"intent": [], "rules": [], "facts": []})[0]["state"] == "cleaned"

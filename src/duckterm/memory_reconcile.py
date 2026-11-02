@@ -245,6 +245,8 @@ async def reconcile(
         "items": kept,
         "closed": closed,
         "rejected_ops": rejected,
+        # Carried so clean_up waits for growth since its last run.
+        **({"cleaned": saved["cleaned"]} if saved and "cleaned" in saved else {}),
     }
     identity = uuid.uuid4().hex
     conn = store._conn
@@ -263,6 +265,89 @@ async def reconcile(
         "closed": len(closed),
         "rejected_ops": value["rejected_ops"],
     }
+
+
+# Owner, 2026-11-01: items only close on evidence, so a long session keeps
+# growing (product: 287-301 open items). Past this size, one call per category
+# merges overlaps and closes items a later item or summary resolves; it reruns
+# only after CLEANUP_GROWTH more items.
+CLEANUP_AT = 150
+CLEANUP_GROWTH = 30
+
+
+async def clean_up(
+    store: Any,
+    key: str,
+    scope: str,
+    summaries: list[dict[str, Any]],
+    generate: Provider,
+) -> dict[str, Any]:
+    """Shrink the saved item list with evidence; a failed category stays unchanged.
+
+    summaries are the active history narratives, oldest first, as {id, summary}.
+    """
+    saved = latest(store, key, scope)
+    if saved is None:
+        return {"state": "skipped"}
+    count = len(saved["items"])
+    last = saved.get("cleaned", {}).get("after")
+    if count < CLEANUP_AT or (last is not None and count < last + CLEANUP_GROWTH):
+        return {"state": "skipped", "items": count}
+    items = [dict(item, ref=f"o{n}", new=False) for n, item in enumerate(saved["items"], 1)]
+    by_ref = {item["ref"]: item for item in items}
+    order = [item["ref"] for item in items]
+    spans = {f"s{n}": s["id"] for n, s in enumerate(summaries, 1)}
+    history = [{"id": f"s{n}", "summary": s["summary"]} for n, s in enumerate(summaries, 1)]
+    ops: list[Any] = []
+    failed = []
+    for name in memory_contract.CATEGORIES:
+        subset = [i for i in items if memory_contract.category(i["kind"]) == name]
+        if len(subset) < 2:
+            continue
+        # Summaries first: they repeat across the three calls and cache.
+        payload = {
+            "span_summaries": history,
+            "category": name,
+            "open_items": [{"id": i["ref"], "kind": i["kind"], "text": i["text"]} for i in subset],
+        }
+        prompt = prompts.render("cleanup", payload=json.dumps(payload, ensure_ascii=False))
+        allowed = {i["ref"] for i in subset}
+        for _ in range(2):
+            try:
+                raw = progress.json_object(await generate(prompt))
+            except RuntimeError:
+                raw = None
+            if raw is not None and isinstance(raw.get("ops"), list):
+                # Each call sees one category; ids outside it are invented.
+                ops += [
+                    op
+                    for op in raw["ops"]
+                    if isinstance(op, dict)
+                    and {op.get("id"), *(op.get("ids") or [])} - {None} <= allowed
+                ]
+                break
+        else:
+            failed.append(name)
+    kept, closed, rejected = apply(ops, by_ref, order, spans)
+    value = {
+        **{k: saved[k] for k in ("format", "scope_hash", "absorbed")},
+        "base": saved["id"],
+        "items": kept,
+        "closed": closed,
+        "rejected_ops": rejected,
+        "cleaned": {"before": count, "after": len(kept), "failed_categories": failed},
+    }
+    identity = uuid.uuid4().hex
+    conn = store._conn
+    with transaction(conn):
+        if (latest(store, key, scope) or {}).get("id") != saved["id"]:
+            raise ValueError("reconcile_base_changed")
+        now = int(time.time() * 1000)
+        conn.execute(
+            "INSERT INTO digest_items VALUES (?, ?, ?, ?, 'active', ?, ?)",
+            (identity, key, BUCKET, json.dumps(value), now, now),
+        )
+    return {"state": "cleaned", "id": identity, **value["cleaned"], "closed": len(closed)}
 
 
 def brief_items(

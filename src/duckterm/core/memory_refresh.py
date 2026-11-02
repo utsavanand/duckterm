@@ -174,14 +174,29 @@ async def reconcile(
     async def generate(prompt: str) -> str:
         return await asyncio.to_thread(reconcile_reply, prompt, model)
 
+    scope = captured["source"]["scope_hash"]
     async with coordinator.persist_locks.setdefault(key, asyncio.Lock()):
-        return await memory_reconcile.reconcile(
-            coordinator.server.digests,
-            key,
-            captured["source"]["scope_hash"],
-            leaves,
-            generate,
+        result = await memory_reconcile.reconcile(
+            coordinator.server.digests, key, scope, leaves, generate
         )
+        rows = memory_folding.rows(coordinator.server.digests, key, scope)
+        index = {row["id"]: row for row in rows}
+        summaries = [
+            {
+                "id": node["id"],
+                "summary": (index[node["id"]].get("summary") if node["tier"] == 0 else None)
+                or index[node["id"]].get("continuity", {}).get("context", {}).get("overview", ""),
+            }
+            for node in memory_folding.active(rows)
+        ]
+        try:
+            result["cleanup"] = await memory_reconcile.clean_up(
+                coordinator.server.digests, key, scope, summaries, generate
+            )
+        except ValueError as exc:
+            # Optional: the reconciled items above stand; the next checkpoint retries.
+            result["cleanup"] = {"state": "failed", "reason": str(exc)[:80]}
+        return result
 
 
 def wanted(coordinator: ProgressCoordinator, key: str) -> bool:
@@ -361,7 +376,7 @@ async def _run(
     folds = await fold(coordinator, key, captured)
     coordinator.report_span_progress(key, stage="reconciling")
     try:
-        await reconcile(coordinator, key, captured, leaves)
+        reconciled = await reconcile(coordinator, key, captured, leaves)
     except (ValueError, KeyError, TypeError, RuntimeError) as exc:
         # Accepted leaves stay saved; the next checkpoint reconciles them.
         return incomplete(
@@ -425,6 +440,7 @@ async def _run(
     return replace(
         SummaryUpdate.from_revision(latest, reused=not changed),
         folds=folds,
+        cleanup=reconciled.get("cleanup"),
         attempt_coverage=attempt_coverage(),
         span_coverage={
             "state": "complete",

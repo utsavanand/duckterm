@@ -119,6 +119,8 @@ class SummaryUpdate:
     attempt_coverage: dict[str, Any] | None = None
     # Folds made after the spans were saved, and each rejected group.
     folds: dict[str, Any] | None = None
+    # The item clean-up run after reconciling, when the list was long enough.
+    cleanup: dict[str, Any] | None = None
 
     def metadata(self, attempted_at: int) -> dict[str, Any]:
         return {
@@ -133,6 +135,7 @@ class SummaryUpdate:
             ),
             **({"span_coverage": self.span_coverage} if self.span_coverage else {}),
             **({"folds": self.folds} if self.folds is not None else {}),
+            **({"cleanup": self.cleanup} if self.cleanup is not None else {}),
             **(
                 {
                     "attempt_coverage": {
