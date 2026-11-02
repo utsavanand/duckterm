@@ -14,6 +14,7 @@ import uuid
 from pathlib import Path
 
 import pytest
+from tests.runtime.test_ducky import visible_session_fixture
 
 from duckterm.core.orchestrator import SessionSupervisor
 from duckterm.editions import LITE
@@ -97,6 +98,7 @@ def app(tmp_path, monkeypatch):
     terminal = Terminal(root, socket)
     history = HistoryStore(root / "state.sqlite", edition=LITE)
     server = Server(history=history, edition=LITE)
+    visible_session_fixture(server, monkeypatch, {"phone-test"})
     target = "rd_ducky_message_test"
     try:
         capture = terminal.spawn(target)

@@ -396,6 +396,9 @@ struct ContentView: View {
         }.padding(16).overlay(alignment: .top) { Rectangle().fill(Palette.border).frame(height: 1) }
     }
     private var composerStatus: String {
+        if OutgoingMessage.startsWithLocalCommand(model.draft) {
+            return DuckyError.localCommandUnavailable.localizedDescription
+        }
         switch model.sendState {
         case .sending: return "Sending to your Mac…"
         case .unconfirmed: return "Receipt unconfirmed. Checking your Mac; your message won’t be sent again."

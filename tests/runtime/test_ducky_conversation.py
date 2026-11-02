@@ -6,6 +6,7 @@ import threading
 from pathlib import Path
 
 import pytest
+from tests.runtime.test_ducky import visible_session_fixture
 
 from duckterm.mobile import conversation
 from duckterm.persistence.history import HistoryStore
@@ -19,6 +20,7 @@ def app(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
     history = HistoryStore(tmp_path / "state.sqlite")
     server = Server(history=history)
+    visible_session_fixture(server, monkeypatch, {"a"})
     yield server, tmp_path
     server.digests.close()
     history.purge_test_sessions()
@@ -73,6 +75,72 @@ def write(path, rows):
 
 def read(server):
     return asyncio.run(conversation.read_conversation(server, "a"))
+
+
+@pytest.mark.parametrize("runtime", ["claude-code", "codex"])
+@pytest.mark.parametrize("state", ["idle", "terminated"])
+def test_test_session_cannot_read_or_discover_transcript(app, monkeypatch, runtime, state):
+    server, root = app
+    server.history.record(
+        {
+            "_id": "hidden-start",
+            "_ts": 1,
+            "event_type": "SessionStart",
+            "session_key": "hidden-test",
+            "runtime": runtime,
+            "cwd": str(root),
+            "session_id": "recorded-test-native",
+            "test": True,
+        }
+    )
+    server.history.set_state("hidden-test", state, now=2)
+    monkeypatch.setattr(
+        conversation,
+        "runtime_for",
+        lambda *args: pytest.fail("A hidden session must not discover or read a transcript"),
+    )
+    assert conversation.conversation_available(server, "hidden-test") is False
+    with pytest.raises(conversation.ConversationNotFound, match="^session_not_found$"):
+        conversation.trusted_message_source(server, "hidden-test")
+    with pytest.raises(conversation.ConversationNotFound, match="^session_not_found$"):
+        asyncio.run(conversation.read_conversation(server, "hidden-test"))
+    assert server.history.session("hidden-test")["test"] == 1
+
+
+def test_session_marked_test_during_read_discards_result(app, monkeypatch):
+    path = source(app)
+    write(path, [claude("assistant", "PRIVATE_TEST_REPLY")])
+    server = app[0]
+    entered, release = threading.Event(), threading.Event()
+    original = conversation._read
+
+    def delayed(captured):
+        result = original(captured)
+        entered.set()
+        assert release.wait(3)
+        return result
+
+    monkeypatch.setattr(conversation, "_read", delayed)
+
+    async def run():
+        task = asyncio.create_task(conversation.read_conversation(server, "a"))
+        try:
+            assert await asyncio.to_thread(entered.wait, 2)
+            session = server.history.session
+            monkeypatch.setattr(
+                server.history,
+                "session",
+                lambda key: {**row, "test": True} if (row := session(key)) else None,
+            )
+            release.set()
+            with pytest.raises(conversation.ConversationNotFound, match="^session_not_found$"):
+                await task
+            assert conversation.conversation_available(server, "a") is False
+        finally:
+            release.set()
+            await asyncio.gather(task, return_exceptions=True)
+
+    asyncio.run(run())
 
 
 def test_claude_only_plain_turns_and_nullable_epoch_timestamps(app):

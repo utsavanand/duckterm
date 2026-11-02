@@ -55,6 +55,7 @@ public final class DuckyClient {
         return result
     }
     public func send(_ message: OutgoingMessage) async throws -> MessageReceipt {
+        guard !OutgoingMessage.startsWithLocalCommand(message.text) else { throw DuckyError.localCommandUnavailable }
         guard OutgoingMessage.validText(message.text), !message.sendContext.isEmpty,
               UUID(uuidString: message.requestID) != nil else { throw DuckyError.invalidResponse }
         let body = try JSONSerialization.data(withJSONObject: ["session_id": message.sessionID,
@@ -75,6 +76,15 @@ public final class DuckyClient {
         sessions.removeAll()
         lock.unlock()
         active.forEach { $0.invalidateAndCancel() }
+    }
+    static func messageRejection(_ data: Data) -> DuckyError {
+        struct Rejection: Decodable { let error: String }
+        if data.count <= 4096,
+           let response = try? JSONDecoder().decode(Rejection.self, from: data),
+           response.error == "local_command_unavailable" {
+            return .localCommandUnavailable
+        }
+        return .unavailable(400)
     }
     private func register(_ session: URLSession, id: UUID) throws {
         lock.lock(); defer { lock.unlock() }
@@ -137,6 +147,16 @@ public final class DuckyClient {
         let (bytes, response) = try await session.bytes(for: request, delegate: delegate)
         defer { bytes.task.cancel() }
         guard let http = response as? HTTPURLResponse else { throw DuckyError.invalidResponse }
+        if http.statusCode == 400, path == "/v2/messages", body != nil {
+            var rejection = Data()
+            do {
+                for try await byte in bytes {
+                    guard rejection.count < 4096 else { throw DuckyError.invalidResponse }
+                    rejection.append(byte)
+                }
+            } catch { throw DuckyError.unavailable(400) }
+            throw Self.messageRejection(rejection)
+        }
         guard (200..<300).contains(http.statusCode) else { throw DuckyError.unavailable(http.statusCode) }
         var data = Data()
         for try await byte in bytes {

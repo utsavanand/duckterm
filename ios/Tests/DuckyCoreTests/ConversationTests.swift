@@ -207,6 +207,35 @@ final class ConversationLifecycleTests: XCTestCase {
         model.enterBackground(); transport.readContinuation?.resume(); await settle()
         XCTAssertNil(model.conversation); XCTAssertFalse(model.canSend)
     }
+    func testLocalCommandsNeverReachTransportAndEditingAllowsPlainText() async {
+        let (model, transport) = await setup()
+        defer { model.forget() }
+        model.selectSession("a"); await settle()
+        for text in ["!pwd", " /help", "\n\t# remember this", "\r\n  !echo hello\nsecond line", "\u{feff}!pwd", "\u{200b} /clear"] {
+            model.setDraft(text); await model.sendMessage()
+            XCTAssertTrue(transport.sends.isEmpty)
+            XCTAssertEqual(model.draft, text)
+            XCTAssertNil(model.sendState)
+        }
+        model.setDraft("Explain /help and # headings."); await model.sendMessage()
+        XCTAssertEqual(transport.sends.count, 1)
+        XCTAssertEqual(model.draft, "")
+    }
+    func testServerCommandRejectionPreservesDraftWithoutUnconfirmedReceipt() async {
+        let (model, transport) = await setup()
+        defer { model.forget() }
+        model.selectSession("a"); await settle()
+        model.setDraft("A plain message")
+        transport.sendError = DuckyError.localCommandUnavailable
+        await model.sendMessage()
+        XCTAssertEqual(model.sendState, .rejected(DuckyError.localCommandUnavailable.localizedDescription))
+        XCTAssertEqual(model.draft, "A plain message")
+        XCTAssertTrue(model.canSend)
+        transport.sendError = nil
+        model.setDraft("Edited plain message"); await model.sendMessage()
+        XCTAssertEqual(transport.sends.count, 2)
+        XCTAssertNotEqual(transport.sends[0].requestID, transport.sends[1].requestID)
+    }
 }
 
 final class ConversationProtocolTests: XCTestCase {
@@ -233,5 +262,41 @@ final class ConversationProtocolTests: XCTestCase {
             XCTAssertFalse(OutgoingMessage.validText(text))
         }
         XCTAssertTrue(OutgoingMessage.validText(String(repeating: "😀", count: 1024)))
+    }
+    func testFirstNonWhitespaceCommandPrefixesAreRejectedWithoutBanningOrdinaryPunctuation() {
+        for prefix in ["!", "/", "#"] {
+            for whitespace in ["", " ", "\t", "\n\r\n", " \n\t ", "\u{a0}\u{2003}", "\u{feff}", "\u{200b} ", "\t\u{2066}\n\u{200d} "] {
+                let text = whitespace + prefix + "command\nmore text"
+                XCTAssertTrue(OutgoingMessage.startsWithLocalCommand(text), text)
+                XCTAssertFalse(OutgoingMessage.validText(text), text)
+            }
+        }
+        for text in ["Hello!", "Explain /help", "Use # headings", "First line\n/quoted command", "First\n! second", "😀 / # !", "\u{200b}Hello!"] {
+            XCTAssertTrue(OutgoingMessage.validText(text), text)
+        }
+    }
+    func testOnlyExactBoundedServerReasonGetsCommandWording() {
+        let expected = Data(#"{"error":"local_command_unavailable"}"#.utf8)
+        guard case .localCommandUnavailable = DuckyClient.messageRejection(expected) else { return XCTFail("Missing command reason") }
+        for data in [Data(), Data(#"{"reason":"local_command_unavailable"}"#.utf8),
+                     Data(#"{"error":"invalid_text","message":"untrusted text"}"#.utf8),
+                     Data(#"{"error":"LOCAL_COMMAND_UNAVAILABLE"}"#.utf8),
+                     expected + Data(repeating: 32, count: 4096)] {
+            guard case .unavailable(400) = DuckyClient.messageRejection(data) else { return XCTFail("Unexpected server wording") }
+        }
+    }
+    func testDirectClientRejectsCommandsBeforeDNSOrNetwork() async throws {
+        let invitation = Invitation(version: 1, hostID: String(repeating: "a", count: 32), invite: String(repeating: "i", count: 43),
+            expiresAt: Int(Date().timeIntervalSince1970) + 600, url: URL(string: "https://fixture.local:4430")!, certificateSHA256: String(repeating: "c", count: 64))
+        let client = try DuckyClient(host: PairedHost(invitation: invitation, token: String(repeating: "t", count: 43)), resolver: { _ in
+            XCTFail("Rejected messages must not resolve or connect"); return []
+        })
+        defer { client.close() }
+        for text in ["!pwd", "\n /help", "\t# memory", "\u{feff}!pwd", "\u{200b} /clear"] {
+            do {
+                _ = try await client.send(OutgoingMessage(sessionID: "a", sendContext: "context", text: text))
+                XCTFail("Command sent")
+            } catch DuckyError.localCommandUnavailable { }
+        }
     }
 }

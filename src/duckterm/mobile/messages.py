@@ -7,6 +7,7 @@ import hashlib
 import hmac
 import secrets
 import time
+import unicodedata
 import uuid
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -21,6 +22,14 @@ if TYPE_CHECKING:
 
 CONTEXT_SECONDS = 60
 QUIET_MS = 120000
+
+
+def local_command(text: str) -> bool:
+    # Invisible leading format characters must not hide a harness shortcut.
+    for char in text:
+        if not char.isspace() and unicodedata.category(char) != "Cf":
+            return char in "!/#"
+    return False
 
 
 def validate(request: object) -> dict[str, str]:
@@ -50,6 +59,8 @@ def validate(request: object) -> dict[str, str]:
         raise MessageError(400, "invalid_text")
     if length > 4096:
         raise MessageError(413, "message_too_large")
+    if local_command(text):
+        raise MessageError(400, "local_command_unavailable")
     return {**request, "text": text}
 
 
@@ -72,7 +83,7 @@ class Messages:
 
     def target(self, key: str) -> tuple[SessionSupervisor | None, str | None]:
         row = self.server.history.session(key)
-        if row is None or row.get("state") in {"archived", "merged"}:
+        if row is None or row.get("test") or row.get("state") in {"archived", "merged"}:
             return None, "session_unavailable"
         if row.get("state") not in {"idle", "busy", "waiting"}:
             return None, "session_finished"
@@ -147,10 +158,14 @@ class Messages:
 
     async def accept(self, device: dict[str, Any], raw: object) -> dict[str, Any]:
         request = validate(raw)
+        if self.hidden_test_session(request["session_id"]):
+            raise MessageError(404, "session_unavailable")
         await self.ensure_store()
         existing = await asyncio.to_thread(self.store.find, device["id"], request["request_id"])
         digest = payload_hash(request)
         if existing is not None:
+            if self.hidden_test_session(existing["session_id"]):
+                raise MessageError(404, "session_unavailable")
             if existing["payload_hash"] != digest:
                 raise MessageError(409, "request_conflict")
             return receipt(existing)
@@ -202,16 +217,26 @@ class Messages:
         self.ensure_worker()
         return receipt(saved)
 
+    def hidden_test_session(self, key: str) -> bool:
+        row = self.server.history.session(key)
+        return bool(row and row.get("test"))
+
     async def lookup(self, device: dict[str, Any], request_id: str) -> dict[str, Any]:
         if not self.initialized and not self.store.path.exists():
             raise MessageError(404, "request_not_found")
         await self.ensure_store()
         row = await asyncio.to_thread(self.store.find, device["id"], request_id)
-        if row is None or row["host"] != device["host_id"]:
+        if (
+            row is None
+            or row["host"] != device["host_id"]
+            or self.hidden_test_session(row["session_id"])
+        ):
             raise MessageError(404, "request_not_found")
         return receipt(row)
 
     async def receipts(self, device: dict[str, Any], key: str) -> list[dict[str, Any]]:
+        if self.hidden_test_session(key):
+            return []
         if not self.initialized and not self.store.path.exists():
             return []
         await self.ensure_store()
@@ -232,6 +257,11 @@ class Messages:
         )
 
     async def attempt(self, row: dict[str, Any]) -> None:
+        if local_command(row["text"]):
+            await asyncio.to_thread(
+                self.store.transition, row, "cancelled", "local_command_unavailable"
+            )
+            return
         key = row["session_id"]
         sup, reason = self.target(key)
         if sup is None or self.binding(key, sup) != row["binding"]:

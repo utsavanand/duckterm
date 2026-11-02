@@ -21,7 +21,11 @@ def snapshot(
     include_inactive: bool = False,
 ) -> dict[str, Any]:
     hidden = {"archived", "merged"} if include_inactive else set(AT_REST_STATES)
-    rows = [row for row in server.history.sessions() if row["state"] not in hidden]
+    rows = [
+        row
+        for row in server.history.sessions()
+        if not row.get("test") and row["state"] not in hidden
+    ]
     rows.sort(
         key=lambda row: (
             row["state"] != "waiting",
@@ -76,7 +80,7 @@ def snapshot(
             notices.append(
                 {"id": event["_id"], "session_id": key, "kind": kind, "at": event["_ts"]}
             )
-    folders = server.history.folders()
+    folders = server.history.folders(include_test=False)
     return {
         "version": 1,
         "host_id": host_id,

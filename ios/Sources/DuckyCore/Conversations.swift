@@ -88,9 +88,16 @@ public struct OutgoingMessage: Equatable {
     public static func normalize(_ text: String) -> String {
         text.replacingOccurrences(of: "\r\n", with: "\n").trimmingCharacters(in: .whitespacesAndNewlines)
     }
+    public static func startsWithLocalCommand(_ text: String) -> Bool {
+        guard let first = text.unicodeScalars.first(where: {
+            !CharacterSet.whitespacesAndNewlines.contains($0) && $0.properties.generalCategory != .format
+        }) else { return false }
+        return first == "!" || first == "/" || first == "#"
+    }
     public static func validText(_ text: String) -> Bool {
         let normalized = normalize(text)
-        return !normalized.isEmpty && normalized.utf8.count <= 4096 && normalized.unicodeScalars.allSatisfy {
+        return !normalized.isEmpty && !startsWithLocalCommand(normalized) &&
+            normalized.utf8.count <= 4096 && normalized.unicodeScalars.allSatisfy {
             ($0.value >= 32 && !(127...159).contains($0.value)) || $0.value == 10 || $0.value == 9
         }
     }

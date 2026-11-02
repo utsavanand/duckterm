@@ -317,6 +317,110 @@ def test_text_limit_uses_utf8_and_normalizes_crlf():
     assert size.value.status == 413
 
 
+@pytest.mark.parametrize(
+    "text",
+    [
+        "!",
+        "  !pwd",
+        "/",
+        "\t/clear",
+        "#",
+        "\n\n# remember this",
+        "\r\n !pwd\nsecond line",
+        "\u00a0/permissions",
+        "\ufeff!pwd",
+        "\u200b \t/clear",
+    ],
+)
+def test_harness_local_commands_rejected_before_acceptance(app, monkeypatch, text):
+    server, root = app
+    service, device, token, sup, writes = prepare(server, root, monkeypatch)
+    bridge = Bridge(server, root, service)
+
+    async def run():
+        try:
+            code, body = await bridge.dispatch(
+                "POST",
+                "/v2/messages",
+                {"authorization": "Ducky " + token},
+                json.dumps(request(service, device, text)).encode(),
+            )
+            assert code == 400 and body == {"error": "local_command_unavailable"}
+            assert not service.store.path.exists()
+            assert writes == []
+        finally:
+            await cleanup(service, sup)
+
+    asyncio.run(run())
+
+
+@pytest.mark.parametrize(
+    "text", ["Explain /clear", "Please review #123", "Fix this!", "Explain:\n/path\n# heading"]
+)
+def test_command_symbols_inside_agent_messages_are_literal(text):
+    value = {"session_id": "a", "send_context": "c", "request_id": str(uuid.uuid4()), "text": text}
+    assert validate(value)["text"] == text
+
+
+def test_test_session_cannot_send_or_reveal_existing_receipts(app, monkeypatch):
+    server, root = app
+    service, device, token, sup, writes = prepare(server, root, monkeypatch)
+    bridge = Bridge(server, root, service)
+
+    async def run():
+        try:
+            payload = request(service, device)
+            await service.accept(device, payload)
+            queued = service.store.find(device["id"], payload["request_id"])
+            original = server.history.session
+            monkeypatch.setattr(
+                server.history,
+                "session",
+                lambda key: {**original(key), "test": 1} if key == "a" else original(key),
+            )
+            assert service.fields("a", device)["can_send"] is False
+            for method, path, body in (
+                ("POST", "/v2/messages", json.dumps(payload).encode()),
+                ("GET", "/v2/messages?request_id=" + payload["request_id"], b""),
+                ("GET", "/v2/conversation?session_id=a", b""),
+            ):
+                code, response = await bridge.dispatch(
+                    method, path, {"authorization": "Ducky " + token}, body
+                )
+                assert code == 404 and "text" not in response
+            assert await service.receipts(device, "a") == []
+            await service.attempt(queued)
+            saved = service.store.find(device["id"], payload["request_id"])
+            assert saved["status"] == "cancelled" and saved["text"] == ""
+            assert writes == []
+        finally:
+            await cleanup(service, sup)
+
+    asyncio.run(run())
+
+
+def test_queued_legacy_local_command_never_reaches_terminal(app, monkeypatch):
+    server, root = app
+    service, device, _, sup, writes = prepare(server, root, monkeypatch)
+
+    async def run():
+        try:
+            payload = request(service, device)
+            await service.accept(device, payload)
+            with service.store.connect() as db:
+                db.execute("UPDATE messages SET text=?", ("\n!pwd",))
+            queued = service.store.find(device["id"], payload["request_id"])
+            await service.attempt(queued)
+            saved = service.store.find(device["id"], payload["request_id"])
+            assert saved["status"] == "cancelled"
+            assert saved["reason"] == "local_command_unavailable" and saved["text"] == ""
+            assert writes == []
+        finally:
+            await cleanup(service, sup)
+
+    asyncio.run(run())
+
+
 def test_compound_prompt_does_not_interleave_desktop_bytes(app, monkeypatch):
     server, root = app
     service, device, _, sup, _ = prepare(server, root, monkeypatch)
@@ -416,13 +520,22 @@ def test_acceptance_is_not_rejected_if_access_changes_after_commit(app, monkeypa
     asyncio.run(run())
 
 
-def test_session_archived_during_conversation_read_is_not_returned(app, monkeypatch):
+@pytest.mark.parametrize("hidden", ["archived", "test"])
+def test_session_hidden_during_conversation_read_is_not_returned(app, monkeypatch, hidden):
     server, root = app
     service, device, token, sup, _ = prepare(server, root, monkeypatch)
     bridge = Bridge(server, root, service)
 
     async def archive_during_read(server, key):
-        server.history.set_state(key, "archived", now=100)
+        if hidden == "archived":
+            server.history.set_state(key, "archived", now=100)
+        else:
+            original = server.history.session
+            monkeypatch.setattr(
+                server.history,
+                "session",
+                lambda key: {**original(key), "test": 1} if key == "a" else original(key),
+            )
         return {
             "messages": [{"id": "a", "role": "assistant", "text": "hidden", "at": None}],
             "truncated": False,

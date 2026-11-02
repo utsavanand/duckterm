@@ -53,7 +53,7 @@ class TrustedMessageSource:
 def trusted_message_source(server: Server, session_key: str) -> TrustedMessageSource:
     """Copy provenance on the history owner thread; never discover by directory recency."""
     row = server.history.session(session_key)
-    if row is None:
+    if row is None or row.get("test"):
         raise ConversationNotFound()
     runtime = row.get("runtime")
     try:

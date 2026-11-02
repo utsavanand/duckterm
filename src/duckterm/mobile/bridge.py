@@ -126,13 +126,17 @@ class Bridge:
                     raise ValueError("Invalid conversation query")
                 key = query["session_id"][0]
                 row = self.server.history.session(key)
-                if row is None or row["state"] in {"archived", "merged"}:
+                if row is None or row.get("test") or row["state"] in {"archived", "merged"}:
                     raise ConversationNotFound()
                 result = await read_conversation(self.server, key)
                 receipts = await self.messages.receipts(device, key)
                 await self.recheck(device, "conversation:read")
                 current = self.server.history.session(key)
-                if current is None or current["state"] in {"archived", "merged"}:
+                if (
+                    current is None
+                    or current.get("test")
+                    or current["state"] in {"archived", "merged"}
+                ):
                     raise ConversationNotFound()
                 return 200, {
                     "version": 1,

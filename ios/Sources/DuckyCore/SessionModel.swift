@@ -318,7 +318,10 @@ public final class SessionModel: ObservableObject {
             acceptReceipt(receipt, message: message)
         } catch {
             guard mine == generation, host?.hostID == hostID, pendingMessages[id] == message else { return }
-            if case DuckyError.unavailable(let status) = error, [400, 403, 404, 409, 413, 429, 503].contains(status) {
+            if case DuckyError.localCommandUnavailable = error {
+                pendingMessages[id] = nil
+                sends[id] = .rejected(error.localizedDescription)
+            } else if case DuckyError.unavailable(let status) = error, [400, 403, 404, 409, 413, 429, 503].contains(status) {
                 pendingMessages[id] = nil
                 let text: String
                 switch status {

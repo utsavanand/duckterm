@@ -1,12 +1,13 @@
 import Foundation
 
 public enum DuckyError: LocalizedError {
-    case invalidInvitation, expiredInvitation, invalidResponse, unavailable(Int), credentialStorage(Int32)
+    case invalidInvitation, expiredInvitation, invalidResponse, localCommandUnavailable, unavailable(Int), credentialStorage(Int32)
     public var errorDescription: String? {
         switch self {
         case .invalidInvitation: return "This Ducky invitation is invalid. Create a new invitation on your Mac."
         case .expiredInvitation: return "This invitation has expired. Create a new invitation on your Mac."
         case .invalidResponse: return "The Mac returned an unsupported response. Your last view may be out of date."
+        case .localCommandUnavailable: return "Messages can’t start with !, / or #. Run commands on your Mac."
         case .unavailable(403): return "Access is unapproved, expired or revoked. Check Ducky devices on your Mac."
         case .unavailable(503): return "Ducky is unavailable on your Mac. Check whether it is enabled, then refresh."
         case .unavailable: return "The Mac is unavailable. Try refreshing."

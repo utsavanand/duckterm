@@ -16,6 +16,27 @@ from duckterm.persistence.history import HistoryStore
 from duckterm.server import Server
 
 
+def ordinary_fixture_view(history: HistoryStore) -> None:
+    """Expose only the named protocol fixture as ordinary; keep persisted test:true."""
+    session, sessions, folders = history.session, history.sessions, history.folders
+
+    def view(row):
+        return {**row, "test": False} if row and row["session_key"] == "test-agent" else row
+
+    def folder_view(*, include_test=True):
+        names = set(folders(include_test=include_test))
+        row = session("test-agent")
+        group = row.get("grp") if row else None
+        while not include_test and group:
+            names.add(group)
+            group = group.rsplit("/", 1)[0] if "/" in group else None
+        return sorted(names, key=str.lower)
+
+    history.session = lambda key: view(session(key))
+    history.sessions = lambda: [view(row) for row in sessions()]
+    history.folders = folder_view
+
+
 async def run(root: Path, mode: str) -> None:
     os.environ["HOME"] = str(root)
     os.environ["DUCKTERM_HOME"] = str(root)
@@ -31,6 +52,7 @@ async def run(root: Path, mode: str) -> None:
         config.update(hostname="ducky-native-fixture.local", tls_name="127.0.0.1")
     history = HistoryStore(root / "state.sqlite", edition=LITE)
     server = Server(history=history, edition=LITE)
+    ordinary_fixture_view(history)
     bridge = Bridge(server, root)
     secondary = None
     counters = {"requests": 0, "handshakes": 0}
@@ -136,6 +158,7 @@ async def run(root: Path, mode: str) -> None:
             }
         )
         history.set_meta("test-agent", name="Native protocol test", group="Test folder")
+        assert history._conn.execute("SELECT test FROM sessions").fetchone()[0] == 1
         if mode == "conversations":
             history.set_state("test-agent", "busy", now=2)
         bridge.listener = await asyncio.start_server(
