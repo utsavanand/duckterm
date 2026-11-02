@@ -14,6 +14,11 @@ from duckterm.core.session_api import APIError
 # need ~59 KB. A 96 KB brief launches unchanged through tmux
 # (test_large_handoff_launch).
 MAX_BRIEF_BYTES = 96000
+# Before older facts are left out, the newest narratives are kept; after, the
+# rest. Owner, 2026-11-01: Intent and Rules always go in full; facts are listed
+# newest first to fit and the rest stay readable with `memory items`. A
+# 287-item session took 78% of the brief and one run could not hand off at all.
+NARRATIVE_FLOOR = 5
 
 
 def render(
@@ -34,6 +39,8 @@ def render(
     original = deepcopy(metadata)
     coverage = memory_contract.read_coverage(original.get("coverage"))
     kept_map, kept_narratives = source_map, narratives
+    facts = list(protected.get("facts", []))
+    kept_facts = facts
     omitted_fields: list[str] = []
     required_value: Any = None
     with suppress(ValueError):
@@ -64,6 +71,10 @@ def render(
                         ][:8],
                     }
                 )
+        left_out = len(facts) - len(kept_facts)
+        if left_out:
+            sections["facts"] = left_out
+            gaps.append({"reason": "budget_exhausted", "count": left_out, "sample_refs": []})
         if omitted_fields:
             sections["current_work_fields"] = list(omitted_fields)
             gaps.append(
@@ -87,7 +98,21 @@ def render(
             introduction=introduction,
             launch=json.dumps(launch, ensure_ascii=False),
             required=required,
-            summary=json.dumps(protected, ensure_ascii=False),
+            summary=json.dumps(
+                {
+                    **protected,
+                    "facts": kept_facts,
+                    **(
+                        {
+                            "facts_not_shown": f"{left_out} older facts; list them with "
+                            "duckterm memory items --category facts"
+                        }
+                        if left_out
+                        else {}
+                    ),
+                },
+                ensure_ascii=False,
+            ),
             tools=tools,
         )
         text = (
@@ -121,9 +146,11 @@ def render(
             else:
                 hi = mid - 1
         kept_map = source_map[:lo]
-    if not fits():
+
+    def keep_newest(floor: int) -> None:
+        nonlocal kept_narratives
         # Whole latest narratives survive; never cut a sentence or a claim.
-        lo, hi = 0, len(narratives)
+        lo, hi = floor, len(narratives)
         while lo < hi:
             mid = (lo + hi + 1) // 2
             kept_narratives = narratives[len(narratives) - mid :]
@@ -132,6 +159,22 @@ def render(
             else:
                 hi = mid - 1
         kept_narratives = narratives[len(narratives) - lo :]
+
+    if not fits():
+        keep_newest(min(NARRATIVE_FLOOR, len(narratives)))
+    if not fits():
+        # Older facts go first, whole lines; the newest facts stay.
+        lo, hi = 0, len(facts)
+        while lo < hi:
+            mid = (lo + hi + 1) // 2
+            kept_facts = facts[len(facts) - mid :]
+            if fits():
+                lo = mid
+            else:
+                hi = mid - 1
+        kept_facts = facts[len(facts) - lo :]
+    if not fits():
+        keep_newest(0)
     if not fits() and isinstance(required_value, dict):
         # These are retrievable current records, not the session's identity,
         # role, launch expectations, or protected claims. Omit complete fields.
