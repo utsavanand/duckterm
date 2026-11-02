@@ -286,7 +286,8 @@ def test_cancelled_provider_propagates_without_producing_parent(stage):
 def test_fenced_reply_and_one_rewrite_with_validator_feedback():
     children = [node(n) for n in range(10)]
     children[0]["narrative"] = "Full span summary: B5 advanced and DuckCloud planned."
-    prompts, verdicts = [], [
+    prompts = []
+    verdicts = [
         {"ready": False, "reason_codes": ["missing:duckcloud_plan"]},
         {"ready": True, "reason_codes": []},
     ]
