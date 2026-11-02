@@ -205,3 +205,45 @@ def test_checkpoints_do_not_retain_tool_events(memory_rig, monkeypatch):
     # 240 tool events later, nothing per event was copied or listed.
     assert len(list(root.glob("record-*.json"))) == 1  # the session card only
     assert max(sizes) - min(sizes) < 2000, sizes
+
+
+def test_a_checkpoint_from_another_sharing_scope_stays_hidden(memory_rig, monkeypatch):
+    # Architect ruling: retained references are the sharing-scope check
+    # (memory_records.projections). Retaining only citable rows must keep it.
+    from test_session_api import enroll
+
+    from duckterm import server as sm
+
+    server, headers, _, tmp = memory_rig
+    transcript(tmp, "agent-claude", "Retain the owner instruction.")
+    provider(monkeypatch)
+    writer = sm.summarize
+
+    def shaped(prompt, *, tier, claude_model=None, effort=None, schema=None):
+        if "MEMORY UPDATE:\n" in prompt:
+            return writer(prompt)
+        return SimpleNamespace(text='{"ops": []}', failure_reason=None)
+
+    monkeypatch.setattr(memory_refresh, "reconcile_reply", REAL_RECONCILE)
+    monkeypatch.setattr(sm, "summarize", shaped)
+    for i in range(20):
+        server.history.record(
+            {
+                "_id": f"tool-{i}",
+                "_ts": 10 + i,
+                "event_type": "PreToolUse",
+                "session_key": "agent",
+                "tool_name": "Bash",
+                "tool_input": {"command": "ls"},
+            }
+        )
+    asyncio.run(server._create_checkpoint("agent", server.history.session("agent"), "manual"))
+
+    def checkpoint_sources(auth):
+        status, body = dispatch(server, "GET", "/api/v1/session/memory/sources", auth)
+        assert status == 200
+        return [s for s in body["sources"] if s["kind"] == "checkpoint"]
+
+    assert len(checkpoint_sources(headers)) == 1
+    server.history.set_meta("agent", group="Elsewhere")
+    assert checkpoint_sources(enroll(server.history, "agent", "Elsewhere")) == []
