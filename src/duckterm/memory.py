@@ -402,6 +402,7 @@ class Memory:
             },
             "revisions": {"cursor", "limit"},
             "sources": set(),
+            "items": {"category"},
             "search": {"q", "limit"},
             "read": {"source", "record", "offset", "limit"},
             "related": {"source", "record", "limit", "cursor"},
@@ -433,6 +434,21 @@ class Memory:
         return memory_reconcile.latest(self.server.digests, key, scope) if scope else None
 
     async def _operate(self, key: str, action: str, query: dict[str, list[str]]) -> dict[str, Any]:
+        if action == "items":
+            # A handoff can leave older facts out; this lists every current item.
+            from duckterm import memory_contract
+
+            category = query.get("category", [""])[0]
+            if category and category not in memory_contract.CATEGORIES:
+                raise APIError(400, "Unknown memory item category")
+            saved = self.reconciled(key, self.catalog(key, retrieval=True)) or {}
+            return {
+                "items": [
+                    {k: item[k] for k in ("id", "kind", "text", "refs")}
+                    for item in saved.get("items", [])
+                    if not category or memory_contract.category(item["kind"]) == category
+                ]
+            }
         if action == "revisions":
             return memory_view.revision_headers(
                 self.server.history._conn,

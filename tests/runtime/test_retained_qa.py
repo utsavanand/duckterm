@@ -7,9 +7,11 @@ from types import SimpleNamespace
 from test_maintained_progress import provider
 from test_memory import memory_rig, transcript
 from test_memory_large_native import message, source
+from test_session_api import dispatch
 
 from duckterm import memory_sources
 from duckterm.core import memory_refresh
+from duckterm.memory_contract import CATEGORIES
 
 __all__ = ["memory_rig"]
 
@@ -19,7 +21,7 @@ REAL_RECONCILE = memory_refresh.reconcile_reply
 def test_real_checkpoint_without_reconcile_stub(memory_rig, monkeypatch):
     from duckterm import server as sm
 
-    server, _, _, tmp = memory_rig
+    server, headers, _, tmp = memory_rig
     transcript(tmp, "agent-claude", "Retain the owner instruction.")
     provider(monkeypatch)
     writer = sm.summarize
@@ -39,6 +41,14 @@ def test_real_checkpoint_without_reconcile_stub(memory_rig, monkeypatch):
     ).fetchall()
     assert rows and json.loads(rows[-1]["text"])["items"]
     assert any("MEMORY UPDATE:\n" not in p and tier == "fast" for p, tier, _ in calls)
+    # A handoff that leaves older facts out points the agent at `memory items`.
+    saved = json.loads(rows[-1]["text"])["items"]
+    status, body = dispatch(server, "GET", "/api/v1/session/memory/items", headers)
+    assert status == 200
+    assert body["items"] == [{k: i[k] for k in ("id", "kind", "text", "refs")} for i in saved]
+    status, body = dispatch(server, "GET", "/api/v1/session/memory/items?category=facts", headers)
+    assert status == 200 and all(i["kind"] in CATEGORIES["facts"] for i in body["items"])
+    assert dispatch(server, "GET", "/api/v1/session/memory/items?category=x", headers)[0] == 400
 
 
 def test_more_than_256_appends_retain_every_version(tmp_path, monkeypatch):
