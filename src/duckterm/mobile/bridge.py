@@ -114,7 +114,10 @@ class Bridge:
                         raise ValueError("Invalid receipt query")
                     result = await self.messages.lookup(device, query["request_id"][0])
                     status = 200
-                await self.recheck(device, "session:send")
+                if method == "GET":
+                    await self.recheck(device, "session:send")
+                # POST authorization and acceptance commit together. A later
+                # opt-out must not turn accepted work into a rejection/retry.
                 return status, {"version": 1, "host_id": device["host_id"], "receipt": result}
             if parsed.path == "/v2/conversation":
                 if "conversation:read" not in device["capabilities"]:
@@ -128,6 +131,9 @@ class Bridge:
                 result = await read_conversation(self.server, key)
                 receipts = await self.messages.receipts(device, key)
                 await self.recheck(device, "conversation:read")
+                current = self.server.history.session(key)
+                if current is None or current["state"] in {"archived", "merged"}:
+                    raise ConversationNotFound()
                 return 200, {
                     "version": 1,
                     "host_id": device["host_id"],

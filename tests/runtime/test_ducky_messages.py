@@ -383,3 +383,60 @@ def test_direct_input_cannot_split_compound_action(app, monkeypatch, method, val
             await cleanup(service, sup)
 
     asyncio.run(run())
+
+
+def test_acceptance_is_not_rejected_if_access_changes_after_commit(app, monkeypatch):
+    server, root = app
+    service, device, token, sup, writes = prepare(server, root, monkeypatch)
+    bridge = Bridge(server, root, service)
+    original = service.accept
+
+    async def accept_then_disable(device, payload):
+        result = await original(device, payload)
+        (root / "ducky-bridge.json").unlink()
+        return result
+
+    monkeypatch.setattr(service, "accept", accept_then_disable)
+
+    async def run():
+        try:
+            payload = request(service, device)
+            status, response = await bridge.dispatch(
+                "POST",
+                "/v2/messages",
+                {"authorization": "Ducky " + token},
+                json.dumps(payload).encode(),
+            )
+            assert status == 202 and response["receipt"]["status"] == "queued"
+            assert service.store.find(device["id"], payload["request_id"]) is not None
+            assert writes == []
+        finally:
+            await cleanup(service, sup)
+
+    asyncio.run(run())
+
+
+def test_session_archived_during_conversation_read_is_not_returned(app, monkeypatch):
+    server, root = app
+    service, device, token, sup, _ = prepare(server, root, monkeypatch)
+    bridge = Bridge(server, root, service)
+
+    async def archive_during_read(server, key):
+        server.history.set_state(key, "archived", now=100)
+        return {
+            "messages": [{"id": "a", "role": "assistant", "text": "hidden", "at": None}],
+            "truncated": False,
+        }
+
+    monkeypatch.setattr("duckterm.mobile.bridge.read_conversation", archive_during_read)
+
+    async def run():
+        try:
+            status, response = await bridge.dispatch(
+                "GET", "/v2/conversation?session_id=a", {"authorization": "Ducky " + token}, b""
+            )
+            assert status == 404 and "hidden" not in json.dumps(response)
+        finally:
+            await cleanup(service, sup)
+
+    asyncio.run(run())
