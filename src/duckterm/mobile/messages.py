@@ -298,7 +298,8 @@ class Messages:
                         row["pane"].split(":", 1)[0],
                         b"\x1b[200~" + row["text"].encode() + b"\x1b[201~",
                     )
-                    time.sleep(0.1)
+                    # Preserve the desktop gap proven against Claude Code swallowing Enter.
+                    time.sleep(self.server._SUBMIT_GAP_S)
                     if (
                         not self.enabled()
                         or self.configuration() != configuration
