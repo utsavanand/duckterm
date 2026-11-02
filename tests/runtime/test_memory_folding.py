@@ -476,3 +476,39 @@ def inspect_signature(function):
     import inspect
 
     return inspect.signature(function).parameters
+
+
+def test_a_rejected_fold_skips_its_group_and_the_pass_folds_the_next(memory_rig, monkeypatch):
+    from duckterm.core import memory_refresh
+
+    server, _, _, tmp = memory_rig
+    transcript(tmp, "agent-claude", "Owner instruction")
+
+    def generate(prompt, **_kw):
+        first_group = '"Work 0."' in prompt
+        if prompt.startswith("Validate"):
+            value = {"ready": not first_group, "reason_codes": ["unsupported"] * first_group}
+        else:
+            value = {"overview": "Combined work."}
+        return SimpleNamespace(text=json.dumps(value))
+
+    monkeypatch.setattr("duckterm.server.summarize", generate)
+
+    async def run():
+        captured = await server.progress_coordinator.capture("agent")
+        ids = seed(server, captured, 60)
+        result = await memory_refresh.fold(server.progress_coordinator, "agent", captured)
+        assert result == {
+            "folded": 1,
+            "failed": [
+                {"tier": 0, "reason": "summary_unverified", "reason_codes": ["unsupported"]}
+            ],
+        }
+        heads = folding.active(
+            folding.rows(server.digests, "agent", captured["source"]["scope_hash"])
+        )
+        # The rejected first ten stay unfolded for the next checkpoint; 10-19 folded.
+        leaves = [n["id"] for n in heads if n["tier"] == 0]
+        assert leaves == ids[:10] + ids[20:] and len(heads) == 51
+
+    asyncio.run(run())

@@ -99,22 +99,53 @@ async def refresh(
             coordinator.span_waiters.pop(key, None)
 
 
-async def fold(coordinator: ProgressCoordinator, key: str, captured: dict[str, Any]) -> None:
-    """Fold once every span is saved, group by group; a rejected fold stops the pass
-    and keeps its spans unfolded until the next checkpoint."""
+async def fold(
+    coordinator: ProgressCoordinator, key: str, captured: dict[str, Any]
+) -> dict[str, Any]:
+    """Fold once every span is saved, group by group.
+
+    A rejected group stays unfolded until the next checkpoint and the pass moves
+    on to the next group; one rejection used to stop every later fold, and the
+    product catch-up handed off with 10 span summaries left out (2026-11-01).
+    Returns the folds made and each rejection, for the checkpoint result.
+    """
+    folded = 0
+    failed: list[dict[str, Any]] = []
+    skip: set[str] = set()
     async with coordinator.persist_locks.setdefault(key, asyncio.Lock()):
         for _ in range(memory_folding.MAX_FOLDS):
             proposal = await memory_folding.prepare(
-                coordinator, key, captured, {"span": "incremental", "context_version": 2}
+                coordinator,
+                key,
+                captured,
+                {"span": "incremental", "context_version": 2},
+                frozenset(skip),
             )
-            if not proposal or not proposal.get("parents"):
-                return
-            with transaction(coordinator.server.digests._conn):
-                status = memory_folding.apply(
-                    coordinator.server.digests, key, proposal, int(time.time() * 1000)
+            # A rejected group marks the proposal pending; its attempts say which.
+            if not proposal or not proposal.get("attempts"):
+                break
+            rejected = [a for a in proposal["attempts"] if a["state"] != "compacted"]
+            for attempt in rejected:
+                skip.update(attempt["children"])
+                failed.append(
+                    {
+                        k: attempt[k]
+                        for k in ("tier", "reason", "reason_codes")
+                        if attempt.get(k) is not None
+                    }
                 )
-            if status["state"] != "compacted":
-                return
+            if proposal["parents"]:
+                with transaction(coordinator.server.digests._conn):
+                    status = memory_folding.apply(
+                        coordinator.server.digests, key, proposal, int(time.time() * 1000)
+                    )
+                if "parent_ids" not in status:
+                    failed.append({"reason": status.get("reason") or status["state"]})
+                    break
+                folded += len(proposal["parents"])
+            elif not rejected:
+                break
+    return {"folded": folded, "failed": failed}
 
 
 def reconcile_reply(prompt: str, model: str | None) -> str:
@@ -327,7 +358,7 @@ async def _run(
         return incomplete(SummaryUpdate.failed("update_failed", diagnostic="update_canceled"))
     if latest is None:
         return incomplete(SummaryUpdate.failed("no_transcript"))
-    await fold(coordinator, key, captured)
+    folds = await fold(coordinator, key, captured)
     coordinator.report_span_progress(key, stage="reconciling")
     try:
         await reconcile(coordinator, key, captured, leaves)
@@ -393,6 +424,7 @@ async def _run(
     available = len(selection) if selection is not None else len(originals)
     return replace(
         SummaryUpdate.from_revision(latest, reused=not changed),
+        folds=folds,
         attempt_coverage=attempt_coverage(),
         span_coverage={
             "state": "complete",

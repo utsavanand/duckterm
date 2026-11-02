@@ -114,7 +114,11 @@ def _node(row: dict[str, Any], index: dict[str, dict[str, Any]], tier: int) -> d
 
 
 async def prepare(
-    coordinator: Any, key: str, captured: dict[str, Any], incoming: dict[str, Any]
+    coordinator: Any,
+    key: str,
+    captured: dict[str, Any],
+    incoming: dict[str, Any],
+    skip: frozenset[str] = frozenset(),
 ) -> dict[str, Any] | None:
     """Stage folds before a typed leaf append; failures never reject that leaf."""
     if incoming.get("span", "cumulative") != "incremental":
@@ -139,7 +143,7 @@ async def prepare(
             "continuity", {}
         ).get("context", {}).get("overview", "")
         node["bytes"] = len(str(narrative).encode())
-    if not memory_compaction.select(heads, 0):
+    if not memory_compaction.select(heads, 0, skip):
         return None
     proposal: dict[str, Any] = {
         "state": "prepared",
@@ -167,11 +171,13 @@ async def prepare(
         return reply.text
 
     async def fold(tier: int) -> None:
-        selected = memory_compaction.select(heads, tier)
+        selected = memory_compaction.select(heads, tier, skip)
         if not selected:
             return
         attempt: dict[str, Any] = {
             "input_key": fingerprint([index[node["id"]] for node in selected]),
+            "tier": tier,
+            "children": [node["id"] for node in selected],
             "state": "pending",
             "reason": "deadline",
             "captured_at": captured.get("captured_at"),
