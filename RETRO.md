@@ -1,3 +1,14 @@
+## 2026-11-01 — A limit the model lands on fails half the time, and a silent failure looks like success
+
+Folds had to fit 3,000 bytes and the prompt named both "aim for 2,500" and
+"never exceed 3,000"; Sonnet wrote 2,960-3,161 bytes, so about half of all folds
+failed. One failure stopped every later fold and was never recorded, so a long
+catch-up reported "updated" while handing off with 10 summaries left out. Name
+one target well under the hard limit, let one rejection skip only its own group,
+and put every rejection in the checkpoint result. Separately, a checkpoint copied
+every tool event to a file and listed it in its record (121k files, 8 MB
+records) though no summary can cite them: retain only what can be cited.
+
 ## Retained transcript pointers must survive growth and interrupted retries
 
 A fixed 256-hop reader limit made valid old snapshots unreadable after enough appends. Track visited references to reject cycles without rejecting valid chains. Rewriting an existing pointer in place after an interrupted index update could destroy the last readable route; publish pointer JSON with the existing atomic private-file writer before unlinking a full copy. Test long histories and failure/retry boundaries, not only three appends.

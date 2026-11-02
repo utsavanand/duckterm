@@ -117,6 +117,8 @@ class SummaryUpdate:
     # Attempt-only bookkeeping also identifies the result's exact batches.
     # Session-wide complete coverage can include leaves from earlier attempts.
     attempt_coverage: dict[str, Any] | None = None
+    # Folds made after the spans were saved, and each rejected group.
+    folds: dict[str, Any] | None = None
 
     def metadata(self, attempted_at: int) -> dict[str, Any]:
         return {
@@ -130,6 +132,7 @@ class SummaryUpdate:
                 else {}
             ),
             **({"span_coverage": self.span_coverage} if self.span_coverage else {}),
+            **({"folds": self.folds} if self.folds is not None else {}),
             **(
                 {
                     "attempt_coverage": {
