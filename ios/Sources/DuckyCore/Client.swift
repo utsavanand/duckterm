@@ -101,8 +101,10 @@ public final class DuckyClient {
         config.urlCache = nil
         config.urlCredentialStorage = nil
         config.waitsForConnectivity = false
-        config.connectionProxyDictionary = ["HTTPEnable": 0, "HTTPSEnable": 0, "SOCKSEnable": 0,
-                                           "ProxyAutoConfigEnable": 0, "ProxyAutoDiscoveryEnable": 0]
+        // An explicit empty dictionary selects a direct connection. Proxy-disable
+        // keys such as HTTPSEnable are macOS-only; nil would instead inherit the
+        // device's proxy settings.
+        config.connectionProxyDictionary = [:]
         config.timeoutIntervalForRequest = min(8, timeout)
         config.timeoutIntervalForResource = timeout
         let session = URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
