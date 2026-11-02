@@ -193,7 +193,7 @@ async def reconcile(
             result["cleanup"] = await memory_reconcile.clean_up(
                 coordinator.server.digests, key, scope, summaries, generate
             )
-        except ValueError as exc:
+        except (ValueError, KeyError, TypeError, RuntimeError, OSError) as exc:
             # Optional: the reconciled items above stand; the next checkpoint retries.
             result["cleanup"] = {"state": "failed", "reason": str(exc)[:80]}
         return result

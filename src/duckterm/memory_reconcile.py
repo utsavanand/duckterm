@@ -133,6 +133,7 @@ def apply(
                 or not isinstance(text, str)
                 or not text.strip()
                 or len(text) > MAX_ITEM_CHARS
+                or not isinstance(new_kind, str)
                 or new_kind not in memory_contract.KIND_FIELD
             ):
                 rejected += 1
@@ -323,7 +324,10 @@ async def clean_up(
                     op
                     for op in raw["ops"]
                     if isinstance(op, dict)
-                    and {op.get("id"), *(op.get("ids") or [])} - {None} <= allowed
+                    and isinstance(op.get("id"), str | None)
+                    and isinstance(op.get("ids", []), list)
+                    and all(isinstance(i, str) for i in op.get("ids", []))
+                    and {op.get("id"), *op.get("ids", [])} - {None} <= allowed
                 ]
                 break
         else:
