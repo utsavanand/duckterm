@@ -4,6 +4,7 @@ import contextlib
 import fcntl
 import hashlib
 import json
+import math
 import os
 import re
 import secrets
@@ -16,6 +17,7 @@ from typing import Any
 from duckterm.helpers.private_files import private_read, private_write
 
 TOKEN = re.compile(r"^[A-Za-z0-9_-]{43,128}$")
+CAPABILITIES = frozenset({"status:read", "conversation:read", "session:send"})
 
 
 class Denied(ValueError):
@@ -26,19 +28,63 @@ def digest(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
 
+def capabilities(value: object = None, *, strict: bool = False) -> list[str]:
+    """Legacy or damaged scopes never imply control; approvals reject bad input."""
+    if value is None:
+        return ["status:read"]
+    if (
+        not isinstance(value, list)
+        or any(not isinstance(item, str) or item not in CAPABILITIES for item in value)
+        or len(set(value)) != len(value)
+    ):
+        if strict:
+            raise ValueError("Invalid Ducky capabilities")
+        return ["status:read"]
+    return sorted({"status:read", *value})
+
+
+def _public_device(identifier: str, device: dict[str, Any], host_id: str) -> dict[str, Any]:
+    return {
+        "id": identifier,
+        "name": device["name"],
+        "status": device["status"],
+        "host_id": host_id,
+        "capabilities": (
+            capabilities(device.get("capabilities")) if device["status"] == "active" else []
+        ),
+        "api_version": 2,
+    }
+
+
 class Grants:
     def __init__(self, directory: Path) -> None:
         self.directory = directory
         self.path = directory / "ducky-grants.json"
 
     @contextlib.contextmanager
-    def locked(self, *, write: bool = False) -> Iterator[dict[str, Any]]:
+    def locked(
+        self, *, write: bool = False, timeout: float | None = None
+    ) -> Iterator[dict[str, Any]]:
+        if timeout is not None and (not math.isfinite(timeout) or timeout < 0):
+            raise ValueError("Invalid grant lock timeout")
         self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         fd = os.open(
             self.directory / ".ducky-grants.lock", os.O_CREAT | os.O_RDWR | os.O_NOFOLLOW, 0o600
         )
         try:
-            fcntl.flock(fd, fcntl.LOCK_EX)
+            if timeout is None:
+                fcntl.flock(fd, fcntl.LOCK_EX)
+            else:
+                deadline = time.monotonic() + timeout
+                while True:
+                    try:
+                        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                        break
+                    except BlockingIOError:
+                        remaining = deadline - time.monotonic()
+                        if remaining <= 0:
+                            raise TimeoutError("Ducky grant store is busy") from None
+                        time.sleep(min(0.01, remaining))
             raw = private_read(self.path)
             state = (
                 json.loads(raw)
@@ -140,13 +186,45 @@ class Grants:
                     if seen is None or now - seen >= 60:
                         device["last_seen_at"] = now
                         private_write(self.path, json.dumps(state))
-                    return {
-                        "id": identifier,
-                        "name": device["name"],
-                        "status": device["status"],
-                        "host_id": state["host_id"],
-                    }
+                    return _public_device(identifier, device, state["host_id"])
         raise Denied("Device is unapproved, expired, or revoked")
+
+    def authenticated_by_id(
+        self,
+        identifier: str,
+        required: str,
+        *,
+        host_id: str | None = None,
+        lock_timeout: float = 1.0,
+    ) -> dict[str, Any]:
+        """Recheck a previously authenticated queued owner; not HTTP authentication."""
+        with self.authorized_device(
+            identifier, required, host_id=host_id, lock_timeout=lock_timeout
+        ) as device:
+            return device
+
+    @contextlib.contextmanager
+    def authorized_device(
+        self,
+        identifier: str,
+        required: str,
+        *,
+        host_id: str | None = None,
+        lock_timeout: float = 1.0,
+    ) -> Iterator[dict[str, Any]]:
+        """Order a short scoped operation against revoke; never yield secret state."""
+        if required not in CAPABILITIES:
+            raise Denied("Ducky capability is unavailable")
+        with self.locked(timeout=lock_timeout) as state:
+            if host_id is not None and host_id != state["host_id"]:
+                raise Denied("Ducky host identity changed")
+            device = state["devices"].get(identifier)
+            if device and device.get("status") == "active":
+                public = _public_device(identifier, device, state["host_id"])
+                if required in public["capabilities"]:
+                    yield public
+                    return
+        raise Denied("Ducky device does not have this capability")
 
     def devices(self) -> list[dict[str, Any]]:
         with self.locked() as state:
@@ -158,11 +236,23 @@ class Grants:
                         for field in ("name", "status", "created_at", "expires_at")
                     },
                     "last_seen_at": value.get("last_seen_at"),
+                    "capabilities": (
+                        capabilities(value.get("capabilities"))
+                        if value["status"] == "active"
+                        else []
+                    ),
                 }
                 for key, value in state["devices"].items()
             ]
 
-    def approve(self, identifier: str, *, now: int | None = None) -> None:
+    def approve(
+        self,
+        identifier: str,
+        *,
+        now: int | None = None,
+        capabilities: list[str] | None = None,
+    ) -> None:
+        approved = _approval_capabilities(capabilities)
         now = int(time.time()) if now is None else now
         with self.locked(write=True) as state:
             device = state["devices"].get(identifier)
@@ -170,6 +260,7 @@ class Grants:
                 raise Denied("No unexpired pending device with that identifier")
             device["status"] = "active"
             device["expires_at"] = 0
+            device["capabilities"] = approved
 
     def pending_invitation(self, invite: str, *, now: int | None = None) -> dict[str, Any] | None:
         """Only the phone which claimed this ceremony's invitation may be offered."""
@@ -184,7 +275,15 @@ class Grants:
                 return None
             return {"id": identifier, "name": device["name"], "expires_at": device["expires_at"]}
 
-    def approve_invitation(self, invite: str, identifier: str, *, now: int | None = None) -> None:
+    def approve_invitation(
+        self,
+        invite: str,
+        identifier: str,
+        *,
+        now: int | None = None,
+        capabilities: list[str] | None = None,
+    ) -> None:
+        approved = _approval_capabilities(capabilities)
         now = int(time.time()) if now is None else now
         with self.locked(write=True) as state:
             invitation = state["invites"].get(digest(invite))
@@ -198,7 +297,7 @@ class Grants:
                 or device["expires_at"] <= now
             ):
                 raise Denied("No unexpired pending device for this invitation")
-            device.update(status="active", expires_at=0)
+            device.update(status="active", expires_at=0, capabilities=approved)
 
     def cancel_invitation(self, invite: str) -> None:
         with self.locked(write=True) as state:
@@ -212,3 +311,7 @@ class Grants:
     def revoke(self, identifier: str) -> None:
         with self.locked(write=True) as state:
             state["devices"].pop(identifier, None)
+
+
+def _approval_capabilities(value: list[str] | None) -> list[str]:
+    return capabilities(value, strict=True)

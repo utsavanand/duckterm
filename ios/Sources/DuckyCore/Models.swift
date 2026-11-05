@@ -1,12 +1,13 @@
 import Foundation
 
 public enum DuckyError: LocalizedError {
-    case invalidInvitation, expiredInvitation, invalidResponse, unavailable(Int), credentialStorage(Int32)
+    case invalidInvitation, expiredInvitation, invalidResponse, localCommandUnavailable, unavailable(Int), credentialStorage(Int32)
     public var errorDescription: String? {
         switch self {
         case .invalidInvitation: return "This Ducky invitation is invalid. Create a new invitation on your Mac."
         case .expiredInvitation: return "This invitation has expired. Create a new invitation on your Mac."
         case .invalidResponse: return "The Mac returned an unsupported response. Your last view may be out of date."
+        case .localCommandUnavailable: return "Messages can’t start with !, / or #. Run commands on your Mac."
         case .unavailable(403): return "Access is unapproved, expired or revoked. Check Ducky devices on your Mac."
         case .unavailable(503): return "Ducky is unavailable on your Mac. Check whether it is enabled, then refresh."
         case .unavailable: return "The Mac is unavailable. Try refreshing."
@@ -74,7 +75,9 @@ public struct PairStatus: Decodable {
     public let id: String
     public let status: String
     public let hostID: String
-    enum CodingKeys: String, CodingKey { case id, status; case hostID = "host_id" }
+    public let capabilities: [String]?
+    public let apiVersion: Int?
+    enum CodingKeys: String, CodingKey { case id, status, capabilities; case hostID = "host_id", apiVersion = "api_version" }
 }
 public struct AgentStatus: Decodable, Identifiable, Equatable {
     public let id: String
@@ -84,9 +87,14 @@ public struct AgentStatus: Decodable, Identifiable, Equatable {
     public let state: String
     public let observedAt: Int64
     public let approvalVisibility: String
+    public let canSend: Bool?
+    public let canRead: Bool?
+    public let sendContext: String?
+    public let sendReason: String?
     enum CodingKeys: String, CodingKey {
         case id, name, folder, runtime, state
         case observedAt = "observed_at", approvalVisibility = "approval_visibility"
+        case canSend = "can_send", canRead = "can_read", sendContext = "send_context", sendReason = "send_reason"
     }
 }
 public struct Notice: Decodable, Identifiable, Equatable {
@@ -111,12 +119,16 @@ public struct HostSnapshot: Decodable {
     public let reset: Bool
     public let notices: [Notice]
     public let notificationDelivery: String
+    public let features: [String]?
+    public let capabilities: [String]?
+    public var supportsConversations: Bool { version == 2 && features?.contains("conversations") == true }
+    public func allows(_ capability: String) -> Bool { supportsConversations && capabilities?.contains(capability) == true }
     enum CodingKeys: String, CodingKey {
-        case version, sessions, folders, truncated, cursor, reset, notices
+        case version, sessions, folders, truncated, cursor, reset, notices, features, capabilities
         case hostID = "host_id", generatedAt = "generated_at", readOnly = "read_only", notificationDelivery = "notification_delivery"
     }
     public func validate(hostID expected: String) throws {
-        guard version == 1, hostID == expected, readOnly,
+        guard [1, 2].contains(version), hostID == expected, readOnly,
               sessions.count <= 1000, folders.count <= 1000, notices.count <= 500,
               Set(sessions.map(\.id)).count == sessions.count,
               notices.allSatisfy({ ["attention", "turn_finished"].contains($0.kind) }) else { throw DuckyError.invalidResponse }

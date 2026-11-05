@@ -849,14 +849,16 @@ class HistoryStore:
         ).fetchone()
         return (json.loads(row["payload_json"]), int(row["ts"])) if row else None
 
-    def folders(self) -> list[str]:
+    def folders(self, *, include_test: bool = True) -> list[str]:
         """Folder names: those explicitly created plus any referenced by a
         session's group (so a folder never silently disappears), plus every
         implied ancestor — the tree renders from top-level roots, so a session
-        grouped under "a/b" would be INVISIBLE if "a" were missing."""
+        grouped under "a/b" would be INVISIBLE if "a" were missing. Excluding
+        test references preserves the explicitly registered folder catalog."""
         rows = self._conn.execute("SELECT name FROM folders").fetchall()
         used = self._conn.execute(
             "SELECT DISTINCT grp FROM sessions WHERE grp IS NOT NULL AND grp != ''"
+            + ("" if include_test else " AND test = 0")
         ).fetchall()
         names = {r["name"] for r in rows} | {r["grp"] for r in used}
         for name in list(names):

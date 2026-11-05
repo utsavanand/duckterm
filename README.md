@@ -46,7 +46,8 @@ unzip it, move **DuckTerm Lite.app** to **Applications**, and open it. Python,
 tmux, the dashboard and its local backend are included. No Homebrew, pipx or
 separate backend installation is required for the app.
 
-Code and Full distribution is invite-only. Lite includes folders, workstreams,
+Code and Full are available through the edition download forms on the
+[DuckTerm website](https://duckterm.utsava.xyz/). Lite includes folders, workstreams,
 coding-agent sessions, forks, terminals, Shell, Messages and session status.
 Install and sign in to your chosen coding agent separately; Git is needed for
 Git workstreams. Your agents use their existing tools, environments and accounts.
@@ -113,6 +114,30 @@ See [installation, upgrades, and troubleshooting](docs/installation.md) for help
   (e.g. uv-suite) and install it into any project from the dashboard, with
   per-skill-kit option pickers and compatibility declarations.
   Contract: [docs/harnesses.md](docs/harnesses.md).
+
+## Ducky for iPhone
+
+Ducky shows this Mac's sessions in collapsible folders, with search and filters
+for active sessions and agents needing you. Finished and interrupted sessions
+remain visible; archived and merged sessions are hidden. Remote computers and
+other DuckTerm edition workspaces are separate.
+
+In the Mac app, choose **Pair iPhone…**, scan the invitation and approve the
+phone with Mac authentication. Enable **Allow conversations with agents** to
+read Claude Code/Codex replies and send short messages. Existing pairings retain
+status-only access; create a new invitation to grant conversations. Permission
+prompts must still be answered on the Mac.
+
+Messages queue until the agent has an empty prompt and nobody has typed in its
+terminal for two minutes. A queue receipt confirms storage on the Mac;
+**Delivered** confirms terminal delivery, not that the agent has read it. The
+queue expires after 15 minutes. An uncertain delivery is never automatically
+replayed. Restarting the backend cancels unsent queued messages.
+
+The phone shows the latest 100 plain user/assistant messages, bounded to 256 KiB,
+from supported local transcripts. It refreshes while open. Keep DuckTerm open
+and use a network that permits phone-to-Mac connections; networks with client
+isolation can block pairing and refresh even when both devices have Wi-Fi.
 
 ## Session inboxes
 

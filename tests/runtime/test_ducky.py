@@ -20,6 +20,32 @@ from duckterm.persistence.history import HistoryStore
 from duckterm.server import Server
 
 
+def visible_session_fixture(server, monkeypatch, keys):
+    """Model ordinary session reads while every scratch SQLite row stays test:true."""
+    visible = set(keys)
+    history = server.history
+    session, sessions, folders = history.session, history.sessions, history.folders
+
+    def view(row):
+        return {**row, "test": False} if row and row["session_key"] in visible else row
+
+    def folder_view(*, include_test=True):
+        names = set(folders(include_test=include_test))
+        if not include_test:
+            for key in visible:
+                row = session(key)
+                group = row.get("grp") if row else None
+                while group:
+                    names.add(group)
+                    group = group.rsplit("/", 1)[0] if "/" in group else None
+        return sorted(names, key=str.lower)
+
+    monkeypatch.setattr(history, "session", lambda key: view(session(key)))
+    monkeypatch.setattr(history, "sessions", lambda: [view(row) for row in sessions()])
+    monkeypatch.setattr(history, "folders", folder_view)
+    return visible
+
+
 @pytest.fixture
 def app(tmp_path, monkeypatch):
     monkeypatch.setenv("DUCKTERM_HOME", str(tmp_path))
@@ -38,9 +64,78 @@ def app(tmp_path, monkeypatch):
         }
     )
     history.set_meta("a", group="Work", name="Coding agent", notes="private owner notes")
+    visible_session_fixture(server, monkeypatch, {"a"})
     yield server, tmp_path
     history.purge_test_sessions()
     history.close()
+
+
+@pytest.mark.parametrize("expanded", [False, True])
+def test_test_sessions_and_inferred_folders_never_reach_phone(app, expanded):
+    server, _ = app
+    history = server.history
+    history.create_folder("Explicit/Empty")
+    history.record(
+        {
+            "_id": "hidden-start",
+            "_ts": 10,
+            "event_type": "SessionStart",
+            "session_key": "hidden-test",
+            "runtime": "codex",
+            "test": True,
+        }
+    )
+    history.set_meta("hidden-test", name="PRIVATE_TEST_NAME")
+    history._conn.execute(
+        "UPDATE sessions SET grp='TestOnly/Nested' WHERE session_key='hidden-test'"
+    )
+    marker = server.bus.publish({"event_type": "FixtureCursor", "test": True})
+    for state in ("idle", "waiting", "terminated", "stopped", "interrupted"):
+        history.set_state("hidden-test", state, now=20)
+        server.bus.publish(
+            {
+                "event_type": "Notification",
+                "session_key": "hidden-test",
+                "notification_type": "permission_prompt",
+                "test": True,
+            }
+        )
+        server.bus.publish(
+            {"event_type": "Stop", "session_key": "hidden-test", "hook_event": True, "test": True}
+        )
+        result = snapshot(server, "host", 100, marker["_id"], include_inactive=expanded)
+        assert [row["id"] for row in result["sessions"]] == ["a"]
+        assert result["notices"] == []
+        assert result["folders"] == ["Explicit", "Explicit/Empty", "Work"]
+        assert "PRIVATE_TEST_NAME" not in json.dumps(result)
+        assert "TestOnly" not in json.dumps(result)
+    assert "TestOnly/Nested" in history.folders()  # Desktop default is unchanged.
+    assert history._conn.execute("SELECT MIN(test) FROM sessions").fetchone()[0] == 1
+
+
+def test_folder_test_filter_keeps_explicit_catalog_and_default_semantics(tmp_path):
+    history = HistoryStore(tmp_path / "folders.sqlite")
+    try:
+        history.create_folder("Explicit/Empty")
+        history.record(
+            {
+                "_id": "folder-test-start",
+                "_ts": 1,
+                "event_type": "SessionStart",
+                "session_key": "folder-test",
+                "test": True,
+            }
+        )
+        history._conn.execute(
+            "UPDATE sessions SET grp='Inferred/TestOnly' WHERE session_key='folder-test'"
+        )
+        assert history.folders() == ["Explicit", "Explicit/Empty", "Inferred", "Inferred/TestOnly"]
+        assert history.folders(include_test=False) == ["Explicit", "Explicit/Empty"]
+        history.create_folder("Inferred/TestOnly")
+        assert history.folders(include_test=False) == history.folders()
+    finally:
+        history.purge_test_sessions()
+        history.close()
 
 
 def paired(grants):
@@ -104,6 +199,67 @@ def test_all_editions_provide_only_the_phone_projection(app):
             assert secret not in serialized
     server.history.set_state("a", "stopped", now=2)
     assert snapshot(server, "host", 100)["sessions"] == []
+
+
+@pytest.mark.parametrize("edition", [LITE, CODE, FULL])
+@pytest.mark.parametrize(
+    "state",
+    [
+        "busy",
+        "waiting",
+        "idle",
+        "unknown",
+        "terminated",
+        "stopped",
+        "interrupted",
+        "archived",
+        "merged",
+    ],
+)
+def test_optional_inactive_projection_matches_desktop_without_changing_v1(app, edition, state):
+    server, _ = app
+    server.edition = edition
+    server.history.set_meta("a", group="Work/Nested")
+    server.history.set_state("a", state, now=2)
+    old = snapshot(server, "host", 100)
+    expanded = snapshot(server, "host", 100, include_inactive=True)
+    assert bool(old["sessions"]) == (state in {"busy", "waiting", "idle", "unknown"})
+    assert bool(expanded["sessions"]) == (state not in {"archived", "merged"})
+    assert expanded["version"] == 1  # Bridge owns the v2 envelope, not this projection.
+    if expanded["sessions"]:
+        item = expanded["sessions"][0]
+        assert item["state"] == state and item["folder"] == "Work/Nested"
+        assert set(item) == {
+            "id",
+            "name",
+            "folder",
+            "runtime",
+            "state",
+            "observed_at",
+            "approval_visibility",
+        }
+    assert expanded["folders"] == ["Work", "Work/Nested"]
+
+
+@pytest.mark.parametrize("state", ["terminated", "stopped", "interrupted"])
+def test_inactive_rows_do_not_gain_live_notifications(app, state):
+    server, _ = app
+    marker = server.bus.publish(
+        {"event_type": "UserPromptSubmit", "session_key": "a", "test": True}
+    )
+    server.bus.publish({"event_type": "Stop", "session_key": "a", "hook_event": True, "test": True})
+    server.bus.publish(
+        {
+            "event_type": "Notification",
+            "notification_type": "permission_prompt",
+            "session_key": "a",
+            "test": True,
+        }
+    )
+    server.history.set_state("a", state, now=2)
+    result = snapshot(server, "host", 100, marker["_id"], include_inactive=True)
+    assert len(result["sessions"]) == 1
+    assert result["notices"] == [] and result["reset"] is False
 
 
 def test_notifications_are_observed_turns_and_attention_with_replay_detection(app):

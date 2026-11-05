@@ -162,6 +162,50 @@ def test_invalid_or_oversized_commands_have_fixed_error_and_restore_flags(pipe, 
     assert fcntl.fcntl(pipe.source, fcntl.F_GETFL) == original
 
 
+@pytest.mark.parametrize(
+    "scopes", [None, "session:send", ["unknown"], ["session:send", "session:send"], [False]]
+)
+def test_scope_commands_reject_ambiguous_or_unknown_authority(pipe, scopes):
+    pipe.send(
+        json.dumps({"action": "approve", "device_id": "phone", "capabilities": scopes}).encode()
+        + b"\n"
+    )
+    with (
+        stream.commands() as incoming,
+        pytest.raises(stream.CeremonyError, match="^invalid_command$"),
+    ):
+        incoming.poll(0)
+
+
+def test_denial_cannot_carry_conversation_permission(pipe):
+    pipe.send(b'{"action":"deny","device_id":"phone","capabilities":["session:send"]}\n')
+    with (
+        stream.commands() as incoming,
+        pytest.raises(stream.CeremonyError, match="^invalid_command$"),
+    ):
+        incoming.poll(0)
+
+
+@pytest.mark.parametrize("scopes", [None, [], ["conversation:read", "session:send"]])
+def test_native_approval_commits_and_echoes_only_selected_capabilities(ceremony, scopes):
+    def react(state, fields):
+        if state == "invitation":
+            ceremony.claim()
+        elif state == "pending":
+            command = {"action": "approve", "device_id": ceremony.phone["id"]}
+            if scopes is not None:
+                command["capabilities"] = scopes
+            ceremony.pipe.send(json.dumps(command).encode() + b"\n")
+
+    ceremony.on_emit = react
+    assert stream.pair_json(ceremony.root) == 0
+    expected = sorted({"status:read", *(scopes or [])})
+    assert ceremony.events[-1]["state"] == "approved"
+    assert ceremony.events[-1]["device"]["capabilities"] == expected
+    assert ceremony.grants.authenticate(ceremony.token)["capabilities"] == expected
+    assert_others_unchanged(ceremony)
+
+
 @pytest.mark.parametrize("action", ["approve", "deny", "cancel", "eof"])
 def test_only_this_invitation_can_be_decided_and_existing_grants_survive(ceremony, capsys, action):
     def react(state, fields):

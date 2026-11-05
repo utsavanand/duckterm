@@ -6,6 +6,7 @@ import CoreImage
 final class DuckyPairingView: NSView {
     enum Action: String { case copy, cancel, approve, deny, restart, done }
     var onAction: ((Action) -> Void)?
+    var onConversationsChanged: ((Bool) -> Void)?
     private(set) var preferredFocus: NSView?
     private var countdown: NSTextField?
     private var expiresAt: Int?
@@ -14,7 +15,7 @@ final class DuckyPairingView: NSView {
     private let inset: CGFloat = 17
     override var isFlipped: Bool { true }
 
-    init(state: DuckyPairingModel.State, busy: Bool = false, icon: NSImage?, now: Date = Date()) {
+    init(state: DuckyPairingModel.State, busy: Bool = false, allowsConversations: Bool = false, icon: NSImage?, now: Date = Date()) {
         super.init(frame: .zero)
         let column = width - inset * 2
         let iconView = NSImageView(frame: NSRect(x: (width - 64) / 2, y: 21, width: 64, height: 64))
@@ -29,8 +30,8 @@ final class DuckyPairingView: NSView {
             body = "Scan with your iPhone camera."; qr = invitation.link; expires = invitation.expiresAt
             buttons = [("Copy link", .copy, true), ("Cancel", .cancel, false)]
         case .pending(let pending):
-            title = "\(pending.name) wants to view your agents"
-            body = "Read-only access to folders and agent status."; device = pending; expires = pending.expiresAt
+            title = "\(pending.name) wants to connect"
+            body = "View your folders and session status."; device = pending; expires = pending.expiresAt
             buttons = [("Deny", .deny, false), ("Approve", .approve, true)]
         case .approved(let device):
             title = "\(device.name) is paired"; body = "Open Ducky to view your agents."
@@ -64,6 +65,23 @@ final class DuckyPairingView: NSView {
             y = addLabel(device.id, y: y, font: .monospacedSystemFont(ofSize: 11, weight: .regular), color: PairingColors.text, selectable: true) + 12
             addSeparator(y: y)
         }
+        var scopeControl: NSButton?
+        if device != nil {
+            y += 14
+            let scope = PairingScopeBox(frame: NSRect(x: inset, y: y, width: column, height: 82))
+            addSubview(scope)
+            let checkbox = PairingCheckbox(title: "Allow conversations with agents", target: self, action: #selector(scopeChanged(_:)))
+            checkbox.setButtonType(.switch); checkbox.identifier = NSUserInterfaceItemIdentifier("conversations")
+            checkbox.state = allowsConversations ? .on : .off; checkbox.isEnabled = !busy
+            checkbox.setAccessibilityLabel("Allow conversations with agents")
+            checkbox.setAccessibilityHelp("Read conversations and send messages. Agents can act on your messages.")
+            checkbox.frame = NSRect(x: inset + 12, y: y + 10, width: column - 24, height: 22)
+            addSubview(checkbox); scopeControl = checkbox
+            let caption = NSTextField(wrappingLabelWithString: "Read conversations and send messages. Agents can act on your messages.")
+            caption.font = .systemFont(ofSize: 11); caption.textColor = PairingColors.body
+            caption.frame = NSRect(x: inset + 34, y: y + 35, width: column - 46, height: 35)
+            addSubview(caption); y += scope.frame.height
+        }
         if let expires {
             y += device == nil ? 10 : 16
             let seconds = max(0, expires - Int(now.timeIntervalSince1970))
@@ -73,7 +91,7 @@ final class DuckyPairingView: NSView {
             countdown = subviews.last as? NSTextField; expiresAt = expires; pendingExpiry = device != nil
         }
         y += 14
-        var controls: [NSButton] = []
+        var controls: [NSButton] = scopeControl.map { [$0] } ?? []
         for (index, entry) in buttons.enumerated() {
             let button = PairingButton(title: entry.0, target: self, action: #selector(performAction(_:)))
             button.identifier = NSUserInterfaceItemIdentifier(entry.1.rawValue); button.primary = entry.2
@@ -108,6 +126,10 @@ final class DuckyPairingView: NSView {
         guard let id = sender.identifier?.rawValue, let action = Action(rawValue: id) else { return }
         onAction?(action)
     }
+    @objc private func scopeChanged(_ sender: NSButton) {
+        guard sender.isEnabled else { return }
+        onConversationsChanged?(sender.state == .on)
+    }
     private func addLabel(_ value: String, y: CGFloat, font: NSFont, color: NSColor, selectable: Bool = false) -> CGFloat {
         let label = NSTextField(wrappingLabelWithString: value)
         label.font = font; label.textColor = color; label.alignment = .center
@@ -123,6 +145,35 @@ final class DuckyPairingView: NSView {
         let line = NSBox(frame: NSRect(x: inset, y: y, width: width - inset * 2, height: 1))
         line.boxType = .separator; addSubview(line)
     }
+}
+
+private final class PairingScopeBox: NSView {
+    override func draw(_ dirtyRect: NSRect) {
+        NSColor.separatorColor.setStroke()
+        NSBezierPath(rect: bounds.insetBy(dx: 0.5, dy: 0.5)).stroke()
+    }
+}
+
+private final class PairingCheckbox: NSButton {
+    override func draw(_ dirtyRect: NSRect) {
+        let box = NSRect(x: 0.5, y: (bounds.height - 14) / 2, width: 14, height: 14)
+        (state == .on ? NSColor.systemBlue : PairingColors.button).setFill(); box.fill()
+        NSColor.separatorColor.setStroke(); NSBezierPath(rect: box).stroke()
+        if state == .on {
+            let check = NSBezierPath(); check.lineWidth = 1.5
+            check.move(to: NSPoint(x: box.minX + 3, y: box.midY))
+            check.line(to: NSPoint(x: box.minX + 6, y: box.maxY - 3))
+            check.line(to: NSPoint(x: box.maxX - 2, y: box.minY + 3))
+            NSColor.white.setStroke(); check.stroke()
+        }
+        let text = NSAttributedString(string: title, attributes: [
+            .font: NSFont.systemFont(ofSize: 12),
+            .foregroundColor: isEnabled ? PairingColors.text : PairingColors.body,
+        ])
+        text.draw(at: NSPoint(x: 22, y: (bounds.height - text.size().height) / 2))
+    }
+    override func drawFocusRingMask() { bounds.fill() }
+    override var focusRingMaskBounds: NSRect { bounds }
 }
 
 private enum PairingColors {
