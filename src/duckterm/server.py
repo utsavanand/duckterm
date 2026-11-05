@@ -474,6 +474,7 @@ class Server:
         # Durable digest archive (deliverables/learnings/next actions as rows).
         self.digests = DigestStore(conn=self.history._conn)
         self._review_tasks: dict[str, asyncio.Task[Any]] = {}
+        self._branch_owners_cache: tuple[float, dict[tuple[str, str], str]] = (0.0, {})
         from duckterm.checkpoint_requests import CheckpointRequests
 
         self.checkpoint_requests = CheckpointRequests(self)
@@ -2096,6 +2097,24 @@ class Server:
 
         self._review_tasks[str(target.directory)] = asyncio.get_running_loop().create_task(run())
 
+    async def _branch_owners(self, refresh: bool) -> dict[tuple[str, str], str]:
+        """Which session pushed each branch, from recorded commands. Reading
+        them scans recent events, so it runs in a worker on its own read-only
+        connection, and the answer is kept as long as the GitHub data it is
+        joined with."""
+        from duckterm.review import lists as review_lists
+
+        at, owners = self._branch_owners_cache
+        if refresh or time.time() - at >= review_lists.CACHE_SECONDS:
+            since = int((time.time() - review_lists.PUSH_DAYS * 86400) * 1000)
+
+            def read() -> dict[tuple[str, str], str]:
+                return review_lists.branch_owners(self.history.push_commands(since))
+
+            owners = await asyncio.to_thread(read)
+            self._branch_owners_cache = (time.time(), owners)
+        return owners
+
     async def _prs(
         self,
         writer: asyncio.StreamWriter,
@@ -2128,7 +2147,10 @@ class Server:
                 await _write_json(writer, 404, {"error": "Folder no longer exists"})
                 return
             members = review_lists.folder_members(self.history, target)
-        result = await asyncio.to_thread(review_lists.build, members, refresh=refresh)
+        owners = await self._branch_owners(refresh)
+        result = await asyncio.to_thread(
+            review_lists.build, members, owners=owners, refresh=refresh
+        )
         for item in result["rows"]:
             number = (item.get("pr") or {}).get("number")
             record = (

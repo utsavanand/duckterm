@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from duckterm.persistence.history import HistoryStore
 from duckterm.review import lists
 
 NO_SIGNING = ["-c", "tag.gpgsign=false", "-c", "tag.forceSignAnnotated=false"]
@@ -201,3 +202,146 @@ def test_cache_serves_within_ttl_and_refresh_bypasses_it(
     assert len(calls) == 1
     lists.build([session("s6", clone)], refresh=True)
     assert len(calls) == 2
+
+
+def test_branch_owners_reads_pushes_and_pr_creates_from_recorded_commands(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(lists.git, "repo_root", lambda directory: "/repo")
+    commands = [
+        ("dev", 10, "cd /tmp/wt && git push -u origin feat/x 2>&1 | tail -1", "/w"),
+        ("rel", 5, "git -C /p push origin HEAD:release-v1 +refs/heads/y:refs/heads/z", "/w"),
+        ("lite", 20, 'gh pr create --base main --head owner:fix/q --title "don\'t"', "/w"),
+        # The command after a heredoc is read; the heredoc body is not.
+        ("dev", 30, "cat > body.md <<'EOF'\nit doesn't build\nEOF\ngit push origin other", "/w"),
+        # A commit message quoted across lines does not hide the push on its last line.
+        ("dev", 35, 'git commit -m "Fix it\n\nTested: gate." && git push -q origin docs/x', "/w"),
+        # Deletions, bare pushes and a quoted mention name no branch.
+        ("dev", 40, "git push origin --delete gone; git push; echo 'git push origin nope'", "/w"),
+        # The release session pushing a merge later does not take the branch.
+        ("rel", 50, "git push origin feat/x", "/w"),
+    ]
+    assert lists.branch_owners(commands) == {
+        ("/repo", "release-v1"): "rel",
+        ("/repo", "z"): "rel",
+        ("/repo", "feat/x"): "dev",
+        ("/repo", "fix/q"): "lite",
+        ("/repo", "other"): "dev",
+        ("/repo", "docs/x"): "dev",
+    }
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        "git push origin :fix/owned",
+        "git push origin +:fix/owned",
+        "git push --dry-run origin fix/owned",
+        "git push -n origin fix/owned",
+        "cat <<'EOF' > notes\ngit push origin fix/owned\nEOF",
+        'cat > notes <<"DOC"\ngh pr create --head fix/owned\nDOC',
+    ],
+)
+def test_deletes_dry_runs_and_heredoc_bodies_claim_no_branch(
+    command: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """main-qa's regressions on #367."""
+    monkeypatch.setattr(lists.git, "repo_root", lambda directory: "/repo")
+    assert lists.branch_owners([("release", 1, command, "/w")]) == {}
+
+
+def test_the_same_branch_name_in_two_repositories_has_two_owners(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(lists.git, "repo_root", lambda directory: directory + "-root")
+    commands = [
+        ("a", 1, "git push origin fix/x", "/one"),
+        ("b", 2, "git push origin fix/x", "/two"),
+    ]
+    assert lists.branch_owners(commands) == {
+        ("/one-root", "fix/x"): "a",
+        ("/two-root", "fix/x"): "b",
+    }
+
+
+def test_pushed_branches_with_a_pr_join_the_session_beside_its_checkout(
+    clone: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    run(clone, "checkout", "-q", "-b", "duckterm/fff")
+    commit(clone, "f.txt", "f\n", "f")
+    monkeypatch.setattr(
+        lists.github,
+        "pulls",
+        lambda slug, token: [
+            pull(20, "duckterm/fff"),
+            pull(21, "fix/from-a-temp-worktree"),
+            pull(22, "release-v9", state="merged", merged_at="2026-10-22T11:00:00Z"),
+            pull(23, "someone/else"),
+        ],
+    )
+    repo = lists.git.repo_root(str(clone))
+    owners = {
+        (repo, "fix/from-a-temp-worktree"): "s7",
+        (repo, "release-v9"): "s7",
+        (repo, "pushed/no-pr"): "s7",
+        (repo, "someone/else"): "other-session",
+        ("/another/repo", "duckterm/fff"): "s7",
+    }
+    rows = lists.build([session("s7", clone)], owners=owners)["rows"]
+    assert sorted(r["pr"]["number"] for r in rows) == [20, 21, 22]
+    assert {r["session"]["key"] for r in rows} == {"s7"}
+    merged = next(r for r in rows if r["branch"] == "release-v9")
+    assert merged["status"] == "merged"
+
+
+def test_push_commands_come_from_real_tool_calls_in_the_window(tmp_path: Path) -> None:
+    history = HistoryStore(tmp_path / "db.sqlite")
+
+    def bash(
+        key: str, ts: int, command: str, event_type: str = "PreToolUse", **extra: object
+    ) -> None:
+        history.record(
+            {
+                "_id": f"{key}-{ts}",
+                "_ts": ts,
+                "event_type": event_type,
+                "session_key": key,
+                "cwd": "/w",
+                "tool_name": "Bash",
+                "tool_input": {"command": command},
+                **extra,
+            }
+        )
+
+    bash("rel", 100, "git push origin release-v1")
+    bash("dev", 200, "git push -u origin feat/new")
+    bash("dev", 300, "pytest -q")
+    bash("dev", 400, "git push origin feat/after", event_type="PostToolUse")
+    bash("old", 50, "git push origin feat/too-old")
+    # main-qa: a test event, or any event from a test session, cannot take a branch.
+    bash("probe", 500, "git push origin feat/new", test=True)
+    history.record(
+        {
+            "_id": "qa-start",
+            "_ts": 550,
+            "event_type": "SessionStart",
+            "session_key": "qa",
+            "test": True,
+        }
+    )
+    bash("qa", 600, "git push origin fix/owned")
+    commands = history.push_commands(100)
+    assert [(key, ts, directory) for key, ts, _, directory in commands] == [
+        ("rel", 100, "/w"),
+        ("dev", 200, "/w"),
+    ]
+
+
+def test_folder_members_leave_out_test_sessions(tmp_path: Path) -> None:
+    history = HistoryStore(tmp_path / "folder.sqlite")
+    for key, test in (("real", False), ("synthetic", True)):
+        history.record(
+            {"_id": key, "_ts": 100, "event_type": "SessionStart", "session_key": key, "test": test}
+        )
+        history.set_meta(key, group="team")
+    assert [row["session_key"] for row in lists.folder_members(history, "team")] == ["real"]
