@@ -1,3 +1,14 @@
+## 2026-11-04 — Diagnostics must not become a server liveness dependency
+
+The stall watchdog joined its native dump thread from the event loop every
+2.5 seconds. On November 3 a dump failed to finish, so cancellation waited
+indefinitely and a recoverable stall became a permanent server hang. The
+reason the native dump spun remains unconfirmed. Remove automatic dumping
+and its joins instead of moving the same unbounded dependency elsewhere.
+Exercise real CLI startup and signal cleanup with both dump-timer APIs
+forbidden. Successful dumps and exception handling did not test a dump that
+never returns. Preserve old logs; diagnose remaining slow work separately.
+
 ## 2026-10-25 — Floating CI environments can break a validated release
 
 The release gate passed locally, but GitHub's ubuntu-latest had moved to 26.04,
