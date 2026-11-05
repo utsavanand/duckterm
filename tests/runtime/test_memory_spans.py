@@ -35,6 +35,14 @@ def snapshot(texts):
     }
 
 
+def first_record_limit(texts):
+    """A span byte limit that admits one of these short records, never two."""
+    alone = snapshot(texts[:1])
+    alone["memory_sources"][0]["version"] = str(len(texts))
+    batch = memory_spans.plan(alone, memory_spans.boundary(alone, empty=True))
+    return len(memory_spans.prompt(batch).encode()) + 30
+
+
 def test_successive_spans_advance_first_without_reusing_prior_summary():
     first = snapshot(["Earlier owner decision"])
     origin = memory_spans.boundary(first, empty=True)
@@ -55,12 +63,15 @@ def test_successive_spans_advance_first_without_reusing_prior_summary():
 def test_proposal_before_batch_boundary_remains_context_without_advancing_coverage():
     captured = snapshot(["Use the real dashboard; keep the voice. Shall I proceed?", "sgtm"])
     captured["memory_sources"][0]["records"][0]["role"] = "assistant"
-    captured["checkpoint_settings"] = {"batch_records": 1}
-    a = memory_spans.plan(captured, memory_spans.boundary(captured, empty=True))
-    b = memory_spans.plan(captured, a["next_boundary"])
+    rows = memory_spans.original_rows(captured)
+    captured["checkpoint_selection"] = {(rows[1]["source"], rows[1]["record"]): rows[1]["hash"]}
+    b = memory_spans.plan(captured, memory_spans.boundary(captured, empty=True))
     payload = json.loads(memory_spans.prompt(b).split("MEMORY UPDATE:\n", 1)[1])
     assert [r["text"] for r in payload["records"]] == ["sgtm"]
     assert [r["record"] for r in payload["context_records"]] == ["0"]
+    # Context records are numbered first, then the selected records.
+    assert [r["ref"] for r in payload["context_records"]] == ["#0"]
+    assert [r["ref"] for r in payload["records"]] == ["#1"]
     assert b["ranges"] == [{"source": "test-conversation", "version": "2", "first": 1, "end": 2}]
     assert memory_spans.continuity(b, {})["processed"] == {
         "test-conversation": {"1": b["selected"][0]["hash"]}
@@ -72,22 +83,44 @@ def test_proposal_before_batch_boundary_remains_context_without_advancing_covera
     context["decisions"] = [
         {
             "text": "Proceed with the real dashboard and keep the voice.",
-            "refs": [payload["context_records"][0]["ref"], payload["records"][0]["ref"]],
-            "kind": "decision",
-            "state": "open",
+            "refs": ["#0", "#1"],
         }
     ]
-    assert memory_continuity.context(json.dumps({"context": context}), b)["decisions"]
-    assert memory_spans.metadata(b)["span_input"]["context_refs"] == [
-        payload["context_records"][0]["ref"]
+    decision = memory_continuity.context(json.dumps({"context": context}), b)["decisions"][0]
+    assert decision["refs"] == ["test-conversation:2:0", "test-conversation:2:1"]
+    assert decision["kind"] == "decision" and decision["state"] == "open"
+    assert memory_spans.metadata(b)["span_input"]["context_refs"] == ["test-conversation:2:0"]
+
+
+def test_short_refs_map_back_and_full_refs_and_explicit_kinds_pass_through():
+    captured = snapshot(["Owner: keep originals.", "Assistant: shipped #41."])
+    batch = memory_spans.plan(captured, memory_spans.boundary(captured, empty=True))
+    context = {"overview": "Originals are kept.", **{f: [] for f in memory_summary.FIELDS}}
+    context["constraints"] = [
+        {"text": "Keep originals.", "refs": "#0"},
+        {"text": "Shipping lesson.", "refs": ["test-conversation:2:1"], "kind": "learning"},
     ]
+    context["questions"] = [{"text": "Is #41 released?", "refs": ["#1"]}]
+    parsed = memory_continuity.context(json.dumps({"context": context}), batch)
+    assert [(c["refs"], c["kind"], c["state"]) for c in parsed["constraints"]] == [
+        (["test-conversation:2:0"], "constraint", "open"),
+        (["test-conversation:2:1"], "learning", "open"),
+    ]
+    assert parsed["questions"][0]["refs"] == ["test-conversation:2:1"]
+    assert parsed["questions"][0]["kind"] == "question"
+    context["questions"] = [{"text": "Unknown ref.", "refs": ["#9"]}]
+    with pytest.raises(memory_summary.InvalidContext) as rejected:
+        memory_continuity.context(json.dumps({"context": context}), batch)
+    assert rejected.value.reason == "unknown_reference"
 
 
-def test_context_never_skips_a_large_proposal_or_reduces_selected_records():
+def test_context_never_skips_a_large_proposal_or_reduces_selected_records(monkeypatch):
     captured = snapshot(["Earlier unrelated proposal", "x" * 48000, "sgtm"])
     captured["memory_sources"][0]["records"][1]["role"] = "assistant"
     rows = memory_spans.original_rows(captured)
     captured["checkpoint_selection"] = {(rows[2]["source"], rows[2]["record"]): rows[2]["hash"]}
+    # Even clipped, the large proposal does not fit beside the selected record.
+    monkeypatch.setattr(memory_spans, "MAX_GENERATION_BYTES", 8000)
     batch = memory_spans.plan(captured, memory_spans.boundary(captured, empty=True))
     assert [r["text"] for r in batch["selected"]] == ["sgtm"]
     assert batch["context_records"] == []
@@ -95,29 +128,49 @@ def test_context_never_skips_a_large_proposal_or_reduces_selected_records():
     assert len(memory_spans.prompt(batch).encode()) <= memory_spans.MAX_GENERATION_BYTES
 
 
-def test_frozen_large_span_splits_in_bytes_and_turns_without_holes():
+def test_frozen_large_span_splits_in_bytes_without_holes():
     captured = snapshot([f"Turn {i}: " + "🔒" * 2000 for i in range(12)])
     lower = memory_spans.boundary(captured, empty=True)
     seen = []
+    batches = 0
     upper = memory_spans.boundary(captured)
     for _ in range(12):
         batch = memory_spans.plan(captured, lower)
+        batches += 1
         assert batch["upper"] == upper
         assert len(memory_spans.prompt(batch).encode()) <= memory_spans.MAX_GENERATION_BYTES
-        assert len(batch["selected"]) <= memory_spans.MAX_RECORDS
         assert not batch["oversized"]
         seen += [r["record"] for r in batch["selected"]]
         lower = batch["next_boundary"]
         if not batch["pending_records"]:
             break
     assert seen == [str(i) for i in range(12)]
+    assert batches >= 2
     assert lower == upper
+    # Many small records are one span: only bytes bound a span, not a count.
     tiny = snapshot(["x"] * 51)
     batch = memory_spans.plan(tiny, memory_spans.boundary(tiny, empty=True))
-    assert len(batch["selected"]) == 50 and batch["pending_records"] == 1
+    assert len(batch["selected"]) == 51 and batch["pending_records"] == 0
 
 
-def test_oversized_record_remains_pending_and_does_not_skip_to_later_turn():
+def test_long_record_is_clipped_into_the_span_instead_of_failing_as_oversized():
+    middle = "MIDDLE-OF-LOG"
+    log = "head " + "a" * 30000 + middle + "b" * 30000 + " tail"
+    captured = snapshot(["First", log, "Third"])
+    batch = memory_spans.plan(captured, memory_spans.boundary(captured, empty=True))
+    assert [r["record"] for r in batch["selected"]] == ["0", "1", "2"]
+    assert not batch["oversized"] and batch["pending_records"] == 0
+    prompt = memory_spans.prompt(batch)
+    assert len(prompt.encode()) <= memory_spans.MAX_GENERATION_BYTES
+    assert middle not in prompt and "head " in prompt and " tail" in prompt
+    assert "middle omitted" in prompt
+    clipped = memory_spans.clip(log)
+    assert len(clipped) < memory_spans.MAX_RECORD_CHARS + 100
+    assert memory_spans.clip("short") == "short"
+
+
+def test_oversized_record_remains_pending_and_does_not_skip_to_later_turn(monkeypatch):
+    monkeypatch.setattr(memory_spans, "MAX_GENERATION_BYTES", 8000)
     captured = snapshot(["First", "x" * 48000, "Third"])
     a = memory_spans.plan(captured, memory_spans.boundary(captured, empty=True))
     assert [r["text"] for r in a["selected"]] == ["First"]
@@ -174,7 +227,7 @@ def provider(monkeypatch):
 
     def generate(prompt, **kwargs):
         calls.append(prompt)
-        assert len(prompt.encode()) <= memory_spans.MAX_INPUT_BYTES
+        assert len(prompt.encode()) <= memory_spans.repair_input_limit()
         if fail[0]:
             return Summary("", "none", "provider_timeout")
         if prompt.startswith("You are validating"):
@@ -228,14 +281,16 @@ def test_shared_writer_saves_typed_leaf_and_reuses_it_without_promoting_handoff(
         assert current_revision(server.history.session("agent")) is None
         reused, _ = await server.progress_coordinator.write_span("agent", frozen, lower)
         assert reused.state == "reused" and reused.revision["id"] == leaf["id"]
-        assert len(calls) == 2
+        # One writer call per span; spans are not model-reviewed.
+        assert len(calls) == 1
+        assert leaf["summary_review"] == {"state": "not_reviewed", "reason_codes": []}
         append(path, "Second owner instruction")
         updated = await capture(server)
         second, b = await server.progress_coordinator.write_span(
             "agent", updated, a["next_boundary"]
         )
-        assert second.state == "updated" and len(calls) == 4
-        assert "First owner instruction" not in calls[2]
+        assert second.state == "updated" and len(calls) == 2
+        assert "First owner instruction" not in calls[1]
         assert b["ranges"][0]["first"] == 1
         assert server.digests.revision("agent", leaf["id"]) == leaf
         heads = memory_folding.active(
@@ -248,6 +303,7 @@ def test_shared_writer_saves_typed_leaf_and_reuses_it_without_promoting_handoff(
 
 def test_failed_subrange_keeps_previous_success_reusable_and_no_overlap(memory_rig, monkeypatch):
     server, _, _, tmp = memory_rig
+    monkeypatch.setattr(memory_spans, "MAX_GENERATION_BYTES", 16000)
     path = transcript(tmp, "agent-claude", "First " + "x" * 11000)
     append(path, "Second " + "y" * 11000)
     calls, fail = provider(monkeypatch)
@@ -267,11 +323,11 @@ def test_failed_subrange_keeps_previous_success_reusable_and_no_overlap(memory_r
         assert server.digests.revision("agent", saved["id"]) == saved
         fail[0] = False
         reused, _ = await server.progress_coordinator.write_span("agent", frozen, lower)
-        assert reused.state == "reused" and len(calls) == 3
+        assert reused.state == "reused" and len(calls) == 2
         second, _ = await server.progress_coordinator.write_span(
             "agent", frozen, a["next_boundary"]
         )
-        assert second.state == "updated" and len(calls) == 5
+        assert second.state == "updated" and len(calls) == 3
         assert b["ranges"][0]["first"] == a["ranges"][0]["end"]
         assert second.revision["continuity"]["summarized_records"] == 1
 
@@ -341,7 +397,7 @@ def test_simultaneous_same_span_writes_join_without_duplicate_provider_calls(
             server.progress_coordinator.write_span("agent", frozen, lower),
         )
         assert a[0].revision["id"] == b[0].revision["id"]
-        assert len(calls) == 2
+        assert len(calls) == 1
 
     asyncio.run(run())
 
@@ -371,7 +427,7 @@ def test_cancelled_waiter_does_not_cancel_a_span_write(memory_rig, monkeypatch):
         lower = memory_spans.boundary(frozen, empty=True)
         waiter = asyncio.create_task(coordinator.write_span("agent", frozen, lower))
         assert await asyncio.to_thread(entered.wait, 3)
-        writer = coordinator.active["agent"]
+        (writer,) = coordinator.pending.values()
         waiter.cancel()
         try:
             with pytest.raises(asyncio.CancelledError):
@@ -380,9 +436,9 @@ def test_cancelled_waiter_does_not_cancel_a_span_write(memory_rig, monkeypatch):
             released.set()
         assert (await writer).state == "updated"
         await asyncio.sleep(0)
-        assert "agent" not in coordinator.active
+        assert not coordinator.pending
         reused, _ = await coordinator.write_span("agent", frozen, lower)
-        assert reused.state == "reused" and len(calls) == 2
+        assert reused.state == "reused" and len(calls) == 1
 
     asyncio.run(run())
 
@@ -403,7 +459,7 @@ def test_changed_snapshot_does_not_allow_rewriting_an_already_committed_span(
         newer = await capture(server)
         overlap, _ = await server.progress_coordinator.write_span("agent", newer, lower)
         assert overlap.state == "failed" and overlap.diagnostic == "overlapping_span"
-        assert len(calls) == 2
+        assert len(calls) == 1
 
     asyncio.run(run())
 
@@ -412,7 +468,6 @@ def test_selected_window_metadata_does_not_grow_with_unrelated_event_history():
     sizes = []
     for count in (100, 10000):
         captured = snapshot([f"Owner decision {i}: retain original evidence." for i in range(20)])
-        captured["checkpoint_settings"] = {"batch_records": 20}
         captured["memory_sources"] += [
             {
                 "id": f"event-{i:032x}",
@@ -449,9 +504,10 @@ def test_selected_window_metadata_does_not_grow_with_unrelated_event_history():
     assert sizes[0] == sizes[1]
 
 
-def test_sequential_metadata_keeps_the_exact_retry_boundary():
-    captured = snapshot(["First record", "Second record"])
-    captured["checkpoint_settings"] = {"batch_records": 1}
+def test_sequential_metadata_keeps_the_exact_retry_boundary(monkeypatch):
+    texts = ["First record", "Second record"]
+    captured = snapshot(texts)
+    monkeypatch.setattr(memory_spans, "MAX_GENERATION_BYTES", first_record_limit(texts))
     plan = memory_spans.plan(captured, memory_spans.boundary(captured, empty=True))
     saved = memory_spans.metadata(plan)["span_input"]
     assert saved["next_boundary"] == plan["next_boundary"]

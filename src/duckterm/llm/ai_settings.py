@@ -33,7 +33,13 @@ DEFAULTS: dict[str, Any] = {
     "base_url": "",
     "fast_model": "",
     "deep_model": "",
+    # Claude Code aliases for the harness tiers. Separate from the checkpoint
+    # summary writer, so changing that writer never moves every fast-tier
+    # feature onto a costlier model (#350 x #364).
+    "harness_fast_model": "haiku",
+    "harness_deep_model": "sonnet",
 }
+HARNESS_MODELS = {"haiku", "sonnet", "opus"}
 BACKENDS = {"harness", "api", "duckterm"}
 LOOPBACK = {"localhost", "127.0.0.1", "::1"}
 HARNESSES = {"auto", "claude-code", "codex"}
@@ -64,6 +70,8 @@ def validated(value: Any) -> dict[str, Any]:
         raise APIError(400, "Choose harness, api or duckterm as the AI backend")
     if result["harness"] not in HARNESSES:
         raise APIError(400, "Choose auto, claude-code or codex as the harness")
+    if {result["harness_fast_model"], result["harness_deep_model"]} - HARNESS_MODELS:
+        raise APIError(400, "Choose haiku, sonnet or opus for each harness model")
     if result["provider"] not in PROVIDERS:
         raise APIError(400, "Choose anthropic, openai, openrouter or custom as the provider")
     if result["provider"] != "custom":

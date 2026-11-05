@@ -4,7 +4,7 @@ import asyncio
 import json
 
 import pytest
-from test_maintained_repair import candidate, review
+from test_maintained_repair import candidate
 from test_memory import memory_rig, transcript
 from test_memory_spans import capture, snapshot
 
@@ -24,7 +24,7 @@ NOTICE = (
 
 
 @pytest.mark.parametrize("repair_succeeds", [True, False])
-def test_overlong_digest_item_is_rewritten_before_review(memory_rig, monkeypatch, repair_succeeds):
+def test_overlong_digest_item_is_rewritten_before_saving(memory_rig, monkeypatch, repair_succeeds):
     server, _, _, tmp = memory_rig
     transcript(tmp, "agent-claude", "Rendering is underway. Do not publish before owner review.")
     calls = []
@@ -33,11 +33,6 @@ def test_overlong_digest_item_is_rewritten_before_review(memory_rig, monkeypatch
 
     def generate(prompt, **kwargs):
         calls.append(prompt)
-        if prompt.startswith("You are validating"):
-            assert repair_succeeds
-            assert complete_item in prompt
-            assert long_item[:160] not in prompt
-            return review()
         value = candidate(prompt)
         if len(calls) > 1:
             assert "digest_item_too_long" in prompt
@@ -50,7 +45,9 @@ def test_overlong_digest_item_is_rewritten_before_review(memory_rig, monkeypatch
     cp = asyncio.run(server._create_checkpoint("agent", server.history.session("agent"), "manual"))
     if repair_succeeds:
         assert cp["summary_update"]["state"] == "updated", cp["summary_update"]
-        assert len(calls) == 3
+        assert len(calls) == 2
+        saved = server.digests.revision("agent", cp["record"]["summary_ref"])
+        assert saved["summary"] and long_item[:160] not in json.dumps(saved)
     else:
         assert len(calls) == 2
         assert cp["summary_update"]["state"] == "failed"
@@ -76,160 +73,20 @@ def test_large_rejected_draft_does_not_discard_reviewer_corrections():
     assert payload["review_feedback"] == corrections
 
 
-def test_routine_setup_repair_keeps_feedback_and_reviews_both_fields(memory_rig, monkeypatch):
-    server, _, _, tmp = memory_rig
-    transcript(
-        tmp,
-        "agent-claude",
-        "Keep the owner constraint. The inbox is empty. Research the business before a decision.",
-    )
-    calls = []
-    correction = "Remove the routine setup paragraph and overview; keep the business research."
-
-    def generate(prompt, **kwargs):
-        calls.append(prompt)
-        if prompt.startswith("You are validating"):
-            if len(calls) == 2:
-                return Summary(
-                    json.dumps(
-                        {
-                            "accept": [],
-                            "summary_corrections": [correction],
-                            "summary_validation": {
-                                "ready": False,
-                                "reason_codes": ["routine_notice_noise"],
-                            },
-                        }
-                    ),
-                    "fixture",
-                )
-            summary = json.loads(prompt.split("SUMMARY:\n", 1)[1].split("\n\nSOURCE:", 1)[0])
-            assert summary["summary"] == "Research the business before deciding."
-            assert summary["context"]["overview"] == summary["summary"]
-            return review()
-        value = candidate(prompt)
-        if len(calls) == 1:
-            # A legal Unicode summary expands beyond the draft-copy budget.
-            value["summary"] = "Setup (routine): " + "é" * 4000
-            value["context"]["overview"] = "Setup (routine): inbox empty."
-        else:
-            assert correction in prompt
-            assert "Keep the owner constraint." in prompt
-            value["summary"] = "Research the business before deciding."
-            value["context"]["overview"] = "Research the business before deciding."
-        return Summary(json.dumps(value), "fixture")
-
-    monkeypatch.setattr("duckterm.server.summarize", generate)
-    cp = asyncio.run(server._create_checkpoint("agent", server.history.session("agent"), "manual"))
-    assert cp["summary_update"]["state"] == "updated", cp
-    assert len(calls) == 4
-    saved = server.digests.revision("agent", cp["record"]["summary_ref"])
-    assert saved["summary"] == "Research the business before deciding."
-    assert saved["continuity"]["context"]["overview"] == saved["summary"]
-
-
-@pytest.mark.parametrize(
-    "codes,feedback,outcome,expected_calls",
-    [
-        (["invented_question"], True, "accepted", 4),
-        (["required_context_missing"], True, "accepted", 4),
-        (["invented_question", "unsupported_task"], True, "accepted", 4),
-        (["invented_question"], True, "rejected", 4),
-        (["invented_question"], True, "provider_timeout", 3),
-        (["invented_question"], False, "accepted", 2),
-    ],
-)
-def test_actionable_corrections_do_not_depend_on_reason_label(
-    memory_rig, monkeypatch, codes, feedback, outcome, expected_calls
-):
-    server, _, _, tmp = memory_rig
-    transcript(tmp, "agent-claude", "The comparison is only an optional suggestion, not a request.")
-    calls = []
-    correction = {
-        "field": "context.unfinished",
-        "claim": "The owner requested a comparison.",
-        "correction": "Remove the comparison from unfinished work; it was only offered.",
-    }
-
-    def generate(prompt, **kwargs):
-        calls.append(prompt)
-        if len(calls) == 3:
-            assert correction["correction"] in prompt
-            assert "not a request" in prompt
-            if outcome == "provider_timeout":
-                return Summary("", "none", "provider_timeout")
-        if prompt.startswith("You are validating"):
-            if len(calls) == 4 and outcome == "accepted":
-                assert "Only an optional comparison was offered." in prompt
-                return review()
-            return Summary(
-                json.dumps(
-                    {
-                        "accept": [],
-                        "summary_validation": {"ready": False, "reason_codes": codes},
-                        "summary_corrections": (
-                            [correction] if feedback else [{"field": "context.unfinished"}]
-                        ),
-                    }
-                ),
-                "fixture",
-            )
-        value = candidate(prompt)
-        value["summary"] = (
-            "The owner requested a comparison."
-            if len(calls) == 1
-            else "Only an optional comparison was offered."
-        )
-        return Summary(json.dumps(value), "fixture")
-
-    monkeypatch.setattr("duckterm.server.summarize", generate)
-    cp = asyncio.run(server._create_checkpoint("agent", server.history.session("agent"), "manual"))
-    assert len(calls) == expected_calls
-    if outcome == "accepted" and feedback:
-        assert cp["summary_update"]["state"] == "updated", cp["summary_update"]
-        saved = server.digests.revision("agent", cp["record"]["summary_ref"])
-        assert saved["summary"] == "Only an optional comparison was offered."
-    else:
-        assert cp["summary_update"]["state"] == "failed"
-        assert cp["record"]["summary_ref"] is None
-        assert server.history.session("agent")["progress"] is None
-
-
-@pytest.mark.parametrize("issue", ["semantic", "format"])
 def test_full_span_leaves_room_for_correction_and_preserves_pending_records(
-    memory_rig, monkeypatch, issue
+    memory_rig, monkeypatch
 ):
     from test_maintained_progress import append
 
     server, _, _, tmp = memory_rig
+    monkeypatch.setattr(memory_spans, "MAX_GENERATION_BYTES", 16000)
     path = transcript(tmp, "agent-claude", "Keep the owner constraint. " + "x" * 500)
     for number in range(30):
         append(path, f"Evidence {number}: " + "y" * 500)
     calls = []
-    correction = (
-        "Remove routine setup from the summary and overview; preserve the owner constraint. "
-        + "é" * 300
-    )
 
     def generate(prompt, **kwargs):
         calls.append(prompt)
-        if prompt.startswith("You are validating"):
-            if issue == "semantic" and len(calls) == 2:
-                return Summary(
-                    json.dumps(
-                        {
-                            "accept": [],
-                            "summary_corrections": [correction],
-                            "summary_validation": {
-                                "ready": False,
-                                "reason_codes": ["routine_notice_noise"],
-                            },
-                        }
-                    ),
-                    "fixture",
-                )
-            assert "Research completed; keep the owner constraint." in prompt
-            return review()
         assert len(prompt.encode()) <= (
             memory_spans.MAX_GENERATION_BYTES
             if len(calls) == 1
@@ -237,18 +94,13 @@ def test_full_span_leaves_room_for_correction_and_preserves_pending_records(
         )
         value = candidate(prompt)
         if len(calls) == 1:
-            value["summary"] = "Setup (routine): " + "é" * (4000 if issue == "semantic" else 6000)
+            value["summary"] = "Setup (routine): " + "é" * 6000
             value["context"]["overview"] = "Setup: inbox empty."
         else:
             original, _ = json.JSONDecoder().raw_decode(calls[0].split("MEMORY UPDATE:\n", 1)[1])
             repaired, _ = json.JSONDecoder().raw_decode(prompt.split("MEMORY UPDATE:\n", 1)[1])
             assert repaired == original
             assert "Keep the owner constraint." in prompt
-            if issue == "semantic":
-                feedback, _ = json.JSONDecoder().raw_decode(
-                    prompt.split("CORRECTION REQUIRED:\n", 1)[1]
-                )
-                assert feedback["review_feedback"] == [correction]
             assert "é" * 4000 not in prompt
             value["summary"] = "Research completed; keep the owner constraint."
             value["context"]["overview"] = value["summary"]
@@ -275,7 +127,7 @@ def test_full_span_leaves_room_for_correction_and_preserves_pending_records(
         )
         result, batch = await server.progress_coordinator.write_span("agent", frozen, lower)
         assert result.state == "updated", result
-        assert len(calls) == (4 if issue == "semantic" else 3)
+        assert len(calls) == 2
         saved = server.digests.revision("agent", result.revision["id"])
         assert saved["summary"] == "Research completed; keep the owner constraint."
         assert saved["continuity"]["context"]["overview"] == saved["summary"]
@@ -288,43 +140,6 @@ def test_full_span_leaves_room_for_correction_and_preserves_pending_records(
         assert later["selected"][0]["record"] == extra["record"]
 
     asyncio.run(run())
-
-
-def test_review_feedback_that_cannot_fit_refuses_instead_of_retrying_blind(memory_rig, monkeypatch):
-    server, _, _, tmp = memory_rig
-    transcript(tmp, "agent-claude", "Keep the owner constraint.")
-    calls = []
-
-    def generate(prompt, **kwargs):
-        calls.append(prompt)
-        if prompt.startswith("You are validating"):
-            return Summary(
-                json.dumps(
-                    {
-                        "accept": [],
-                        "summary_corrections": [
-                            f"Remove routine setup detail {number}: " + "x" * 450
-                            for number in range(8)
-                        ],
-                        "summary_validation": {
-                            "ready": False,
-                            "reason_codes": ["routine_notice_noise"],
-                        },
-                    }
-                ),
-                "fixture",
-            )
-        monkeypatch.setattr(memory_spans, "MAX_GENERATION_BYTES", len(prompt.encode()) + 2000)
-        monkeypatch.setattr(memory_spans, "REPAIR_HEADROOM_BYTES", 0)
-        return Summary(json.dumps(candidate(prompt)), "fixture")
-
-    monkeypatch.setattr("duckterm.server.summarize", generate)
-    cp = asyncio.run(server._create_checkpoint("agent", server.history.session("agent"), "manual"))
-    assert cp["summary_update"]["state"] == "failed"
-    assert cp["summary_update"]["diagnostic"] == "repair_input_too_large"
-    assert cp["record"]["summary_ref"] is None
-    assert server.history.session("agent")["progress"] is None
-    assert len(calls) == 2
 
 
 def test_noise_is_retrievable_but_does_not_consume_summary_records():
@@ -356,60 +171,6 @@ def test_long_summary_survives_without_slicing():
     assert progress.parse(json.dumps({"summary": "x" * 6001})) is None
 
 
-def test_stale_claim_is_repaired_and_reviewed_before_checkpoint_publication(
-    memory_rig, monkeypatch
-):
-    server, _, _, tmp = memory_rig
-    transcript(
-        tmp,
-        "agent-claude",
-        "Keep the owner constraint. The cause was unknown; later we diagnosed the comparison bug.",
-    )
-    calls = []
-
-    def generate(prompt, **kwargs):
-        calls.append(prompt)
-        if prompt.startswith("You are validating"):
-            if len(calls) == 2:
-                return Summary(
-                    json.dumps(
-                        {
-                            "accept": [],
-                            "done_next_action_ids": [],
-                            "summary_corrections": [
-                                {
-                                    "field": "context.questions",
-                                    "correction": "The later record diagnoses the comparison bug.",
-                                }
-                            ],
-                            "summary_validation": {
-                                "ready": False,
-                                "reason_codes": ["stale_open_item"],
-                            },
-                        }
-                    ),
-                    "fixture",
-                )
-            assert "The comparison bug was diagnosed" in prompt
-            return review()
-        value = candidate(prompt)
-        value["summary"] = (
-            "The cause is unknown." if len(calls) == 1 else "The comparison bug was diagnosed."
-        )
-        if len(calls) > 1:
-            assert "The later record diagnoses the comparison bug." in prompt
-            assert "stale_open_item" in prompt
-            assert "The cause was unknown; later we diagnosed" in prompt
-        return Summary(json.dumps(value), "fixture")
-
-    monkeypatch.setattr("duckterm.server.summarize", generate)
-    cp = asyncio.run(server._create_checkpoint("agent", server.history.session("agent"), "manual"))
-    assert cp["summary_update"]["state"] == "updated", cp
-    assert len(calls) == 4
-    saved = server.digests.revision("agent", cp["record"]["summary_ref"])
-    assert saved["summary"] == "The comparison bug was diagnosed."
-
-
 def test_summary_array_is_rejected_instead_of_python_stringified():
     reply = json.dumps({"summary": ["Paragraph one.", "Paragraph two."]})
     assert progress.parse(reply) is None
@@ -436,42 +197,9 @@ def test_hook_copy_of_noise_is_filtered_without_losing_owner_comment():
     assert stats["eligible_records"] == 1
 
 
-@pytest.mark.parametrize("second_failure", ["rejected", "provider_timeout"])
-def test_semantic_correction_is_bounded_and_never_saves_rejected_memory(
-    memory_rig, monkeypatch, second_failure
-):
-    server, _, _, tmp = memory_rig
-    transcript(tmp, "agent-claude", "The cause was diagnosed; keep the owner constraint.")
-    calls = []
-
-    def generate(prompt, **kwargs):
-        calls.append(prompt)
-        if len(calls) == 3 and second_failure == "provider_timeout":
-            return Summary("", "none", "provider_timeout")
-        if prompt.startswith("You are validating"):
-            return Summary(
-                json.dumps(
-                    {
-                        "accept": [],
-                        "summary_validation": {"ready": False, "reason_codes": ["stale_open_item"]},
-                    }
-                ),
-                "fixture",
-            )
-        return Summary(json.dumps(candidate(prompt)), "fixture")
-
-    monkeypatch.setattr("duckterm.server.summarize", generate)
-    cp = asyncio.run(server._create_checkpoint("agent", server.history.session("agent"), "manual"))
-    assert len(calls) == (3 if second_failure == "provider_timeout" else 4)
-    assert cp["summary_update"]["state"] == "failed"
-    assert cp["record"]["summary_ref"] is None
-    assert server.history.session("agent")["progress"] is None
-
-
-@pytest.mark.parametrize("issue", ["format", "semantic"])
 @pytest.mark.parametrize("room_for_correction", [True, False])
 def test_correction_respects_generation_reserve_without_slicing_sources(
-    memory_rig, monkeypatch, issue, room_for_correction
+    memory_rig, monkeypatch, room_for_correction
 ):
     server, _, _, tmp = memory_rig
     evidence = "Keep the owner constraint. " + "x" * 6000
@@ -480,24 +208,6 @@ def test_correction_respects_generation_reserve_without_slicing_sources(
 
     def generate(prompt, **kwargs):
         calls.append(prompt)
-        if prompt.startswith("You are validating"):
-            if issue == "semantic" and len(calls) == 2:
-                return Summary(
-                    json.dumps(
-                        {
-                            "accept": [],
-                            "summary_corrections": [
-                                "The later evidence resolves the earlier unknown."
-                            ],
-                            "summary_validation": {
-                                "ready": False,
-                                "reason_codes": ["stale_open_item"],
-                            },
-                        }
-                    ),
-                    "fixture",
-                )
-            return review()
         if len(calls) == 1:
             monkeypatch.setattr(memory_spans, "REPAIR_HEADROOM_BYTES", 0)
             # Leave room for minimal correction but not for a copied large draft.
@@ -510,13 +220,9 @@ def test_correction_respects_generation_reserve_without_slicing_sources(
         assert evidence in prompt
         value = candidate(prompt)
         if len(calls) == 1:
-            value["summary"] = "S" * (6001 if issue == "format" else 5800)
+            value["summary"] = "S" * 6001
         else:
-            if issue == "semantic":
-                assert "The later evidence resolves the earlier unknown." in prompt
-                assert "S" * 5800 not in prompt
-            else:
-                assert '"rejected_draft": ""' in prompt
+            assert '"rejected_draft": ""' in prompt
         return Summary(json.dumps(value), "fixture")
 
     monkeypatch.setattr("duckterm.server.summarize", generate)
@@ -524,4 +230,4 @@ def test_correction_respects_generation_reserve_without_slicing_sources(
     assert cp["summary_update"]["state"] == ("updated" if room_for_correction else "failed"), cp
     if not room_for_correction:
         assert cp["record"]["summary_ref"] is None
-        assert len(calls) == (1 if issue == "format" else 2)
+        assert len(calls) == 1

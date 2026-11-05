@@ -163,7 +163,7 @@ function watchProgress(key: string, requestId: string, startedAt: number, comple
 }
 
 function validProgress(value: CheckpointWorkProgress | undefined): CheckpointWorkProgress | undefined {
-  if (!value || !["checking", "writing", "reviewing", "repairing", "saving"].includes(value.stage)) return undefined;
+  if (!value || !["checking", "writing", "reviewing", "repairing", "reconciling", "saving"].includes(value.stage)) return undefined;
   const { completed, total } = value;
   if (typeof completed === "number" && Number.isSafeInteger(completed) && completed >= 0
     && typeof total === "number" && Number.isSafeInteger(total) && total >= completed) return { stage: value.stage, completed, total };

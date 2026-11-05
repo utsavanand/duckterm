@@ -9,6 +9,12 @@ from duckterm import memory_budget, memory_contract, memory_handoff
 from duckterm.core.session_api import APIError
 
 
+@pytest.fixture(autouse=True)
+def _brief_budget(monkeypatch):
+    """Fixtures here are sized against a 32,000-byte budget; the rules don't depend on it."""
+    monkeypatch.setattr(memory_budget, "MAX_BRIEF_BYTES", 32000)
+
+
 def render(**kwargs):
     return memory_budget.render(
         introduction="Continue the named session",
@@ -103,3 +109,23 @@ def test_more_than_ten_kb_of_protected_claims_can_fit_the_final_handoff_budget()
     assert 10000 < len(json.dumps(claim).encode()) < memory_budget.MAX_BRIEF_BYTES
     assert json.dumps(claim) in text
     assert memory_handoff.TOOLS in text
+
+
+def test_older_facts_give_way_after_the_newest_narratives_and_rules_stay_whole():
+    rules = [f"decision #r{i}: Keep rule {i} " + "x" * 60 for i in range(60)]
+    facts = [f"known_issue #f{i}: Fact {i} " + "y" * 150 for i in range(200)]
+    narratives = [{"revision": f"n{i}", "text": f"Narrative {i}. " * 60} for i in range(12)]
+    metadata = {"coverage": {"declared": True, "unknown": False, "omitted": []}}
+    text = render(
+        protected={"intent": ["task #t1: Finish it"], "rules": rules, "facts": facts},
+        narratives=narratives,
+        metadata=metadata,
+    )
+    assert len(text.encode()) <= memory_budget.MAX_BRIEF_BYTES
+    assert all(rule in text for rule in rules) and "task #t1: Finish it" in text
+    shown = [f for f in facts if f in text]
+    left_out = metadata["handoff_omissions"]["facts"]
+    # The newest facts are the ones shown, and the brief says how to read the rest.
+    assert shown == facts[len(facts) - len(shown) :] and left_out == len(facts) - len(shown) > 0
+    assert f"{left_out} older facts; list them with duckterm memory items --category facts" in text
+    assert all(f"Narrative {i}." in text for i in range(7, 12))

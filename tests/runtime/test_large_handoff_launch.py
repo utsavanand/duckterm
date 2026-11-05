@@ -26,7 +26,7 @@ def test_switch_launch_delivers_large_brief_on_same_card(tmp_path):
         "print('HANDOFF_READY',flush=True)\n"
         "time.sleep(30)\n"
     )
-    brief = ("Owner's complete handoff, including `literal tools` and $variables.\n" * 600)[:32000]
+    brief = ("Owner's complete handoff, including `literal tools` and $variables.\n" * 1700)[:96000]
     store = HistoryStore(tmp_path / "history.db")
     server = Server(history=store)
     key = "test-large-switch"

@@ -13,7 +13,7 @@ beforeEach(() => {
   Object.defineProperty(document, "visibilityState", { configurable: true, value: "visible" });
   vi.mocked(memorySwitchService).mockReturnValue(service);
   service.plan.mockResolvedValue({ available_records: 0, processed_records: 0, pending_records: 0,
-    default_records: 20, selected_records: 0, remaining_records: 0, batch_records: 20,
+    default_records: 20, selected_records: 0, remaining_records: 0,
     order: "oldest_unprocessed_first", selection_plan: {} });
   service.prepare.mockResolvedValue(ready()); service.preparation.mockImplementation(async () => ready());
   service.release.mockResolvedValue(undefined);
@@ -65,7 +65,7 @@ it("prepares after checking the empty backlog but requires explicit Switch and p
 it("shows the pending count and prepares only the chosen recent records", async () => {
   service.plan.mockResolvedValueOnce({ available_records: 171, processed_records: 28,
     pending_records: 143, default_records: 20, selected_records: 20, remaining_records: 123,
-    batch_records: 20, order: "oldest_unprocessed_first", selection_plan: { version: 1 } });
+    order: "oldest_unprocessed_first", selection_plan: { version: 1 } });
   render(<MemorySwitchPanel {...props()} />);
   await screen.findByText("143");
   expect(service.prepare).not.toHaveBeenCalled();

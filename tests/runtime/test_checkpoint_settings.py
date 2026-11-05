@@ -15,6 +15,7 @@ __all__ = ["memory_rig"]
 
 def test_defaults_and_partial_concurrent_updates_survive_reload(memory_rig):
     assert checkpoint_settings.load() == checkpoint_settings.DEFAULTS
+    assert checkpoint_settings.DEFAULTS["lookback_records"] == "all"
     with ThreadPoolExecutor(max_workers=2) as pool:
         futures = [
             pool.submit(checkpoint_settings.save, value)
@@ -25,7 +26,32 @@ def test_defaults_and_partial_concurrent_updates_survive_reload(memory_rig):
     result = checkpoint_settings.load()
     assert result["lookback_records"] == 60
     assert result["writer_model"] == "sonnet"
-    assert result["batch_records"] == 20
+    assert "batch_records" not in result
+    assert checkpoint_settings.save({"lookback_records": "all"})["lookback_records"] == "all"
+
+
+def test_settings_file_with_retired_keys_still_loads(memory_rig):
+    from duckterm.helpers import paths
+
+    (paths.home() / "checkpoint-settings.json").write_text(
+        json.dumps(
+            {
+                "lookback_records": 60,
+                "batch_records": 20,
+                "reviewer_model": "opus",
+                "writer_model": "sonnet",
+            }
+        )
+    )
+    loaded = checkpoint_settings.load()
+    assert loaded == {
+        **checkpoint_settings.DEFAULTS,
+        "lookback_records": 60,
+        "writer_model": "sonnet",
+    }
+    assert checkpoint_settings.save({"writer_model": "opus"})["lookback_records"] == 60
+    saved = json.loads((paths.home() / "checkpoint-settings.json").read_text())
+    assert "batch_records" not in saved and "reviewer_model" not in saved
 
 
 @pytest.mark.parametrize(
@@ -37,7 +63,8 @@ def test_defaults_and_partial_concurrent_updates_survive_reload(memory_rig):
         {"lookback_records": 0},
         {"lookback_records": 1001},
         {"lookback_records": "20"},
-        {"batch_records": 50},
+        {"lookback_records": "ALL"},
+        {"batch_records": 20},
         {"writer_model": []},
         {"reviewer_model": "invalid"},
         {"unexpected": 1},

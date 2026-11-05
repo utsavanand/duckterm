@@ -75,7 +75,9 @@ def test_preview_is_read_only_and_selection_advances_over_actual_coverage(memory
         first = await checkpoint_plan.preview(server, "agent")
         assert first["order"] == first["selection_plan"]["order"] == "newest_unprocessed_first"
         assert first["pending_records"] == 55
-        assert first["selected_records"] == 20 and first["remaining_records"] == 35
+        # The default summarizes every unprocessed record; a count is a one-off choice.
+        assert first["default_records"] == "all" and "batch_records" not in first
+        assert first["selected_records"] == 55 and first["remaining_records"] == 0
         assert not calls and not server.history.checkpoints("agent")
         status, saved = await submit(server, first)
         assert status == 200 and saved["summary_update"]["state"] == "updated", saved
@@ -85,10 +87,10 @@ def test_preview_is_read_only_and_selection_advances_over_actual_coverage(memory
         assert next_plan["pending_records"] == 35
         status, saved = await submit(server, next_plan, "all", "test-all")
         assert status == 200 and saved["summary_update"]["state"] == "updated", saved
-        assert [len(v) for v in writer_texts(calls)] == [20, 20, 15]
+        assert [len(v) for v in writer_texts(calls)] == [20, 35]
         final = await checkpoint_plan.preview(server, "agent")
         assert final["pending_records"] == final["selected_records"] == 0
-        assert checkpoint_settings.load()["lookback_records"] == 20
+        assert checkpoint_settings.load()["lookback_records"] == "all"
 
     asyncio.run(run())
 

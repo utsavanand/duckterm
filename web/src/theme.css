@@ -1730,7 +1730,11 @@ code,
   font-size: 0.875rem;
   padding: 9px 16px;
   cursor: pointer;
-  border: 1px solid transparent;
+  /* A button with no variant looks like ghost. Without this, 40 buttons fell
+     back to the browser's grey default, which ignores the theme. */
+  background: var(--card);
+  color: var(--text);
+  border: 1px solid var(--border-strong);
   transition: background 0.12s ease, border-color 0.12s ease, opacity 0.12s ease;
   white-space: nowrap;
 }
@@ -1740,6 +1744,7 @@ code,
 }
 .rd-btn-primary {
   background: var(--brand-green-strong);
+  border-color: transparent;
   color: #ffffff;
 }
 .rd-btn-primary:hover:not(:disabled) {

@@ -52,7 +52,7 @@ export function MemorySwitchPanel(props: {
     let live = true;
     void service.plan().then(value => {
       if (!live) return;
-      setPlan(value); setPlanError(""); setCustomCount(String(value.default_records));
+      setPlan(value); setPlanError(""); setCustomCount(String(value.default_records === "all" ? Math.min(value.pending_records, 1000) || 1 : value.default_records)); setCountChoice(value.default_records === "all" ? "all" : "default");
       if (value.pending_records === 0) setRecordChoice(null);
     }).catch(cause => { if (live) setPlanError((cause as Error).message); });
     return () => { live = false; };
@@ -122,13 +122,14 @@ export function MemorySwitchPanel(props: {
   }
   const customNumber = Number(customCount);
   const validCount = countChoice !== "custom" || (customCount.trim() !== "" && Number.isInteger(customNumber) && customNumber >= 1 && customNumber <= 1000);
+  const fallback = plan ? plan.default_records === "all" ? plan.pending_records : plan.default_records : 0;
   const selectedCount = plan && validCount ? Math.min(plan.pending_records,
-    countChoice === "all" ? plan.pending_records : countChoice === "custom" ? customNumber : plan.default_records) : 0;
+    countChoice === "all" ? plan.pending_records : countChoice === "custom" ? customNumber : fallback) : 0;
   function startChosenPreparation() {
     if (!plan || !validCount) return;
     setRecordChoice(plan.pending_records === 0 ? null : {
       plan: plan.selection_plan,
-      records: countChoice === "all" ? "all" : countChoice === "custom" ? customNumber : plan.default_records,
+      records: countChoice === "all" ? "all" : countChoice === "custom" ? customNumber : fallback,
     });
   }
   const eligibility = { now, draftClear: props.allowed, targetAvailable: props.allowed,
@@ -224,13 +225,12 @@ export function MemorySwitchPanel(props: {
         <p><strong>{plan.pending_records.toLocaleString()}</strong> conversation records haven’t been summarized.</p>
         <p className="hint">Records are individual user or assistant messages, not whole turns. Tool activity and routine inbox reminders are excluded.</p>
         {plan.pending_records > 0 && <fieldset><legend>How many should this handoff summarize?</legend>
-          <label><input type="radio" name="handoff-record-choice" checked={countChoice === "default"} onChange={() => setCountChoice("default")} /> Recent {Math.min(plan.default_records, plan.pending_records).toLocaleString()} · your configured default</label>
+          {plan.default_records !== "all" && <label><input type="radio" name="handoff-record-choice" checked={countChoice === "default"} onChange={() => setCountChoice("default")} /> Recent {Math.min(fallback, plan.pending_records).toLocaleString()} · your configured default</label>}
           <label><input type="radio" name="handoff-record-choice" checked={countChoice === "custom"} onChange={() => setCountChoice("custom")} /> Choose a count <input aria-label="Number of handoff records" type="number" min="1" max="1000" step="1" value={customCount} onChange={event => { setCountChoice("custom"); setCustomCount(event.target.value); }} /></label>
           <label><input type="radio" name="handoff-record-choice" checked={countChoice === "all"} onChange={() => setCountChoice("all")} /> All {plan.pending_records.toLocaleString()} unprocessed records</label>
         </fieldset>}
         <div className="rd-checkpoint-selection" aria-live="polite"><strong>{selectedCount.toLocaleString()}</strong> records selected · <strong>{(plan.pending_records - selectedCount).toLocaleString()}</strong> left for later
           <p className="hint">{selectedCount ? "Newest unprocessed first for this handoff. Older history remains searchable. Batches contain at most 20 records." : "No new conversation records need a summary."}</p></div>
-        <p className="hint">This choice applies once. Your Checkpoint default in Settings stays at {plan.default_records.toLocaleString()}.</p>
         {!validCount && <p role="alert">Enter a whole number from 1 to 1,000.</p>}
       </>}
       <div className="rd-restart-footer"><button className="rd-btn rd-btn-ghost" onClick={props.close}>Cancel</button>

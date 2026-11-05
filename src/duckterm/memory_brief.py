@@ -4,8 +4,11 @@ from __future__ import annotations
 
 from typing import Any
 
-from duckterm import memory_assembly, memory_contract, memory_summary, memory_summary_input
+from duckterm import memory_assembly, memory_contract, memory_summary_input
 from duckterm.core.session_api import APIError
+
+RECENT_BYTES = 16000
+MAX_RECENT_MESSAGE_CHARS = 3000
 
 
 def assemble(
@@ -17,7 +20,9 @@ def assemble(
     *,
     links: list[dict[str, Any]] | None = None,
     evidence_sources: list[dict[str, Any]] | None = None,
+    items: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any], list[dict[str, str]]]:
+    from duckterm import memory_lifecycle, memory_reconcile
     from duckterm.memory_handoff import TOOLS
 
     try:
@@ -33,6 +38,11 @@ def assemble(
         ) from exc
     except ValueError as exc:
         raise APIError(409, "Saved span memory cannot be resolved; source agent kept") from exc
+    leaves = [
+        r
+        for r in revisions
+        if r.get("span") == "incremental" and r.get("fold", {}).get("tier") == 0
+    ]
     original_rows, _ = memory_summary_input.records(sources)
     rows = [r for r in original_rows if r["kind"] in {"conversation", "event"}]
     eligible_count = sum(not r["reference_only"] for r in rows)
@@ -46,12 +56,46 @@ def assemble(
     # An explicit bounded handoff can summarize current work while older
     # originals remain available through the read tools. Declare that gap;
     # never present selected coverage as complete history coverage.
-    context = assembled["context"]
-    # Lifecycle changes must be explicit persisted claims, never an inference by
-    # the handoff writer. No narrative provider gets to retire protected claims.
-    protected = {
-        field: [c for c in context[field] if c.get("state", "open") == "open"]
-        for field in memory_summary.FIELDS
+    # Reconciled items, plus unmerged items from leaves not yet reconciled. The
+    # handoff writer never closes an item itself.
+    protected: dict[str, Any] = memory_reconcile.brief_items(
+        items, leaves, set(memory_lifecycle.transitions(links or []))
+    )
+    # Every ref repeats a ~97-character source handle; name each handle once.
+    handles: dict[str, str] = {}
+    for entries in protected.values():
+        for item in entries:
+            short = []
+            for ref in item["refs"]:
+                source, version, record = ref.split(":", 2)
+                handle = source + ":" + version
+                name = handles.setdefault(handle, f"T{len(handles) + 1}")
+                short.append(name + ":" + record)
+            item["refs"] = short
+    # The latest exchanges carry who did what most recently, which summaries
+    # compress; measured 2026-10-30, a raw tail removed most wrong answers about
+    # current state.
+    recent: list[str] = []
+    size = 0
+    for row in reversed(original_rows):
+        if row["kind"] != "conversation" or row["reference_only"]:
+            continue
+        if row["role"] not in {"user", "assistant"}:
+            continue
+        text = row["text"]
+        if len(text) > MAX_RECENT_MESSAGE_CHARS:
+            half = MAX_RECENT_MESSAGE_CHARS // 2
+            text = text[:half] + " [... middle omitted ...] " + text[-half:]
+        name = handles.setdefault(row["source"] + ":" + row["version"], f"T{len(handles) + 1}")
+        line = f"[{name}:{row['record']}] {row['role']}: {text}"
+        size += len(line.encode()) + 1
+        if size > RECENT_BYTES:
+            break
+        recent.append(line)
+    protected["ref_sources"] = {
+        "usage": "T1:3282 is record 3282 of source handle T1: "
+        "duckterm memory read <handle> --record 3282",
+        **{name: handle for handle, name in handles.items()},
     }
     coverage: dict[str, Any] = {
         "declared": True,
@@ -70,11 +114,6 @@ def assemble(
             else []
         ),
     }
-    leaves = [
-        r
-        for r in revisions
-        if r.get("span") == "incremental" and r.get("fold", {}).get("tier") == 0
-    ]
     handoff: dict[str, Any] = {
         "method": "independent_spans",
         "summary_state": "partial" if missing else "current",
@@ -87,12 +126,23 @@ def assemble(
         "included_records": 0,
         "omitted_records": len(rows) - summarized_count,
         "protected_kinds": {
-            kind: sum(c["kind"] == kind for items in protected.values() for c in items)
-            for kind in sorted(set().union(*memory_contract.KINDS.values()))
+            kind: sum(
+                c["kind"] == kind for name in memory_contract.CATEGORIES for c in protected[name]
+            )
+            for kind in sorted(memory_contract.KIND_FIELD)
         },
-        "protected_fields": {field: len(items) for field, items in protected.items()},
+        "protected_categories": {name: len(protected[name]) for name in memory_contract.CATEGORIES},
         "coverage": coverage,
     }
+    # One line per item: JSON keys cost ~45 bytes an item, which at 226 items
+    # pushed the oldest history out of a full brief (2026-10-31).
+    lines: dict[str, Any] = {
+        name: [
+            f"{c['kind']} #{c['id']}: {c['text']} [{', '.join(c['refs'])}]" for c in protected[name]
+        ]
+        for name in memory_contract.CATEGORIES
+    }
+    lines["ref_sources"] = protected["ref_sources"]
     from duckterm import memory_budget
 
     if assembled["omitted_narratives"]:
@@ -109,7 +159,7 @@ def assemble(
         ),
         launch=launch or {"session_key": key},
         required=required,
-        protected=protected,
+        protected=lines,
         narratives=assembled["narratives"],
         metadata=handoff,
         source_map=[
@@ -118,5 +168,6 @@ def assemble(
             if source["kind"] == "session"
         ],
         tools=TOOLS,
+        recent="\n".join(reversed(recent)),
     )
     return text, handoff, []

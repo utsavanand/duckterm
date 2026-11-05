@@ -5,6 +5,8 @@ import json
 
 from tests.runtime import test_memory_preparation as fixtures
 
+from duckterm import memory_budget
+
 memory_rig = fixtures.memory_rig
 preparation = fixtures.preparation
 
@@ -27,19 +29,21 @@ def test_first_handoff_requires_a_summary_and_retains_source_when_provider_unava
     assert server.history.session("agent")["runtime"] == "claude-code"
 
 
-def test_existing_complete_spans_prepare_without_model_or_raw_tail(preparation, monkeypatch):
+def test_complete_spans_prepare_without_model_and_clip_the_raw_tail(preparation, monkeypatch):
     from test_maintained_progress import append
 
     server, _, tmp = preparation
     from test_maintained_progress import provider
 
     calls = provider(monkeypatch)
+    # Two ~11 KB records in separate spans.
+    monkeypatch.setattr("duckterm.memory_spans.MAX_GENERATION_BYTES", 16000)
     path = fixtures.transcript(tmp, "agent-claude", "older original " + "x" * 11000)
     append(path, "recent original " + "y" * 11000)
 
     async def run():
         await server.progress_coordinator.refresh("agent")
-        assert len(calls) == 4
+        assert len(calls) == 2
 
         def forbidden(*args, **_kw):
             raise AssertionError("Complete summaries must be reused")
@@ -49,9 +53,10 @@ def test_existing_complete_spans_prepare_without_model_or_raw_tail(preparation, 
         assert result["state"] == "ready", result
         detail = server.memory_preparation.details("agent", result["preparation_id"])
         text = detail["brief"]["text"]
-        assert "duckterm memory read" in text and "x" * 100 not in text
+        assert "duckterm memory read" in text
+        assert "[... middle omitted ...]" in text and "x" * 1600 not in text
         assert result["coverage"]["handoff"]["protected_kinds"]["constraint"] == 2
-        assert len(text.encode()) <= 32000
+        assert len(text.encode()) <= memory_budget.MAX_BRIEF_BYTES
 
     asyncio.run(run())
 
@@ -66,7 +71,7 @@ def test_prepare_reuses_verified_revision_and_refuses_rewritten_evidence(prepara
         revision = await server.progress_coordinator.refresh("agent")
         assert revision["continuity"]["verified"]
         ready = await fixtures.prepare(server)
-        assert len(calls) == 2  # Opening the switch never generates another revision.
+        assert len(calls) == 1  # Opening the switch never generates another revision.
         assert ready["proof"]["revision_id"] == revision["id"]
         # Reference-only originals are still not summarized; keep that coverage honest.
         assert ready["coverage"]["handoff"]["summary_state"] == "current"
@@ -76,7 +81,7 @@ def test_prepare_reuses_verified_revision_and_refuses_rewritten_evidence(prepara
         next_ready = await fixtures.prepare(server, "new-dialog")
         assert next_ready["state"] == "stale_source"
         assert "proof" not in next_ready
-        assert len(calls) == 2
+        assert len(calls) == 1
 
     asyncio.run(run())
 
@@ -96,4 +101,4 @@ def test_onboarding_identifies_named_session_directory_and_selected_target(prepa
         "source_harness": "claude-code",
         "target": {"harness": "codex", "model": {"mode": "explicit", "id": "selected-model"}},
     }
-    assert len(calls) == 2 and len(text.encode()) <= 32000
+    assert len(calls) == 1 and len(text.encode()) <= 32000

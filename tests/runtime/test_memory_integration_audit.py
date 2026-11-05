@@ -46,7 +46,7 @@ def test_generation_input_preserves_32kb_response_reserve():
     assert len(memory_spans.prompt(plan).encode()) <= 16000
 
 
-def test_handoff_coverage_distinguishes_callout_learning_constraint():
+def test_handoff_counts_items_by_taxonomy_kind_and_category():
     revisions = rows(3)
     kinds = ["constraint", "callout", "learning"]
     sources = []
@@ -64,9 +64,10 @@ def test_handoff_coverage_distinguishes_callout_learning_constraint():
                 }
             )
     _, coverage, _ = memory_brief.assemble("test", sources, "{}", revisions, None)
-    assert coverage["protected_kinds"]["callout"] == 1
+    # A legacy callout is read as a constraint under the 2026-10-30 taxonomy.
+    assert coverage["protected_kinds"]["constraint"] == 2
     assert coverage["protected_kinds"]["learning"] == 1
-    assert coverage["protected_kinds"]["constraint"] == 1
+    assert coverage["protected_categories"] == {"intent": 0, "rules": 2, "facts": 1}
 
 
 def test_supersede_retry_remains_idempotent_after_replacement_retirement(memory_rig, monkeypatch):

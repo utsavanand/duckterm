@@ -13,7 +13,7 @@ const props = {selection,targetName:"Codex",allowed:true,afterTurn:false,canInte
 
 it("keeps one live dialog lease after StrictMode effect replay", async () => {
   const leases = new Set<string>();
-  const service = {plan:vi.fn(async () => ({available_records:0,processed_records:0,pending_records:0,default_records:20,selected_records:0,remaining_records:0,batch_records:20 as const,order:"oldest_unprocessed_first" as const,selection_plan:{}})),prepare:vi.fn(async (key:string) => { leases.add(key);return preparing; }),
+  const service = {plan:vi.fn(async () => ({available_records:0,processed_records:0,pending_records:0,default_records:20,selected_records:0,remaining_records:0,order:"oldest_unprocessed_first" as const,selection_plan:{}})),prepare:vi.fn(async (key:string) => { leases.add(key);return preparing; }),
     preparation:vi.fn(async () => preparing),details:vi.fn(),release:vi.fn(async (_id:string,key:string) => {leases.delete(key);}),switch:vi.fn(),operation:vi.fn(),cancel:vi.fn()};
   vi.mocked(memorySwitchService).mockReturnValue(service);
   const view = render(<StrictMode><MemorySwitchPanel {...props} /></StrictMode>);
@@ -29,7 +29,7 @@ it("keeps one live dialog lease after StrictMode effect replay", async () => {
 it("does not retain a lease whose preparation finishes after its dialog unmounts", async () => {
   const leases = new Set<string>();
   let finish!: () => void;
-  const service = {plan:vi.fn(async () => ({available_records:0,processed_records:0,pending_records:0,default_records:20,selected_records:0,remaining_records:0,batch_records:20 as const,order:"oldest_unprocessed_first" as const,selection_plan:{}})),prepare:vi.fn((key:string) => new Promise<MemoryPreparation>(resolve => {finish=()=>{leases.add(key);resolve(preparing);};})),preparation:vi.fn(),details:vi.fn(),
+  const service = {plan:vi.fn(async () => ({available_records:0,processed_records:0,pending_records:0,default_records:20,selected_records:0,remaining_records:0,order:"oldest_unprocessed_first" as const,selection_plan:{}})),prepare:vi.fn((key:string) => new Promise<MemoryPreparation>(resolve => {finish=()=>{leases.add(key);resolve(preparing);};})),preparation:vi.fn(),details:vi.fn(),
     release:vi.fn(async (_id:string,key:string)=>{leases.delete(key);}),switch:vi.fn(),operation:vi.fn(),cancel:vi.fn()};
   vi.mocked(memorySwitchService).mockReturnValue(service);
   const view=render(<MemorySwitchPanel {...props} />);

@@ -36,10 +36,23 @@ _INBOX_REQUEST = re.compile(
 )
 
 
+# Codex's approval reviewer (approvals_reviewer = "auto_review") records each
+# ~100 KB assessment prompt as a user message inside some sessions: about 550 a
+# day here, machine text a checkpoint would otherwise summarize (2026-11-01).
+_CODEX_APPROVAL_REVIEW = "The following is the Codex agent history whose request action"
+
+
 def is_routine_notice(role: str, text: str) -> bool:
     text = text.strip()
     return bool(
-        (role == "user" and (_ORACLE.fullmatch(text) or _INBOX_REQUEST.fullmatch(text)))
+        (
+            role == "user"
+            and (
+                _ORACLE.fullmatch(text)
+                or _INBOX_REQUEST.fullmatch(text)
+                or text.startswith(_CODEX_APPROVAL_REVIEW)
+            )
+        )
         or (role == "assistant" and _INBOX_ACK.fullmatch(text))
     )
 

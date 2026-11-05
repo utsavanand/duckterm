@@ -8,15 +8,21 @@ from test_maintained_progress import append
 from test_memory import memory_rig, transcript
 from test_memory_spans import provider
 
-from duckterm import memory_continuity, memory_handoff
-from duckterm.core import memory_folding
+from duckterm import memory_continuity, memory_handoff, memory_spans
+from duckterm.core import memory_folding, memory_refresh
 from duckterm.persistence.saved_state import current_revision
 
 __all__ = ["memory_rig"]
 
 
+@pytest.fixture
+def two_spans(monkeypatch):
+    """Two ~11 KB records no longer share a span."""
+    monkeypatch.setattr(memory_spans, "MAX_GENERATION_BYTES", 16000)
+
+
 def test_checkpoint_completes_bounded_spans_and_second_write_reads_only_gap(
-    memory_rig, monkeypatch
+    memory_rig, monkeypatch, two_spans
 ):
     server, _, _, tmp = memory_rig
     path = transcript(tmp, "agent-claude", "Initial constraint " + "x" * 11000)
@@ -32,20 +38,22 @@ def test_checkpoint_completes_bounded_spans_and_second_write_reads_only_gap(
         assert first_attempt["state"] == "complete"
         assert first_attempt["summarized_records"] == 2
         assert len(first_attempt["revision_ids"]) == 2
-        assert len(calls) == 4
-        assert "Initial constraint" in calls[0]
-        assert "Initial constraint" not in calls[2]
-        assert "Second instruction" in calls[2]
+        # One writer call per span; the two spans may run in either order.
+        assert len(calls) == 2
+        assert sorted(("Initial constraint" in c, "Second instruction" in c) for c in calls) == [
+            (False, True),
+            (True, False),
+        ]
         append(path, "Third instruction")
         second = await server.progress_coordinator.refresh_result("agent")
-        assert second.state == "updated" and len(calls) == 6
+        assert second.state == "updated" and len(calls) == 3
         second_attempt = second.metadata(2)["attempt_coverage"]
         assert second_attempt["summarized_records"] == 1
         assert second_attempt["revision_ids"] == [second.revision["id"]]
         assert not set(first_attempt["revision_ids"]).intersection(second_attempt["revision_ids"])
-        assert "Third instruction" in calls[4]
-        assert "Second instruction" not in calls[4]
-        assert "prior_context" not in calls[4]
+        assert "Third instruction" in calls[2]
+        assert "Second instruction" not in calls[2]
+        assert "prior_context" not in calls[2]
         captured = await server.progress_coordinator.capture("agent")
         captured = await memory_continuity.capture(server, "agent", captured)
         rows = memory_folding.rows(server.digests, "agent", captured["source"]["scope_hash"])
@@ -64,7 +72,10 @@ def test_checkpoint_completes_bounded_spans_and_second_write_reads_only_gap(
             evidence_sources=evidence_sources,
         )
         assert len(rows) == 3
-        first_trigger, second_trigger, third_trigger = [row["trigger"] for row in rows]
+        first_trigger, second_trigger = sorted(
+            (row["trigger"] for row in rows[:2]), key=lambda trigger: trigger["batch_index"]
+        )
+        third_trigger = rows[2]["trigger"]
         assert first_trigger["request_id"] == second_trigger["request_id"] == "explicit-range"
         assert first_trigger["range_id"] == second_trigger["range_id"]
         assert first_trigger["batch_index"] == 1 and first_trigger["continuation"] is False
@@ -73,10 +84,11 @@ def test_checkpoint_completes_bounded_spans_and_second_write_reads_only_gap(
         assert third_trigger["range_id"] != first_trigger["range_id"]
         assert coverage["protected_kinds"]["constraint"] == 3
         assert "duckterm memory read" in brief
-        assert "x" * 100 not in brief  # no raw transcript tail in a span brief
+        # The latest messages are verbatim but each is clipped; the original stays readable.
+        assert "[... middle omitted ...]" in brief and "x" * 1600 not in brief
         assert included == []
         again = await server.progress_coordinator.refresh_result("agent")
-        assert again.state == "reused" and len(calls) == 6
+        assert again.state == "reused" and len(calls) == 3
 
     asyncio.run(run())
 
@@ -169,19 +181,26 @@ def test_different_capture_cannot_join_an_older_update(memory_rig, monkeypatch):
     asyncio.run(run())
 
 
-def test_failed_later_batch_keeps_boundary_and_retry_does_not_repeat_first(memory_rig, monkeypatch):
+def test_failed_later_batch_keeps_boundary_and_retry_does_not_repeat_first(
+    memory_rig, monkeypatch, two_spans
+):
+    from duckterm import server as server_module
+    from duckterm.llm.summarizer import Summary
+
     server, _, _, tmp = memory_rig
     path = transcript(tmp, "agent-claude", "First " + "x" * 11000)
     append(path, "Second " + "y" * 11000)
-    calls, fail = provider(monkeypatch)
-    real_write = server.progress_coordinator.write_span
+    calls, _ = provider(monkeypatch)
+    generate = server_module.summarize
+    fail = [True]
 
-    async def write(key, captured, lower):
-        if any(value["count"] for value in lower["sources"].values()):
-            fail[0] = True
-        return await real_write(key, captured, lower)
+    def second_fails(prompt, **kwargs):
+        if fail[0] and "Second " in prompt:
+            calls.append(prompt)
+            return Summary("", "none", "provider_timeout")
+        return generate(prompt, **kwargs)
 
-    monkeypatch.setattr(server.progress_coordinator, "write_span", write)
+    monkeypatch.setattr(server_module, "summarize", second_fails)
 
     async def run():
         progress = []
@@ -194,20 +213,73 @@ def test_failed_later_batch_keeps_boundary_and_retry_does_not_repeat_first(memor
         assert failed.span_coverage["pending_records"] == 1
         assert failed.metadata(1)["revision_id"] is None
         assert current_revision(server.history.session("agent")) is None
-        assert len(calls) == 3
+        assert len(calls) == 2
         fail[0] = False
-        monkeypatch.setattr(server.progress_coordinator, "write_span", real_write)
         result = await server.progress_coordinator.refresh_result("agent")
-        assert result.state == "updated" and len(calls) == 5
-        assert "First " not in calls[3]
+        assert result.state == "updated" and len(calls) == 3
+        assert "First " not in calls[2]
         assert current_revision(server.history.session("agent")) == result.revision["id"]
 
     asyncio.run(run())
 
 
-def test_canceled_preparation_stops_before_next_batch_and_retry_reuses_leaf(
-    memory_rig, monkeypatch
+def test_spans_write_concurrently_and_a_failed_sibling_keeps_the_others(
+    memory_rig, monkeypatch, two_spans
 ):
+    from duckterm import server as server_module
+    from duckterm.llm.summarizer import Summary
+
+    server, _, _, tmp = memory_rig
+    path = transcript(tmp, "agent-claude", "First " + "x" * 11000)
+    append(path, "Second " + "y" * 11000)
+    append(path, "Third " + "z" * 11000)
+    calls, _ = provider(monkeypatch)
+    generate = server_module.summarize
+    lock = threading.Lock()
+    in_flight, peak = [0], [0]
+    overlapped = threading.Event()
+
+    def tracked(prompt, **kwargs):
+        with lock:
+            in_flight[0] += 1
+            peak[0] = max(peak[0], in_flight[0])
+            if in_flight[0] > 1:
+                overlapped.set()
+        try:
+            # Hold each call until another is in flight; a sequential writer times out.
+            overlapped.wait(5)
+            if "Third " in prompt:
+                calls.append(prompt)
+                return Summary("", "none", "provider_timeout")
+            return generate(prompt, **kwargs)
+        finally:
+            with lock:
+                in_flight[0] -= 1
+
+    monkeypatch.setattr(server_module, "summarize", tracked)
+
+    async def run():
+        result = await server.progress_coordinator.refresh_result("agent")
+        assert peak[0] >= 2  # a sequential writer never has two calls in flight
+        assert result.state == "failed" and result.reason == "provider_timeout"
+        assert result.span_coverage["summarized_records"] == 2
+        assert result.span_coverage["pending_records"] == 1
+        assert len(result.span_coverage["revision_ids"]) == 2
+        assert current_revision(server.history.session("agent")) is None
+        saved = server.history._conn.execute(
+            "SELECT count(*) FROM digest_items WHERE session_key='agent' "
+            "AND bucket='summary_revision_v1'"
+        ).fetchone()[0]
+        assert saved == 2
+
+    asyncio.run(run())
+
+
+def test_canceled_preparation_stops_before_next_batch_and_retry_reuses_leaf(
+    memory_rig, monkeypatch, two_spans
+):
+    # With one writer slot, cancellation must stop before the next span starts.
+    monkeypatch.setattr(memory_refresh, "PARALLEL_SPANS", 1)
     server, _, _, tmp = memory_rig
     path = transcript(tmp, "agent-claude", "First " + "x" * 11000)
     append(path, "Second " + "y" * 11000)
@@ -229,17 +301,19 @@ def test_canceled_preparation_stops_before_next_batch_and_retry_reuses_leaf(
         assert canceled.span_coverage["state"] == "incomplete"
         assert canceled.span_coverage["summarized_records"] == 1
         assert canceled.span_coverage["pending_records"] == 1
-        assert len(calls) == 2 and current_revision(server.history.session("agent")) is None
+        assert len(calls) == 1 and current_revision(server.history.session("agent")) is None
         monkeypatch.setattr(coordinator, "write_span", real_write)
         result = await coordinator.refresh_result("agent")
-        assert result.state == "updated" and len(calls) == 4
-        assert "First " not in calls[2] and "Second " in calls[2]
+        assert result.state == "updated" and len(calls) == 2
+        assert "First " not in calls[1] and "Second " in calls[1]
         assert not coordinator.span_waiters
 
     asyncio.run(run())
 
 
-def test_canceling_one_preparation_does_not_cancel_shared_checkpoint(memory_rig, monkeypatch):
+def test_canceling_one_preparation_does_not_cancel_shared_checkpoint(
+    memory_rig, monkeypatch, two_spans
+):
     from duckterm import server as server_module
 
     server, _, _, tmp = memory_rig
@@ -276,7 +350,7 @@ def test_canceling_one_preparation_does_not_cancel_shared_checkpoint(memory_rig,
             released.set()
             results = await asyncio.gather(preparation, checkpoint)
             assert all(r.state == "updated" for r in results)
-            assert len(calls) == 4
+            assert len(calls) == 2
             assert current_revision(server.history.session("agent")) == results[1].revision["id"]
         finally:
             released.set()
@@ -289,7 +363,7 @@ def test_canceling_one_preparation_does_not_cancel_shared_checkpoint(memory_rig,
 
 
 def test_progress_counts_only_checked_new_entries_and_joiners_share_progress(
-    memory_rig, monkeypatch
+    memory_rig, monkeypatch, two_spans
 ):
     server, _, _, tmp = memory_rig
     path = transcript(tmp, "agent-claude", "First instruction " + "x" * 11000)
@@ -327,7 +401,8 @@ def test_progress_counts_only_checked_new_entries_and_joiners_share_progress(
         results = await asyncio.gather(a, b)
         assert all(r.state == "updated" for r in results)
         assert first == joined
-        assert {p["stage"] for p in first} >= {"writing", "reviewing", "checking"}
+        assert {p["stage"] for p in first} >= {"writing", "checking"}
+        assert "reviewing" not in {p["stage"] for p in first}
         assert [p["completed"] for p in first] == sorted(p["completed"] for p in first)
         assert first[-1]["completed"] == first[-1]["total"] == 2
         assert not coordinator.span_observers

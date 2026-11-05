@@ -4,12 +4,12 @@ import { MemorySwitchPanel } from "./MemorySwitchPanel";
 import type { SwitchSelection } from "./memorySwitchState";
 
 // Exercise the actual transport decoder and controller together. Mock only HTTP.
-vi.mock("./api", () => ({ authHeaders: (extra = {}) => ({ "X-Duckterm-Token": "test-owner", ...extra }) }));
+vi.mock("./api", async importOriginal => ({ ...await importOriginal<typeof import("./api")>(), authHeaders: (extra = {}) => ({ "X-Duckterm-Token": "test-owner", ...extra }) }));
 const selection: SwitchSelection = { sessionRef: "test", sourceHarness: "claude-code", sourceGeneration: "a", harness: "codex", model: { mode: "explicit", id: "gpt-6-astra" } };
 const binding = { session_key: "test", source_generation: "a", target: { harness: "codex", model: selection.model } };
 const fetchMock = vi.fn();
 const emptyPlan = { available_records: 0, processed_records: 0, pending_records: 0,
-  default_records: 20, selected_records: 0, remaining_records: 0, batch_records: 20,
+  default_records: 20, selected_records: 0, remaining_records: 0,
   order: "oldest_unprocessed_first", selection_plan: { version: 1 } };
 const props = () => ({ selection, targetName: "Codex", allowed: true, afterTurn: false, canInterrupt: false, close: vi.fn(), onBusy: vi.fn(), onAccepted: vi.fn() });
 function packet(saved = true) {

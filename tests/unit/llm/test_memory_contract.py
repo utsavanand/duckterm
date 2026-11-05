@@ -305,7 +305,7 @@ def test_typed_write_does_not_accept_prior_summary_context_as_new_span_evidence(
     assert exc.value.reason == "typed_write_requires_span"
 
 
-def test_pointer_union_over_budget_declares_gap_without_changing_any_revision():
+def test_folded_pointer_union_resolves_past_the_per_write_cap_unchanged():
     rows = {}
     parent = {"overview": "All work", **{field: [] for field in FIELDS}}
     for n in range(12):
@@ -323,13 +323,13 @@ def test_pointer_union_over_budget_declares_gap_without_changing_any_revision():
         parent["constraints"].append({"id": claim["id"], "ref_revision": str(n)})
     rows["parent"] = revision("parent", parent)
     original = deepcopy(rows)
-    with pytest.raises(contract.BudgetExceeded) as exc:
-        contract.resolve_revision(rows["parent"], rows.get)
-    gap = contract.read_coverage(exc.value.coverage)["omitted"][0]
-    assert gap["reason"] == "budget_exhausted" and gap["count"] == 12
-    assert len(gap["sample_refs"]) == 8
+    # Reconciliation bounds the brief; a fold's union is not held to one write's cap.
+    context, origins = contract.resolve_revision(rows["parent"], rows.get)
+    assert [c["text"] for c in context["constraints"]] == [
+        rows[str(n)]["continuity"]["context"]["constraints"][0]["text"] for n in range(12)
+    ]
+    assert set(origins.values()) == {str(n) for n in range(12)}
     assert rows == original
-    # A refused aggregate does not make any original inaccessible.
     for n in range(12):
         assert (
             contract.resolve_revision(rows[str(n)], rows.get)[0]
