@@ -130,6 +130,8 @@ test("session PRs tab and folder Pull requests tab list a pushed branch without 
     await workspace.getByRole("tab", { name: "History" }).click();
     const timeline = workspace.getByRole("list", { name: "Releases" });
     await expect(timeline.getByRole("listitem")).toHaveCount(1);
+    await expect(timeline).toHaveCSS("display", "flex");
+    await expect(timeline).toHaveCSS("flex-direction", "row");
     await expect(timeline).toContainText("v0.1.0");
     await expect(workspace.getByText(/this change will ship after v0.1.0/)).toBeVisible();
     await expect(workspace.getByText(new RegExp(`Module map omitted: ${NO_MODEL}`))).toBeVisible({ timeout: 20_000 });
