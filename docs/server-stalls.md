@@ -1,24 +1,20 @@
 # Diagnosing server stalls
 
-The CLI server automatically records Python thread stacks if its event loop
-cannot run its heartbeat for ten seconds. The log is `server-stalls.log` in
-the instance's DuckTerm home (normally `~/.duckterm`). It includes the version,
-process ID, function names, file paths and line numbers, without local variable
-values, request bodies or transcript contents. It is local and mode `0600`.
+Automatic faulthandler stack dumping is removed. In the November 3, 2026
+incident, a dump failed to finish and the event loop waited indefinitely in
+`cancel_dump_traceback_later()`. Diagnostic collection must not become a
+dependency of server progress or shutdown.
 
-The Python standard library's native faulthandler timer produces the report;
-no profiler installation or administrator access is needed. Waiting for an
-asynchronous operation does not count as a stall when the loop remains responsive.
-Each continuous stall produces one report. The heartbeat rearms after recovery,
-and shutdown cancels the timer before closing the log. Reports can also occur
-around system suspension; a report alone does not establish the cause.
+Existing `server-stalls.log` and `server-stalls.previous.log` files in the
+instance's DuckTerm home are retained as historical evidence. New servers do
+not arm that timer or write these logs. Removing it prevents this diagnostic
+wait; it does not fix the blocking work that originally triggered a dump,
+or the separate slow-startup problem.
 
-The log rotates between reports when it reaches 1 MiB, keeping one previous
-file named `server-stalls.previous.log`. A single bounded faulthandler dump can
-exceed that threshold. A log
-failure disables diagnostics for that run and does not stop the server.
-
-This is diagnostic coverage, not a fix for a blocking query. Use the captured
-Python caller to reproduce and fix the underlying work. The timer starts in
-the CLI's server loop; it does not cover construction before the loop starts,
-direct in-process `Server.serve()` users, or stalls shorter than ten seconds.
+On macOS, capture a native sample from a separate terminal while the server
+is unresponsive: `sample <server-pid> 3 -file /tmp/duckterm-server.sample.txt`.
+Confirm the server PID first. Sampling does not require restarting the server
+or stopping agent sessions. Native samples can identify blocked system calls
+but may not identify the Python caller. Preserve the sample, timestamps,
+server version and existing stall logs for investigation. A prior dump may
+also reflect system suspension; it does not alone establish a slow code path.

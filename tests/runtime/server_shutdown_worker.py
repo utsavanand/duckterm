@@ -1,6 +1,7 @@
 """Disposable real-server fixture with a harmless process standing in for SSH."""
 
 import asyncio
+import faulthandler
 import json
 import os
 import sys
@@ -11,6 +12,16 @@ from duckterm import server as server_module
 from duckterm.collaboration.transport import Transport
 
 root = Path(os.environ["HOME"])
+
+
+def forbidden_dump_timer(*args, **kwargs):
+    raise AssertionError("Server must not start or join a faulthandler dump timer")
+
+
+# A native dump can fail to finish. Even cancellation then waits indefinitely;
+# catch any attempt to use either API throughout real CLI startup and shutdown.
+faulthandler.dump_traceback_later = forbidden_dump_timer
+faulthandler.cancel_dump_traceback_later = forbidden_dump_timer
 
 
 class FixtureServer(server_module.Server):
