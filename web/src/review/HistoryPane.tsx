@@ -66,8 +66,8 @@ export function HistoryPane({ header, active }: { header: ReviewHeader; active: 
     const index = (releases ?? []).findIndex(r => r.tag === tag);
     return index > 0 ? releases![index - 1].tag : null;
   }
-  return <div className="rd-history">
-    <div className="rd-history-toolbar">
+  return <div className="rd-pr-history">
+    <div className="rd-pr-history-toolbar">
       <span className="rd-card-meta">{releases ? `${releases.length} releases` : "Reading tags…"}{shipped && ` · this change ${header.pr?.state === "merged" ? "shipped in" : "will ship after"} ${shipped}`}</span>
       <label><input type="checkbox" checked={onlyTouched} onChange={event => setOnlyTouched(event.target.checked)} /> Only releases that touched this PR's files ({touched.length})</label>
       {selected && previousOf(selected) && <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={() => setOther(previousOf(selected))}>Compare with previous</button>}
@@ -75,17 +75,17 @@ export function HistoryPane({ header, active }: { header: ReviewHeader; active: 
     </div>
     {error && <p className="rd-prs-note" role="alert">{error}</p>}
     {releases && releases.length === 0 && <p className="rd-prs-empty">No release tags (v*) in this repository yet.</p>}
-    {shown.length > 0 && <ol className="rd-timeline" aria-label="Releases">
+    {shown.length > 0 && <ol className="rd-pr-release-timeline" aria-label="Releases">
       {shown.map(item => <li key={item.tag} className={`${item.tag === selected ? "selected" : ""}${item.tag === other ? " other" : ""}${item.tag === shipped ? " shipped" : ""}`}>
         <button onClick={event => pick(item.tag, event.shiftKey)} title={`${item.subject || item.tag} · shift-click to compare`} aria-pressed={item.tag === selected || item.tag === other}>
-          <span className="rd-timeline-dot" data-status={status[item.tag] ?? "missing"} />
-          <span className="rd-timeline-tag">{item.tag}</span>
-          <span className="rd-timeline-date">{day(item.at)}</span>
-          <span className="rd-timeline-merges">{item.merges.length} {item.merges.length === 1 ? "merge" : "merges"}</span>
+          <span className="rd-pr-release-timeline-dot" data-status={status[item.tag] ?? "missing"} />
+          <span className="rd-pr-release-timeline-tag">{item.tag}</span>
+          <span className="rd-pr-release-timeline-date">{day(item.at)}</span>
+          <span className="rd-pr-release-timeline-merges">{item.merges.length} {item.merges.length === 1 ? "merge" : "merges"}</span>
         </button>
       </li>)}
     </ol>}
-    {release && <section className="rd-history-detail">
+    {release && <section className="rd-pr-history-detail">
       <header>
         <h3>{release.tag}{other && <> ↔ {other}</>}</h3>
         <p className="rd-card-meta">{day(release.at)}{release.subject ? ` · ${release.subject}` : ""}{status[release.tag] === "pending" ? " · map being written" : ""}</p>
