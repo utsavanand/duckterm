@@ -1,3 +1,12 @@
+## 2026-11-07 — Retention metadata must not be parsed per event
+
+A startup expiry query reparsed large checkpoint evidence for each old event:
+74,118 candidates and 32 checkpoints took 105 seconds even with no rows eligible.
+Materialize the existing protection rules and event bounds once per statement.
+Verify exact candidate sets, analytics rollback and startup reopening, and assert
+that JSON work does not scale with event count. Query timing alone is not full
+server readiness; measure those separately before claiming startup is fixed.
+
 ## 2026-10-25 — Floating CI environments can break a validated release
 
 The release gate passed locally, but GitHub's ubuntu-latest had moved to 26.04,
