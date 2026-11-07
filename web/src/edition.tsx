@@ -2,12 +2,12 @@ import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, 
 import { api, EditionDescription } from "./api";
 import { allowCollaboration, allowRemoteWorkspaces } from "./desktop";
 
-// Features outside the Lite core. Core surfaces (folders, terminal, shell,
-// messages, forks, session status) are never gated here.
+// Server-advertised capabilities. Basic session surfaces remain available
+// while the description loads; every capability below fails closed.
 export type Feature =
   | "explorer" | "file_editing" | "git_changes" | "inbox" | "folder_chat" | "checkpoints"
   | "summaries" | "context" | "handoff" | "connectors" | "oracle" | "remote_workspaces"
-  | "artifacts" | "pr_review";
+  | "artifacts" | "pr_review" | "overview" | "rule_suggestions";
 
 export type EditionState =
   | { status: "loading" }

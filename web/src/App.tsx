@@ -39,6 +39,7 @@ import { HarnessesModal } from "./HarnessesModal";
 import { MemoryView } from "./MemoryView";
 import { TimelineView } from "./TimelineView";
 import { SessionFilesView } from "./SessionFilesView";
+import { ArtifactsView } from "./ArtifactsView";
 import { PrList } from "./review/PrList";
 import { ReviewWorkspace } from "./review/ReviewWorkspace";
 import type { PrRow } from "./api";
@@ -116,14 +117,15 @@ function Dashboard() {
   >(desktop()?.draft ? "launch" : null);
   const [bugSession, setBugSession] = useState<string | null>(null);
   const [towerChosen, setTowerOpen] = useState(false);
-  const towerOpen = towerChosen && has("oracle");
+  const towerOpen = towerChosen && has("overview");
   const [analyticsTab, setAnalyticsTab] = useState<AnalyticsTab | null>(null);
   const relayOpen = useRelayCount(has("oracle"));
   const defaultSelection = sessions.find(s => s.state !== "archived")?.key ?? null;
   const { selectedKey, selectSession } = useSessionSelection(sessions, defaultSelection, loadedHosts);
   const [terminalFocus, setTerminalFocus] = useState({ key: "", revision: 0 });
   const [appearanceFolder, setAppearanceFolder] = useState<string | null>(null);
-  const [selectedFolder, setSelectedFolder] = useState<string | null>(null);
+  const [chosenFolder, setSelectedFolder] = useState<string | null>(null);
+  const selectedFolder = has("overview") ? chosenFolder : null;
   const setSelectedKey = useCallback((key: string | null) => {
     setSelectedFolder(null);
     setAppearanceFolder(null);
@@ -182,7 +184,7 @@ function Dashboard() {
   const [chosenView, setView] = useState<"terminal" | "messages" | "history" | "inbox" | "artifacts" | "memory" | "prs">(
     "terminal",
   );
-  // The Explorer tab; Full adds registered artifacts to it as Artifacts.
+  // Coding editions combine files and saved artifacts; Lite shows saved outputs.
   const viewFeature = { history: has("checkpoints") || has("context"), memory: has("context"), inbox: has("inbox"),
     artifacts: has("explorer") || has("artifacts"), prs: has("pr_review") } as Record<string, boolean>;
   const view = viewFeature[chosenView] === false ? "terminal" : chosenView;
@@ -305,8 +307,8 @@ function Dashboard() {
   // recurring-review nudge. Re-fetched when the editor closes (a save may
   // have promoted/rejected them all).
   const [ruleCandidates, setRuleCandidates] = useState(0);
-  // Manual AGENTS.md editing is core; rule candidates are generated from context.
-  const candidates = has("context");
+  // Manual AGENTS.md editing is core; generated rule suggestions are separate.
+  const candidates = has("rule_suggestions");
   useEffect(() => {
     if (!candidates || !agentsMdDir || modal === "agentsmd") return;
     let stale = false;
@@ -349,14 +351,14 @@ function Dashboard() {
           onClick={() => { setFocusOpen((open) => !open); setTowerOpen(false); }}>
           Focus · {pinnedSessions.length}
         </button>
-        {has("oracle") && <button
+        {has("overview") && <button
           className={`rd-btn rd-btn-ghost rd-btn-sm${towerOpen ? " rd-btn-active" : ""}`}
           aria-pressed={towerOpen}
           onClick={() => { setTowerOpen((o) => !o); setFocusOpen(false); setGridFolder(null); }}
-          title="Control tower: fleet insights, every agent at a glance, and Oracle chat"
+          title={has("oracle") ? "Control tower: fleet insights, every agent at a glance, and Oracle chat" : "Control tower: fleet insights and every agent at a glance"}
         >
-          Oracle
-          {relayOpen > 0 && <span className="rd-rules-badge" aria-label={`${relayOpen} need you`}>{relayOpen}</span>}
+          {has("oracle") ? "Oracle" : "Overview"}
+          {has("oracle") && relayOpen > 0 && <span className="rd-rules-badge" aria-label={`${relayOpen} need you`}>{relayOpen}</span>}
         </button>}
         <button
           className="rd-btn rd-btn-ghost rd-btn-sm"
@@ -364,7 +366,7 @@ function Dashboard() {
           disabled={!agentsMdDir}
           title={
             agentsMdDir
-              ? ruleCandidates
+              ? candidates && ruleCandidates
                 ? `${ruleCandidates} proposed rule(s) awaiting review`
                 : "Edit the AGENTS.md rules for this agent's folder"
               : "Select an agent to edit its AGENTS.md"
@@ -447,7 +449,7 @@ function Dashboard() {
                 selectedKey={selectedFolder === null ? selectedKey : null}
                 contextKey={actionSession?.key}
                 selectedFolder={selectedFolder}
-                onOpenFolder={has("folder_chat") ? setSelectedFolder : undefined}
+                onOpenFolder={has("overview") ? setSelectedFolder : undefined}
                 onFolderRenamed={(from, to) => setSelectedFolder(current => current === from ? to : current?.startsWith(from + "/") ? to + current.slice(from.length) : current)}
                 onFolderDeleted={path => setSelectedFolder(current => current === path || current?.startsWith(path + "/") ? null : current)}
                 onOpen={key => { setSelectedKey(key); setTerminalFocus(previous => ({ key, revision: previous.revision + 1 })); }}
@@ -458,7 +460,7 @@ function Dashboard() {
                   patchSession(key, { group: group || undefined })
                 }
                 onOpenGrid={setGridFolder}
-                onOpenFolderInbox={has("folder_chat") ? setInboxFolder : undefined}
+                onOpenFolderInbox={has("inbox") ? setInboxFolder : undefined}
                 onNewSessionIn={(folder) => {
                   setLaunchGroup(folder);
                   setModal("launch");
@@ -469,7 +471,7 @@ function Dashboard() {
             )}
           </section>
 
-          {selectedFolder !== null && has("folder_chat") && <FolderView key={selectedFolder} folder={selectedFolder} onOpenSession={setSelectedKey} onGrid={() => setGridFolder(selectedFolder)} onMessage={() => setInboxFolder(selectedFolder)} onNewSession={() => { setLaunchGroup(selectedFolder); setModal("launch"); }} />}
+          {selectedFolder !== null && <FolderView key={selectedFolder} folder={selectedFolder} onOpenSession={setSelectedKey} onGrid={() => setGridFolder(selectedFolder)} onMessage={has("inbox") ? () => setInboxFolder(selectedFolder) : undefined} onNewSession={() => { setLaunchGroup(selectedFolder); setModal("launch"); }} />}
           <section className="rd-terminal-pane" style={selectedFolder !== null ? { display: "none" } : undefined}>
             <div className="rd-view-toggle">
               <button
@@ -540,7 +542,7 @@ function Dashboard() {
             )}
             {view === "artifacts" && (
               <div className="rd-messages-wrap rd-files-wrap">
-                {selected ? <SessionFilesView session={selected} artifacts={has("artifacts")} />
+                {selected ? has("explorer") ? <SessionFilesView session={selected} artifacts={has("artifacts")} /> : <ArtifactsView key={selected.key} sessionKey={selected.key} sessionName={selected.label} />
                   : <p className="rd-panel-empty">Select a session to see its artifacts.</p>}
               </div>
             )}
@@ -609,8 +611,8 @@ function Dashboard() {
       </div>
 
       {has("checkpoints") && <CheckpointDialogHost />}
-      {messageFolder !== null && has("folder_chat") && <MessageFolderModal key={messageFolder} folder={messageFolder} onClose={() => setMessageFolder(null)} />}
-      {inboxFolder !== null && messageFolder === null && has("folder_chat") && (
+      {messageFolder !== null && has("inbox") && <MessageFolderModal key={messageFolder} folder={messageFolder} onClose={() => setMessageFolder(null)} />}
+      {inboxFolder !== null && messageFolder === null && has("inbox") && (
         <Modal title={`${inboxFolder} · Interactions${desktop() ? " · This Mac" : ""}`} onClose={() => setInboxFolder(null)}>
           <InboxView key={inboxFolder} folder={inboxFolder} onMessageFolder={() => setMessageFolder(inboxFolder)} />
         </Modal>

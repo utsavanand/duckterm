@@ -2,12 +2,52 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api } from "./api";
 import { FolderView } from "./FolderView";
-import { edition, FULL } from "./test/editions";
+import { edition, CODE, FULL, LITE } from "./test/editions";
+import { StaticEdition } from "./edition";
 vi.mock("./api", () => ({ api: { folderChat: vi.fn(), fleetAsk: vi.fn(), folderArtifacts: vi.fn(), folderRecipients: vi.fn(), folderDispatch: vi.fn() } }));
-vi.mock("./FolderDetails", () => ({ FolderDetails: () => <aside>Folder details</aside> }));
+vi.mock("./FolderDetails", () => ({ FolderDetails: ({ presentation }: { presentation?: string }) => <aside>{presentation === "overview" ? "Folder overview" : "Folder details"}</aside> }));
 vi.mock("./ArtifactsView", () => ({ ArtifactsView: ({ folder }: { folder: string }) => <p>Files from {folder}</p> }));
 beforeEach(() => { vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }))); });
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
+it("opens Lite on Overview without mounting or requesting folder chat", async () => {
+  render(<FolderView folder="Website" />, { wrapper: edition(LITE, "lite") });
+  await act(async () => {});
+  expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByRole("tabpanel", { name: "Overview" })).toHaveTextContent("Folder overview");
+  expect(screen.queryByRole("tab", { name: "Chat" })).toBeNull();
+  expect(screen.queryByRole("textbox")).toBeNull();
+  expect(screen.queryByRole("button", { name: /Details/ })).toBeNull();
+  fireEvent.keyDown(screen.getByRole("tab", { name: "Overview" }), { key: "ArrowRight" });
+  expect(screen.getByRole("tab", { name: "Artifacts" })).toHaveFocus();
+  expect(screen.getByText("Files from Website")).toBeVisible();
+  expect(api.folderChat).not.toHaveBeenCalled();
+  expect(api.fleetAsk).not.toHaveBeenCalled();
+  expect(api.folderRecipients).not.toHaveBeenCalled();
+});
+it.each([["code", CODE], ["full", FULL]])("%s keeps Chat as default and preserves a draft through Overview", async (_id, features) => {
+  vi.mocked(api.folderChat).mockResolvedValue({ messages: [] });
+  render(<FolderView folder="Website" />, { wrapper: edition(features as string[]) });
+  await act(async () => {});
+  const input = screen.getByRole("textbox");
+  fireEvent.change(input, { target: { value: "Keep this draft" } });
+  expect(screen.getByRole("tab", { name: "Chat" })).toHaveAttribute("aria-selected", "true");
+  fireEvent.click(screen.getByRole("tab", { name: "Overview" }));
+  expect(screen.getByRole("tabpanel", { name: "Overview" })).toBeVisible();
+  expect(screen.getAllByRole("complementary")).toHaveLength(1);
+  fireEvent.click(screen.getByRole("tab", { name: "Chat" }));
+  expect(screen.getByRole("textbox")).toBe(input);
+  expect(input).toHaveValue("Keep this draft");
+  expect(api.folderChat).toHaveBeenCalledExactlyOnceWith("Website");
+});
+it("hides a mounted chat and chooses an available tab after edition capabilities change", async () => {
+  vi.mocked(api.folderChat).mockResolvedValue({ messages: [] });
+  const view = render(<StaticEdition features={FULL}><FolderView folder="Website" /></StaticEdition>);
+  await act(async () => {});
+  view.rerender(<StaticEdition features={LITE} id="lite"><FolderView folder="Website" /></StaticEdition>);
+  expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
+  expect(screen.queryByLabelText("Ask this folder")).toBeNull();
+  expect(api.folderChat).toHaveBeenCalledTimes(1);
+});
 it("sends only the selected folder and keeps the answer when switching tabs", async () => {
   vi.mocked(api.folderChat).mockResolvedValue({ messages: [] });
   vi.mocked(api.fleetAsk).mockResolvedValue({ answer: "Ready", exchange: { q: "Status?", a: "Ready", at: 1 }, sessions: [] });

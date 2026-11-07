@@ -20,7 +20,7 @@ import subprocess
 import sys
 import tarfile
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -817,6 +817,8 @@ def clone(
     github_repository: str = "",
     auto_workspace: bool = False,
     attempt_id: str = "",
+    *,
+    authorize: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     check_url(url)
     attempt_id = operation_id(attempt_id) if attempt_id else uuid.uuid4().hex
@@ -830,11 +832,12 @@ def clone(
         expected = automatic_workspace(identifier, url)
         if destination != str(expected):
             raise ValueError("Workspace changed; review this repository again")
-        automatic_workspace(identifier, url, create=True)
     requested_destination = destination
     destination = str(Path(destination).expanduser().resolve())
     with locked(identifier) as directory:
         previous = read_state(directory)
+        if authorize is not None:
+            authorize(previous)
         if previous:
             if (
                 previous.get("url") != url
@@ -852,6 +855,8 @@ def clone(
                 and marker.read_text() == identifier
             ):
                 return save(directory, {**previous, "stage": "ready"})
+        if auto_workspace:
+            automatic_workspace(identifier, url, create=True)
         dest = destination_path(requested_destination)
         if shutil.disk_usage(dest.parent).free < 512 * 1024 * 1024:
             raise ValueError("Not enough destination disk space to clone safely")
@@ -921,9 +926,18 @@ def clone(
             raise
 
 
-def claim_launch(identifier: str, command: str, name: str, prompt: str) -> dict[str, Any]:
+def claim_launch(
+    identifier: str,
+    command: str,
+    name: str,
+    prompt: str,
+    *,
+    authorize: Callable[[dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
     with locked(identifier) as directory:
         state = read_state(directory)
+        if authorize is not None:
+            authorize(state)
         if state.get("stage") in ("launching", "launched"):
             return state
         if state.get("stage") != "ready":
@@ -967,9 +981,13 @@ def claim_launch(identifier: str, command: str, name: str, prompt: str) -> dict[
         )
 
 
-def mark_launched(identifier: str) -> dict[str, Any]:
+def mark_launched(
+    identifier: str, *, authorize: Callable[[dict[str, Any]], None] | None = None
+) -> dict[str, Any]:
     with locked(identifier) as directory:
         state = read_state(directory)
+        if authorize is not None:
+            authorize(state)
         return save(directory, {**state, "stage": "launched"})
 
 

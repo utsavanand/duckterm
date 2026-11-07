@@ -53,8 +53,8 @@ export function AgentsMdModal({
   onClose: () => void;
 }) {
   const toast = useToast();
-  // Editing rules is core; generating candidates from corrections needs context.
-  const suggestions = useFeature("context");
+  // Editing rules is core; generating candidates has its own capability.
+  const suggestions = useFeature("rule_suggestions");
   const [rules, setRules] = useState<Rule[]>([]);
   const [legacyText, setLegacyText] = useState<string | null>(null); // hand-written AGENTS.md, not yet typed
   const [draft, setDraft] = useState("");

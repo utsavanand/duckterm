@@ -1,4 +1,4 @@
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { SessionView, viewFromPersisted } from "./types";
@@ -15,8 +15,8 @@ vi.mock("./Connectors", () => ({ Connectors: () => null }));
 vi.mock("./ContextPanel", () => ({ ContextPanel: () => null }));
 vi.mock("./AgentTree", () => ({ AgentTree: (props: Record<string, unknown>) => { probe.tree = props; return null; } }));
 
-// Requests a Lite dashboard must never make, by endpoint family.
-const ADVANCED = [/^\/relay/, /^\/session-inbox-counts/, /^\/agents-md/, /\/checkpoints/, /\/artifacts/, /\/prs/, /^\/connectors/, /^\/oracle/, /^\/layouts/, /^\/tasks/];
+const ADVANCED = [/^\/relay/, /^\/session-inbox-counts/, /^\/agents-md/, /\/checkpoints/, /\/artifacts/, /\/prs/, /^\/connectors/, /^\/oracle/, /^\/layouts/, /^\/tasks/, /^\/control-tower/, /\/files\b/];
+const LITE_UNAVAILABLE = [/^\/relay/, /^\/oracle/, /^\/agents-md/, /\/prs\b/, /^\/connectors/, /\/files\b/, /\/file-content\b/, /\/folders\/.+\/chat/, /^\/fleet\/ask/];
 
 beforeEach(() => {
   probe.requests = []; probe.connected = true;
@@ -26,7 +26,18 @@ beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn(async (input: string) => {
     const path = String(input);
     probe.requests.push(path);
-    const body = path === "/edition" ? probe.edition : path.startsWith("/session-inbox-counts") ? { counts: {} } : path.startsWith("/relay/count") ? { open: 0 } : { pins: [], open: false, requests: [] };
+    const body = path === "/edition" ? probe.edition
+      : path.startsWith("/session-inbox-counts") ? { counts: {} }
+      : path === "/relay/count" ? { open: 0 }
+      : path === "/relay" ? { notes: [], rules: [], open: 0 }
+      : path === "/control-tower" ? { tokens: { days: 7, by_agent: {} }, mail: { sent: 0, answered: 0, nudges: 0 }, backup: {}, remote: { available: false, count: 0 } }
+      : path.startsWith("/layouts/") ? { revision: "default", instances: [] }
+      : path === "/tasks" ? { tasks: [] }
+      : path.includes("/files?") ? { available: true, root: "/work", path: ".", entries: [], artifacts: [], next_cursor: null }
+      : path.endsWith("/artifacts") ? { artifacts: [] }
+      : path.endsWith("/stats") ? { folder: "Team", updated_at: 1, sessions: { busy: 0, idle: 1, waiting: 0 }, waiting: [], periods: { "1": { tokens: 0, sent: 0, answered: 0 } }, artifacts: { by_kind: {}, available: 0, removed: 0 } }
+      : path.includes("/folder-interactions") || path.endsWith("/chat") ? { messages: [], next_cursor: null }
+      : { pins: [], open: false, requests: [] };
     return new Response(JSON.stringify(body ?? { error: "Unavailable" }), { status: body ? 200 : 503 });
   }));
 });
@@ -39,25 +50,38 @@ async function mount(features: string[] | null, id: "lite" | "code" | "full" = "
 }
 const tab = (name: string) => screen.queryByRole("button", { name: new RegExp(`^${name}`) });
 
-it("Lite shows the core session views and makes no advanced requests", async () => {
+it("Lite exposes continuity, inbox, artifacts and folder overview without coding or Oracle requests", async () => {
   await mount(LITE, "lite");
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 3100)); });
-  for (const name of ["Terminal", "Messages", "AGENTS.md"]) expect(tab(name)).toBeInTheDocument();
-  for (const name of ["Timeline", "Inbox", "Artifacts", "Explorer", "PRs", "Oracle"]) expect(tab(name)).not.toBeInTheDocument();
+  for (const name of ["Terminal", "Messages", "Timeline", "Inbox", "Artifacts", "Overview", "AGENTS.md"]) expect(tab(name)).toBeInTheDocument();
+  for (const name of ["Explorer", "PRs", "Oracle"]) expect(tab(name)).not.toBeInTheDocument();
   expect(screen.queryByRole("tab", { name: "Connectors" })).not.toBeInTheDocument();
-  expect(probe.tree.onOpenInbox).toBeUndefined();
-  expect(probe.tree.onOpenFolder).toBeUndefined();
-  expect(probe.tree.onOpenFolderInbox).toBeUndefined();
+  expect(probe.tree.onOpenInbox).toBeTypeOf("function");
+  expect(probe.tree.onOpenFolder).toBeTypeOf("function");
+  expect(probe.tree.onOpenFolderInbox).toBeTypeOf("function");
   expect(probe.requests).toContain("/edition");
-  expect(probe.requests.filter(path => ADVANCED.some(pattern => pattern.test(path)))).toEqual([]);
+  expect(probe.requests).toContain("/session-inbox-counts");
+  await act(async () => { fireEvent.click(tab("Artifacts")!); });
+  expect(await screen.findByRole("region", { name: "Session artifacts" })).toBeVisible();
+  expect(screen.queryByRole("region", { name: "Session files" })).toBeNull();
+  expect(probe.requests).toContain("/sessions/one/artifacts");
+  await act(async () => { (probe.tree.onOpenFolder as (folder: string) => void)("Team"); });
+  expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
+  expect(screen.queryByRole("tab", { name: "Chat" })).toBeNull();
+  expect(screen.getByRole("complementary", { name: "Folder overview" })).toBeVisible();
+  expect(probe.requests.filter(path => LITE_UNAVAILABLE.some(pattern => pattern.test(path)))).toEqual([]);
 }, 10_000);
 
-it("Code has the Explorer and pull requests, but no Oracle or artifacts", async () => {
+it("Code combines Explorer files and saved artifacts, with pull requests and no Oracle", async () => {
   await mount(CODE, "code");
-  for (const name of ["Terminal", "Messages", "Timeline", "Inbox", "Explorer", "PRs", "AGENTS.md"]) expect(tab(name)).toBeInTheDocument();
-  for (const name of ["Artifacts", "Oracle"]) expect(tab(name)).not.toBeInTheDocument();
+  for (const name of ["Terminal", "Messages", "Timeline", "Inbox", "Artifacts", "Overview", "PRs", "AGENTS.md"]) expect(tab(name)).toBeInTheDocument();
+  expect(tab("Oracle")).not.toBeInTheDocument();
   expect(screen.getByRole("tab", { name: "Connectors" })).toBeInTheDocument();
-  expect(probe.requests.filter(path => /^\/relay|\/artifacts/.test(path))).toEqual([]);
+  await act(async () => { fireEvent.click(tab("Artifacts")!); });
+  expect(await screen.findByRole("region", { name: "Session files" })).toBeVisible();
+  expect(screen.getByRole("group", { name: "Files filter" })).toBeVisible();
+  expect(probe.requests.some(path => path.startsWith("/sessions/one/files?"))).toBe(true);
+  expect(probe.requests.filter(path => /^\/relay|^\/oracle/.test(path))).toEqual([]);
 });
 
 it("Full keeps every view, including pull request review", async () => {
@@ -70,7 +94,9 @@ it("keeps only the core when the edition is unavailable, rather than assuming Fu
   await mount(null);
   expect(probe.requests).toContain("/edition");
   expect(tab("Terminal")).toBeInTheDocument();
-  for (const name of ["Timeline", "Inbox", "Artifacts", "Oracle"]) expect(tab(name)).not.toBeInTheDocument();
+  for (const name of ["Timeline", "Inbox", "Artifacts", "Oracle", "Overview"]) expect(tab(name)).not.toBeInTheDocument();
+  expect(probe.tree.onOpenFolder).toBeUndefined();
+  expect(probe.tree.onOpenFolderInbox).toBeUndefined();
   expect(await screen.findByText(/Feature list unavailable/)).toBeInTheDocument();
   expect(probe.requests.filter(path => ADVANCED.some(pattern => pattern.test(path)))).toEqual([]);
 });
@@ -94,5 +120,32 @@ it("rereads the edition when the server connection comes back", async () => {
   render(<App />, { container: document.body.firstElementChild as HTMLElement });
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
   expect(tab("Oracle")).not.toBeInTheDocument();
-  expect(tab("Explorer")).toBeInTheDocument();
+  expect(tab("Artifacts")).toBeInTheDocument();
+  expect(tab("Overview")).toBeInTheDocument();
+});
+
+it.each([["lite", LITE], ["code", CODE]] as const)("%s Overview preserves the mounted terminal and makes no Oracle requests", async (id, features) => {
+  await mount([...features], id);
+  const terminal = screen.getByLabelText("Terminal input");
+  fireEvent.change(terminal, { target: { value: "keep this draft" } });
+  await act(async () => { fireEvent.click(tab("Overview")!); });
+  expect(screen.getByRole("heading", { name: /Control tower/ })).toBeVisible();
+  expect(screen.queryByLabelText("Message Oracle")).toBeNull();
+  expect(screen.getByLabelText("Terminal input")).toBe(terminal);
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "← Sessions" })); });
+  expect(screen.getByLabelText("Terminal input")).toBe(terminal);
+  expect(terminal).toHaveValue("keep this draft");
+  expect(probe.requests.filter(path => /^\/relay|^\/oracle|^\/fleet\/ask/.test(path))).toEqual([]);
+});
+
+it("returns to the mounted terminal when a selected folder loses its overview capability", async () => {
+  await mount(LITE, "lite");
+  const terminal = screen.getByLabelText("Terminal input");
+  await act(async () => { (probe.tree.onOpenFolder as (folder: string) => void)("Team"); });
+  expect(screen.getByRole("region", { name: "Folder Team" })).toBeVisible();
+  probe.edition = null;
+  await act(async () => { window.dispatchEvent(new Event("focus")); });
+  expect(screen.queryByRole("region", { name: "Folder Team" })).toBeNull();
+  expect(screen.getByLabelText("Terminal input")).toBe(terminal);
+  expect(terminal).toBeVisible();
 });

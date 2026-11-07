@@ -128,7 +128,7 @@ export async function expandFolder(page: Page, path: string) {
   const parts = path.split("/");
   for (let i = 0; i < parts.length; i++) {
     const name = parts.slice(0, i + 1).join("/");
-    // Every edition has folder colors; folder interactions are not in Lite.
+    // Folder colors remain available even when collaboration is disabled.
     const head = page.locator(".rd-group-head").filter({ has: page.getByRole("button", { name: `Terminal colors for ${name}`, exact: true }) });
     const caret = head.locator(".rd-group-caret");
     await expect(caret).toBeVisible();

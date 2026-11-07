@@ -62,7 +62,18 @@ struct DesktopEdition: Equatable {
 
     static func requiredFeature(target: String, operation: String) -> String? {
         if operation.hasPrefix("collaboration-") { return "inbox" }
-        if target != "local" || operation.hasPrefix("project-") { return "remote_workspaces" }
+        if target != "local" { return "remote_workspaces" }
+        if operation.hasPrefix("project-") {
+            // These operations prepare and launch a local checkout. Copying or
+            // continuing a moved session still requires remote workspaces.
+            switch operation {
+            case "project-mkdir", "project-repositories", "project-preflight",
+                 "project-clone", "project-status", "project-launch":
+                return "terminal"
+            default:
+                return "remote_workspaces"
+            }
+        }
         return nil
     }
 }

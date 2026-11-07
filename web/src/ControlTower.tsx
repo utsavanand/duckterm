@@ -1,5 +1,6 @@
 import { tasksWidget } from "./FolderTasks";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useEdition } from "./edition";
 import { AnalyticsTab } from "./analyticsData";
 import { api } from "./api";
 import { Duck, poseFor } from "./Duck";
@@ -33,8 +34,8 @@ const STATE_WORD: Record<string, string> = {
   terminated: "Ended",
 };
 
-// Oracle's control tower: fleet insights, every agent drawn as the session
-// mascot grouped by team (top-level folder), and a way to message one agent.
+// Factual fleet insights, every agent grouped by team (top-level folder), and
+// a way to message one agent. Oracle's chat and relay are added when available.
 // Session states come from the dashboard's own stream; /control-tower adds
 // what that stream lacks (tokens, mail, backup, remote).
 export function ControlTower({
@@ -50,10 +51,12 @@ export function ControlTower({
   onOpenTerminal: (key: string) => void;
   onAnalytics: (tab: AnalyticsTab) => void;
 }) {
+  const { has } = useEdition();
+  const overview = has("overview"), oracle = overview && has("oracle"), remote = oracle && has("remote_workspaces"), inbox = has("inbox");
   const [source] = useState(() => new WidgetStreams());
   const analyticsRef = useRef(onAnalytics); analyticsRef.current = onAnalytics;
   const taskOpen = useRef(onOpenTerminal); taskOpen.current = onOpenTerminal;
-  const [registry] = useState(() => [...oracleWidgets(tab => analyticsRef.current(tab)), tasksWidget(key => taskOpen.current(key))]);
+  const registry = useMemo(() => [...oracleWidgets(tab => analyticsRef.current(tab), { oracle, remote }), ...(inbox ? [tasksWidget(key => taskOpen.current(key))] : [])], [oracle, remote, inbox]);
   const [hover, setHover] = useState<{ key: string; el: HTMLElement } | null>(null);
   const [pinned, setPinned] = useState<{ key: string; el: HTMLElement } | null>(null);
 
@@ -74,38 +77,39 @@ export function ControlTower({
 
   const active = pinned ?? hover;
   const activeAgent = active ? agents.find((a) => a.key === active.key) : undefined;
-  const relay = useRelay();
+  const relay = useRelay(oracle);
   // Oldest first: the longest wait is the most urgent.
-  const needs = relay.notes
+  const needs = (oracle ? relay.notes : [])
     .filter((n) => n.status === "open" && n.urgency !== "offer")
     .sort((a, b) => a.created_at - b.created_at);
   const teamList = teams(agents);
   useEffect(() => { source.emit("sessions", { status: "ready", value: agents }); }, [source, agents]);
   useEffect(() => { source.emit("needs-you", relay.loaded ? { status: "ready", value: { notes: relay.notes.filter(n => n.status === "open" && n.urgency !== "offer").sort((a, b) => a.created_at - b.created_at), now } } : { status: "loading" }); }, [source, relay.notes, relay.loaded, now]);
 
+  if (!overview) return null;
   return (
-    <div className="rd-tower rd-tower-widgets">
+    <div className={`rd-tower rd-tower-widgets${oracle ? "" : " rd-tower-passive"}`}>
       <div className="rd-tower-bar">
         <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={onBack} title="Back to sessions (Esc)">
           ← Sessions
         </button>
         <h1 className="rd-tower-title">
-          Control tower <small>Oracle · fleet monitor</small>
+          Control tower <small>{oracle ? "Oracle · fleet monitor" : "Agent overview"}</small>
         </h1>
         <button className="rd-btn rd-btn-ghost rd-btn-sm rd-analytics-link" onClick={() => onAnalytics("tokens")}>Analytics ↗</button>
       </div>
 
       <div className="rd-tower-columns">
-      <aside className="rd-tower-oracle" aria-label="Ask Oracle">
+      {oracle && <aside className="rd-tower-oracle" aria-label="Ask Oracle">
         <OracleChat relay={relay} onRelayChange={relay.refresh} onOpenTerminal={onOpenTerminal} />
-      </aside>
+      </aside>}
       <div className="rd-tower-scroll">
       <h2 className="rd-teams-title">Your agents <small>{agents.length} across {teamList.length} {teamList.length === 1 ? "team" : "teams"}</small></h2>
       <section className="rd-tower-teams" aria-label="Teams">
         {teamList.length === 0 && <p className="rd-panel-empty">No agents yet.</p>}
         {teamList.map(team => <div key={team.name} className="rd-tower-team"><div className="rd-tower-team-head"><span className="rd-tower-team-name">{team.name}</span><small>{team.agents.length}</small></div><div className="rd-tower-field">{team.agents.map(a => <AgentDuck key={a.key} agent={a} stuck={looksStuck(a, now)} pinned={pinned?.key === a.key} onHover={el => setHover(el ? { key: a.key, el } : null)} onPin={el => setPinned({ key: a.key, el })} />)}</div></div>)}
       </section>
-      <Widgets surface="oracle" slot="oracle" registry={registry} source={source} />
+      <Widgets surface="oracle" slot="oracle" registry={registry} source={source} kindLabel={oracle ? "Oracle" : "fleet"} />
 
       <section className="rd-tower-facts" aria-label="Facts">
         {facts(agents, now).map((f) => (
