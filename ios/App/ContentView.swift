@@ -30,6 +30,7 @@ struct ContentView: View {
     @State private var search = ""
     @State private var filter: SessionFilter = .all
     @State private var expanded: Set<String> = []
+    @State private var readingPositions: [String: ConversationReadingPosition] = [:]
     private let expansionStore = FolderExpansionStore()
 
     private var live: Bool { model.phase == .live }
@@ -48,11 +49,15 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Rectangle().fill(Palette.border).frame(height: 1)
-            if model.selectedSessionID != nil && !settings {
-                conversationView
+            if let id = model.selectedSessionID, !settings {
+                let positionKey = (model.host?.hostID ?? "") + ":" + id
+                ConversationView(model: model, position: Binding(
+                    get: { readingPositions[positionKey] ?? ConversationReadingPosition() },
+                    set: { readingPositions[positionKey] = $0 }
+                )).id(positionKey)
             } else {
+                header.accessibilityIdentifier("global-header")
+                Rectangle().fill(Palette.border).frame(height: 1)
                 if !settings && model.snapshot != nil && (model.phase == .live || model.phase == .stale) {
                     sessionToolbar.padding(.horizontal, 16).padding(.top, 18)
                 }
@@ -67,17 +72,19 @@ struct ContentView: View {
                 .refreshable { await model.refresh() }
                 .background(Palette.background)
             }
-            Rectangle().fill(Palette.border).frame(height: 1)
-            HStack(spacing: 0) {
-                tab("Agents", systemImage: "circle.inset.filled", selected: !settings) { settings = false; model.selectSession(nil) }
-                tab("Settings", systemImage: "gearshape", selected: settings) { settings = true; model.selectSession(nil) }
+            if model.selectedSessionID == nil || settings {
+                Rectangle().fill(Palette.border).frame(height: 1)
+                HStack(spacing: 0) {
+                    tab("Agents", systemImage: "circle.inset.filled", selected: !settings) { settings = false; model.selectSession(nil) }
+                    tab("Settings", systemImage: "gearshape", selected: settings) { settings = true; model.selectSession(nil) }
+                }
+                .background(Palette.panel).accessibilityIdentifier("global-tabs")
             }
-            .background(Palette.panel)
         }
         .background(Palette.background.ignoresSafeArea())
         .foregroundStyle(Color(red: 0.90, green: 0.91, blue: 0.93))
         .onAppear { loadExpansion() }
-        .onChange(of: model.host?.hostID) { _ in loadExpansion(); search = ""; filter = .all }
+        .onChange(of: model.host?.hostID) { _ in loadExpansion(); search = ""; filter = .all; readingPositions = [:] }
     }
 
     private var header: some View {
@@ -283,133 +290,6 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, minHeight: 66, alignment: .leading).contentShape(Rectangle())
                 .overlay(alignment: .bottom) { Rectangle().fill(Palette.border.opacity(0.6)).frame(height: 1) }
         }.buttonStyle(.plain).accessibilityIdentifier("session:" + session.id)
-    }
-
-    private var conversationView: some View {
-        VStack(spacing: 0) {
-            VStack(alignment: .leading, spacing: 10) {
-                Button { model.selectSession(nil) } label: { Label("Sessions", systemImage: "chevron.left") }
-                    .font(.subheadline).foregroundStyle(Palette.muted).padding(.vertical, 4)
-                if let session = model.selectedSession {
-                    Text(session.name).font(.title2.bold()).fixedSize(horizontal: false, vertical: true)
-                    HStack {
-                        Text(session.runtimeLabel)
-                        Text("·")
-                        Text(session.stateLabel).foregroundStyle(stateColor(session.state))
-                    }.font(.caption).foregroundStyle(Palette.muted)
-                }
-            }.frame(maxWidth: .infinity, alignment: .leading).padding(20)
-                .overlay(alignment: .bottom) { Rectangle().fill(Palette.border).frame(height: 1) }
-            ScrollView {
-                LazyVStack(alignment: .leading, spacing: 12) {
-                    conversationContents
-                }.padding(20).frame(maxWidth: .infinity, alignment: .leading)
-            }
-            .scrollDismissesKeyboard(.interactively)
-            .refreshable { await model.refresh(); await model.refreshConversation() }
-            if model.selectedSession?.isActive == true && model.snapshot?.allows("session:send") == true {
-                composer
-            }
-        }.background(Palette.background)
-    }
-
-    @ViewBuilder private var conversationContents: some View {
-        if model.selectedSession == nil {
-            Text("This session is no longer available.").foregroundStyle(Palette.muted)
-        } else if model.snapshot?.supportsConversations != true {
-            Text("Update DuckTerm on your Mac to view conversations and send messages.").foregroundStyle(Palette.muted).panel()
-        } else if model.snapshot?.allows("conversation:read") != true {
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Messaging isn’t enabled").bold()
-                Text("On your Mac, choose DuckTerm → Pair iPhone… and pair again with messaging access.")
-            }.foregroundStyle(Palette.muted).panel()
-        } else {
-            if !live { staleBanner }
-            if let conversation = model.conversation {
-                if conversation.truncated {
-                    Text("Showing recent messages. Open DuckTerm on your Mac for the full conversation.").font(.caption).foregroundStyle(Palette.muted)
-                }
-                ForEach(conversation.messages) { message in
-                    if message.role == "assistant" {
-                        Text("Agent").font(.caption).foregroundStyle(Palette.muted).padding(.top, 8)
-                        Text(message.text).textSelection(.enabled).font(.subheadline)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                    } else {
-                        Text(message.text).textSelection(.enabled).font(.subheadline).panel()
-                    }
-                }
-                ForEach(conversation.receipts) { receipt in
-                    receiptView(receipt)
-                }
-                if conversation.messages.isEmpty && conversation.receipts.isEmpty {
-                    Text("No messages yet").foregroundStyle(Palette.muted)
-                }
-            } else if model.selectedSession?.canRead != true {
-                Text(["codex", "claude-code"].contains(model.selectedSession?.runtime ?? "") ? "No conversation yet" : "Conversation unavailable for this session.").foregroundStyle(Palette.muted)
-            } else if model.conversationError == nil {
-                ProgressView("Loading conversation…").tint(Palette.green)
-            }
-            if let error = model.conversationError {
-                Text(error).font(.subheadline).foregroundStyle(Palette.amber)
-            }
-            if case .acknowledged(let receipt) = model.sendState,
-               model.conversation?.receipts.contains(where: { $0.id == receipt.id }) != true {
-                receiptView(receipt)
-            }
-            if let session = model.selectedSession, !session.isActive {
-                Text("Resume this session on your Mac to send a message.").font(.subheadline).foregroundStyle(Palette.muted).panel()
-            }
-        }
-    }
-
-    private func receiptView(_ receipt: MessageReceipt) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
-            if let text = model.messageText(for: receipt), receipt.status != "delivered" {
-                Text(text).textSelection(.enabled).font(.subheadline).panel()
-            }
-            Text(receipt.label).font(.caption).foregroundStyle(receipt.status == "unknown" ? Palette.amber : Palette.muted)
-        }
-    }
-
-    private var composer: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            TextEditor(text: Binding(get: { model.draft }, set: { model.setDraft($0) }))
-                .scrollContentBackground(.hidden).font(.subheadline)
-                .frame(height: 74).padding(8).background(Palette.panel)
-                .overlay(Rectangle().stroke(Palette.border))
-                .overlay(alignment: .topLeading) {
-                    if model.draft.isEmpty { Text("Message agent…").font(.subheadline).foregroundStyle(Palette.muted).padding(13).allowsHitTesting(false) }
-                }
-                .accessibilityLabel("Message agent")
-            HStack(alignment: .center, spacing: 12) {
-                Text(composerStatus).font(.caption).foregroundStyle(Palette.muted).frame(maxWidth: .infinity, alignment: .leading)
-                Button { Task { await model.sendMessage() } } label: {
-                    Text(model.sendState == .sending ? "Sending…" : "Send ↗").font(.subheadline.bold())
-                        .padding(.horizontal, 18).padding(.vertical, 12)
-                        .background(Palette.green).foregroundStyle(Palette.background)
-                }.buttonStyle(.plain).disabled(!model.canSend || !OutgoingMessage.validText(model.draft))
-                    .opacity(model.canSend && OutgoingMessage.validText(model.draft) ? 1 : 0.45)
-            }
-            if case .acknowledged(let receipt) = model.sendState, receipt.status == "unknown" {
-                Button("Start a new message") { model.beginNewMessage() }.font(.caption).foregroundStyle(Palette.green)
-            }
-        }.padding(16).overlay(alignment: .top) { Rectangle().fill(Palette.border).frame(height: 1) }
-    }
-    private var composerStatus: String {
-        if OutgoingMessage.startsWithLocalCommand(model.draft) {
-            return DuckyError.localCommandUnavailable.localizedDescription
-        }
-        switch model.sendState {
-        case .sending: return "Sending to your Mac…"
-        case .unconfirmed: return "Receipt unconfirmed. Checking your Mac; your message won’t be sent again."
-        case .rejected(let message): return message
-        case .acknowledged(let receipt) where receipt.status == "unknown": return "Delivery unconfirmed. Check your Mac before sending again."
-        default:
-            if model.draft.utf8.count > 4096 { return "Message is too long (maximum 4,096 bytes)." }
-            if !live { return "Reconnect to your Mac to send." }
-            if model.selectedSession?.runtime == "generic" { return "Messaging isn’t available for shell sessions." }
-            return model.canSend ? "Sends when the agent is ready" : "Refresh the conversation before sending."
-        }
     }
 
     @ViewBuilder private var settingsView: some View {
