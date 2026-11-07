@@ -55,7 +55,7 @@ it("sends only the selected folder and keeps the answer when switching tabs", as
   await act(async () => {});
   fireEvent.change(screen.getByRole("textbox"), { target: { value: "Status?" } });
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Ask" })); });
-  expect(api.fleetAsk).toHaveBeenCalledExactlyOnceWith("Status?", "Website/Research");
+  expect(api.fleetAsk).toHaveBeenCalledExactlyOnceWith("Status?", "Website/Research", expect.any(String));
   expect(screen.getByText("Ready")).toBeVisible();
   expect(screen.queryByRole("heading", { name: "Sessions" })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("tab", { name: "Artifacts" }));
@@ -137,13 +137,41 @@ it("reuses the submission key after a network failure and keeps the message", as
   expect(vi.mocked(api.folderDispatch).mock.calls[1][1]).toEqual(first);
   expect(screen.getByRole("alert")).toHaveTextContent("offline");
 });
-it("removing a mention restores answer-only behavior", async () => {
+it("removing a mention restores natural-language routing", async () => {
   await openPicker();
   fireEvent.click(screen.getByRole("option", { name: /ui-dev/ }));
   fireEvent.click(screen.getByRole("button", { name: "Remove recipient" }));
   vi.mocked(api.fleetAsk).mockResolvedValue({ answer: "Ready", exchange: { q: "Status", a: "Ready", at: 1 }, sessions: [] });
   fireEvent.change(screen.getByRole("textbox"), { target: { value: "Status" } });
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Ask" })); });
-  expect(api.fleetAsk).toHaveBeenCalledWith("Status", "Website");
+  expect(api.fleetAsk).toHaveBeenCalledWith("Status", "Website", expect.any(String));
+  expect(api.folderDispatch).not.toHaveBeenCalled();
+});
+
+it("renders natural-language delivery receipts and retries with the same key", async () => {
+  vi.mocked(api.folderChat).mockResolvedValue({ messages: [] });
+  vi.mocked(api.fleetAsk).mockRejectedValueOnce(new Error("connection lost"));
+  render(<FolderView folder="Website" />);
+  await act(async () => {});
+  const message = "Ask ui-dev to report progress";
+  fireEvent.change(screen.getByRole("textbox"), { target: { value: message } });
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Ask" })); });
+  const first = vi.mocked(api.fleetAsk).mock.calls[0];
+  expect(screen.getByRole("textbox")).toHaveValue(message);
+  vi.mocked(api.fleetAsk).mockResolvedValue({ answer: "", sessions: ["ui-1"], exchange: { q: message, a: "", at: 2, dispatch: { request_key: `chat:${first[2]}`, target: { kind: "session", id: "ui-1" }, label: "ui-dev", recipients: [{ session_id: "ui-1", name: "ui-dev", message_id: "q-test", status: "queued", answer: null }] } } });
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Ask" })); });
+  expect(vi.mocked(api.fleetAsk).mock.calls[1]).toEqual(first);
+  expect(screen.getByText("ui-dev · Queued in inbox")).toBeVisible();
+  fireEvent.change(screen.getByRole("textbox"), { target: { value: message } });
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Ask" })); });
+  expect(vi.mocked(api.fleetAsk).mock.calls[2][2]).not.toEqual(first[2]);
+});
+
+it("keeps suggestion buttons read-only even when a recipient is selected", async () => {
+  await openPicker();
+  fireEvent.click(screen.getByRole("option", { name: /ui-dev/ }));
+  vi.mocked(api.fleetAsk).mockResolvedValue({ answer: "Ready", exchange: { q: "Status", a: "Ready", at: 1 }, sessions: [] });
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "What needs my attention?" })); });
+  expect(api.fleetAsk).toHaveBeenCalledWith("What needs my attention?", "Website", undefined);
   expect(api.folderDispatch).not.toHaveBeenCalled();
 });

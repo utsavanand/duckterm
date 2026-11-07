@@ -118,14 +118,15 @@ function FolderChat({ folder, active }: { folder: string; active: boolean }) {
     setQuestion("");
     const target = answerOnly ? null : recipient;
     try {
-      const signature = JSON.stringify([target, value, assign]);
+      const signature = JSON.stringify([target, value, assign, answerOnly]);
       if (!submission.current || submission.current.signature !== signature) submission.current = { signature, key: crypto.randomUUID() };
       const result = target ? await api.folderDispatch(folder, {
         assign, identity: target.identity, target: { kind: target.kind, id: target.id }, text: value,
         request_key: submission.current.key, recipients: target.recipients.filter(r => r.eligible).map(r => r.session_id),
-      }) : await api.fleetAsk(value, folder);
+      }) : await api.fleetAsk(value, folder, answerOnly ? undefined : submission.current.key);
       if (assign) window.dispatchEvent(new Event("folder-tasks-refresh"));
       if (mounted.current) setMessages(previous => result.exchange.dispatch && previous.some(m => m.dispatch?.request_key === result.exchange.dispatch?.request_key) ? previous : [...previous, result.exchange]);
+      submission.current = undefined;
     } catch (cause) {
       if (mounted.current) { setError((cause as Error).message); setQuestion(current => current || value); }
     } finally {

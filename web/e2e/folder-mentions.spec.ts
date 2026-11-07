@@ -40,6 +40,18 @@ test("folder mentions deliver owner questions, retain replies, and review broadc
     await expect(page.locator('.rd-folder-answer')).toContainText('Keyboard navigation verified. All paths passed.');
     await page.reload(); await header().click();
     await expect(page.locator('.rd-folder-answer')).toContainText('Keyboard navigation verified. All paths passed.');
+    // A plain-language request uses the same real broker without selecting @.
+    await input.fill('Ask ui-dev to report progress.');
+    await page.getByRole('button', { name: 'Ask', exact: true }).click();
+    await expect(page.getByText('ui-dev · Queued in inbox', { exact: true })).toBeVisible();
+    const direct = (await inbox(0)).messages.find((m: { question: string }) => m.question === 'Report your progress.');
+    expect(direct).toMatchObject({ sender_kind: 'owner', requires_reply: true });
+    await input.fill('Tell everyone in this folder to report progress.');
+    await page.getByRole('button', { name: 'Ask', exact: true }).click();
+    await expect(page.getByText('research · Queued in inbox', { exact: true })).toBeVisible();
+    expect((await inbox(1)).messages).toHaveLength(1);
+    expect((await inbox(1)).messages[0]).toMatchObject({ question: 'Report your progress.', sender_kind: 'owner', requires_reply: false });
+    await page.screenshot({ path: '/tmp/duckterm-folder-natural-messages.png' });
     await input.fill('@Research');
     await page.getByRole('option', { name: /Research/ }).click();
     await input.fill('Please review sources.');
@@ -49,7 +61,7 @@ test("folder mentions deliver owner questions, retain replies, and review broadc
     await expect(input).toHaveValue('Please review sources.');
     await page.getByRole('button', { name: 'Review recipients', exact: true }).click();
     await page.getByRole('button', { name: 'Send to 1 sessions', exact: true }).click();
-    await expect(page.getByText('research · Queued in inbox', { exact: true })).toBeVisible();
+    await expect(page.getByText('research · Queued in inbox', { exact: true })).toHaveCount(2);
     expect((await inbox(1)).messages[0]).toMatchObject({ sender_kind: 'owner', requires_reply: false, question: 'Please review sources.' });
     await page.emulateMedia({ colorScheme: 'light' });
     await page.screenshot({ path: '/tmp/duckterm-mentions-light.png' });
