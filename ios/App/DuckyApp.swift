@@ -130,6 +130,28 @@ private final class ChatUIFixtureTransport: DuckyTransport {
         print("ready <agent>")
         ```
         """])
+        if ProcessInfo.processInfo.arguments.contains("--ducky-chat-untrusted-reply-fixture") {
+            let links = """
+            ## Untrusted reply fixture
+
+            [**trusted.example**](https://untrusted.example/open)
+
+            <https://untrusted.example/autolink>
+
+            https://untrusted.example/bare
+
+            www.untrusted.example/plain
+
+            [Pair](ducky://pair?invite=fixture)
+            """
+            let nesting = String(repeating: "> ", count: 16) +
+                String(repeating: "- ", count: 16) + "Deeply nested fixture text remains readable."
+            messages = [["id": "untrusted-reply", "role": "assistant", "text": links + "\n\n" + nesting]]
+        }
+        if ProcessInfo.processInfo.arguments.contains("--ducky-chat-large-reply-fixture") {
+            messages = [["id": "large-reply", "role": "assistant", "text":
+                "# Oversized **unformatted**\n\n" + String(repeating: "Plain reply. ", count: 3000)]]
+        }
         let receiptData = receipts.map { ["request_id": $0.requestID, "session_id": $0.sessionID,
             "status": $0.status, "created_at": $0.createdAt, "updated_at": $0.updatedAt,
             "text": $0.text ?? ""] as [String: Any] }

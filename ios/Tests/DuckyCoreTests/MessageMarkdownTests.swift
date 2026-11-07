@@ -54,17 +54,78 @@ final class MessageMarkdownTests: XCTestCase {
         XCTAssertTrue(blocks[0].text.runs.allSatisfy { $0.link == nil && $0.imageURL == nil })
     }
 
-    func testOnlyAbsoluteHTTPLinksRemainActiveAndImagesStayText() {
+    func testAllLinkSchemesAreInactiveAndImagesStayText() {
         let source = "[web](https://example.com/a?q=1) [plain](http://example.com) " +
             "[pair](ducky://pair?invite=fake) [file](file:///tmp/file) [script](javascript:alert) " +
             "[mail](mailto:person@example.com) [relative](/docs) [credentials](https://user:pass@example.com) " +
             "![image description](https://example.com/image.png)"
         let blocks = MessageMarkdown(source).blocks
         XCTAssertEqual(blocks.count, 1)
-        let links = blocks[0].text.runs.compactMap(\.link).map(\.absoluteString)
-        XCTAssertEqual(links, ["https://example.com/a?q=1", "http://example.com"])
+        XCTAssertTrue(blocks[0].text.runs.allSatisfy { $0.link == nil })
         XCTAssertTrue(blocks[0].text.runs.allSatisfy { $0.imageURL == nil })
         XCTAssertEqual(text(blocks[0]), "web plain pair file script mail relative credentials image description")
+    }
+
+    func testMaskedAutolinkBareAndWWWURLsRetainTextWithoutActions() {
+        let cases = [
+            ("[**trusted.example**](https://untrusted.example/open)", "trusted.example"),
+            ("<https://untrusted.example/open>", "https://untrusted.example/open"),
+            ("https://untrusted.example/open", "https://untrusted.example/open"),
+            ("www.untrusted.example/open", "www.untrusted.example/open"),
+            ("<person@example.com>", "person@example.com"),
+            ("[Open](itms-apps://apps.apple.com/app/id1)", "Open"),
+        ]
+        for (source, expected) in cases {
+            let blocks = MessageMarkdown(source).blocks
+            XCTAssertEqual(blocks.map(text), [expected], source)
+            XCTAssertTrue(blocks.flatMap { $0.text.runs }.allSatisfy { $0.link == nil }, source)
+        }
+        let formatted = MessageMarkdown("**Formatted** [label](https://untrusted.example)").blocks[0]
+        XCTAssertTrue(formatted.text.runs.contains {
+            $0.inlinePresentationIntent?.contains(.stronglyEmphasized) == true
+        })
+    }
+
+    func testParseLimitUsesUTF8BytesAndIncludesTheBoundary() {
+        for content in [String(repeating: "a", count: 32766), String(repeating: "é", count: 16383)] {
+            let boundary = "# " + content
+            XCTAssertEqual(boundary.utf8.count, 32768)
+            let parsed = MessageMarkdown(boundary).blocks
+            XCTAssertEqual(parsed.map(\.kind), [.heading(1)])
+            XCTAssertEqual(parsed.map(text), [content])
+
+            let oversized = boundary + "x"
+            let plain = MessageMarkdown(oversized).blocks
+            XCTAssertEqual(plain.map(\.kind), [.paragraph])
+            XCTAssertEqual(plain.map(text), [oversized])
+            XCTAssertTrue(plain[0].text.runs.allSatisfy {
+                $0.link == nil && $0.inlinePresentationIntent == nil && $0.presentationIntent == nil
+            })
+        }
+    }
+
+    func testPathological256KiBReplyRemainsWholePlainText() {
+        let source = String(repeating: "> ", count: 32768) +
+            String(repeating: "[label](https://example.com) ", count: 8192)
+        XCTAssertGreaterThan(source.utf8.count, 256 * 1024)
+        let blocks = MessageMarkdown(source).blocks
+        XCTAssertEqual(blocks.map(\.kind), [.paragraph])
+        XCTAssertEqual(blocks.map(text), [source])
+        XCTAssertEqual(blocks[0].quoteDepth, 0)
+        XCTAssertEqual(blocks[0].listDepth, 0)
+        XCTAssertTrue(blocks[0].text.runs.allSatisfy { $0.link == nil })
+    }
+
+    func testDeepQuotesAndListsClampDisplayDepthWithoutDroppingContent() {
+        let list = (0..<16).map { String(repeating: "  ", count: $0) + "- item \($0)" }
+            .joined(separator: "\n")
+        let source = String(repeating: "> ", count: 16) + "quoted\n\n" + list + "\n\nOutside"
+        let blocks = MessageMarkdown(source).blocks
+        XCTAssertEqual(blocks.map(text), ["quoted"] + (0..<16).map { "item \($0)" } + ["Outside"])
+        XCTAssertEqual(blocks[0].quoteDepth, 6)
+        XCTAssertEqual(blocks.dropFirst().dropLast().map(\.listDepth), (1...16).map { min($0, 6) })
+        XCTAssertTrue(blocks.dropFirst().dropLast().allSatisfy(\.isListItem))
+        XCTAssertEqual(Set(blocks.map(\.id)).count, blocks.count)
     }
 
     func testMalformedMarkdownAndUnsupportedTablesPreserveReadableSource() {
@@ -85,7 +146,7 @@ final class MessageMarkdownTests: XCTestCase {
     }
 
     func testLongMessagesAndManyBlocksKeepStableIdentitiesAndAllText() {
-        let paragraph = String(repeating: "word ", count: 12000) + "end"
+        let paragraph = String(repeating: "word ", count: 4000) + "end"
         let source = paragraph + "\n\n" + (1...120).map { "## Heading \($0)\n\nText \($0)" }.joined(separator: "\n\n")
         let first = MessageMarkdown(source), second = MessageMarkdown(source)
         XCTAssertEqual(first, second)

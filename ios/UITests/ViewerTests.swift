@@ -189,6 +189,40 @@ final class ChatPolishTests: XCTestCase {
     }
 
     @MainActor
+    func testUntrustedReplyURLsHaveNoLinkActionsAndNestingStaysReadable() {
+        app.launchArguments.append("--ducky-chat-untrusted-reply-fixture")
+        launchConversation()
+        let scroll = app.scrollViews["conversation-scroll"]
+        // Never activate a destination, even when this regression fails.
+        XCTAssertEqual(scroll.links.count, 0)
+        for label in ["trusted.example", "https://untrusted.example/autolink",
+                      "https://untrusted.example/bare", "www.untrusted.example/plain", "Pair"] {
+            XCTAssertTrue(scroll.staticTexts[label].exists, label)
+        }
+        let nested = scroll.staticTexts["Deeply nested fixture text remains readable."]
+        XCTAssertTrue(nested.exists)
+        XCTAssertGreaterThan(nested.frame.width, app.frame.width * 0.35)
+        XCTAssertGreaterThanOrEqual(nested.frame.minX, scroll.frame.minX)
+        XCTAssertLessThanOrEqual(nested.frame.maxX, scroll.frame.maxX + 1)
+        capture("chat-untrusted-links-and-nesting")
+    }
+
+    @MainActor
+    func testOversizedReplyUsesPlainTextAndNavigationRemainsAvailable() {
+        app.launchArguments.append("--ducky-chat-large-reply-fixture")
+        launchConversation()
+        let reply = app.staticTexts.containing(NSPredicate(
+            format: "label BEGINSWITH %@", "# Oversized **unformatted**")).firstMatch
+        XCTAssertTrue(reply.waitForExistence(timeout: 5))
+        XCTAssertFalse(app.descendants(matching: .any).matching(NSPredicate(
+            format: "identifier BEGINSWITH %@", "message-heading:large-reply:")).firstMatch.exists)
+        XCTAssertEqual(app.scrollViews["conversation-scroll"].links.count, 0)
+        XCTAssertTrue(app.buttons["conversation-back"].isHittable)
+        app.buttons["conversation-back"].tap()
+        XCTAssertTrue(app.buttons["session:chat-ui-test"].waitForExistence(timeout: 5))
+    }
+
+    @MainActor
     func testComposerKeepsNewlinesAndLocalCommandsCannotBeSent() {
         launchConversation()
         let composer = element("conversation-composer")

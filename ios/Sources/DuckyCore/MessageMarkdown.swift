@@ -20,9 +20,17 @@ public struct MarkdownBlock: Identifiable, Equatable, Sendable {
 }
 
 public struct MessageMarkdown: Equatable, Sendable {
+    public static let maximumParsedBytes = 32 * 1024
+    public static let maximumDisplayDepth = 6
     public let blocks: [MarkdownBlock]
 
     public init(_ source: String) {
+        // Conversation text is untrusted. Bound synchronous Markdown work while
+        // keeping an oversized reply fully readable and selectable as plain text.
+        guard source.utf8.count <= Self.maximumParsedBytes else {
+            blocks = Self.plain(source)
+            return
+        }
         let options = AttributedString.MarkdownParsingOptions(
             allowsExtendedAttributes: false, interpretedSyntax: .full, failurePolicy: .throwError)
         guard let parsed = try? AttributedString(markdown: source, options: options),
@@ -70,7 +78,10 @@ public struct MessageMarkdown: Equatable, Sendable {
             }
             part.presentationIntent = nil
             part.imageURL = nil
-            if let link = part.link, !Self.allowedLink(link) { part.link = nil }
+            // Even an HTTPS destination can disguise a different host behind its
+            // label or open another app through a universal link. Replies do not
+            // grant authority to navigate; preserve formatting without actions.
+            part.link = nil
             text.append(part)
         }
         finishBlock()
@@ -81,11 +92,6 @@ public struct MessageMarkdown: Equatable, Sendable {
         guard !source.isEmpty else { return [] }
         return [MarkdownBlock(id: 0, kind: .paragraph, text: AttributedString(source),
             listDepth: 0, listOrdinal: nil, isListItem: false, quoteDepth: 0)]
-    }
-
-    private static func allowedLink(_ url: URL) -> Bool {
-        ["http", "https"].contains(url.scheme?.lowercased() ?? "") &&
-            url.host?.isEmpty == false && url.user == nil && url.password == nil
     }
 
     private struct Context {
@@ -123,10 +129,10 @@ public struct MessageMarkdown: Equatable, Sendable {
                 default: break
                 }
             }
-            listDepth = depth
+            listDepth = min(depth, MessageMarkdown.maximumDisplayDepth)
             ordinal = nearestListIsOrdered == true ? itemOrdinal : nil
             itemID = item
-            quoteDepth = quotes
+            quoteDepth = min(quotes, MessageMarkdown.maximumDisplayDepth)
         }
     }
 }

@@ -336,18 +336,16 @@ private struct FormattedReply: View, Equatable {
                     }
                     blockView(block).frame(maxWidth: .infinity, alignment: .leading)
                 }
-                .padding(.leading, CGFloat(max(0, block.listDepth - 1)) * 16 + CGFloat(block.quoteDepth) * 12)
+                .padding(.leading, min(CGFloat(MessageMarkdown.maximumDisplayDepth) * 16,
+                    CGFloat(max(0, block.listDepth - 1)) * 16 + CGFloat(block.quoteDepth) * 12))
                 .overlay(alignment: .leading) {
                     if block.quoteDepth > 0 { Rectangle().fill(ChatColor.muted.opacity(0.28)).frame(width: 2) }
                 }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
-        .environment(\.openURL, OpenURLAction { url in
-            guard ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
-                  url.host?.isEmpty == false, url.user == nil, url.password == nil else { return .discarded }
-            return .systemAction
-        })
+        // Defense in depth if SwiftUI introduces a link beyond the projection.
+        .environment(\.openURL, OpenURLAction { _ in .discarded })
     }
 
     @ViewBuilder private func blockView(_ block: MarkdownBlock) -> some View {
