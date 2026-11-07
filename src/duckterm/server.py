@@ -3837,7 +3837,9 @@ class Server:
                 return message
         if not snapshot["sessions"]:
             return None
-        result = await asyncio.to_thread(summarize, routing_prompt(folder, question, snapshot))
+        result = await asyncio.to_thread(
+            summarize, routing_prompt(folder, question, snapshot), tier="fast"
+        )
         intent = parse_intent(result.text)
         # Inference yields to folder moves, enrollment changes and new sessions.
         # Never deliver to a recipient set the model did not see.

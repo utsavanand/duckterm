@@ -151,7 +151,7 @@ it("removing a mention restores natural-language routing", async () => {
 it("renders natural-language delivery receipts and retries with the same key", async () => {
   vi.mocked(api.folderChat).mockResolvedValue({ messages: [] });
   vi.mocked(api.fleetAsk).mockRejectedValueOnce(new Error("connection lost"));
-  render(<FolderView folder="Website" />);
+  render(<FolderView folder="Website" />, { wrapper: edition(FULL) });
   await act(async () => {});
   const message = "Ask ui-dev to report progress";
   fireEvent.change(screen.getByRole("textbox"), { target: { value: message } });

@@ -30,7 +30,7 @@ def ask(server, question="Ask Session one what they are working on", key="first"
 def model(monkeypatch, output):
     prompts = []
 
-    def summarize(prompt):
+    def summarize(prompt, **_kwargs):
         prompts.append(prompt)
         return SimpleNamespace(text=json.dumps(output), backend="test")
 
@@ -116,7 +116,8 @@ def test_clarification_and_normal_question_do_not_send(app, monkeypatch):  # noq
     assert status == 200 and "Nothing was sent" in body["answer"]
     outputs = iter(['{"action":"answer"}', "Session one is testing."])
     monkeypatch.setattr(
-        "duckterm.server.summarize", lambda _: SimpleNamespace(text=next(outputs), backend="test")
+        "duckterm.server.summarize",
+        lambda _, **_kwargs: SimpleNamespace(text=next(outputs), backend="test"),
     )
     status, body = ask(app, "What are the agents doing?")
     assert status == 200 and body["answer"] == "Session one is testing."
@@ -135,7 +136,7 @@ def test_auth_and_invalid_retry_keys_do_not_invoke_model(app, monkeypatch):  # n
 @pytest.mark.parametrize("text", ["", "Message sent!", '{"action":'])
 def test_bad_model_response_cannot_claim_delivery(app, monkeypatch, text):  # noqa: F811
     monkeypatch.setattr(
-        "duckterm.server.summarize", lambda _: SimpleNamespace(text=text, backend="test")
+        "duckterm.server.summarize", lambda _, **_kwargs: SimpleNamespace(text=text, backend="test")
     )
     assert ask(app)[0] == 502
     assert app.history.session_api.pending_counts() == {}
@@ -187,7 +188,7 @@ def test_changes_during_inference(app, monkeypatch, change):  # noqa: F811
         else:
             app.history.set_state("one", "idle")
 
-    def summarize(_):
+    def summarize(_, **_kwargs):
         asyncio.run_coroutine_threadsafe(mutate(), loop).result(timeout=5)
         return SimpleNamespace(text=json.dumps(plan()), backend="test")
 
