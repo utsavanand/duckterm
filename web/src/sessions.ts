@@ -230,6 +230,19 @@ export function contextLevel(
   return null;
 }
 
+/** The duck shares the numeric warning's evidence and thresholds. */
+export function contextTint(tokens?: number, model?: string, reportedCapacity?: number): { color: string; label: string } | undefined {
+  const level = contextLevel(tokens, model, reportedCapacity);
+  if (!level) return undefined;
+  const used = tokens! / contextWindowFor(model, reportedCapacity);
+  const start = used < 0.8 ? [255, 181, 43] : [245, 121, 43];
+  const end = used < 0.8 ? [245, 121, 43] : [217, 67, 67];
+  const progress = Math.min(1, Math.max(0, used < 0.8 ? (used - 0.55) / 0.25 : (used - 0.8) / 0.15));
+  const color = "#" + start.map((channel, index) => Math.round(channel + (end[index] - channel) * progress).toString(16).padStart(2, "0")).join("");
+  const guidance = used >= 0.95 ? "nearly full — checkpoint or compact now" : level === "high" ? "high — checkpoint or compact now" : "warm — consider a checkpoint soon";
+  return { color, label: `Context ${Math.round(used * 100)}% used, ${guidance}` };
+}
+
 export function fmtTokens(n: number): string {
   return n >= 1000 ? `${Math.round(n / 1000)}k` : String(n);
 }

@@ -1,3 +1,12 @@
+## 2026-11-07 — A warning needs both data and a visible signal
+
+Context occupancy and capacity shipped without the duck colour ramp, leaving
+sessions visually identical near their context limit. Reuse the numeric warning's
+trusted window calculation, then tint every session duck from one shared component.
+Keep unknown windows, sleeping ducks and editions without context untinted. Test
+compaction clearing the tint as well as rising usage; preserve numeric warnings
+and accessible text alongside colour. The owner approved the dark/light preview.
+
 ## 2026-10-25 — Floating CI environments can break a validated release
 
 The release gate passed locally, but GitHub's ubuntu-latest had moved to 26.04,

@@ -1,5 +1,7 @@
-import { useEffect, useState } from "react";
+import { CSSProperties, useEffect, useState } from "react";
 import { DuckCelebration, SessionView } from "./types";
+import { contextTint } from "./sessions";
+import { useFeature } from "./edition";
 
 // The rubber duck session mascot, v4 (user-approved 2026-09-20): no water —
 // the duck fills the frame over a soft ground shadow.
@@ -63,7 +65,15 @@ const SHADOW = (cx: number) => (
   <ellipse className="duck-shadow" cx={cx} cy="56" rx="20" ry="2.6" fill="#000" />
 );
 
-export function Duck({ pose, size = 24, celebrating }: { pose: DuckPose; size?: number; celebrating?: DuckCelebration }) {
+export function Duck({ pose, size = 24, celebrating, session }: { pose: DuckPose; size?: number; celebrating?: DuckCelebration; session?: Pick<SessionView, "contextTokens" | "model" | "contextWindowTokens"> }) {
+  const context = useFeature("context");
+  const tint = context && pose !== "sleeping" && session ? contextTint(session.contextTokens, session.model, session.contextWindowTokens) : undefined;
+  const style: CSSProperties = { width: size, height: size, ...(tint ? {
+    "--duck-body": tint.color,
+    "--duck-outline": "color-mix(in srgb, var(--duck-body) 78%, #703800)",
+    "--duck-wing": "color-mix(in srgb, var(--duck-body) 85%, #703800)",
+    "--duck-wing-outline": "color-mix(in srgb, var(--duck-body) 70%, #703800)",
+  } : {}) };
   const [now, setNow] = useState(Date.now);
   useEffect(() => {
     if (!celebrating) return;
@@ -76,18 +86,21 @@ export function Duck({ pose, size = 24, celebrating }: { pose: DuckPose; size?: 
   }, [celebrating]);
   const active = celebrating && celebrating.startedAt + 4000 > now ? celebrating : undefined;
   return (
-    <span className={`rd-duck-wrap${active ? ` rd-duck-celebrating rd-duck-celebrating-${active.kind}` : ""}`} style={{ width: size, height: size }}>
+    <span className={`rd-duck-wrap${active ? ` rd-duck-celebrating rd-duck-celebrating-${active.kind}` : ""}`} style={style}>
 
     <svg
       className={`rd-duck rd-duck-${pose}`}
       viewBox="2 4 60 56"
       width={size}
       height={size}
-      aria-hidden="true"
+      role={tint ? "img" : undefined}
+      aria-label={tint?.label}
+      aria-hidden={tint ? undefined : true}
       focusable="false"
     >
+      {tint && <title>{tint.label}</title>}
       {pose === "waving" && <>
-        <ellipse className="duck-shadow" cx="31" cy="56" rx="20" ry="2.6" fill="#000"></ellipse><g className="duck-p-wave"><path d="M12 42 Q8 34 14 31 Q15 37 19 39 Z" fill="#FFD32B" stroke="#E0AD00" strokeWidth="1"></path><ellipse cx="29" cy="45" rx="17" ry="11.5" fill="#FFD32B" stroke="#E0AD00" strokeWidth="1.2"></ellipse><g className="duck-wave-wing"><path d="M27 44 C20 45 14 40 12 33 C10 28 10 22 13 20 C15 19 17 23 18 25 C18 21 19 19 21 21 C23 24 22 28 24 31 C29 35 31 40 27 44Z" fill="#FFD32B" stroke="#C99300" strokeWidth="1.5"/><path d="M16 29 Q18 35 24 39" fill="none" stroke="#E6B309" strokeWidth="1.5" strokeLinecap="round"/></g><circle cx="41" cy="25" r="11.5" fill="#FFD32B" stroke="#E0AD00" strokeWidth="1.2"></circle><path d="M50.5 24.5 Q59 24 58.5 26.8 Q58 29.5 50.5 28.3 Q49 26.4 50.5 24.5 Z" fill="#FF8A00" stroke="#D96F00" strokeWidth=".8"></path><circle cx="44.5" cy="22" r="2" fill="#1a1a1a"></circle><circle cx="45.2" cy="21.2" r="0.65" fill="#fff"></circle></g>
+        <ellipse className="duck-shadow" cx="31" cy="56" rx="20" ry="2.6" fill="#000"></ellipse><g className="duck-p-wave"><path d="M12 42 Q8 34 14 31 Q15 37 19 39 Z" fill="var(--duck-body, #FFD32B)" stroke="var(--duck-outline, #E0AD00)" strokeWidth="1"></path><ellipse cx="29" cy="45" rx="17" ry="11.5" fill="var(--duck-body, #FFD32B)" stroke="var(--duck-outline, #E0AD00)" strokeWidth="1.2"></ellipse><g className="duck-wave-wing"><path d="M27 44 C20 45 14 40 12 33 C10 28 10 22 13 20 C15 19 17 23 18 25 C18 21 19 19 21 21 C23 24 22 28 24 31 C29 35 31 40 27 44Z" fill="var(--duck-body, #FFD32B)" stroke="var(--duck-wing-outline, #C99300)" strokeWidth="1.5"/><path d="M16 29 Q18 35 24 39" fill="none" stroke="var(--duck-wing, #E6B309)" strokeWidth="1.5" strokeLinecap="round"/></g><circle cx="41" cy="25" r="11.5" fill="var(--duck-body, #FFD32B)" stroke="var(--duck-outline, #E0AD00)" strokeWidth="1.2"></circle><path d="M50.5 24.5 Q59 24 58.5 26.8 Q58 29.5 50.5 28.3 Q49 26.4 50.5 24.5 Z" fill="#FF8A00" stroke="#D96F00" strokeWidth=".8"></path><circle cx="44.5" cy="22" r="2" fill="#1a1a1a"></circle><circle cx="45.2" cy="21.2" r="0.65" fill="#fff"></circle></g>
       </>}
       {pose === "busy" && (
         <>
@@ -98,8 +111,8 @@ export function Duck({ pose, size = 24, celebrating }: { pose: DuckPose; size?: 
               cy="42"
               rx="18"
               ry="13"
-              fill="#FFD32B"
-              stroke="#E0AD00"
+              fill="var(--duck-body, #FFD32B)"
+              stroke="var(--duck-outline, #E0AD00)"
               strokeWidth="1.2"
             />
             <g transform="rotate(5 32 21)">
@@ -107,8 +120,8 @@ export function Duck({ pose, size = 24, celebrating }: { pose: DuckPose; size?: 
                 cx="32"
                 cy="20"
                 r="13"
-                fill="#FFD32B"
-                stroke="#E0AD00"
+                fill="var(--duck-body, #FFD32B)"
+                stroke="var(--duck-outline, #E0AD00)"
                 strokeWidth="1.2"
               />
               <path
@@ -145,8 +158,8 @@ export function Duck({ pose, size = 24, celebrating }: { pose: DuckPose; size?: 
                 cy="46"
                 rx="5.5"
                 ry="3.8"
-                fill="#F2BE0A"
-                stroke="#E0AD00"
+                fill="var(--duck-wing, #F2BE0A)"
+                stroke="var(--duck-outline, #E0AD00)"
                 strokeWidth=".9"
               />
             </g>
@@ -156,8 +169,8 @@ export function Duck({ pose, size = 24, celebrating }: { pose: DuckPose; size?: 
                 cy="46"
                 rx="5.5"
                 ry="3.8"
-                fill="#F2BE0A"
-                stroke="#E0AD00"
+                fill="var(--duck-wing, #F2BE0A)"
+                stroke="var(--duck-outline, #E0AD00)"
                 strokeWidth=".9"
               />
             </g>
@@ -193,8 +206,8 @@ export function Duck({ pose, size = 24, celebrating }: { pose: DuckPose; size?: 
           <g className="duck-p-watch">
             <path
               d="M10 42 Q6 34 12 31 Q13 37 17 39 Z"
-              fill="#FFD32B"
-              stroke="#E0AD00"
+              fill="var(--duck-body, #FFD32B)"
+              stroke="var(--duck-outline, #E0AD00)"
               strokeWidth="1"
             />
             <ellipse
@@ -202,8 +215,8 @@ export function Duck({ pose, size = 24, celebrating }: { pose: DuckPose; size?: 
               cy="45"
               rx="17"
               ry="11.5"
-              fill="#FFD32B"
-              stroke="#E0AD00"
+              fill="var(--duck-body, #FFD32B)"
+              stroke="var(--duck-outline, #E0AD00)"
               strokeWidth="1.2"
             />
             <g transform="rotate(6 40 24)">
@@ -211,8 +224,8 @@ export function Duck({ pose, size = 24, celebrating }: { pose: DuckPose; size?: 
                 cx="40"
                 cy="23"
                 r="11.5"
-                fill="#FFD32B"
-                stroke="#E0AD00"
+                fill="var(--duck-body, #FFD32B)"
+                stroke="var(--duck-outline, #E0AD00)"
                 strokeWidth="1.2"
               />
               <path
@@ -221,12 +234,12 @@ export function Duck({ pose, size = 24, celebrating }: { pose: DuckPose; size?: 
                 stroke="#D96F00"
                 strokeWidth=".8"
               />
-              <circle cx="42.5" cy="22.5" r="2.6" fill="#fff" stroke="#E0AD00" strokeWidth=".5" />
+              <circle cx="42.5" cy="22.5" r="2.6" fill="#fff" stroke="var(--duck-outline, #E0AD00)" strokeWidth=".5" />
               <circle cx="41.8" cy="23.6" r="1.7" fill="#1a1a1a" />
               <path
                 d="M39.5 17.8 Q42.5 16.6 45.3 17.9"
                 fill="none"
-                stroke="#B8860B"
+                stroke="var(--duck-wing-outline, #B8860B)"
                 strokeWidth="1.3"
                 strokeLinecap="round"
               />
@@ -234,7 +247,7 @@ export function Duck({ pose, size = 24, celebrating }: { pose: DuckPose; size?: 
             <path
               d="M20 47 Q26 40 32 37"
               fill="none"
-              stroke="#F2BE0A"
+              stroke="var(--duck-wing, #F2BE0A)"
               strokeWidth="6"
               strokeLinecap="round"
             />
@@ -275,8 +288,8 @@ export function Duck({ pose, size = 24, celebrating }: { pose: DuckPose; size?: 
           <g className="duck-p-idle">
             <path
               d="M12 42 Q8 34 14 31 Q15 37 19 39 Z"
-              fill="#FFD32B"
-              stroke="#E0AD00"
+              fill="var(--duck-body, #FFD32B)"
+              stroke="var(--duck-outline, #E0AD00)"
               strokeWidth="1"
             />
             <ellipse
@@ -284,17 +297,17 @@ export function Duck({ pose, size = 24, celebrating }: { pose: DuckPose; size?: 
               cy="45"
               rx="17"
               ry="11.5"
-              fill="#FFD32B"
-              stroke="#E0AD00"
+              fill="var(--duck-body, #FFD32B)"
+              stroke="var(--duck-outline, #E0AD00)"
               strokeWidth="1.2"
             />
-            <path d="M22 44 Q29 38 36 44 Q29 50 22 44 Z" fill="#F2BE0A" opacity=".7" />
+            <path d="M22 44 Q29 38 36 44 Q29 50 22 44 Z" fill="var(--duck-wing, #F2BE0A)" opacity=".7" />
             <circle
               cx="41"
               cy="25"
               r="11.5"
-              fill="#FFD32B"
-              stroke="#E0AD00"
+              fill="var(--duck-body, #FFD32B)"
+              stroke="var(--duck-outline, #E0AD00)"
               strokeWidth="1.2"
             />
             <path
@@ -314,8 +327,8 @@ export function Duck({ pose, size = 24, celebrating }: { pose: DuckPose; size?: 
           <g className="duck-p-sleep">
             <path
               d="M12 44 Q8 36 14 33 Q15 39 19 41 Z"
-              fill="#FFD32B"
-              stroke="#E0AD00"
+              fill="var(--duck-body, #FFD32B)"
+              stroke="var(--duck-outline, #E0AD00)"
               strokeWidth="1"
             />
             <ellipse
@@ -323,17 +336,17 @@ export function Duck({ pose, size = 24, celebrating }: { pose: DuckPose; size?: 
               cy="46"
               rx="18"
               ry="11.5"
-              fill="#FFD32B"
-              stroke="#E0AD00"
+              fill="var(--duck-body, #FFD32B)"
+              stroke="var(--duck-outline, #E0AD00)"
               strokeWidth="1.2"
             />
-            <path d="M23 45 Q30 39 37 45 Q30 51 23 45 Z" fill="#F2BE0A" opacity=".7" />
+            <path d="M23 45 Q30 39 37 45 Q30 51 23 45 Z" fill="var(--duck-wing, #F2BE0A)" opacity=".7" />
             <circle
               cx="42"
               cy="34"
               r="10.5"
-              fill="#FFD32B"
-              stroke="#E0AD00"
+              fill="var(--duck-body, #FFD32B)"
+              stroke="var(--duck-outline, #E0AD00)"
               strokeWidth="1.2"
             />
             <path

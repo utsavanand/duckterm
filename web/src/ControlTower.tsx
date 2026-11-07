@@ -167,7 +167,7 @@ export function ControlTower({
 function OracleDuck({ agent, pose, size }: { agent?: TowerAgent; pose: Parameters<typeof Duck>[0]["pose"]; size: number }) {
   return agent && sessionLocation(agent).remote
     ? <SessionLocationDuck session={agent} pose={pose} height={size} focusable={false} />
-    : <Duck pose={pose} size={size} />;
+    : <Duck session={agent} pose={pose} size={size} />;
 }
 
 function AgentDuck({

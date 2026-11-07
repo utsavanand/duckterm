@@ -116,7 +116,7 @@ export function ContextPanel({ session, active = true, onMemory, onCheckpointMem
   return (
     <div className="rd-context">
       <header className="rd-session-overview">
-        <div className="rd-session-overview-title"><Duck key={session.key} pose={poseFor(state, !!session.attentionSince)} size={28} celebrating={session.celebration} />
+        <div className="rd-session-overview-title"><Duck key={session.key} session={session} pose={poseFor(state, !!session.attentionSince)} size={28} celebrating={session.celebration} />
           <h2>{session.label}</h2><span className="rd-session-overview-state">{sessionStateLabel(state)}</span></div>
         <div className="rd-section-purpose">{session.group || "Ungrouped"}{session.branch && <> / {session.branch}</>}</div>
         {has("summaries") && session.progress?.summary ? <button className={`rd-session-work${summaryOpen ? " open" : ""}`} aria-expanded={summaryOpen} onClick={() => setSummaryOpen(o => !o)} title={summaryOpen ? "Collapse current work" : "Expand current work"}><span className="rd-session-work-text">{session.progress.summary}</span></button>
