@@ -4,7 +4,7 @@ import { initialMemorySwitch, memorySwitchReducer, type SwitchSelection, type Sw
 import { sessionRef } from "./hostTransport";
 import type { RestartOptions } from "./api";
 
-vi.mock("./api", () => ({ authHeaders: (extra = {}) => ({ "X-Duckterm-Token": "test-owner", ...extra }) }));
+vi.mock("./api", async importOriginal => ({ ...await importOriginal<typeof import("./api")>(), authHeaders: (extra = {}) => ({ "X-Duckterm-Token": "test-owner", ...extra }) }));
 const selection: SwitchSelection = { sessionRef: "same.id", sourceGeneration: "generation-a",
   sourceHarness: "claude-code", harness: "codex", model: { mode: "explicit", id: "gpt-6-astra" } };
 const binding = { session_key: "same.id", source_generation: "generation-a",
@@ -37,13 +37,26 @@ afterEach(() => { vi.unstubAllGlobals(); vi.clearAllMocks(); });
 
 it.each(["oldest_unprocessed_first", "newest_unprocessed_first"])("accepts %s without rewriting the opaque selection plan", async order => {
   const plan = { available_records: 47, processed_records: 0, pending_records: 47, default_records: 20, selected_records: 20,
-    remaining_records: 27, batch_records: 20, order, selection_plan: { version: order === "newest_unprocessed_first" ? 2 : 1, ...(order === "newest_unprocessed_first" ? { order } : {}), boundary: "frozen" } };
+    remaining_records: 27, order, selection_plan: { version: order === "newest_unprocessed_first" ? 2 : 1, ...(order === "newest_unprocessed_first" ? { order } : {}), boundary: "frozen" } };
   response(plan);
   expect(await memorySwitchService(selection).plan()).toEqual(plan);
 });
+it("accepts an all default and an older host's batch_records without passing it on", async () => {
+  const plan = { available_records: 2014, processed_records: 0, pending_records: 2014, default_records: "all", selected_records: 2014,
+    remaining_records: 0, order: "oldest_unprocessed_first", selection_plan: { version: 1, boundary: "frozen" } };
+  response(plan);
+  expect(await memorySwitchService(selection).plan()).toEqual(plan);
+  response({ ...plan, default_records: 20, selected_records: 20, remaining_records: 1994, batch_records: 20 });
+  expect(await memorySwitchService(selection).plan()).toEqual({ ...plan, default_records: 20, selected_records: 20, remaining_records: 1994 });
+});
+it("rejects a selected count that disagrees with an all default", async () => {
+  response({ available_records: 47, processed_records: 0, pending_records: 47, default_records: "all", selected_records: 20,
+    remaining_records: 27, order: "oldest_unprocessed_first", selection_plan: {} });
+  await expect(memorySwitchService(selection).plan()).rejects.toMatchObject({ code: "invalid_response" });
+});
 it("rejects unknown plan ordering", async () => {
   response({ available_records: 47, processed_records: 0, pending_records: 47, default_records: 20, selected_records: 20,
-    remaining_records: 27, batch_records: 20, order: "random", selection_plan: {} });
+    remaining_records: 27, order: "random", selection_plan: {} });
   await expect(memorySwitchService(selection).plan()).rejects.toMatchObject({ code: "invalid_response" });
 });
 
@@ -53,7 +66,7 @@ it.each([
   ["oldest_unprocessed_first", "newest_unprocessed_first"],
 ])("refuses v2 handoff order mismatch: preview %s, token %s", async (order, tokenOrder) => {
   response({ available_records: 47, processed_records: 0, pending_records: 47, default_records: 20, selected_records: 20,
-    remaining_records: 27, batch_records: 20, order, selection_plan: { version: 2, order: tokenOrder } });
+    remaining_records: 27, order, selection_plan: { version: 2, order: tokenOrder } });
   await expect(memorySwitchService(selection).plan()).rejects.toBeInstanceOf(Error);
   expect(fetchMock).toHaveBeenCalledTimes(1);
   expect(fetchMock.mock.calls[0][1].method).toBe("GET");

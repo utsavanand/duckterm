@@ -14,14 +14,47 @@ from typing import Any
 
 from duckterm.memory_summary import FIELDS, MAX_SUMMARY_BYTES
 
+# Owner taxonomy, 2026-10-30: Episodes (span summaries) plus three item
+# categories. Facts are stored in the constraints field so saved revisions keep
+# their six-field shape; the kind carries the category.
+CATEGORIES = {
+    "intent": ("goal", "task", "question"),
+    "rules": ("constraint", "decision", "authority", "convention"),
+    "facts": ("design", "environment", "known_issue", "risk", "learning", "reference"),
+}
+KIND_FIELD = {
+    "goal": "goals",
+    "task": "unfinished",
+    "question": "questions",
+    "constraint": "constraints",
+    "decision": "decisions",
+    "authority": "constraints",
+    "convention": "constraints",
+    "design": "constraints",
+    "environment": "constraints",
+    "known_issue": "constraints",
+    "risk": "risks",
+    "learning": "constraints",
+    "reference": "constraints",
+}
+# Kinds written before the taxonomy, kept readable.
+LEGACY_KINDS = {"unfinished": "task", "callout": "constraint"}
 KINDS = {
     "goals": {"goal"},
-    "constraints": {"constraint", "callout", "learning"},
+    "constraints": {"constraint", "callout", "learning", "authority", "convention", "design"}
+    | {"environment", "known_issue", "reference"},
     "decisions": {"decision", "learning"},
-    "unfinished": {"unfinished"},
+    "unfinished": {"unfinished", "task"},
     "questions": {"question"},
     "risks": {"risk"},
 }
+
+
+def category(kind: str) -> str:
+    kind = LEGACY_KINDS.get(kind, kind)
+    return next((name for name, kinds in CATEGORIES.items() if kind in kinds), "facts")
+
+
 OMISSION_REASONS = {
     "oversized_record",
     "pending_update",
@@ -113,7 +146,9 @@ def resolve_revision(
                         previous = origins.setdefault(item["id"], origin)
                         if previous != origin:
                             raise ValueError("conflicting_claim_origin")
-            result = read_context(value, version), origins
+            # Folded revisions point at every child's items, so their union is not
+            # bounded by the per-write cap; the brief has its own budget.
+            result = read_context(value, version, check_budget=False), origins
         visiting.remove(identity)
         cache[identity] = result
         return result

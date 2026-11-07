@@ -97,6 +97,8 @@ def add_memory_parser(sub: Any) -> None:
     parser.set_defaults(session_action="memory")
     actions = parser.add_subparsers(dest="memory_action", required=True)
     actions.add_parser("sources", help="show available conversation and work sources")
+    items = actions.add_parser("items", help="list current memory items")
+    items.add_argument("--category", choices=["intent", "rules", "facts"])
     search = actions.add_parser("search", help="find older context in your own session")
     search.add_argument("query")
     search.add_argument("--limit", type=int, default=20)
@@ -204,6 +206,8 @@ def main(args: argparse.Namespace) -> int:
             query: dict[str, Any] = {}
             if args.memory_action == "search":
                 query = {"q": args.query, "limit": args.limit}
+            elif args.memory_action == "items" and args.category:
+                query = {"category": args.category}
             elif args.memory_action == "read":
                 query = {"source": args.source, "offset": args.offset, "limit": args.limit}
                 if args.record is not None:

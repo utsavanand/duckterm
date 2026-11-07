@@ -122,13 +122,13 @@ def test_preparation_completes_spans_before_creating_proof(preparation):
     }
     assert cp["record"]["summary_ref"] == view["proof"]["revision_id"]
     assert cp["record"]["memory_sources"] and cp["record"]["retained_sources"]
-    assert len(calls) == 2
+    assert len(calls) == 1
     assert server.history.session("agent")["runtime"] == "claude-code"
 
 
-@pytest.mark.parametrize("count,expected_batches", [(20, 1), (35, 2), ("all", 3)])
+@pytest.mark.parametrize("count", [20, 35, "all"])
 def test_selected_recent_history_prepares_partial_handoff_without_processing_backlog(
-    preparation, count, expected_batches
+    preparation, count
 ):
     server, calls, tmp = preparation
     path = next(tmp.rglob("agent-claude.jsonl"))
@@ -162,7 +162,7 @@ def test_selected_recent_history_prepares_partial_handoff_without_processing_bac
             if not prompt.startswith("You are validating")
         ]
         assert sum(map(len, written)) == expected
-        assert len(written) == expected_batches
+        assert len(written) == 1  # short messages share one byte-bounded span
         assert "Message 40" in [row["text"] for batch in written for row in batch]
         assert ("Message 1" in [row["text"] for batch in written for row in batch]) == (
             count == "all"
@@ -383,11 +383,11 @@ def test_turn_progress_reuses_preparation_revision_without_new_generation(prepar
 
     async def run():
         view = await prepare(server)
-        assert view["state"] == "ready" and len(calls) == 2
+        assert view["state"] == "ready" and len(calls) == 1
         checkpoint = server.history.checkpoints("agent")[0]
         assert checkpoint["record"]["summary_ref"] == view["proof"]["revision_id"]
         value = await server.progress_coordinator.refresh("agent")
-        assert len(calls) == 2
+        assert len(calls) == 1
         assert value["id"] == view["proof"]["revision_id"]
         assert value["continuity"]["verified"]
         assert value["summary_validation"]["ready"]
@@ -529,13 +529,14 @@ def test_preparation_reports_real_summary_work_before_readiness(preparation, mon
     assert view["state"] == "ready", view
     progress = [item["progress"] for item in observed]
     stages = [item["stage"] for item in progress]
-    assert stages.index("capturing") < stages.index("writing") < stages.index("reviewing")
-    assert stages.index("reviewing") < stages.index("reading") < stages.index("assembling")
+    assert "reviewing" not in stages
+    assert stages.index("capturing") < stages.index("writing") < stages.index("reading")
+    assert stages.index("reading") < stages.index("assembling")
     assert stages.index("assembling") < stages.index("checking_sources") < stages.index("ready")
-    reviewing = next(item for item in progress if item["stage"] == "reviewing")
-    assert reviewing["completed"] == 0
-    assert reviewing["total"] > 0
-    assert view["progress"]["completed"] == reviewing["total"]
+    writing = next(item for item in progress if item["stage"] == "writing")
+    assert writing["completed"] == 0
+    assert writing["total"] > 0
+    assert view["progress"]["completed"] == writing["total"]
     assert all("proof" not in item for item in observed if item["state"] == "preparing")
     assert all(item["updated_at"] >= item["started_at"] for item in progress)
     assert server.history.session("agent")["runtime"] == "claude-code"

@@ -1,5 +1,5 @@
 // Preparation and explicit switching remain separate. Never retry mutations here.
-import { authHeaders, type CheckpointPlan, type CheckpointSelection, type RestartOptions } from "./api";
+import { authHeaders, validCheckpointPlan, type CheckpointPlan, type CheckpointSelection, type RestartOptions } from "./api";
 import { routedFetch, splitSessionRef } from "./hostTransport";
 import { type PreparationResult, type SwitchSelection, type SwitchSubmission, type OperationResult } from "./memorySwitchState";
 
@@ -265,15 +265,12 @@ export function memorySwitchService(input: SwitchSelection) {
       const v = obj(await request(`${path()}/checkpoint-plan`));
       const plan: CheckpointPlan = {
         available_records: num(v.available_records), processed_records: num(v.processed_records),
-        pending_records: num(v.pending_records), default_records: num(v.default_records),
+        pending_records: num(v.pending_records), default_records: v.default_records === "all" ? "all" : num(v.default_records),
         selected_records: num(v.selected_records), remaining_records: num(v.remaining_records),
-        batch_records: num(v.batch_records) as 20, order: choice(v.order, ["oldest_unprocessed_first", "newest_unprocessed_first"]),
+        order: choice(v.order, ["oldest_unprocessed_first", "newest_unprocessed_first"]),
         selection_plan: obj(v.selection_plan),
       };
-      if (plan.batch_records !== 20 || plan.default_records < 1 || plan.default_records > 1000
-        || plan.available_records !== plan.processed_records + plan.pending_records
-        || plan.selected_records !== Math.min(plan.default_records, plan.pending_records)
-        || plan.remaining_records !== plan.pending_records - plan.selected_records) invalid();
+      if (!validCheckpointPlan(plan)) invalid();
       checkHandoffPlan(plan.selection_plan);
       if (plan.selection_plan.version === 2 && plan.order !== plan.selection_plan.order) invalid();
       return plan;
@@ -296,8 +293,8 @@ export function memorySwitchService(input: SwitchSelection) {
       const v = obj(await request(`${path()}/restart-preparation/${identity(id)}?${query}`));
       if (v.preparation_id !== id || v.snapshot_id !== snapshotId) invalid();
       const b = obj(v.brief);
-      const brief = { text: str(b.text, 32000), utf8_bytes: num(b.utf8_bytes), budget_bytes: num(b.budget_bytes) };
-      if (brief.budget_bytes > 32000 || brief.utf8_bytes > brief.budget_bytes
+      const brief = { text: str(b.text, 96000), utf8_bytes: num(b.utf8_bytes), budget_bytes: num(b.budget_bytes) };
+      if (brief.budget_bytes > 96000 || brief.utf8_bytes > brief.budget_bytes
         || new TextEncoder().encode(brief.text).length !== brief.utf8_bytes) invalid();
       return { preparationId: id, snapshotId, brief, sources: list(v.sources, source => {
         const s = obj(source), source_id = nonempty(s.source_id), source_version = nonempty(s.source_version);

@@ -79,6 +79,7 @@ def assemble(
     revisions: list[dict[str, Any]] | None = None,
     links: list[dict[str, Any]] | None = None,
     evidence_sources: list[dict[str, Any]] | None = None,
+    items: dict[str, Any] | None = None,
 ) -> tuple[str, dict[str, Any], list[dict[str, str]]]:
     """Include required records intact; add complete recent records within the launch budget."""
     if revisions is not None and any(r.get("span") == "incremental" for r in revisions):
@@ -92,6 +93,7 @@ def assemble(
             launch,
             links=links,
             evidence_sources=evidence_sources,
+            items=items,
         )
     from duckterm import memory_budget, memory_summary
 

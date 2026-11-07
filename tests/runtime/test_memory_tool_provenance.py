@@ -159,7 +159,7 @@ def test_old_incorrect_attribution_cannot_reuse_a_verified_summary(memory_rig, m
         assert handoff["summary_revision_id"] is None
         second = await server.progress_coordinator.refresh_result("agent")
         assert second.state == "failed" and second.reason == "source_changed"
-        assert len(calls) == 2  # Cannot reinterpret an old span boundary after reader changes.
+        assert len(calls) == 1  # Cannot reinterpret an old span boundary after reader changes.
         assert server.digests.revision("agent", first["id"])["summary"] == first["summary"]
 
     asyncio.run(run())

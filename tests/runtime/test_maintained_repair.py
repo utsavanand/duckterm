@@ -1,4 +1,4 @@
-"""Rejected memory drafts get one correction before the existing review/write path."""
+"""Rejected memory drafts get one correction before the write path."""
 
 import asyncio
 import json
@@ -89,16 +89,13 @@ def rejected(value, issue):
         "context_too_large",
     ],
 )
-def test_rejected_draft_is_corrected_reviewed_and_checkpoint_reuses(memory_rig, monkeypatch, issue):
+def test_rejected_draft_is_corrected_and_checkpoint_reuses(memory_rig, monkeypatch, issue):
     server, _, _, tmp = memory_rig
     transcript(tmp, "agent-claude", "Keep the owner constraint.")
     calls = []
 
     def generate(prompt, **kwargs):
         calls.append(prompt)
-        if prompt.startswith("You are validating"):
-            assert "invented:reference" not in prompt
-            return review()
         value = candidate(prompt)
         return Summary(rejected(value, issue) if len(calls) == 1 else json.dumps(value), "fixture")
 
@@ -113,11 +110,11 @@ def test_rejected_draft_is_corrected_reviewed_and_checkpoint_reuses(memory_rig, 
             revision["continuity"]["context"]["constraints"][0]["text"]
             == "Keep the owner constraint."
         )
-        assert len(calls) == 3
+        assert len(calls) == 2
         assert calls[1].startswith(calls[0]) and issue in calls[1]
-        assert "CORRECTION REQUIRED" not in calls[2]
+        assert "invented:reference" not in json.dumps(revision)
         again = await server._create_checkpoint("agent", server.history.session("agent"), "manual")
-        assert again["record"]["summary_ref"] == revision["id"] and len(calls) == 3
+        assert again["record"]["summary_ref"] == revision["id"] and len(calls) == 2
 
     asyncio.run(run())
 
@@ -194,43 +191,6 @@ def test_source_change_during_bad_draft_prevents_correction(memory_rig, monkeypa
     assert server.history.session("agent")["progress"] is None
 
 
-def test_corrected_draft_still_requires_review_and_preserves_last_good(memory_rig, monkeypatch):
-    server, _, _, tmp = memory_rig
-    path = transcript(tmp, "agent-claude", "Keep the owner constraint.")
-    phase = ["initial"]
-    calls = []
-
-    def generate(prompt, **kwargs):
-        calls.append(prompt)
-        if prompt.startswith("You are validating"):
-            return review(phase[0] == "initial")
-        if phase[0] == "bad":
-            phase[0] = "corrected"
-            return Summary("not JSON", "fixture")
-        return Summary(json.dumps(candidate(prompt)), "fixture")
-
-    monkeypatch.setattr("duckterm.server.summarize", generate)
-
-    async def run():
-        first = await server.progress_coordinator.refresh("agent")
-        cached = server.history.session("agent")["progress"]
-        path.write_text(
-            path.read_text()
-            + json.dumps(
-                {"type": "user", "message": {"role": "user", "content": "Additional owner work"}}
-            )
-            + "\n"
-        )
-        phase[0] = "bad"
-        outcome = await server.progress_coordinator.refresh_result("agent")
-        assert outcome.state == "failed" and outcome.reason == "summary_unverified"
-        assert len(calls) == 5
-        assert server.history.session("agent")["progress"] == cached
-        assert server.digests.revision("agent", first["id"])["continuity"] == first["continuity"]
-
-    asyncio.run(run())
-
-
 @pytest.mark.parametrize("rejected_text", ["x" * 16001, "\x00" * 4000, "\ud800" * 4000])
 def test_oversized_rejected_text_is_not_added_to_correction_evidence(rejected_text):
     prompt = "Original source including essential constraint."
@@ -254,8 +214,6 @@ def test_exhausted_correction_keeps_prior_revision_and_coverage(memory_rig, monk
 
     def generate(prompt, **kwargs):
         calls.append(prompt)
-        if prompt.startswith("You are validating"):
-            return review()
         value = candidate(prompt)
         return Summary(
             rejected(value, "unknown_reference") if broken[0] else json.dumps(value), "fixture"
@@ -278,7 +236,7 @@ def test_exhausted_correction_keeps_prior_revision_and_coverage(memory_rig, monk
         assert cp["summary_update"]["state"] == "failed"
         assert cp["summary_update"]["diagnostic"] == "unknown_reference"
         assert cp["record"]["summary_ref"] == first["id"]
-        assert len(calls) == 4
+        assert len(calls) == 3
         assert server.history.session("agent")["progress"] == cached
         assert server.digests.revision("agent", first["id"])["continuity"] == first["continuity"]
 
@@ -293,8 +251,6 @@ def test_coalesced_checkpoint_keeps_one_repair_when_other_waiter_cancels(memory_
 
     def generate(prompt, **kwargs):
         calls.append(prompt)
-        if prompt.startswith("You are validating"):
-            return review()
         if len(calls) == 1:
             return Summary("not JSON", "fixture")
         started.set()
@@ -331,7 +287,7 @@ def test_coalesced_checkpoint_keeps_one_repair_when_other_waiter_cancels(memory_
             assert cp["summary_update"]["state"] == "updated"
             revision = server.digests.revision("agent", cp["record"]["summary_ref"])
             assert revision["continuity"]["verified"]
-            assert len(calls) == 3
+            assert len(calls) == 2
         finally:
             release.set()
 

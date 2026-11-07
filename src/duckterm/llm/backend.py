@@ -15,13 +15,12 @@ without the owner configuring it.
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import os
 import shutil
 from dataclasses import dataclass
 from typing import Any
 
-from duckterm import checkpoint_settings, memory_provider
+from duckterm import memory_provider
 from duckterm.core.session_api import APIError
 from duckterm.llm import ai_settings, api
 
@@ -63,10 +62,13 @@ async def complete(
     tier: str,
     schema: dict[str, Any] | None = None,
     claude_model: str = "",
+    effort: str | None = None,
 ) -> Reply:
     """claude_model pins the model when Claude Code serves the call (a
     checkpoint keeps the models captured with it); other backends use the
-    tier's model."""
+    tier's model. effort None uses the tier's; "" sends none, so the model's
+    default applies (checkpoints were quality-measured that way)."""
+    effort = EFFORT[tier] if effort is None else effort
     if os.environ.get("DUCKTERM_SUMMARIZER") == "off":
         raise APIError(503, "Automatic preparation is disabled on this host")
     settings = ai_settings.load()
@@ -74,7 +76,7 @@ async def complete(
     if settings["backend"] == "api":
         try:
             model = ai_settings.model(settings, tier)
-            text = await asyncio.to_thread(_api, settings, model, tier, prompt, schema)
+            text = await asyncio.to_thread(_api, settings, model, effort, prompt, schema)
             return Reply(text, "api", f"{settings['provider']}/{model}")
         except APIError as exc:
             fallback = str(exc)
@@ -88,11 +90,9 @@ async def complete(
         raise APIError(503, fallback or "No Claude Code or Codex CLI is installed")
     model = claude_model if name == "claude-code" else ""
     if name == "claude-code" and not model:
-        with contextlib.suppress(APIError):
-            chosen = checkpoint_settings.load()
-            model = chosen["writer_model" if tier == "fast" else "reviewer_model"]
+        model = settings[f"harness_{tier}_model"]
     text = await memory_provider.generate(
-        name, model, prompt, schema, user_settings=True, effort=EFFORT[tier]
+        name, model, prompt, schema, user_settings=True, effort=effort
     )
     return Reply(text, "harness", name, fallback)
 
@@ -104,7 +104,7 @@ def _api_key(settings: dict[str, Any]) -> str | None:
 
 
 def _api(
-    settings: dict[str, Any], model: str, tier: str, prompt: str, schema: dict[str, Any] | None
+    settings: dict[str, Any], model: str, effort: str, prompt: str, schema: dict[str, Any] | None
 ) -> str:
     key = _api_key(settings)
     if key is None:
@@ -112,7 +112,7 @@ def _api(
     base = ai_settings.base_url(settings)
     if ai_settings.PROVIDERS[settings["provider"]][0] == "anthropic":
         return api.anthropic(
-            base, key, model, memory_provider.SYSTEM_PROMPT, prompt, schema, EFFORT[tier]
+            base, key, model, memory_provider.SYSTEM_PROMPT, prompt, schema, effort
         )
     return api.openai_chat(base, key, model, memory_provider.SYSTEM_PROMPT, prompt, schema)
 

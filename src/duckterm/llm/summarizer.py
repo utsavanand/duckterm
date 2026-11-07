@@ -21,6 +21,7 @@ import subprocess
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
+from typing import Any
 
 from duckterm import memory_provider
 from duckterm.core.session_api import APIError
@@ -33,9 +34,17 @@ class Summary:
     failure_reason: str | None = None
 
 
-def summarize(prompt: str, *, tier: str, claude_model: str | None = None) -> Summary:
+def summarize(
+    prompt: str,
+    *,
+    tier: str,
+    claude_model: str | None = None,
+    effort: str | None = None,
+    schema: dict[str, Any] | None = None,
+) -> Summary:
     """claude_model pins the model when Claude Code serves the call (e.g.
-    "sonnet" for a classifier measured on Sonnet)."""
+    "sonnet" for a classifier measured on Sonnet). effort and schema pass
+    through to llm.backend.complete."""
     # Explicit config always wins. DUCKTERM_SUMMARIZER=off only disables the
     # automatic backends (so e.g. tests don't shell out to a real agent), not
     # a backend the user set on purpose.
@@ -54,7 +63,11 @@ def summarize(prompt: str, *, tier: str, claude_model: str | None = None) -> Sum
             if shutil.which("copilot"):
                 return _cli_summary("copilot -p", prompt)
             return Summary(text="", backend="none", failure_reason="no_provider")
-        reply = asyncio.run(backend.complete(prompt, tier=tier, claude_model=claude_model or ""))
+        reply = asyncio.run(
+            backend.complete(
+                prompt, tier=tier, claude_model=claude_model or "", effort=effort, schema=schema
+            )
+        )
     except memory_provider.BatchTimeout:
         return Summary(text="", backend="none", failure_reason="provider_timeout")
     except APIError:

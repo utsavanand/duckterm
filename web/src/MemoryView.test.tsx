@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { MemoryView } from "./MemoryView";
 import { CheckpointAge, publishCheckpointClock } from "./CheckpointAge";
@@ -13,7 +13,10 @@ const fixture = (): SavedMemory => ({
   state: "available", current_revision_id: "latest", checkpoint_clock: { state: "known", succeeded_at: Date.now() - 3_600_000, checkpoint_id: "success" },
   revisions: [{ id: "latest", created_at: 2000 }, { id: "older", created_at: 1000 }], revisions_truncated: false,
   revision: { id: "latest", source: "revision:latest", created_at: 2000, summary: "Latest span narrative", overview: null, is_current: true, verified_at_save: true, groups: [], withheld_claims: 0, coverage_at_save: {} },
-  memory: { state: "available", span_count: 2, narratives: [], groups: [{ field: "decisions", claims: [{ id: "claim-one", text: "Keep the earlier decision", kind: "decision", state: "open", record: "decision:0", evidence: [{ source: "conversation:version", record: "turn-1", title: "Original conversation", kind: "conversation", role: "user", retained: true }] }] }] },
+  memory: { state: "available", span_count: 2, narratives: [], groups: [{ field: "decisions", claims: [{ id: "claim-one", text: "Keep the earlier decision", kind: "decision", state: "open", record: "decision:0", evidence: [{ source: "conversation:version", record: "turn-1", title: "Original conversation", kind: "conversation", role: "user", retained: true }] }] },
+    // Pre-taxonomy kinds count under their current names.
+    { field: "unfinished", claims: [{ id: "claim-two", text: "Ship the backup button", kind: "unfinished", state: "open", record: "unfinished:0", evidence: [] }] },
+    { field: "constraints", claims: [{ id: "claim-three", text: "Locks fail instantly", kind: "known_issue", state: "open", record: "constraints:0", evidence: [] }] }] },
 });
 beforeEach(() => { get.mockResolvedValue(fixture()); vi.mocked(requestCheckpoint).mockResolvedValue({} as never); });
 afterEach(() => { cleanup(); vi.resetAllMocks(); vi.useRealTimers(); });
@@ -21,11 +24,22 @@ afterEach(() => { cleanup(); vi.resetAllMocks(); vi.useRealTimers(); });
 it("reads combined saved claims without checkpointing; original evidence is lazy, paginated and escaped", async () => {
   render(<MemoryView sessionKey="remote::session" name="Test memory" />);
   await screen.findByText("Keep the earlier decision");
-  expect(screen.getByText("decision: 1")).toBeVisible();
+  expect(screen.getByText("Intent: 1 task")).toBeVisible();
+  expect(screen.getByText("Rules: 1 decision")).toBeVisible();
+  expect(screen.getByText("Facts: 1 known issue")).toBeVisible();
+  // Sections follow the categories, not the six storage fields.
+  const section = (name: string) => screen.getByRole("heading", { name, level: 2 }).parentElement!;
+  expect(within(section("Intent")).getByText("Ship the backup button")).toBeVisible();
+  expect(within(section("Intent")).getByText("task · open")).toBeVisible();
+  expect(within(section("Rules")).getByText("Keep the earlier decision")).toBeVisible();
+  expect(within(section("Facts")).getByText("known issue · open")).toBeVisible();
   expect(get).toHaveBeenCalledOnce();
   expect(requestCheckpoint).not.toHaveBeenCalled();
   get.mockResolvedValueOnce({ text: "<script>original</script>", next_offset: 25 });
-  const details = screen.getByText("Original conversation · conversation").parentElement!;
+  // One collapsed line per item; each citation is labelled by role and record.
+  expect(screen.getByText("Evidence: 1 message")).toBeVisible();
+  expect(screen.queryByText("Original conversation · conversation")?.closest("summary")).toBeFalsy();
+  const details = screen.getByText("user · #turn-1").parentElement!;
   details.setAttribute("open", ""); fireEvent(details, new Event("toggle"));
   await screen.findByText("<script>original</script>");
   expect(document.querySelector("script")).toBeNull();
@@ -111,7 +125,7 @@ it("opens a linked revision outside the recent list and reads its own evidence o
   await screen.findByText("Historical linked summary");
   expect(get).toHaveBeenCalledExactlyOnceWith("remote::same", "", { revision: "older-exact" });
   expect(screen.getByRole("combobox")).toHaveValue("older-exact");
-  const evidence = screen.getByText("Original conversation · conversation").parentElement!;
+  const evidence = screen.getByText("user · #turn-1").parentElement!;
   get.mockResolvedValueOnce({ text: "Original older evidence", next_offset: null });
   evidence.setAttribute("open", ""); fireEvent(evidence, new Event("toggle"));
   await screen.findByText("Original older evidence");

@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { AgentMergeDialog, type AgentMergePreview, type AgentMergeRecord, type AgentMergeService } from "./AgentMergeDialog";
 
 import { api, type CheckpointRecord } from "./api";
-vi.mock("./api", () => ({ api: { checkpointPlan: vi.fn(), checkpoint: vi.fn(), checkpointAttempt: vi.fn() } }));
+vi.mock("./api", async importOriginal => ({ ...await importOriginal<typeof import("./api")>(), api: { checkpointPlan: vi.fn(), checkpoint: vi.fn(), checkpointAttempt: vi.fn() } }));
 beforeEach(() => { vi.resetAllMocks(); });
 afterEach(cleanup);
 const preview: AgentMergePreview = { source: { key: "source", name: "Source" }, target: { key: "target", name: "Destination", group: "Project", allowed: true, state: "busy", priorityDelivery: true }, context: "Saved context", notes: "Source notes", git: { allowed: false, reason: "These agents already share the same worktree." }, revision: "v1" };
@@ -141,7 +141,7 @@ it("keeps an explicit exclusion when refresh first discovers context", async () 
 });
 
 
-const checkpointPlan = { available_records: 8, processed_records: 0, pending_records: 8, default_records: 20, selected_records: 8, remaining_records: 0, batch_records: 20 as const, order: "oldest_unprocessed_first" as const, selection_plan: { source: "frozen" } };
+const checkpointPlan = { available_records: 8, processed_records: 0, pending_records: 8, default_records: 20, selected_records: 8, remaining_records: 0, order: "oldest_unprocessed_first" as const, selection_plan: { source: "frozen" } };
 const checkpointResult: CheckpointRecord = { id: "cp", label: "manual", created_at: 1, saved: true, summary: "Response display text is not canonical merge context", summary_update: { state: "updated" }, record: { prompts: [], files: [], tools: [], event_count: 0 } };
 async function emptySource() {
   const f = fixture();

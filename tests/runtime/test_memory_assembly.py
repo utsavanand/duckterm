@@ -133,10 +133,13 @@ def test_active_handoff_uses_final_budget_instead_of_single_revision_budget():
     assert memory_handoff.TOOLS in text
 
 
-def test_large_required_notes_do_not_discard_recent_narrative_when_room_reopens():
+def test_large_required_notes_do_not_discard_recent_narrative_when_room_reopens(monkeypatch):
     import json
 
     from duckterm import memory_budget, memory_handoff
+
+    # Sized against a 32,000-byte budget; the omission order doesn't depend on it.
+    monkeypatch.setattr(memory_budget, "MAX_BRIEF_BYTES", 32000)
 
     metadata = {}
     text = memory_budget.render(

@@ -5765,7 +5765,10 @@ class Server:
             )
             if "memory_sources" in original:
                 plan = memory_continuity.plan(original, None)
-                plan["selected"] = plan["rows"]
+                # Only rows a summary can cite. Tool events project to no text,
+                # and retaining each one put a file and a reference per event in
+                # every checkpoint record (121k files, records up to 8 MB).
+                plan["selected"] = [r for r in plan["rows"] if not r["reference_only"]]
                 record.update(await memory_continuity.retain(session_key, original, plan))
         except APIError:
             record["memory_retention"] = "unavailable"

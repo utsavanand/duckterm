@@ -380,7 +380,7 @@ class MemoryPreparation:
             revisions = memory_folding.rows(
                 self.server.digests, key, captured["source"]["scope_hash"]
             )
-            from duckterm import memory_records
+            from duckterm import memory_reconcile, memory_records
 
             evidence_sources, evidence_gaps = await asyncio.to_thread(
                 memory_records.retained, catalog, sources
@@ -396,6 +396,9 @@ class MemoryPreparation:
                 revisions=revisions,
                 links=catalog["lifecycle"],
                 evidence_sources=evidence_sources,
+                items=memory_reconcile.latest(
+                    self.server.digests, key, captured["source"]["scope_hash"]
+                ),
                 launch={
                     "session_key": key,
                     "session_name": row.get("name"),

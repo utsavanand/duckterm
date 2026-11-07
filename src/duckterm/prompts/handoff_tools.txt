@@ -1,6 +1,7 @@
 Available tools (arguments in angle brackets are placeholders):
 duckterm session self
 duckterm memory sources
+duckterm memory items --category facts
 duckterm memory search "query" --limit 20
 duckterm memory read <source-handle> --record <record-id> --limit 8000
 duckterm memory read <source-handle> --record <record-id> --offset <next-offset> --limit 8000
