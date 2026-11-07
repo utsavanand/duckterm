@@ -169,23 +169,36 @@ def retention_predicate(kind: str) -> str:
     Unknown/malformed markers suspend expiry for that session, conservatively.
     Explicit owner deletion never uses this predicate.
     """
-    scope = (
-        "c.session_key=e.session_key"
-        if kind == "events"
-        else ("(c.session_key=q.recipient OR c.session_key=q.sender)")
-    )
+    if kind == "events":
+        # Checkpoint evidence can be megabytes. Materialize only its retention
+        # metadata once per statement, not once for each candidate event. Keep
+        # this inside the predicate so analytics and DELETE use identical rules.
+        rule = _retention_rule("NULL")
+        return f"""NOT EXISTS (
+          WITH pins AS MATERIALIZED (
+            SELECT c.session_key, {rule} AS rule,
+              CASE WHEN json_valid(c.record_json)
+                THEN json_extract(c.record_json,'$.events.first') END AS first_id,
+              CASE WHEN json_valid(c.record_json)
+                THEN json_extract(c.record_json,'$.events.last') END AS last_id
+            FROM checkpoints c)
+          SELECT 1 FROM pins c WHERE c.session_key=e.session_key AND
+            CASE WHEN c.rule IS NULL THEN e.rowid BETWEEN c.first_id AND c.last_id
+              ELSE c.rule END)"""
+    scope = "(c.session_key=q.recipient OR c.session_key=q.sender)"
     pin = (
-        "e.rowid BETWEEN json_extract(c.record_json,'$.events.first') "
-        "AND json_extract(c.record_json,'$.events.last')"
-        if kind == "events"
-        else "EXISTS (SELECT 1 FROM json_each(json_extract(c.record_json,'$.mail_ids')) m "
+        "EXISTS (SELECT 1 FROM json_each(json_extract(c.record_json,'$.mail_ids')) m "
         "WHERE m.value=q.id)"
     )
     # Extract the guarded array first: json_each would otherwise parse the whole
     # checkpoint again, including potentially megabytes of unrelated evidence.
     # CASE prevents SQLite from invoking JSON functions on corrupt data.
-    return f"""NOT EXISTS (SELECT 1 FROM checkpoints c WHERE {scope} AND
-      CASE WHEN NOT json_valid(c.record_json) THEN 1
+    return f"NOT EXISTS (SELECT 1 FROM checkpoints c WHERE {scope} AND {_retention_rule(pin)})"
+
+
+def _retention_rule(pin: str) -> str:
+    """Internal SQL: 1 pins the session, 0 ignores the marker, else evaluate pin."""
+    return f"""CASE WHEN NOT json_valid(c.record_json) THEN 1
       WHEN json_type(c.record_json) IS NOT 'object' THEN 1
       WHEN json_type(c.record_json,'$.format') IS NULL THEN 0
       WHEN json_extract(c.record_json,'$.format') = 'checkpoint_fork_merge_v1' THEN 0
@@ -193,7 +206,7 @@ def retention_predicate(kind: str) -> str:
       WHEN json_type(c.record_json,'$.events.first') IS NOT 'integer'
         OR json_type(c.record_json,'$.events.last') IS NOT 'integer'
         OR json_type(c.record_json,'$.mail_ids') IS NOT 'array' THEN 1
-      ELSE ({pin}) END)"""
+      ELSE ({pin}) END"""
 
 
 def resolve_checkpoint(
