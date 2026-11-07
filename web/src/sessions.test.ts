@@ -3,6 +3,7 @@ import {
   applyAll,
   applyEvent,
   contextLevel,
+  contextTint,
   contextWindowFor,
   contextWindowIsAssumed,
   effectiveState,
@@ -294,5 +295,31 @@ describe("reported context capacity", () => {
   });
   it.each([undefined, 0, -1, NaN, Infinity])("does not warn for invalid usage %s", tokens => {
     expect(contextLevel(tokens, "unlisted-codex-model", 128_000)).toBeNull();
+  });
+});
+
+
+describe("context duck tint", () => {
+  it("matches the approved anchors and interpolates between them", () => {
+    expect(contextTint(549, undefined, 1000)).toBeUndefined();
+    expect(contextTint(550, undefined, 1000)?.color).toBe("#ffb52b");
+    expect(contextTint(675, undefined, 1000)?.color).toBe("#fa972b");
+    expect(contextTint(800, undefined, 1000)?.color).toBe("#f5792b");
+    expect(contextTint(950, undefined, 1000)?.color).toBe("#d94343");
+    expect(contextTint(1100, undefined, 1000)?.color).toBe("#d94343");
+    expect(contextTint(800, undefined, 1000)?.label).toContain("80% used, high");
+    expect(contextTint(950, undefined, 1000)?.label).toContain("nearly full");
+  });
+  it("uses reported capacity, never guesses for unknown or overrun model windows", () => {
+    expect(contextTint(512_235, "sonnet-5-5")).toBeUndefined();
+    expect(contextTint(1_200_000, "opus-5")).toBeUndefined();
+    expect(contextTint(800_000, "opus-5")?.color).toBe("#f5792b");
+    expect(contextTint(202_390, "unknown-model", 258_400)?.label).toContain("78% used");
+    for (const tokens of [undefined, 0, -1, NaN, Infinity]) {
+      expect(contextTint(tokens, "opus-5")).toBeUndefined();
+    }
+    for (const capacity of [0, -1, NaN, Infinity, 1.5]) {
+      expect(contextTint(180_000, "unknown-model", capacity)).toBeUndefined();
+    }
   });
 });

@@ -652,7 +652,7 @@ function TreeRow({
           ) : (
             depth > 0 && <span className="rd-row-twig">⑂</span>
           )}
-          {desktop() ? <SessionLocationDuck key={s.key} session={s} pose={poseFor(effState, !!s.attentionSince)} /> : <Duck key={s.key} pose={poseFor(effState, !!s.attentionSince)} size={24} celebrating={s.celebration} />}
+          {desktop() ? <SessionLocationDuck key={s.key} session={s} pose={poseFor(effState, !!s.attentionSince)} /> : <Duck key={s.key} session={s} pose={poseFor(effState, !!s.attentionSince)} size={24} celebrating={s.celebration} />}
           <span className="rd-row-click" onClick={() => onOpen(s.key)}>
             {s.branch && (
               <span
