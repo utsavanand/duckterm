@@ -30,6 +30,9 @@ private struct MessageFrames: PreferenceKey {
 struct ConversationView: View {
     @ObservedObject var model: SessionModel
     @Binding var position: ConversationReadingPosition
+    private let embedded: Bool
+    @Binding private var sharedComposing: Bool
+    private let onClose: (() -> Void)?
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @FocusState private var composing: Bool
     @State private var restored = false
@@ -37,7 +40,18 @@ struct ConversationView: View {
     @State private var firstVisibleMessage: String?
     @State private var visibleAnchorY: CGFloat = 0
     @State private var savedOnBack = false
+    @State private var measuredViewport = CGSize.zero
     private let bottomID = "conversation-bottom"
+
+    init(model: SessionModel, position: Binding<ConversationReadingPosition>,
+         embedded: Bool = false, composing: Binding<Bool> = .constant(false),
+         onClose: (() -> Void)? = nil) {
+        self.model = model
+        _position = position
+        self.embedded = embedded
+        _sharedComposing = composing
+        self.onClose = onClose
+    }
 
     private var live: Bool { model.phase == .live }
     private var readyToSend: Bool { model.canSend && OutgoingMessage.validText(model.draft) }
@@ -63,10 +77,19 @@ struct ConversationView: View {
                 composer
             }
         }
-        .background(ChatColor.background.ignoresSafeArea())
+        .background {
+            if embedded { ChatColor.background }
+            else { ChatColor.background.ignoresSafeArea() }
+        }
         .foregroundStyle(ChatColor.text)
         .tint(ChatColor.accent)
-        .onDisappear { if !savedOnBack { savePosition() } }
+        .onAppear { composing = sharedComposing }
+        .onChange(of: composing) { sharedComposing = $0 }
+        .onChange(of: sharedComposing) { composing = $0 }
+        .onDisappear {
+            if !savedOnBack { savePosition() }
+            sharedComposing = false
+        }
     }
 
     private var messageList: some View {
@@ -86,7 +109,14 @@ struct ConversationView: View {
                 .scrollDismissesKeyboard(.interactively)
                 .refreshable { await model.refresh(); await model.refreshConversation() }
                 .onPreferenceChange(MessageFrames.self) { frames in
-                    guard restored else { return }
+                    // Track zero-sized viewports too: keyboard dismissal can return
+                    // through the previous size before the panel reaches its final width.
+                    // Reflow is not a reader scroll; let the resize callback position it.
+                    if measuredViewport != viewport.size {
+                        measuredViewport = viewport.size
+                        return
+                    }
+                    guard restored, viewport.size.height > 1 else { return }
                     if let bottom = frames[bottomID] {
                         followingLatest = bottom.minY <= viewport.size.height + 70
                     }
@@ -114,7 +144,7 @@ struct ConversationView: View {
                 .onChange(of: model.sendState) { state in
                     if state == .sending { scrollToLatest(proxy, animated: true) }
                 }
-                .onChange(of: viewport.size.height) { _ in
+                .onChange(of: viewport.size) { _ in
                     if followingLatest { scrollToLatest(proxy, animated: false) }
                 }
             }
@@ -123,14 +153,14 @@ struct ConversationView: View {
 
     private var header: some View {
         HStack(spacing: 6) {
-            Button {
-                savePosition(); savedOnBack = true; composing = false; model.selectSession(nil)
-            } label: {
-                Image(systemName: "chevron.left").font(.system(size: 18, weight: .regular))
-                    .frame(width: 44, height: 44).contentShape(Rectangle())
+            if !embedded {
+                Button(action: closeConversation) {
+                    Image(systemName: "chevron.left").font(.system(size: 18, weight: .regular))
+                        .frame(width: 44, height: 44).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).foregroundStyle(ChatColor.muted)
+                .accessibilityLabel("Back to sessions").accessibilityIdentifier("conversation-back")
             }
-            .buttonStyle(.plain).foregroundStyle(ChatColor.muted)
-            .accessibilityLabel("Back to sessions").accessibilityIdentifier("conversation-back")
             VStack(alignment: .leading, spacing: 3) {
                 Text(model.selectedSession?.name ?? "Session").font(.subheadline.weight(.medium))
                     .lineLimit(1).accessibilityAddTraits(.isHeader)
@@ -142,8 +172,16 @@ struct ConversationView: View {
                 }.font(.caption2).foregroundStyle(ChatColor.muted)
             }
             Spacer(minLength: 4)
+            if embedded {
+                Button(action: closeConversation) {
+                    Image(systemName: "xmark").font(.system(size: 16, weight: .regular))
+                        .frame(width: 44, height: 44).contentShape(Rectangle())
+                }
+                .buttonStyle(.plain).foregroundStyle(ChatColor.muted)
+                .accessibilityLabel("Close").accessibilityIdentifier("conversation-close")
+            }
         }
-        .padding(.horizontal, 8).padding(.vertical, 7)
+        .padding(.horizontal, 8).padding(.vertical, embedded ? 0 : 7)
         .background(ChatColor.background)
         .overlay(alignment: .bottom) {
             LinearGradient(colors: [ChatColor.background, ChatColor.background.opacity(0)],
@@ -153,6 +191,13 @@ struct ConversationView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("conversation-header")
+    }
+
+    private func closeConversation() {
+        savePosition(); savedOnBack = true
+        composing = false; sharedComposing = false
+        if let onClose { onClose() }
+        else { model.selectSession(nil) }
     }
 
     @ViewBuilder private var contents: some View {

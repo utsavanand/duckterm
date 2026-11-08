@@ -10,6 +10,10 @@ struct DuckyApp: App {
 
     init() {
         #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--ducky-map-ui-fixture") {
+            _model = StateObject(wrappedValue: MapUIFixture.model())
+            return
+        }
         if ProcessInfo.processInfo.arguments.contains("--ducky-chat-ui-fixture") {
             _model = StateObject(wrappedValue: ChatUIFixture.model())
             return
@@ -187,6 +191,131 @@ private final class ChatUIFixtureTransport: DuckyTransport {
         return receipt
     }
 
+    func close() {}
+}
+/// Constellation-only in-memory data. The regular chat fixture above is unchanged.
+private enum MapUIFixture {
+    static let hostID = "22222222222222222222222222222222"
+    static let longFolder = "Research/An exceptionally long folder name for viewport verification"
+    static let folders = ["DuckTerm/Features/Pairing", "DuckTerm/Infrastructure", "DuckTerm/Empty",
+        "Design", longFolder, "Research/Deep work", "Personal/Notes", "Dense", "Empty"]
+
+    static func folder(_ index: Int) -> String {
+        switch index {
+        case 0...1: return "DuckTerm/Features/Pairing"
+        case 2...5: return "DuckTerm/Features"
+        case 6...8: return "DuckTerm/Infrastructure"
+        case 9...11: return "Design"
+        case 12...14: return longFolder
+        case 15...17: return "Research/Deep work"
+        case 18...20: return "Personal/Notes"
+        case 21...23: return ""
+        default: return "Dense"
+        }
+    }
+    static func state(_ index: Int) -> String {
+        index == 0 ? "idle" : ["idle", "busy", "waiting", "terminated"][index % 4]
+    }
+    static func name(_ index: Int) -> String {
+        switch index {
+        case 0: return "Pairing engineer"
+        case 1: return "Mobile reviewer"
+        case 12: return "A deliberately long agent name for layout verification"
+        default: return "Agent \(index)"
+        }
+    }
+    @MainActor static func model() -> SessionModel {
+        let arguments = ProcessInfo.processInfo.arguments
+        if arguments.contains("--ducky-map-ui-reduced-motion") {
+            precondition(UIAccessibility.isReduceMotionEnabled, "The QA device must have system Reduce Motion enabled")
+        }
+        let failure = arguments.contains("--ducky-map-ui-revoked") ? 403 :
+            arguments.contains("--ducky-map-ui-stale") ? 503 : nil
+        let invitation = Invitation(version: 1, hostID: hostID,
+            invite: String(repeating: "i", count: 43), expiresAt: Int(Date().timeIntervalSince1970) + 600,
+            url: URL(string: "https://127.0.0.1:9")!, certificateSHA256: String(repeating: "b", count: 64))
+        let store = ChatUIFixtureStore(PairedHost(invitation: invitation, token: String(repeating: "t", count: 43)))
+        let domain = "com.rubberduckhq.ducky.map-ui-fixture"
+        let defaults = UserDefaults(suiteName: domain)!
+        defaults.removePersistentDomain(forName: domain)
+        return SessionModel(credentials: store, makeTransport: { _ in MapUIFixtureTransport(failure: failure) },
+            pause: { try await Task.sleep(nanoseconds: failure == nil ? 15_000_000_000 : 1_000_000_000) },
+            expansionStore: FolderExpansionStore(defaults: defaults))
+    }
+}
+
+private final class MapUIFixtureTransport: DuckyTransport {
+    private let failure: Int?
+    private var firstSnapshotAt: Date?
+    private var receipts: [MessageReceipt] = []
+    init(failure: Int?) { self.failure = failure }
+    func claim(_ invitation: Invitation, name: String) async throws -> PairStatus { throw DuckyError.unavailable(403) }
+    func pairingStatus() async throws -> PairStatus {
+        try ChatUIFixture.decode(["id": "map-ui-device", "status": "active", "host_id": MapUIFixture.hostID])
+    }
+    func snapshot(cursor: String?) async throws -> HostSnapshot {
+        if firstSnapshotAt == nil { firstSnapshotAt = Date() }
+        if let failure, Date().timeIntervalSince(firstSnapshotAt!) >= 35 { throw DuckyError.unavailable(failure) }
+        let sessions: [[String: Any]] = (0..<48).map { index in
+            ["id": "map-agent-\(index)", "name": MapUIFixture.name(index), "folder": MapUIFixture.folder(index),
+             "runtime": index.isMultiple(of: 2) ? "codex" : "claude-code", "state": MapUIFixture.state(index),
+             "observed_at": Int(Date().timeIntervalSince1970), "test": true, "approval_visibility": "terminal_only", "can_read": true,
+             "can_send": MapUIFixture.state(index) != "terminated", "send_context": "map-context-\(index)"]
+        }
+        let result: HostSnapshot = try ChatUIFixture.decode([
+            "version": 2, "host_id": MapUIFixture.hostID, "read_only": true,
+            "generated_at": Int(Date().timeIntervalSince1970), "truncated": false, "reset": false,
+            "notices": [], "notification_delivery": "foreground_refresh", "folders": MapUIFixture.folders,
+            "features": ["conversations"], "capabilities": ["status:read", "conversation:read", "session:send"],
+            "sessions": sessions
+        ])
+        try result.validate(hostID: MapUIFixture.hostID)
+        return result
+    }
+    private func index(_ sessionID: String) throws -> Int {
+        guard sessionID.hasPrefix("map-agent-"), let index = Int(sessionID.dropFirst(10)), (0..<48).contains(index) else {
+            throw DuckyError.unavailable(404)
+        }
+        return index
+    }
+    func conversation(sessionID: String) async throws -> ConversationSnapshot {
+        let index = try index(sessionID)
+        let messages = (0..<8).map { entry in
+            ["id": "map-reply-\(entry)", "role": entry.isMultiple(of: 2) ? "user" : "assistant", "text":
+                entry == 7 ? "## Scope checked\n\n**\(MapUIFixture.name(index))** is ready for the next message.\n\n- Keep folder scope\n- Preserve the draft\n\n```swift\nlet viewport = \"landscape\"\nprint(viewport)\n```" :
+                "Checkpoint \(entry) for \(MapUIFixture.name(index)). This is synthetic UI test data with no connection to a Mac."]
+        }
+        let ownReceipts = receipts.filter { $0.sessionID == sessionID }.map {
+            ["request_id": $0.requestID, "session_id": $0.sessionID, "status": $0.status,
+             "created_at": $0.createdAt, "updated_at": $0.updatedAt, "text": $0.text ?? ""] as [String: Any]
+        }
+        let result: ConversationSnapshot = try ChatUIFixture.decode([
+            "version": 1, "host_id": MapUIFixture.hostID, "session_id": sessionID,
+            "messages": messages, "truncated": false, "receipts": ownReceipts,
+            "can_send": MapUIFixture.state(index) != "terminated", "send_context": "map-context-\(index)"
+        ])
+        try result.validate(hostID: MapUIFixture.hostID, sessionID: sessionID)
+        return result
+    }
+    func send(_ message: OutgoingMessage) async throws -> MessageReceipt {
+        let index = try index(message.sessionID)
+        guard MapUIFixture.state(index) != "terminated", message.sendContext == "map-context-\(index)",
+              OutgoingMessage.validText(message.text) else { throw DuckyError.unavailable(400) }
+        if let existing = receipts.first(where: { $0.requestID == message.requestID }) { return existing }
+        try await Task.sleep(nanoseconds: 500_000_000)
+        let receipt: MessageReceipt = try ChatUIFixture.decode([
+            "request_id": message.requestID, "session_id": message.sessionID, "status": "queued",
+            "created_at": 1, "updated_at": 1, "text": message.text
+        ])
+        receipts.append(receipt)
+        return receipt
+    }
+    func receipt(requestID: String, sessionID: String) async throws -> MessageReceipt {
+        guard let receipt = receipts.first(where: { $0.requestID == requestID && $0.sessionID == sessionID }) else {
+            throw DuckyError.unavailable(404)
+        }
+        return receipt
+    }
     func close() {}
 }
 #endif

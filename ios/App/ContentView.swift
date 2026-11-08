@@ -24,6 +24,8 @@ private extension View {
 struct ContentView: View {
     @ObservedObject var model: SessionModel
     @State private var settings = false
+    @State private var showMap = false
+    @State private var composing = false
     @State private var pairing = false
     @State private var confirmForget = false
     @State private var pasteError: String?
@@ -49,14 +51,20 @@ struct ContentView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            if let id = model.selectedSessionID, !settings {
-                let positionKey = (model.host?.hostID ?? "") + ":" + id
-                ConversationView(model: model, position: Binding(
-                    get: { readingPositions[positionKey] ?? ConversationReadingPosition() },
-                    set: { readingPositions[positionKey] = $0 }
-                )).id(positionKey)
+            if showMap && !settings {
+                // Keep this view mounted across rotation and agent selection so the map
+                // retains its navigation. The map owns portrait hints and list fallback.
+                ConstellationView(model: model, onExit: closeMap,
+                    // The overview uses existing status; questions need the scoped assistant API.
+                    folderQuestionsAvailable: false, oracleAvailable: true,
+                    oracleQuestionsAvailable: false, composing: $composing,
+                    agentConversation: { conversation(embedded: true) },
+                    assistantConversation: { _ in EmptyView() })
+                    .id(model.host?.hostID ?? "")
+            } else if model.selectedSessionID != nil && !settings {
+                conversation()
             } else {
-                header.accessibilityIdentifier("global-header")
+                header.accessibilityElement(children: .contain).accessibilityIdentifier("global-header")
                 Rectangle().fill(Palette.border).frame(height: 1)
                 if !settings && model.snapshot != nil && (model.phase == .live || model.phase == .stale) {
                     sessionToolbar.padding(.horizontal, 16).padding(.top, 18)
@@ -72,7 +80,7 @@ struct ContentView: View {
                 .refreshable { await model.refresh() }
                 .background(Palette.background)
             }
-            if model.selectedSessionID == nil || settings {
+            if (!showMap && model.selectedSessionID == nil) || settings {
                 Rectangle().fill(Palette.border).frame(height: 1)
                 HStack(spacing: 0) {
                     tab("Agents", systemImage: "circle.inset.filled", selected: !settings) { settings = false; model.selectSession(nil) }
@@ -84,7 +92,33 @@ struct ContentView: View {
         .background(Palette.background.ignoresSafeArea())
         .foregroundStyle(Color(red: 0.90, green: 0.91, blue: 0.93))
         .onAppear { loadExpansion() }
-        .onChange(of: model.host?.hostID) { _ in loadExpansion(); search = ""; filter = .all; readingPositions = [:] }
+        .onChange(of: model.phase) { phase in
+            // Revoked access uses the existing recovery screen, not an empty map.
+            if phase == .denied || phase == .unpaired { closeMap() }
+        }
+        .onChange(of: model.host?.hostID) { _ in
+            model.selectSession(nil)
+            composing = false; showMap = false
+            loadExpansion(); search = ""; filter = .all; readingPositions = [:]
+        }
+    }
+
+    @ViewBuilder private func conversation(embedded: Bool = false) -> some View {
+        if let id = model.selectedSessionID {
+            let positionKey = (model.host?.hostID ?? "") + ":" + id
+            ConversationView(model: model, position: Binding(
+                get: { readingPositions[positionKey] ?? ConversationReadingPosition() },
+                set: { readingPositions[positionKey] = $0 }
+            ), embedded: embedded, composing: $composing)
+                .id(positionKey)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+    }
+
+    private func closeMap() {
+        composing = false
+        model.selectSession(nil)
+        showMap = false
     }
 
     private var header: some View {
@@ -92,6 +126,19 @@ struct ContentView: View {
             HStack(spacing: 10) {
                 Image("Duckmark").resizable().scaledToFit().frame(width: 34, height: 34)
                 Text("Ducky").font(.largeTitle.bold())
+                Spacer(minLength: 8)
+                if !settings && model.snapshot != nil && (model.phase == .live || model.phase == .stale) {
+                    Button {
+                        composing = false
+                        model.selectSession(nil)
+                        showMap = true
+                    } label: {
+                        Text("Map").frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                    }
+                    .font(.subheadline).foregroundStyle(Palette.green)
+                    .buttonStyle(.plain)
+                    .accessibilityIdentifier("show-map")
+                }
             }
             HStack(alignment: .top) {
                 Rectangle().fill(live ? Palette.green : Palette.muted).frame(width: 8, height: 8).padding(.top, 5)
