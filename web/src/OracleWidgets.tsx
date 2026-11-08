@@ -4,8 +4,8 @@ import { TowerAgent, ago, compact, teams } from "./tower";
 import { WidgetType } from "./Widgets";
 import { StreamState } from "./widgetStreams";
 function value<T>(state: StreamState): T { return state.status === "ready" ? state.value as T : undefined as T; }
-export function oracleWidgets(onAnalytics: (tab: AnalyticsTab) => void): WidgetType[] {
-  return [
+export function oracleWidgets(onAnalytics: (tab: AnalyticsTab) => void, { oracle = true, remote = true }: { oracle?: boolean; remote?: boolean } = {}): WidgetType[] {
+  const widgets: WidgetType[] = [
     { type: "agents", title: "Agents", slots: ["oracle"], streams: ["sessions"], render: ({ streams }) => {
       const agents = value<TowerAgent[]>(streams.sessions), count = (state: string) => agents.filter(a => a.shownState === state).length;
       const resting = agents.length - count("busy") - count("waiting") - count("idle");
@@ -18,11 +18,12 @@ export function oracleWidgets(onAnalytics: (tab: AnalyticsTab) => void): WidgetT
     { type: "tokens", title: "Tokens · 7 days", slots: ["oracle"], streams: ["tokens"], render: ({ streams }) => <TokensTile tokens={value(streams.tokens)} onClick={() => onAnalytics("tokens")} /> },
     { type: "mail", title: "Agent mail · 24h", slots: ["oracle"], streams: ["mail"], render: ({ streams }) => {
       const mail = value<TowerInsights["mail"]>(streams.mail);
-      return <Tile label="Agent mail · 24h" value={String(mail.sent)} onClick={() => onAnalytics("mail")}>{mail.answered} answered · {mail.nudges} Oracle {mail.nudges === 1 ? "nudge" : "nudges"}</Tile>;
+      return <Tile label="Agent mail · 24h" value={String(mail.sent)} onClick={() => onAnalytics("mail")}>{mail.answered} answered{oracle && <> · {mail.nudges} Oracle {mail.nudges === 1 ? "nudge" : "nudges"}</>}</Tile>;
     } },
     { type: "backup", title: "Last backup", slots: ["oracle"], streams: ["backup"], render: ({ streams }) => <BackupTile b={value(streams.backup)} now={Date.now()} /> },
     { type: "remote", title: "Remote sessions", slots: ["oracle"], streams: ["remote"], render: ({ streams }) => <Tile label="Remote sessions" value={String(value<TowerInsights["remote"]>(streams.remote).count)}>Running on the remote workspace</Tile> },
   ];
+  return widgets.filter(widget => (oracle || widget.type !== "needs-you") && (remote || widget.type !== "remote"));
 }
 export function Tile({ label, value, warn, children, onClick }: { label: string; value: string; warn?: boolean; children: React.ReactNode; onClick?: () => void }) {
   const Tag = onClick ? "button" : "div";
@@ -74,4 +75,3 @@ function BackupTile({ b, now }: { b: TowerInsights["backup"]; now: number }) {
     </Tile>
   );
 }
-

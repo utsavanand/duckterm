@@ -287,7 +287,7 @@ def test_cli_sends_file_as_json_and_related_pagination_without_owner_credentials
     monkeypatch.setattr(
         session_client, "client_credentials", lambda: ("http://localhost", "own-session")
     )
-    monkeypatch.setattr(session_client.urllib.request, "urlopen", http)
+    monkeypatch.setattr(session_client.instance, "open_local", http)
     assert (
         session_client.main(build_parser().parse_args(["memory", "link", "--file", str(path)])) == 0
     )

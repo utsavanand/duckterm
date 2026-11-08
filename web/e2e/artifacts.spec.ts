@@ -52,6 +52,20 @@ test("registered artifacts persist, preview safely, refresh, download, and prese
     await page.screenshot({ path: "/tmp/duckterm-artifacts-implemented-html.png" });
     expect(await page.locator("body").getAttribute("data-artifact-leak")).toBeNull();
     expect(leaked).toEqual([]);
+    const downloadLink = page.getByRole("link", { name: "Download", exact: true });
+    const blobUrl = await downloadLink.getAttribute("href");
+    expect(await page.evaluate(async url => (await fetch(url!)).headers.get("Content-Type"), blobUrl)).toBe("application/octet-stream");
+    // Opening the URL directly must still download; the HTML cannot execute
+    // with the dashboard origin just because the anchor's download flag is gone.
+    await downloadLink.evaluate((node: HTMLAnchorElement) => { node.removeAttribute("download"); node.target = "_blank"; });
+    const directPending = page.waitForEvent("download");
+    await downloadLink.click();
+    const direct = await directPending;
+    await direct.saveAs(join(cwd, "direct-download.html"));
+    expect(readFileSync(join(cwd, "direct-download.html"), "utf8")).toBe(unsafeHTML);
+    expect(await page.locator("body").getAttribute("data-artifact-leak")).toBeNull();
+    expect(leaked).toEqual([]);
+    await downloadLink.evaluate((node: HTMLAnchorElement) => { node.download = "website.html"; node.removeAttribute("target"); });
     const downloadPending = page.waitForEvent("download");
     await page.getByRole("link", { name: "Download", exact: true }).click();
     const download = await downloadPending;

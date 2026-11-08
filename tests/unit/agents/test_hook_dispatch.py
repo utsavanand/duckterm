@@ -1,12 +1,15 @@
 """Shared hooks survive app removal without crossing independent profiles."""
 
 import concurrent.futures
+import http.server
 import json
 import os
 import shlex
 import shutil
 import subprocess
 import sys
+import threading
+import time
 from pathlib import Path
 
 import pytest
@@ -298,6 +301,108 @@ def run_hook(script: Path, env: dict, event: str = "Stop") -> subprocess.Complet
         env=env,
         timeout=10,
     )
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://attacker.example",
+        "http://attacker.example:4300",
+        "http://127.0.0.1:4300@attacker.example",
+        "http://127.0.0.1.attacker.example:4300",
+    ],
+)
+def test_the_owner_token_is_never_sent_off_this_machine(delivery, home, url):
+    # A trusted repository's .claude/settings.json "env" overrides DUCKTERM_URL
+    # in every pane it runs in; Claude Code then hands that env to this hook.
+    script, env, calls = delivery
+    (home / ".duckterm").mkdir()
+    (home / ".duckterm/token").write_text("fixture-full-token")
+    env.update({"DUCKTERM_HOME": str(home / ".duckterm"), "DUCKTERM_URL": url})
+    for event in ("SessionStart", "UserPromptSubmit", "PreToolUse", "Stop"):
+        assert run_hook(script, env, event).returncode == 0
+    assert not calls.exists()
+
+
+def test_another_loopback_port_is_still_delivered(delivery, home):
+    script, env, calls = delivery
+    (home / ".duckterm").mkdir()
+    (home / ".duckterm/token").write_text("fixture-full-token")
+    env.update({"DUCKTERM_HOME": str(home / ".duckterm"), "DUCKTERM_URL": "http://[::1]:4519"})
+    assert run_hook(script, env).returncode == 0
+    assert "http://[::1]:4519/events" in calls.read_text()
+
+
+@pytest.fixture
+def listeners():
+    """Two loopback HTTP listeners: the DuckTerm server and a would-be proxy."""
+    seen: dict[str, list[str]] = {"server": [], "proxy": []}
+    servers = []
+    for name in seen:
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            role = name
+
+            def do_POST(self) -> None:
+                self.rfile.read(int(self.headers.get("Content-Length", 0)))
+                seen[self.role].append(self.headers.get("X-Duckterm-Token", ""))
+                self.send_response(200)
+                self.end_headers()
+                self.wfile.write(b"{}")
+
+            def log_message(self, *args: object) -> None:
+                pass
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        servers.append(server)
+    yield seen, *(server.server_address[1] for server in servers)
+    for server in servers:
+        server.shutdown()
+        server.server_close()
+
+
+@pytest.mark.skipif(not Path("/usr/bin/curl").exists(), reason="needs curl")
+def test_proxy_settings_from_a_repository_never_receive_the_token(delivery, home, listeners):
+    # The env block that can set DUCKTERM_URL can also set proxy variables or
+    # move HOME to a directory holding a .curlrc.
+    script, env, _ = delivery
+    seen, server_port, proxy_port = listeners
+    proxy = f"http://127.0.0.1:{proxy_port}"
+    (home / ".duckterm").mkdir()
+    (home / ".duckterm/token").write_text("fixture-full-token")
+    (home / ".curlrc").write_text(f"proxy = {proxy}\n")
+    env.update(
+        {
+            "PATH": "/usr/bin:/bin",
+            "DUCKTERM_HOME": str(home / ".duckterm"),
+            "DUCKTERM_URL": f"http://127.0.0.1:{server_port}",
+            "http_proxy": proxy,
+            "HTTP_PROXY": proxy,
+            "ALL_PROXY": proxy,
+            "no_proxy": "",
+        }
+    )
+    assert run_hook(script, env).returncode == 0
+    deadline = time.monotonic() + 5
+    while not seen["server"] and time.monotonic() < deadline:
+        time.sleep(0.05)
+    assert seen == {"server": ["fixture-full-token"], "proxy": []}
+
+
+def test_a_rejected_url_override_warns_without_echoing_it(delivery, home):
+    script, env, calls = delivery
+    (home / ".duckterm").mkdir()
+    env.update(
+        {
+            "DUCKTERM_HOME": str(home / ".duckterm"),
+            "DUCKTERM_URL": "http://u:p@evil.example\x1b]0;x",
+        }
+    )
+    result = run_hook(script, env)
+    assert result.returncode == 0 and not calls.exists()
+    assert "ignoring DUCKTERM_URL" in result.stderr
+    assert "evil" not in result.stderr and "\x1b" not in result.stderr
 
 
 def test_removed_apps_leave_stop_and_approval_hooks_working(delivery, home):

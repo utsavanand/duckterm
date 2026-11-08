@@ -5,9 +5,12 @@ import { join } from "node:path";
 import { apiDelete, apiPatch, apiPost, base, expandFolder, forEdition, seedSession, sessionMenu } from "./helpers";
 import { CODE, FULL, LITE } from "../src/test/editionFeatures";
 
-// Endpoint families that belong to features outside Lite.
+// An unavailable description enables none of these optional requests.
 const ADVANCED = [/\/relay/, /\/session-inbox-counts/, /\/agents-md/, /\/checkpoints?\b/, /\/artifacts/, /\/prs\b/, /\/connectors/,
-  /\/oracle/, /\/layouts/, /\/tasks/, /\/timeline/, /\/digest/, /\/diff\b/, /\/branches/, /\/folders\/.+\/(chat|stats)/, /\/folder-interactions/];
+  /\/oracle/, /\/layouts/, /\/tasks/, /\/timeline/, /\/digest/, /\/diff\b/, /\/branches/, /\/folders\/.+\/(chat|stats)/, /\/folder-interactions/, /\/control-tower/, /\/files\b/];
+// The shared factual widget layout is /layouts/oracle; only Oracle API routes
+// are forbidden in passive editions.
+const LITE_UNAVAILABLE = [/^\/relay/, /^\/oracle/, /\/agents-md/, /\/prs\b/, /\/connectors/, /\/diff\b/, /\/files\b/, /\/file-content\b/, /\/folders\/.+\/chat/, /\/fleet\/ask/];
 
 function recordRequests(page: Page): string[] {
   const paths: string[] = [];
@@ -43,17 +46,17 @@ test.beforeEach(async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
 });
 
-test("Lite runs the core session flows without any advanced control or request", async ({ page }) => {
+test("Lite runs continuity, saved artifacts and factual overviews without coding or Oracle requests", async ({ page }) => {
   await forEdition(page, "lite", LITE);
   const requests = recordRequests(page);
   await withSession("lite-agent", async folder => {
     await open(page, folder, "lite-agent");
     const views = page.locator(".rd-view-toggle");
-    await expect(views.getByRole("button")).toHaveText(["Terminal", "Messages", /Shell/]);
+    await expect(views.getByRole("button")).toHaveText(["Terminal", "Messages", "Timeline", /^Inbox/, "Artifacts", /Shell/]);
     await expect(page.getByRole("button", { name: "Oracle", exact: true })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "AGENTS.md", exact: true })).toBeVisible();
     await expect(page.getByRole("tab", { name: "Connectors" })).toHaveCount(0);
-    await expect(page.getByRole("button", { name: `View interactions in ${folder}` })).toHaveCount(0);
+    await expect(page.getByRole("button", { name: `View interactions in ${folder}` })).toBeVisible();
 
     // Core flows: the shell, messages, the session menu and folder controls.
     await page.locator("#rd-shell-toggle button").click();
@@ -62,25 +65,39 @@ test("Lite runs the core session flows without any advanced control or request",
     await views.getByRole("button", { name: "Terminal" }).click();
     const menu = await sessionMenu(page);
     await expect(menu.getByRole("menuitem", { name: "Rename" })).toBeVisible();
-    for (const name of ["Checkpoint", "Move to remote", "Merge back", "Merge with agent"]) await expect(menu.getByRole("menuitem", { name })).toHaveCount(0);
+    for (const name of ["Checkpoint", "Merge with agent"]) await expect(menu.getByRole("menuitem", { name })).toBeVisible();
+    for (const name of ["Move to remote", "Merge back"]) await expect(menu.getByRole("menuitem", { name })).toHaveCount(0);
     await page.keyboard.press("Escape");
     await page.getByRole("button", { name: "Settings" }).click();
-    for (const name of ["Collaboration", "Checkpointing"]) await expect(page.getByRole("button", { name: new RegExp(`^${name}`) })).toHaveCount(0);
+    for (const name of ["Collaboration", "Checkpointing"]) await expect(page.getByRole("button", { name: new RegExp(`^${name}`) })).toBeVisible();
     await expect(page.getByRole("button", { name: /^Harnesses/ })).toBeVisible();
     await expect(page.getByText("Voice announcements")).toHaveCount(0);
     await page.keyboard.press("Escape");
 
-    // Clicking a folder name opens no folder page (folder chat is not in Lite).
+    await views.getByRole("button", { name: "Artifacts" }).click();
+    await expect(page.getByRole("region", { name: "Session artifacts" })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Session files" })).toHaveCount(0);
     await page.locator(".rd-group-name", { hasText: folder }).click();
-    await expect(page.getByRole("region", { name: `Folder ${folder}` })).toHaveCount(0);
+    const folderView = page.getByRole("region", { name: `Folder ${folder}` });
+    await expect(folderView.getByRole("tab")).toHaveText(["Overview", "Artifacts"]);
+    await expect(folderView.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
+    await expect(folderView.getByRole("complementary", { name: "Folder overview" })).toBeVisible();
+    await page.getByRole("button", { name: "Overview", exact: true }).click();
+    await expect(page.getByRole("heading", { name: /Control tower/ })).toBeVisible();
+    await expect(page.getByLabel("Message Oracle")).toHaveCount(0);
+    await expect(page.getByRole("article", { name: "Remote sessions", exact: true })).toHaveCount(0);
     await page.waitForTimeout(3500); // past the inbox and relay poll intervals
   });
   expect(requests).toContain("/edition");
-  expect(requests.filter(path => ADVANCED.some(pattern => pattern.test(path)))).toEqual([]);
+  expect(requests).toContain("/control-tower");
+  expect(requests.some(path => path.endsWith("/artifacts"))).toBe(true);
+  expect(requests.filter(path => LITE_UNAVAILABLE.some(pattern => pattern.test(path)))).toEqual([]);
 });
 
-test("Lite desktop folders and session assignments use core HTTP despite a native collaboration bridge", async ({ page }) => {
+test("desktop folders without the inbox capability use core HTTP despite a native collaboration bridge", async ({ page }) => {
   await forEdition(page, "lite", LITE);
+  // Explicitly disabled collaboration still uses the core folder routes.
+  await page.route("**/edition", route => route.fulfill({ json: { id: "lite", features: LITE.filter(feature => feature !== "inbox") } }));
   const nativeCalls: string[] = [];
   await page.exposeFunction("recordNativeCollaboration", (operation: string) => { nativeCalls.push(operation); });
   await page.addInitScript(() => {
@@ -190,24 +207,37 @@ test("Lite desktop folders and session assignments use core HTTP despite a nativ
   }
 });
 
-test("Code's Explorer browses files without artifact requests and offers pull requests but not the Oracle", async ({ page }) => {
+test("Code combines files and artifacts and offers folder chat without the Oracle", async ({ page }) => {
   await forEdition(page, "code", CODE);
   const requests = recordRequests(page);
   await withSession("code-agent", async folder => {
     await open(page, folder, "code-agent");
     const views = page.locator(".rd-view-toggle");
-    for (const name of ["Timeline", "Explorer", "PRs"]) await expect(views.getByRole("button", { name, exact: true })).toBeVisible();
+    for (const name of ["Timeline", "Artifacts", "PRs"]) await expect(views.getByRole("button", { name, exact: true })).toBeVisible();
     await expect(views.getByRole("button", { name: /^Inbox/ })).toBeVisible();
-    for (const name of ["Artifacts", "Oracle"]) await expect(page.getByRole("button", { name, exact: true })).toHaveCount(0);
-    await views.getByRole("button", { name: "Explorer" }).click();
+    await expect(page.getByRole("button", { name: "Oracle", exact: true })).toHaveCount(0);
+    await views.getByRole("button", { name: "Artifacts" }).click();
     const files = page.getByRole("region", { name: "Session files" });
     await files.getByRole("button", { name: /notes.txt/ }).click();
     await expect(files).toContainText("EDITION_FILE");
-    await expect(files.getByRole("group", { name: "Files filter" })).toHaveCount(0);
+    await expect(files.getByRole("group", { name: "Files filter" })).toBeVisible();
     await page.locator(".rd-group-name", { hasText: folder }).click();
-    await expect(page.getByRole("region", { name: `Folder ${folder}` }).getByRole("tab")).toHaveText(["Chat", "Pull requests"]);
+    const folderView = page.getByRole("region", { name: `Folder ${folder}` });
+    await expect(folderView.getByRole("tab")).toHaveText(["Overview", "Chat", "Artifacts", "Pull requests"]);
+    await expect(folderView.getByRole("tab", { name: "Chat" })).toHaveAttribute("aria-selected", "true");
+    const draft = folderView.getByRole("textbox", { name: "Ask this folder" });
+    await draft.fill("Keep this unsent draft");
+    await folderView.getByRole("tab", { name: "Overview" }).click();
+    await folderView.getByRole("tab", { name: "Chat" }).click();
+    await expect(draft).toHaveValue("Keep this unsent draft");
+    await page.getByRole("button", { name: "Overview", exact: true }).click();
+    await expect(page.getByRole("heading", { name: /Control tower/ })).toBeVisible();
+    await expect(page.getByLabel("Message Oracle")).toHaveCount(0);
+    await expect(page.getByRole("article", { name: "Remote sessions", exact: true })).toHaveCount(0);
+    await page.waitForTimeout(3500);
   });
-  expect(requests.filter(path => /\/artifacts|\/relay|\/oracle/.test(path))).toEqual([]);
+  expect(requests).toContain("/control-tower");
+  expect(requests.filter(path => /^\/relay|^\/oracle|^\/fleet\/ask/.test(path))).toEqual([]);
 });
 
 test("Full keeps every view, including pull request review", async ({ page }) => {
@@ -218,7 +248,7 @@ test("Full keeps every view, including pull request review", async ({ page }) =>
     for (const name of ["Timeline", "Artifacts", "PRs"]) await expect(views.getByRole("button", { name, exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Oracle", exact: true })).toBeVisible();
     await page.locator(".rd-group-name", { hasText: folder }).click();
-    await expect(page.getByRole("region", { name: `Folder ${folder}` }).getByRole("tab")).toHaveText(["Chat", "Artifacts", "Pull requests"]);
+    await expect(page.getByRole("region", { name: `Folder ${folder}` }).getByRole("tab")).toHaveText(["Overview", "Chat", "Artifacts", "Pull requests"]);
   });
 });
 

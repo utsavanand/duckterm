@@ -16,7 +16,7 @@ def directory(monkeypatch, pages):
         requests.append(request)
         return io.BytesIO(json.dumps(next(iterator)).encode())
 
-    monkeypatch.setattr("duckterm.session_client.urllib.request.urlopen", open_page)
+    monkeypatch.setattr("duckterm.session_client.instance.open_local", open_page)
     return requests
 
 

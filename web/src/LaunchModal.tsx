@@ -1,6 +1,6 @@
 import { RemoteLaunchWizard } from "./RemoteLaunchWizard";
 import { sessionRef } from "./hostTransport";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { DirBrowser } from "./DirBrowser";
 import { api, BrowseResult, LaunchRequest } from "./api";
 import { desktop, destinationRequest } from "./desktop";
@@ -38,7 +38,7 @@ export function LaunchModal({
   const native = desktop();
   const [, refreshTargets] = useState(0);
   useEffect(() => {
-    const refresh = () => { refreshTargets(n => n + 1); setTarget(desktop()?.launchTarget ?? desktop()?.currentTarget ?? "local"); setPicked(null); setPrepared(null); setProjectKind("existing"); setLegacyRemote(false); };
+    const refresh = () => { refreshTargets(n => n + 1); changeTarget(desktop()?.launchTarget ?? desktop()?.currentTarget ?? "local"); setPicked(null); setPrepared(null); setProjectKind("existing"); setLegacyRemote(false); };
     window.addEventListener("desktop-targets-changed", refresh);
     return () => window.removeEventListener("desktop-targets-changed", refresh);
   }, []);
@@ -46,7 +46,8 @@ export function LaunchModal({
   const [projectKind, setProjectKind] = useState<"existing" | "copy" | "clone">("existing");
   const [prepared, setPrepared] = useState<PreparedProject | null>(null);
   const [transferBusy, setTransferBusy] = useState(false);
-  const [target, setTarget] = useState(native?.currentTarget ?? "local");
+  const initialTarget = native?.launchTarget ?? native?.currentTarget ?? "local";
+  const [target, setTarget] = useState(initialTarget);
   const elsewhere = !!native && target !== native.currentTarget;
   const destination = useMemo(() => elsewhere ? {
     browse: (path?: string) => destinationRequest<BrowseResult>(target, "browse", path ? { path } : {}),
@@ -57,8 +58,22 @@ export function LaunchModal({
       return destinationRequest<{ session_key: string }>(target, "launch", params);
     },
   } : api, [elsewhere, target]);
-  const [agent, setAgent] = useState(native?.draft?.agent ?? "claude");
-  const [command, setCommand] = useState(native?.draft?.command ?? "claude");
+  // Saved setup preferences apply to this Mac only; explicit launch drafts win.
+  const localSetup = initialTarget === "local" ? native?.agentSetup : undefined;
+  const initialAgent = localSetup?.default_agent ?? "claude";
+  const initialCommand = localSetup?.default_command ?? AGENTS.find(item => item.id === initialAgent)?.command ?? "claude";
+  const [agent, setAgent] = useState(native?.draft?.agent ?? initialAgent);
+  const [command, setCommand] = useState(native?.draft?.command ?? initialCommand);
+  const agentEdited = useRef(!!native?.draft);
+  function changeTarget(next: string) {
+    if (!agentEdited.current) {
+      const setup = next === "local" ? desktop()?.agentSetup : undefined;
+      const nextAgent = setup?.default_agent ?? "claude";
+      setAgent(nextAgent);
+      setCommand(setup?.default_command ?? AGENTS.find(item => item.id === nextAgent)?.command ?? "claude");
+    }
+    setTarget(next);
+  }
   const [openCodeModels, setOpenCodeModels] = useState<Record<string, string>>({});
   const openCodeModel = openCodeModels[target] ?? "";
   const openCode = useOpenCodeOptions(agent === "opencode", target);
@@ -96,7 +111,7 @@ export function LaunchModal({
   // The new agent won't see them (candidates don't render) — surfacing the
   // count here is the moment the user most cares about the folder's rules.
   const [pendingRules, setPendingRules] = useState(0);
-  const rules = useFeature("context");
+  const rules = useFeature("rule_suggestions");
   useEffect(() => {
     setPendingRules(0);
     if (!rules || !path || elsewhere) return;
@@ -190,7 +205,7 @@ export function LaunchModal({
   }
 
   if (native && target !== "local" && !legacyRemote) return <RemoteLaunchWizard key={target}
-    target={target} onTarget={value => { setTarget(value); setPicked(null); setPrepared(null); setMode(null); }}
+    target={target} onTarget={value => { changeTarget(value); setPicked(null); setPrepared(null); setMode(null); }}
     onOtherProject={() => setLegacyRemote(true)} onClose={onClose} onCreated={onCreated}
     folders={folders} group={selectedGroup} initial={{ agent, command, name, prompt }} />;
 
@@ -204,7 +219,7 @@ export function LaunchModal({
             value={target}
             disabled={busy || transferBusy}
             onChange={(event) => {
-              setTarget(event.target.value);
+              changeTarget(event.target.value);
               setLegacyRemote(false);
               setPrepared(null);
               setProjectKind("existing");
@@ -237,6 +252,7 @@ export function LaunchModal({
               disabled={busy || transferBusy}
               className={`rd-pill${agent === a.id ? " active" : ""}`}
               onClick={() => {
+                agentEdited.current = true;
                 setAgent(a.id);
                 if (a.id !== "custom") setCommand(a.command);
               }}
@@ -254,7 +270,7 @@ export function LaunchModal({
           <input
             style={inputStyle}
             value={command}
-            onChange={(e) => setCommand(e.target.value)}
+            onChange={(e) => { agentEdited.current = true; setCommand(e.target.value); }}
             placeholder='e.g. aider   ·   claude -p "fix the bug"'
             autoFocus
           />

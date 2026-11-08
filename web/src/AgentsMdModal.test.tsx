@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, expect, it, vi } from "vitest";
 import { AgentsMdModal } from "./AgentsMdModal";
 import { sessionFetch } from "./hostTransport";
+import { edition, CODE, FULL, LITE } from "./test/editions";
 
 const toast = vi.hoisted(() => vi.fn());
 vi.mock("./hostTransport", () => ({ sessionFetch: vi.fn() }));
@@ -17,6 +18,26 @@ function deferred() {
   return { promise, resolve };
 }
 const loaded = () => Response.json({ rules: [], managed: true });
+
+it.each([
+  ["Lite", LITE, false], ["Code", CODE, true], ["Full", FULL, true],
+  ["Code without context", CODE.filter(feature => feature !== "context"), true],
+  ["Full without suggestions", FULL.filter(feature => feature !== "rule_suggestions"), false],
+] as const)("%s gates generated suggestions separately from manual editing and context", async (_name, features, enabled) => {
+  vi.mocked(sessionFetch).mockResolvedValueOnce(loaded()).mockResolvedValue(Response.json({ suggestions: [], corrections_seen: 0 }));
+  await act(async () => { render(<AgentsMdModal dir="/project" onClose={vi.fn()} />, { wrapper: edition(features) }); });
+  expect(screen.getByPlaceholderText(/New rule/)).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+  const suggest = screen.queryByRole("button", { name: "Suggest from corrections" });
+  if (enabled) {
+    expect(suggest).toBeEnabled();
+    await act(async () => { fireEvent.click(suggest!); });
+    expect(sessionFetch).toHaveBeenCalledWith("", "/agents-md/suggest", expect.objectContaining({ method: "POST", body: JSON.stringify({ dir: "/project" }) }));
+  } else {
+    expect(suggest).toBeNull();
+    expect(sessionFetch).toHaveBeenCalledExactlyOnceWith("", "/agents-md?dir=%2Fproject");
+  }
+});
 
 it("waits for existing rules before adding by click or Enter, then saves the added rule", async () => {
   const load = deferred();

@@ -9,6 +9,19 @@ import type { Terminal as XTerm } from "@xterm/xterm";
 let active: XTerm | null = null;
 let activeSession: string | null = null;
 let activeTarget: string | null = null;
+let setup: { term: XTerm; enabled: () => boolean } | null = null;
+
+// Setup has no agent/session identity. Explicit Edit-menu text operations
+// never inherit the previous session's image or OSC52 handling.
+export function bindSetupClipboard(term: XTerm, enabled: () => boolean): () => void {
+  const binding = { term, enabled };
+  setup = binding;
+  return () => { if (setup === binding) setup = null; };
+}
+
+function focusedSetup() {
+  return setup?.term.textarea === document.activeElement && setup?.term.textarea?.getClientRects().length ? setup : null;
+}
 
 export function bindClipboardBridge(term: XTerm, sessionKey: string, kind: "agent" | "shell" = "agent"): void {
   const target = kind === "shell" ? `${sessionKey}#shell:${crypto.randomUUID()}` : sessionKey;
@@ -41,10 +54,13 @@ declare global {
     __rtPasteImage?: (path: string, sessionKey: string) => boolean;
     __rtCopy?: () => string;
     __rtPaste?: (text: string) => void;
+    __rtPasteSetup?: (text: string) => boolean;
   }
 }
 
 window.__rtCopy = () => {
+  const ephemeral = focusedSetup();
+  if (ephemeral) return ephemeral.term.hasSelection() ? ephemeral.term.getSelection() : "";
   const field = editableField();
   if (field instanceof HTMLInputElement || field instanceof HTMLTextAreaElement) {
     return field.value.slice(
@@ -58,6 +74,7 @@ window.__rtCopy = () => {
 };
 
 window.__rtPaste = (text: string) => {
+  if (focusedSetup()) { window.__rtPasteSetup?.(text); return; }
   if (editableField()) {
     document.execCommand("insertText", false, text);
     return;
@@ -67,10 +84,13 @@ window.__rtPaste = (text: string) => {
 
 // Native image resolution is only appropriate for a visible, focused terminal.
 window.__rtPasteTarget = () => {
+  const ephemeral = focusedSetup();
+  if (ephemeral) return ephemeral.enabled() ? "runtime-setup" : null;
   if (editableField()) return "field";
   return active?.textarea === document.activeElement && active?.textarea?.getClientRects().length ? activeTarget : null;
 };
 window.__rtPasteImage = (path, sessionKey) => {
+  if (focusedSetup() || sessionKey === "runtime-setup") return false;
   if (window.__rtPasteTarget?.() !== sessionKey) return false;
   active?.paste(imagePathText(path));
   return true;
@@ -81,7 +101,15 @@ export function imagePathText(path: string): string {
   return (/^[\w/.-]+$/.test(path) ? path : "'" + path.replace(/'/g, "'\\''") + "'") + " ";
 }
 
+window.__rtPasteSetup = (text: string) => {
+  const ephemeral = focusedSetup();
+  if (!ephemeral?.enabled()) return false;
+  ephemeral.term.paste(text);
+  return true;
+};
+
 window.__rtPasteImageData = (base64, sessionKey) => {
+  if (focusedSetup() || sessionKey === "runtime-setup") return false;
   if (window.__rtPasteTarget?.() !== sessionKey) return false;
   const bytes = Uint8Array.from(atob(base64), c => c.charCodeAt(0));
   void sessionFetch(activeSession!, "/paste-image", { method: "POST", body: new Blob([bytes], { type: "image/png" }) })

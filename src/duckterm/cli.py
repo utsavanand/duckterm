@@ -423,7 +423,7 @@ def _restart_identity_matches(host: str, port: int) -> bool:
         request = urllib.request.Request(
             f"http://{host}:{port}/edition", headers={security.TOKEN_HEADER: token}
         )
-        with urllib.request.urlopen(request, timeout=2) as response:
+        with instance.open_local(request, timeout=2) as response:
             payload = json.load(response)
         identity = payload.get("instance")
         if identity is None:
@@ -469,7 +469,7 @@ def _duckterm_responds(host: str, port: int) -> bool:
     """True if whatever owns the port answers with Duckterm's self-probe
     header, so we can tell 'already running' from 'foreign process'."""
     try:
-        resp = urllib.request.urlopen(f"http://{host}:{port}/", timeout=1)
+        resp = instance.open_local(f"http://{host}:{port}/", timeout=1)
     except urllib.error.HTTPError as locked:  # the sign-in page answers 401
         resp = locked
     except OSError:
@@ -495,7 +495,7 @@ def _launch(command: str, cwd: str, session_key: str | None, prompt: str) -> int
         method="POST",
     )
     try:
-        resp = urllib.request.urlopen(req, timeout=5)
+        resp = instance.open_local(req, timeout=5)
     except OSError as e:
         print(f"could not reach server at {_server_url()}: {e}", file=sys.stderr)
         return 1
@@ -580,7 +580,7 @@ def _post_json(path: str, payload: dict[str, object]) -> None:
         headers=_auth_headers(),
         method="POST",
     )
-    urllib.request.urlopen(req, timeout=3).read()
+    instance.open_local(req, timeout=3).read()
 
 
 def _patch_json(path: str, payload: dict[str, object]) -> None:
@@ -590,7 +590,7 @@ def _patch_json(path: str, payload: dict[str, object]) -> None:
         headers=_auth_headers(),
         method="PATCH",
     )
-    urllib.request.urlopen(req, timeout=3).read()
+    instance.open_local(req, timeout=3).read()
 
 
 def _hook_installed(runtime: str) -> bool:
@@ -609,7 +609,7 @@ def _snapshot() -> int:
         f"{_server_url()}/snapshots", data=b"", headers=_auth_headers(False), method="POST"
     )
     try:
-        resp = urllib.request.urlopen(req, timeout=10)
+        resp = instance.open_local(req, timeout=10)
     except OSError as e:
         print(f"could not reach server at {_server_url()}: {e}", file=sys.stderr)
         return 1
@@ -670,7 +670,7 @@ def _dashboard() -> int:
             return 1
     url = _server_url()
     try:
-        urllib.request.urlopen(f"{url}/", timeout=2)
+        instance.open_local(f"{url}/", timeout=2)
     except urllib.error.HTTPError:
         pass  # the sign-in page answers 401; the server is up
     except OSError:

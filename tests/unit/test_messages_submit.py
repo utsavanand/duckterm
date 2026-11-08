@@ -46,3 +46,41 @@ def test_followup_separates_paste_and_enter_and_reports_failure(monkeypatch, fai
         supervisor.write_input.assert_not_called()
 
     asyncio.run(scenario())
+
+
+@pytest.mark.parametrize("state", ["busy", "waiting", "idle", "unknown"])
+@pytest.mark.parametrize("during_paste", [False, True])
+def test_compact_requires_idle_before_paste_and_enter(monkeypatch, state, during_paste):
+    async def scenario():
+        writes = []
+        responses = []
+        row = {"state": "idle" if during_paste else state}
+
+        async def write(data):
+            writes.append(data)
+            row["state"] = state
+            return True
+
+        async def respond(writer, status, body):
+            responses.append((status, body))
+
+        supervisor = SimpleNamespace(write_queued_bytes=write)
+        server = SimpleNamespace(
+            orchestrator=SimpleNamespace(get=lambda _: supervisor),
+            history=SimpleNamespace(session=lambda _: row),
+            restarts=SimpleNamespace(pending=lambda _: False),
+        )
+        monkeypatch.setattr("duckterm.server._write_json", respond)
+        monkeypatch.setattr(Server, "_SUBMIT_GAP_S", 0)
+        await Server._input(
+            server, None, "compact-test", json.dumps({"text": "/compact", "submit": True}).encode()
+        )
+        paste = b"\x1b[200~/compact\x1b[201~"
+        if state == "idle":
+            assert writes == [paste, b"\r"]
+            assert responses == [(200, {"written": True, "submitted": True})]
+        else:
+            assert writes == ([paste] if during_paste else [])
+            assert responses[0][0] == 409
+
+    asyncio.run(scenario())

@@ -300,6 +300,7 @@ _ROUTES: list[Route] = [
     Route("GET", "", lambda s, r, w, h, b, seg: s._session_digest(w, seg),
           **_mid("/sessions/", "/digest")),
     # ── control ──
+    Route("GET", "/runtimes/discovery", lambda s, r, w, h, b, seg: s._runtime_discovery(w)),
     Route("GET", "/runtimes/opencode/launch-options",
           lambda s, r, w, h, b, seg: s._opencode_options(w)),
     Route("POST", "/sessions/launch", lambda s, r, w, h, b, seg: s._launch(w, b)),
@@ -2562,6 +2563,11 @@ class Server:
                 out.append(f"{suite.name} (global)")
         return out
 
+    async def _runtime_discovery(self, writer: asyncio.StreamWriter) -> None:
+        from duckterm.runtimes.discovery import discover
+
+        await _write_json(writer, 200, await discover())
+
     async def _opencode_options(self, writer: asyncio.StreamWriter) -> None:
         await _write_json(writer, 200, await opencode_options.launch_options())
 
@@ -3005,9 +3011,9 @@ class Server:
     ) -> list[str] | None:
         """The argv to relaunch a fork *with the parent's conversation* — built
         from the parent harness's own resume command, so this works for any agent
-        that can resume (Claude: --resume <id> --fork-session; Copilot:
-        --resume=<id>). Returns None for harnesses with no native resume
-        (codex/generic) or when no resumable session is recorded."""
+        that can resume (Claude: --resume <id> --fork-session; Codex: fork <id>;
+        Copilot: --resume=<id>). Returns None for harnesses with no native resume
+        or when no resumable session is recorded."""
         runtime = parent.get("runtime") or "generic"
         cwd = str(parent.get("cwd") or repo)
         if runtime == "claude-code":
@@ -5872,11 +5878,33 @@ class Server:
             if not text.strip() or len(text.encode()) > 16384:
                 await _write_json(writer, 400, {"error": "text must be 1 to 16384 bytes"})
                 return
+            compact = text.strip() == "/compact"
+
+            def compact_idle() -> bool:
+                row = self.history.session(session_key)
+                return (
+                    row is not None
+                    and row.get("state") == "idle"
+                    and not self.restarts.pending(session_key)
+                )
+
+            # The UI can be stale, and an approval may arrive during the paste gap.
+            # Never use Compact's Enter to answer a busy or approval prompt.
+            if compact and not compact_idle():
+                await _write_json(writer, 409, {"error": "Compact requires an idle session."})
+                return
             # A multiline paste is one prompt. Enter must arrive separately once
             # the harness has left paste mode, not in the same tmux/PTY burst.
             wrote = await supervisor.write_queued_bytes(b"\x1b[200~" + text.encode() + b"\x1b[201~")
             if wrote:
                 await asyncio.sleep(Server._SUBMIT_GAP_S)
+                if compact and not compact_idle():
+                    await _write_json(
+                        writer,
+                        409,
+                        {"error": "Session is no longer idle. Check the terminal before retrying."},
+                    )
+                    return
                 wrote = await supervisor.write_queued_bytes(b"\r")
             if not wrote:
                 await _write_json(

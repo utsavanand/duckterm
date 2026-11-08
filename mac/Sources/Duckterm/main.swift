@@ -7,6 +7,14 @@ import UserNotifications
 /// you close the window.
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    // Read before any diagnostics/server initialization can create the profile.
+    // This does not write the home or bypass legacy workspace admission.
+    private let setupNewWorkspace = !FileManager.default.fileExists(atPath: AppIdentity.home.path)
+    private lazy var runtimeSetup = RuntimeSetupController(
+        preferences: RuntimeSetupPreferences(home: AppIdentity.home, newWorkspace: setupNewWorkspace),
+        picker: { [weak self] runtime in await self?.window?.chooseAgentExecutable(runtime) }
+    )
+    private var terminatingAfterSetup = false
     private var hosts = RemoteHost.load()
     private var launchConnections: [String: RemoteConnection] = [:]
     private let launchAPI = LaunchDestination()
@@ -32,6 +40,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             NSApp.terminate(nil)
             return
         }
+        // Admission is complete. Persist only preferences before the server
+        // creates its home, so a failed first startup can resume setup.
+        runtimeSetup.prepare()
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
 
         AppDiagnostics.shared.record("Application launched")
@@ -41,12 +52,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             } catch { AppDiagnostics.shared.record("Approval key not bound") }
         }
         window = DashboardWindow(url: server.url)
+        runtimeSetup.onEvent = { [weak self] event in self?.window?.dispatch(name: "runtime-setup", detail: event) }
+        runtimeSetup.onOutput = { [weak self] event in await self?.window?.dispatchSetupOutput(detail: event) }
+        runtimeSetup.onPreferences = { [weak self] state in
+            self?.window?.agentSetupState = state
+            self?.window?.refreshDesktop()
+        }
+        window?.onRuntimeSetupRequest = { [weak self] operation, params, isCurrent in
+            guard let self else { throw RuntimeSetupController.Failure.unavailable }
+            // Keystrokes and cancellation must not wait on independent HTTP
+            // probes, which could reorder input or prevent stopping setup.
+            if !["input", "resize", "cancel"].contains(operation) {
+                try await self.requireFeature("terminal")
+            }
+            guard isCurrent() else { throw RuntimeSetupController.Failure.stale }
+            return try await self.runtimeSetup.perform(operation: operation, params: params)
+        }
         window?.onReportBug = { [weak self] in self?.reportBug(nil) }
         window?.onClose = { [weak self] in self?.duckyPairing?.close() }
         window?.desktopHosts = []
         sessionTransport.onTerminal = { [weak self] event in self?.window?.dispatch(name: "remote-terminal", detail: event) }
         sessionTransport.onTerminalData = { [weak self] event in await self?.window?.dispatchAndWait(name: "remote-terminal", detail: event) }
         window?.onPageReset = { [weak self] in
+            self?.runtimeSetup.reset()
             self?.sessionTransport.close()
             Task { @MainActor [weak self] in _ = try? await self?.refreshEdition() }
         }
@@ -70,7 +98,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         window?.onLaunchRequest = { [weak self] target, operation, params in
             guard let self else { throw LaunchDestination.Failure.message("App closed") }
-            if let feature = DesktopEdition.requiredFeature(target: target, operation: operation) {
+            if let feature = DesktopEdition.requiredFeature(target: target, operation: operation, params: params) {
                 try await self.requireFeature(feature)
             }
             if operation == "collaboration-preview" || operation == "collaboration-connect" {
@@ -249,12 +277,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationWillTerminate(_ note: Notification) {
+        runtimeSetup.reset()
         duckyPairing?.close()
         pollers.values.forEach { $0.stop() }
         sessionTransport.close()
         launchConnections.values.forEach { $0.stop() }
         server.stop()
     }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard runtimeSetup.isRunning else { return .terminateNow }
+        if !terminatingAfterSetup {
+            terminatingAfterSetup = true
+            Task { @MainActor in
+                await runtimeSetup.shutdown()
+                sender.reply(toApplicationShouldTerminate: true)
+            }
+        }
+        return .terminateLater
+    }
+
 
     // Quit when the dashboard window is closed — it's the whole app.
     func applicationShouldTerminateAfterLastWindowClosed(_ app: NSApplication) -> Bool {
@@ -437,6 +479,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func applyEdition(_ current: DesktopEdition?) {
         guard edition != current else { return }
         edition = current
+        if current?.includes("terminal") != true { runtimeSetup.reset() }
+        window?.canSetUpAgents = current?.includes("terminal") == true
+        window?.agentSetupState = current == nil ? nil : runtimeSetup.state
         window?.desktopHosts = current?.includes("remote_workspaces") == true ? hosts : []
         if current?.includes("remote_workspaces") != true {
             sessionTransport.close()
@@ -512,6 +557,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
             let pasteboard = NSPasteboard.general
+            if target == "runtime-setup" {
+                // Recheck setup focus after the asynchronous bridge round trip.
+                // Never save an image or send setup text to an agent session.
+                if let text = pasteboard.string(forType: .string), !text.isEmpty,
+                   let data = try? JSONSerialization.data(withJSONObject: [text]) {
+                    let json = String(decoding: data, as: UTF8.self)
+                    self.window?.evaluate("window.__rtPasteSetup && window.__rtPasteSetup((\(json))[0])")
+                }
+                return
+            }
             do {
                 if let png = try ClipboardImage.png(from: pasteboard) {
                     if target.hasPrefix("~remote~") {

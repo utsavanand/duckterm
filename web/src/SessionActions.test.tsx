@@ -68,7 +68,7 @@ it.each([undefined, "parent"])("offers general merge for any session and merge b
   expect(screen.getByRole("menuitem", { name: "Merge with agent" })).toBeEnabled();
   expect(screen.queryAllByRole("menuitem", { name: "Merge back" })).toHaveLength(parentKey ? 1 : 0);
 });
-it.each([["Lite", LITE, 0], ["Code", CODE, 1]] as const)("%s offers merge-back and checkpoint actions only with handoff and checkpoints", (_name, features, count) => {
+it.each([["Lite", LITE, 1], ["Code", CODE, 1], ["Full", FULL, 1], ["disabled continuity", FULL.filter(feature => !["handoff", "checkpoints"].includes(feature)), 0]] as const)("%s offers merge-back and checkpoint actions only with handoff and checkpoints", (_name, features, count) => {
   const s = { key: "fork", parentKey: "parent", label: "Fork", state: "idle", startedAt: 1, launched: true, runtime: "generic" } as SessionView;
   render(<SessionActions session={s} anchor={{ key: s.key, x: 10, y: 10, trigger: document.body }} onClose={vi.fn()} onFork={vi.fn()} onRename={vi.fn()} onDelete={vi.fn()} onNotes={vi.fn()} />, { wrapper: edition(features) });
   for (const name of ["Merge back", "Merge with agent", "Checkpoint"]) expect(screen.queryAllByRole("menuitem", { name })).toHaveLength(count);

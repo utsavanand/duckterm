@@ -97,3 +97,44 @@ it("shows a connection error inside the form without changing dashboards", async
   expect(screen.getByText("Retry")).toBeVisible();
   expect(switchHost).not.toHaveBeenCalled();
 });
+
+it("uses saved local setup defaults, while an explicit launch draft wins", async () => {
+  setup(async () => ({ themes: [] }));
+  window.__rubbertermDesktop!.agentSetup = { completed: true, show_on_launch: false, default_agent: "custom", default_command: "zsh" };
+  const first = render(<LaunchModal folders={[]} onCreated={vi.fn()} onClose={vi.fn()} />);
+  expect(screen.getByDisplayValue("zsh")).toBeVisible();
+  first.unmount();
+  window.__rubbertermDesktop!.draft = { agent: "custom", command: "fish", name: "Draft", prompt: "" };
+  render(<LaunchModal folders={[]} onCreated={vi.fn()} onClose={vi.fn()} />);
+  expect(screen.getByDisplayValue("fish")).toBeVisible();
+  expect(screen.queryByDisplayValue("zsh")).toBeNull();
+});
+
+it("does not apply this Mac's saved command to a remote dashboard", async () => {
+  setup(async () => ({ themes: [] }));
+  window.__rubbertermDesktop!.currentTarget = "dev";
+  window.__rubbertermDesktop!.agentSetup = { completed: true, show_on_launch: false, default_agent: "custom", default_command: "/private/local/agent" };
+  await act(async () => { render(<LaunchModal folders={[]} onCreated={vi.fn()} onClose={vi.fn()} />); });
+  fireEvent.click(screen.getByText("Other project options"));
+  fireEvent.click(screen.getByText("Copy a local project or use an existing folder"));
+  expect(screen.queryByDisplayValue("/private/local/agent")).toBeNull();
+  expect(screen.getByText("Claude Code")).toHaveClass("active");
+});
+
+it("uses the actual launch destination and keeps a saved local path out of remote launches", async () => {
+  setup(async () => ({ themes: [] }));
+  window.__rubbertermDesktop!.launchTarget = "dev";
+  window.__rubbertermDesktop!.agentSetup = { completed: true, show_on_launch: false, default_agent: "custom", default_command: "/private/local/agent" };
+  await act(async () => { render(<LaunchModal folders={[]} onCreated={vi.fn()} onClose={vi.fn()} />); });
+  expect(screen.getByRole("heading", { name: "New remote session" })).toBeVisible();
+  fireEvent.click(screen.getByText("Other project options"));
+  fireEvent.click(screen.getByText("Copy a local project or use an existing folder"));
+  expect(screen.getByText("Claude Code")).toHaveClass("active");
+  await act(async () => { fireEvent.change(screen.getByRole("combobox", { name: "Run on" }), { target: { value: "local" } }); });
+  expect(screen.getByDisplayValue("/private/local/agent")).toBeVisible();
+  await act(async () => { fireEvent.change(screen.getByRole("combobox", { name: "Run on" }), { target: { value: "dev" } }); });
+  fireEvent.click(screen.getByText("Other project options"));
+  fireEvent.click(screen.getByText("Copy a local project or use an existing folder"));
+  expect(screen.queryByDisplayValue("/private/local/agent")).toBeNull();
+  expect(screen.getByText("Claude Code")).toHaveClass("active");
+});

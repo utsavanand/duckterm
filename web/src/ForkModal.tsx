@@ -26,12 +26,16 @@ export function ForkModal({
   const [branch, setBranch] = useState(
     session.branch ? `${session.branch}-fork` : "",
   );
-  const [command, setCommand] = useState("claude");
+  const [command, setCommand] = useState(
+    session.runtime === "codex" ? "codex" : "claude",
+  );
   const [busy, setBusy] = useState(false);
   // Carry the parent's conversation into the worktree fork — only for harnesses
-  // that can resume (Claude Code, Copilot). On by default when available.
+  // that can resume (Claude Code, Codex, Copilot). Promotion moves the existing
+  // session onto a branch; it does not create a child conversation.
   const canCarryContext =
-    session.runtime === "claude-code" || session.runtime === "copilot";
+    hasBranch &&
+    ["claude-code", "codex", "copilot"].includes(session.runtime ?? "");
   const [carryContext, setCarryContext] = useState(canCarryContext);
 
   // Forks run in a PTY Duckterm owns (in_terminal:false) so they render in the
@@ -74,13 +78,17 @@ export function ForkModal({
 
   return (
     <Modal title={`Fork ${session.label}`} onClose={onClose}>
-      <Field label="What kind of fork?">
+      <div role="radiogroup" aria-label="What kind of fork?" style={{ marginBottom: 12 }}>
+        <span style={{ display: "block", fontSize: "0.8125rem", color: "var(--text-soft)", marginBottom: 4 }}>
+          What kind of fork?
+        </span>
         <label
           className="rd-radio"
           style={{ opacity: canWorktreeFork ? 1 : 0.5 }}
         >
           <input
             type="radio"
+            name="fork-mode"
             checked={mode === "worktree"}
             disabled={!canWorktreeFork}
             onChange={() => setMode("worktree")}
@@ -105,6 +113,7 @@ export function ForkModal({
         >
           <input
             type="radio"
+            name="fork-mode"
             checked={mode === "conversation"}
             disabled={!canConversationFork}
             onChange={() => setMode("conversation")}
@@ -115,7 +124,7 @@ export function ForkModal({
             {!canConversationFork && " (Claude Code sessions only)"}
           </span>
         </label>
-      </Field>
+      </div>
 
       {mode === "worktree" && (
         <>

@@ -38,6 +38,13 @@ LITE = EditionConfig(
             "messages",
             "forks",
             "session_status",
+            "inbox",
+            "checkpoints",
+            "summaries",
+            "context",
+            "handoff",
+            "artifacts",
+            "overview",
         }
     ),
 )
@@ -46,21 +53,24 @@ SHARED_CODING = frozenset(
         "explorer",
         "file_editing",
         "git_changes",
-        "inbox",
         "folder_chat",
-        "checkpoints",
-        "summaries",
-        "context",
-        "handoff",
         "connectors",
+        "pr_review",
+        "rule_suggestions",
     }
 )
-CODE = EditionConfig("code", LITE.features | SHARED_CODING | {"pr_review"})
-FULL = EditionConfig("full", CODE.features | {"oracle", "remote_workspaces", "artifacts"})
+CODE = EditionConfig("code", LITE.features | SHARED_CODING)
+FULL = EditionConfig("full", CODE.features | {"oracle", "remote_workspaces"})
 
 # Existing installations keep Full unless explicitly configured otherwise.
 CURRENT_EDITION = FULL
 PRESETS: dict[str, EditionConfig] = {edition.name: edition for edition in (LITE, CODE, FULL)}
+
+# These operations also serve local repository clones. The handler validates
+# parameters and journal provenance before any restricted read or mutation.
+LOCAL_PROJECT_OPERATIONS = frozenset(
+    {"mkdir", "repositories", "preflight", "clone", "status", "launch"}
+)
 
 
 def configured(*, prefer_saved: bool = False) -> EditionConfig:
@@ -149,6 +159,21 @@ def _path_feature(method: str, path: str, body: bytes) -> str | None:
         return "pr_review"
     if re.fullmatch(r"/(sessions|folders)/.+/prs", path):
         return "pr_review"
+    if path == "/transfers/repositories" and method == "POST":
+        return "connectors"
+    if path == "/transfers/clone" and method == "POST":
+        try:
+            payload = json.loads(body or b"{}")
+        except (ValueError, UnicodeError):
+            payload = {}
+        if isinstance(payload, dict) and payload.get("github_repository"):
+            return "connectors"
+    if (
+        path.startswith("/transfers/")
+        and method == "POST"
+        and path.removeprefix("/transfers/") in LOCAL_PROJECT_OPERATIONS
+    ):
+        return "terminal"
     for prefix, capability in (
         ("/connectors", "connectors"),
         ("/transfers", "remote_workspaces"),
@@ -161,9 +186,9 @@ def _path_feature(method: str, path: str, body: bytes) -> str | None:
         if path == prefix or path.startswith(prefix + "/"):
             return capability
     exact = {
-        "/control-tower": "oracle",
+        "/control-tower": "overview",
         "/checkpoint-settings": "checkpoints",
-        "/agents-md/suggest": "context",
+        "/agents-md/suggest": "rule_suggestions",
         "/session-inbox-counts": "inbox",
         "/folder-interactions": "inbox",
         "/analytics/mail": "inbox",

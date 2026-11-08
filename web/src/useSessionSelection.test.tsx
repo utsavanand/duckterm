@@ -103,3 +103,38 @@ it("explicit native navigation overrides the saved selection", () => {
   view.rerender({rows:[local,remote],loadedHosts:["local","qa-remote"]});
   expect(view.result.current.selectedKey).toBe(remoteKey);
 });
+
+it("keeps explicit local choices and restoration in native Lite/Code with remote workspaces disabled", () => {
+  allowRemoteWorkspaces(false);
+  const second: SessionView = { ...local, key: "second", label: "Another local agent" };
+  const view = mount([local, second], ["local"]);
+  act(() => view.result.current.selectSession(second.key));
+  expect(view.result.current.selectedKey).toBe(second.key);
+  view.rerender({ rows: [{ ...local, updatedAt: 100 }, second], loadedHosts: ["local"] });
+  expect(view.result.current.selectedKey).toBe(second.key);
+  view.unmount();
+  const restored = mount([], []);
+  expect(restored.result.current.selectedKey).toBe(second.key);
+  restored.rerender({ rows: [local, second], loadedHosts: ["local"] });
+  expect(restored.result.current.selectedKey).toBe(second.key);
+});
+
+it("keeps local choices usable while native edition capabilities are loading", () => {
+  allowRemoteWorkspaces(null);
+  const second: SessionView = { ...local, key: "second" };
+  const view = mount([local, second], ["local"]);
+  act(() => view.result.current.selectSession(second.key));
+  expect(view.result.current.selectedKey).toBe(second.key);
+  act(() => allowRemoteWorkspaces(false));
+  expect(view.result.current.selectedKey).toBe(second.key);
+});
+
+it("still hides saved remote choices in native Lite/Code and restores them when Full is available", () => {
+  allowRemoteWorkspaces(false);
+  localStorage.setItem("rd.selectedSession", JSON.stringify({ host: "qa-remote", sessionKey: "same" }));
+  const view = mount([local, remote], ["local", "qa-remote"]);
+  expect(view.result.current.selectedKey).toBe(local.key);
+  expect(JSON.parse(localStorage.getItem("rd.selectedSession")!).host).toBe("qa-remote");
+  act(() => allowRemoteWorkspaces(true));
+  expect(view.result.current.selectedKey).toBe(remoteKey);
+});

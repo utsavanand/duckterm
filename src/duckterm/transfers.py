@@ -20,10 +20,10 @@ import subprocess
 import sys
 import tarfile
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from duckterm.helpers import paths
 from duckterm.helpers.private_files import private_write
@@ -200,12 +200,13 @@ def check_url(url: str) -> None:
     if (
         parts.scheme == "ssh"
         and parts.hostname
+        and not unquote(parts.hostname).startswith("-")
         and not parts.password
         and not parts.query
         and not parts.fragment
     ):
         return
-    if re.fullmatch(r"[\w.-]+@[\w.-]+:[\w./~-]+", url):
+    if re.fullmatch(r"[\w.-]+@(?!-)[\w.-]+:[\w./~-]+", url):
         return
     raise ValueError(
         "Use HTTPS without embedded credentials, or SSH with the remote computer's login"
@@ -817,6 +818,8 @@ def clone(
     github_repository: str = "",
     auto_workspace: bool = False,
     attempt_id: str = "",
+    *,
+    authorize: Callable[[dict[str, Any]], None] | None = None,
 ) -> dict[str, Any]:
     check_url(url)
     attempt_id = operation_id(attempt_id) if attempt_id else uuid.uuid4().hex
@@ -830,11 +833,12 @@ def clone(
         expected = automatic_workspace(identifier, url)
         if destination != str(expected):
             raise ValueError("Workspace changed; review this repository again")
-        automatic_workspace(identifier, url, create=True)
     requested_destination = destination
     destination = str(Path(destination).expanduser().resolve())
     with locked(identifier) as directory:
         previous = read_state(directory)
+        if authorize is not None:
+            authorize(previous)
         if previous:
             if (
                 previous.get("url") != url
@@ -852,6 +856,8 @@ def clone(
                 and marker.read_text() == identifier
             ):
                 return save(directory, {**previous, "stage": "ready"})
+        if auto_workspace:
+            automatic_workspace(identifier, url, create=True)
         dest = destination_path(requested_destination)
         if shutil.disk_usage(dest.parent).free < 512 * 1024 * 1024:
             raise ValueError("Not enough destination disk space to clone safely")
@@ -871,6 +877,8 @@ def clone(
                 "destination_empty": dest.is_dir(),
             },
         )
+        sibling = dest.parent / (".duckterm-transfer-" + identifier)
+        owned_sibling: os.stat_result | None = None
         try:
             args = ["git", "-c", "core.hooksPath=/dev/null", "clone", "--no-local"]
             if branch:
@@ -896,15 +904,20 @@ def clone(
             # Apply the same unsupported-project checks; no repository hooks are run.
             compatibility = scan(stage, [], cloned=True)
             check_requirements(compatibility["requirements"], compatibility["linux_compatible"])
-            sibling = dest.parent / (".duckterm-transfer-" + identifier)
-            if sibling.exists():
+            if sibling.exists() or sibling.is_symlink():
                 marker = sibling / ".duckterm-transfer-id"
-                if not marker.is_file() or marker.read_text() != identifier:
+                if (
+                    sibling.is_symlink()
+                    or marker.is_symlink()
+                    or not marker.is_file()
+                    or marker.read_text() != identifier
+                ):
                     raise ValueError("Staging destination exists; choose another destination")
                 shutil.rmtree(sibling)
             sibling.mkdir(mode=0o700)
+            owned_sibling = sibling.stat()
             private_write(sibling / ".duckterm-transfer-id", identifier)
-            shutil.copytree(stage, sibling, dirs_exist_ok=True)
+            shutil.copytree(stage, sibling, symlinks=True, dirs_exist_ok=True)
             save(directory, {**state, "stage": "publishing"})
             publish(sibling, dest, allow_empty=state["destination_empty"])
             return save(directory, {**state, "stage": "ready"})
@@ -919,11 +932,27 @@ def clone(
                 },
             )
             raise
+        finally:
+            shutil.rmtree(stage, ignore_errors=True)
+            if owned_sibling is not None:
+                # Publication renames this path; never remove the committed destination.
+                with contextlib.suppress(FileNotFoundError):
+                    if os.path.samestat(sibling.lstat(), owned_sibling):
+                        shutil.rmtree(sibling, ignore_errors=True)
 
 
-def claim_launch(identifier: str, command: str, name: str, prompt: str) -> dict[str, Any]:
+def claim_launch(
+    identifier: str,
+    command: str,
+    name: str,
+    prompt: str,
+    *,
+    authorize: Callable[[dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
     with locked(identifier) as directory:
         state = read_state(directory)
+        if authorize is not None:
+            authorize(state)
         if state.get("stage") in ("launching", "launched"):
             return state
         if state.get("stage") != "ready":
@@ -967,9 +996,13 @@ def claim_launch(identifier: str, command: str, name: str, prompt: str) -> dict[
         )
 
 
-def mark_launched(identifier: str) -> dict[str, Any]:
+def mark_launched(
+    identifier: str, *, authorize: Callable[[dict[str, Any]], None] | None = None
+) -> dict[str, Any]:
     with locked(identifier) as directory:
         state = read_state(directory)
+        if authorize is not None:
+            authorize(state)
         return save(directory, {**state, "stage": "launched"})
 
 
