@@ -17,7 +17,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgentsMdModal } from "./AgentsMdModal";
 import { FolderView } from "./FolderView";
 import { api } from "./api";
-import { clearLaunchDraft, desktop, openNativeBugReport } from "./desktop";
+import { canSetUpAgents, clearLaunchDraft, desktop, openNativeBugReport, rememberRuntimeSetup, runtimeSetupRequest, type RuntimeSetupState } from "./desktop";
 import { Connectors } from "./Connectors";
 import { SessionPanelSection } from "./SessionPanelSection";
 import { ContextViews } from "./ContextViews";
@@ -30,6 +30,7 @@ import { FloatingSessionShortcuts } from "./FloatingSessionShortcuts";
 import { orderShortcuts, useShortcutPreferences } from "./shortcutPreferences";
 import { CheckpointSettingsModal } from "./CheckpointSettingsModal";
 import { AiModelsModal } from "./AiModelsModal";
+import { RuntimeSetupWizard } from "./RuntimeSetupWizard";
 import { CheckpointDialogHost } from "./CheckpointDialog";
 import { BackupModal } from "./BackupModal";
 import { BugReport } from "./BugReport";
@@ -114,8 +115,20 @@ function Dashboard() {
   const { density, setDensity } = useSidebarDensity();
 
   const [modal, setModal] = useState<
-    "launch" | "agentsmd" | "folder" | "harnesses" | "backup" | "bugreport" | "collaboration" | "checkpointing" | "aimodels" | "appearance" | null
+    "launch" | "agentsmd" | "folder" | "harnesses" | "backup" | "bugreport" | "collaboration" | "checkpointing" | "aimodels" | "appearance" | "agentsetup" | null
   >(desktop()?.draft ? "launch" : null);
+  const setupState = useRef<Promise<RuntimeSetupState> | null>(null);
+  useEffect(() => {
+    if (!canSetUpAgents()) return;
+    let active = true;
+    setupState.current ??= runtimeSetupRequest("state", {});
+    void setupState.current.then(state => {
+      if (!active || !canSetUpAgents()) return;
+      rememberRuntimeSetup(state);
+      if (state.show_on_launch) setModal(current => current === null ? "agentsetup" : current);
+    }).catch(() => undefined);
+    return () => { active = false; };
+  }, []);
   const [bugSession, setBugSession] = useState<string | null>(null);
   const [towerChosen, setTowerOpen] = useState(false);
   const towerOpen = towerChosen && has("overview");
@@ -649,6 +662,7 @@ function Dashboard() {
       {modal === "backup" && <BackupModal onClose={() => setModal(null)} />}
       {modal === "appearance" && <AppearanceSettings {...appearance} onClose={() => setModal(null)} />}
       {modal === "checkpointing" && has("checkpoints") && <CheckpointSettingsModal onClose={() => setModal(null)} />}
+      {modal === "agentsetup" && <RuntimeSetupWizard onClose={() => setModal(null)} />}
       {modal === "aimodels" && <AiModelsModal onClose={() => setModal(null)} />}
       {modal === "harnesses" && (
         <HarnessesModal

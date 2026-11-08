@@ -32,6 +32,10 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
     var onChooseLaunchTarget: ((String, [String: String], String?) -> Void)?
 
     var onLaunchRequest: ((String, String, [String: Any]) async throws -> Any)?
+    var onRuntimeSetupRequest: ((String, [String: Any], @escaping () -> Bool) async throws -> Any)?
+    var canSetUpAgents = false
+    var agentSetupState: [String: Any]?
+    private var pageGeneration = 0
 
     private func desktopScript() -> WKUserScript {
         var state: [String: Any] = [
@@ -46,6 +50,10 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         if let launchDraft { state["draft"] = launchDraft }
         if let launchTarget { state["launchTarget"] = launchTarget }
         if let selectedSession { state["selectedSession"] = selectedSession }
+        if desktopTarget == "local", canSetUpAgents {
+            state["canSetUpAgents"] = true
+            if let agentSetupState { state["agentSetup"] = agentSetupState }
+        }
         let data = try! JSONSerialization.data(withJSONObject: state)
         return WKUserScript(source: "window.__rubbertermDesktop = \(String(decoding: data, as: UTF8.self));",
                             injectionTime: .atDocumentStart, forMainFrameOnly: true)
@@ -56,6 +64,7 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         config.userContentController.add(self, name: "remoteSession")
         config.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "launchRequest")
         config.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "approval")
+        config.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "runtimeSetup")
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -93,6 +102,10 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
                                didReceive message: WKScriptMessage,
                                replyHandler: @escaping (Any?, String?) -> Void) {
         let origin = message.frameInfo.securityOrigin
+        if message.name == "runtimeSetup" {
+            runtimeSetupRequest(message, origin: origin, replyHandler: replyHandler)
+            return
+        }
         if message.name == "approval" {
             approvalRequest(message, origin: origin, replyHandler: replyHandler)
             return
@@ -113,6 +126,36 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         Task { @MainActor in
             do { replyHandler(try await handler(target, operation, params), nil) }
             catch { replyHandler(nil, error.localizedDescription) }
+        }
+    }
+
+    private func runtimeSetupRequest(_ message: WKScriptMessage, origin: WKSecurityOrigin,
+                                     replyHandler: @escaping (Any?, String?) -> Void) {
+        guard RuntimeSetupAccess.allows(expected: url, localPort: AppIdentity.localPort,
+              target: desktopTarget, enabled: canSetUpAgents, currentWebView: message.webView === web,
+              mainFrame: message.frameInfo.isMainFrame, scheme: origin.protocol, host: origin.host, port: origin.port),
+              let body = message.body as? [String: Any], Set(body.keys) == ["operation", "params"],
+              let operation = body["operation"] as? String, let params = body["params"] as? [String: Any],
+              let data = try? JSONSerialization.data(withJSONObject: body), data.count <= 65536,
+              let handler = onRuntimeSetupRequest else {
+            replyHandler(nil, "Agent setup is available only in the local DuckTerm app."); return
+        }
+        let generation = pageGeneration
+        Task { @MainActor [weak self, weak source = message.webView] in
+            do {
+                let result = try await handler(operation, params) { [weak self, weak source] in
+                    guard let self, let source else { return false }
+                    return self.web === source && self.pageGeneration == generation
+                        && self.canSetUpAgents && self.desktopTarget == "local"
+                }
+                replyHandler(result, nil)
+            } catch let error as RuntimeSetupController.Failure {
+                replyHandler(nil, error.localizedDescription)
+            } catch {
+                // Provider output, filesystem paths and credentials must never
+                // escape through a native exception string.
+                replyHandler(nil, "Agent setup could not finish. Try again or use manual instructions.")
+            }
         }
     }
 
@@ -148,7 +191,7 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
     }
 
     func webView(_ webView: WKWebView, didStartProvisionalNavigation navigation: WKNavigation!) {
-        if webView === web { onPageReset?() }
+        if webView === web { pageGeneration += 1; onPageReset?() }
     }
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
@@ -167,6 +210,8 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
     }
 
     func connect(url: URL, remote: Bool, title: String) {
+        pageGeneration += 1
+        onPageReset?()
         self.url = url
         dashboardLoaded = false
         web?.stopLoading()
@@ -202,6 +247,29 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         let script = "(() => { const e = \(String(decoding: data, as: UTF8.self)); window.dispatchEvent(new CustomEvent(e.name, {detail:e.detail})); })()"
         await withCheckedContinuation { (continuation: CheckedContinuation<Void, Never>) in
             web.evaluateJavaScript(script) { _, _ in continuation.resume() }
+        }
+    }
+
+    @MainActor func dispatchSetupOutput(detail: [String: Any]) async {
+        guard let web, let data = try? JSONSerialization.data(withJSONObject: ["name": "runtime-setup", "detail": detail]) else { return }
+        let script = "(() => { const e = \(String(decoding: data, as: UTF8.self)); window.dispatchEvent(new CustomEvent(e.name, {detail:e.detail})); })()"
+        await RuntimeSetupDelivery.deliver { complete in
+            web.evaluateJavaScript(script) { _, _ in complete() }
+        }
+    }
+
+    func chooseAgentExecutable(_ runtime: RuntimeSetupRuntime) async -> URL? {
+        guard let host = sheetHost() else { return nil }
+        let panel = NSOpenPanel()
+        panel.title = runtime == .claudeCode ? "Choose Claude Code executable" : "Choose Codex executable"
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.treatsFilePackagesAsDirectories = true
+        return await withCheckedContinuation { continuation in
+            panel.beginSheetModal(for: host) { response in
+                continuation.resume(returning: response == .OK ? panel.url : nil)
+            }
         }
     }
 
