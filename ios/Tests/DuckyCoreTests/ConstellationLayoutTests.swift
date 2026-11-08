@@ -217,6 +217,23 @@ final class ConstellationLayoutTests: XCTestCase {
         }
     }
 
+    func testSubfoldersShrinkBeforeLosingTheirNames() {
+        let subs = ["platform-leadership", "Core", "QA", "alpha-team", "beta-team", "Pairing"]
+        // Long names: three subfolders stay named on every phone, six on the largest; beyond that the list takes over.
+        for count in [3, 6] {
+            let tree = ConstellationTree(sessions: subs.prefix(count).enumerated().flatMap { i, sub in
+                (0..<3).map { session("s\(i)-\($0)", "DuckTerm/" + sub) } } + [session("lead", "DuckTerm")],
+                folders: ["DuckTerm"] + subs.prefix(count).map { "DuckTerm/" + $0 })
+            var nav = ConstellationNav(); nav.focus(f("DuckTerm"), in: tree)
+            for (size, stage) in stages where count == 3 || size == "932x430" {
+                let l = ConstellationLayout(tree: tree, nav: nav, selectedAgent: nil,
+                                            map: ConstellationFrame(stage: stage, panelsOpen: false, composing: false).map)
+                XCTAssertTrue(tree.nodes[f("DuckTerm")]!.children.allSatisfy { l.placements[$0]!.labelled && l.placements[$0]!.target >= 44 },
+                              "\(size): \(count) subfolders")
+            }
+        }
+    }
+
     func testSelectedAgentIsAlwaysNamedEvenWhenPanelsCrowdTheMap() {
         let s = scenarios(tree).first { $0.name == "agent" }!
         for (size, stage) in stages {

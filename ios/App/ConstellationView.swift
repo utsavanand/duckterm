@@ -459,6 +459,8 @@ struct ConstellationView<AgentConversation: View, AssistantConversation: View>: 
             Text(node.name).font(.footnote).foregroundStyle(current ? Sky.text : Sky.muted).lineLimit(1)
             if current, let sub = folderSub(node) { Text(sub.0).font(.caption).foregroundStyle(sub.1).lineLimit(1) }
         }
+        // The ring has fixed room; larger text sizes read in the breadcrumb, details panel and list.
+        .dynamicTypeSize(...DynamicTypeSize.xLarge)
         .frame(width: box.width, height: 44)
         .contentShape(Rectangle())
         .position(x: box.midX, y: box.midY)

@@ -567,11 +567,14 @@ private struct Builder {
             let a = Double(i) * 2.399963 - .pi / 2, d = ((Double(i) + 0.5) / Double(ordered.count)).squareRoot() * 0.62 * rad
             return (k.id, (x + cos(a) * d, y + topBand / 3 + sin(a) * d * 0.9))
         })
-        // Every name first; then only subfolder names (agents stay named on selection); then smaller
-        // targets, only when 44pt ones cannot fit; the view then offers the list too.
-        var tiers: [(labels: Bool, folderLabels: Bool, minTarget: Double)] = []
-        if wantLabels { tiers += [(true, true, 44), (false, true, 44)] }
-        if tappable { tiers += [(false, false, 44), (false, false, 36), (false, false, 30)] } else { tiers.append((false, false, 0)) }
+        // Every name first, shrinking subfolder bubbles before giving up names; then only subfolder names
+        // (agents stay named on selection); then smaller targets, only when 44pt ones cannot fit; the view then offers the list too.
+        var tiers: [(labels: Bool, folderLabels: Bool, minTarget: Double, scale: Double)] = []
+        if wantLabels {
+            let scales = folders.isEmpty ? [1.0] : [1, 0.8, 0.6, 0.45]
+            tiers += scales.map { (true, true, 44, $0) } + scales.map { (false, true, 44, $0) }
+        }
+        if tappable { tiers += [(false, false, 44, 1), (false, false, 36, 1), (false, false, 30, 1)] } else { tiers.append((false, false, 0, 1)) }
         let limit = rad * 0.94
         if wantLabels && folders.isEmpty, let rows = rows(agents, x, y, limit, top: y - rad + topBand, dotR: dotR) { return (rows, false) }
         for setup in tiers {
@@ -579,7 +582,7 @@ private struct Builder {
             var result: [String: Spot] = [:]
             var ok = true
             for k in sequence {
-                let r = k.isFolder ? folderR(k) : dotR
+                let r = k.isFolder ? folderR(k) * setup.scale : dotR
                 let named = setup.labels || (setup.folderLabels && k.isFolder)
                 let label = named ? min(110, k.isFolder ? ConstellationLayout.folderLabelWidth(k.name, measure: measure) : measure(k.name)) + 8 : nil
                 let item: Item = k.isFolder ? .folder(k.id, r: r, minTarget: setup.minTarget, label: label)

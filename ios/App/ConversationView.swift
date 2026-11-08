@@ -168,7 +168,7 @@ struct ConversationView: View {
                     Text("·")
                     Text(model.agentActivityLabel)
                         .accessibilityIdentifier("conversation-agent-activity")
-                        .foregroundStyle(live ? ChatColor.accent : ChatColor.warning)
+                        .foregroundStyle(live && model.selectedSession?.state != "waiting" ? ChatColor.accent : ChatColor.warning)
                 }.font(.caption2).foregroundStyle(ChatColor.muted)
             }
             Spacer(minLength: 4)

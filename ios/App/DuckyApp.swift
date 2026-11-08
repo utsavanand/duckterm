@@ -71,7 +71,15 @@ private enum StatusUIFixture {
         client.afterFirstSnapshot = { [weak model] in
             guard client.mode.hasPrefix("no-cache-offline") else { return }
             Task { @MainActor in
-                try? await Task.sleep(nanoseconds: 300_000_000)
+                // Scene startup can cancel an early read. Inject the outage only
+                // after a successful snapshot has actually reached the model.
+                for _ in 0..<1000 {
+                    guard let model else { return }
+                    if model.snapshot != nil { break }
+                    try? await Task.sleep(nanoseconds: 10_000_000)
+                }
+                guard model?.snapshot != nil else { return }
+                client.failSnapshots = true
                 await model?.refresh()
             }
         }
@@ -92,6 +100,7 @@ private final class StatusUIFixtureTransport: DuckyTransport {
     let mode = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--ducky-status-mode=") })?.components(separatedBy: "=").last ?? "waiting"
     var afterFirstRead: (() -> Void)?
     var afterFirstSnapshot: (() -> Void)?
+    var failSnapshots = false
     private var reads = 0, failedReads = 0, snapshots = 0
     private let created = Int64(Date().timeIntervalSince1970 * 1000) - 120_000
     private var newReceipts: [MessageReceipt] = []
@@ -101,7 +110,7 @@ private final class StatusUIFixtureTransport: DuckyTransport {
     }
     func snapshot(cursor: String?) async throws -> HostSnapshot {
         snapshots += 1
-        if mode.hasPrefix("no-cache-offline") && snapshots > 1 { throw URLError(.timedOut) }
+        if failSnapshots { throw URLError(.timedOut) }
         if reads > 0 && ["failed", "reconnecting", "orphan-delivered"].contains(mode) {
             failedReads += 1
             if mode == "reconnecting" && failedReads > 1 { try await Task.sleep(nanoseconds: 8_000_000_000) }
