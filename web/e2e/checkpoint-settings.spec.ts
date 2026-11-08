@@ -16,7 +16,7 @@ test("checkpoint settings save and reopen through the real API", async ({ page }
     await expect(field).toBeDisabled();
     await page.getByRole("radio", { name: /Only the latest/ }).check();
     await field.fill("60");
-    await page.getByLabel("Summary writer").selectOption("opus");
+    await page.getByLabel("Summary writer (Claude Code)").selectOption("opus");
     await page.getByRole("button", { name: "Save settings", exact: true }).click();
     await expect(page.getByText("Settings saved", { exact: true })).toBeVisible();
     await page.screenshot({ path: "/tmp/checkpoint-settings-implemented-dark.png" });
@@ -24,7 +24,7 @@ test("checkpoint settings save and reopen through the real API", async ({ page }
     await page.getByRole("button", { name: "Settings", exact: false }).click();
     await page.getByRole("button", { name: "Checkpointing", exact: false }).click();
     await expect(field).toHaveValue("60");
-    await expect(page.getByLabel("Summary writer")).toHaveValue("opus");
+    await expect(page.getByLabel("Summary writer (Claude Code)")).toHaveValue("opus");
     await page.emulateMedia({ colorScheme: "light" });
     await page.screenshot({ path: "/tmp/checkpoint-settings-implemented-light.png" });
     await page.setViewportSize({ width: 390, height: 844 });
