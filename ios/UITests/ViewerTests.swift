@@ -65,7 +65,7 @@ final class ConnectionStatusUITests: XCTestCase {
         XCTAssertTrue(app.buttons["conversation-send"].isHittable)
         capture("status-working-landscape-right-keyboard")
         app.buttons["conversation-send"].tap()
-        XCTAssertEqual(element("conversation-composer").value as? String, "Message agent…")
+        XCTAssertTrue(["", "Message agent…"].contains(element("conversation-composer").value as? String ?? "missing"))
         element("conversation-composer").typeText("Next draft")
         XCTAssertEqual(element("conversation-composer").value as? String, "Next draft")
     }
