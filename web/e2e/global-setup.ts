@@ -50,12 +50,7 @@ export default async function globalSetup() {
   // A deterministic stand-in for the LLM backend: the observation-loop spec
   // asserts these exact rules come back as AGENTS.md suggestions. (It also
   // becomes the checkpoint summarizer, which no spec asserts on.)
-  const fakeLlm = join(home, "fake-llm.sh");
-  writeFileSync(
-    fakeLlm,
-    "#!/bin/sh\nprintf -- '- [all] [1] Use rg, not grep\\n- [all] [1] No emoji in commit messages\\n'\n",
-    { mode: 0o755 },
-  );
+  const fakeLlm = "python " + "'" + join(__dirname, "fixture-summarizer.py").replaceAll("'", "'\\''") + "'";
 
   // A private tmux namespace for this run's fixture agents, swept wholesale
   // in global-teardown — never the user's real duckterm socket.
