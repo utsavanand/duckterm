@@ -88,7 +88,54 @@ def test_invalid_enrollment_never_falls_back_to_app_default(monkeypatch):
     assert not instance.home().exists()
 
 
-def test_lite_pane_cli_keeps_workspace_without_inbox_enrollment(monkeypatch):
+def test_lite_pane_cli_retains_verified_enrollment(monkeypatch):
+    select(monkeypatch, "lite")
+    home = instance.home()
+    home.mkdir()
+    profile_state.remember_new_home()
+    key = "lite-fixture"
+    path = session_credentials.credential_path(key)
+    session_credentials.write_private(path, {"session_id": key, "token": "fixture-token"})
+    connection = path.parent / "server.json"
+    session_credentials.write_private(
+        connection, {"url": instance.server_url(), "instance": instance.description()}
+    )
+    before = {file: file.read_bytes() for file in (path, connection, home / "profile.json")}
+    for name, value in session_credentials.launch_env(key).items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("DUCKTERM_APP_PROFILE", "full")
+    monkeypatch.setenv("DUCKTERM_URL", "http://127.0.0.1:4300")
+    apply_app_profile()
+    assert editions.configured() is editions.LITE
+    assert instance.home() == home
+    assert instance.server_url() == "http://127.0.0.1:4519"
+    assert session_credentials.client_credentials() == ("http://127.0.0.1:4519", "fixture-token")
+    assert {file: file.read_bytes() for file in before} == before
+    assert not (Path.home() / ".duckterm").exists()
+
+
+def test_lite_pane_cli_rejects_missing_enrollment_without_changing_workspace(monkeypatch):
+    select(monkeypatch, "lite")
+    home = instance.home()
+    home.mkdir()
+    profile_state.remember_new_home()
+    marker = (home / "profile.json").read_bytes()
+    for name, value in session_credentials.launch_env("lite-fixture").items():
+        monkeypatch.setenv(name, value)
+    monkeypatch.setenv("DUCKTERM_APP_PROFILE", "full")
+    with pytest.raises(ValueError, match="session enrollment is unavailable"):
+        apply_app_profile()
+    assert editions.configured() is editions.LITE
+    assert instance.home() == home
+    assert instance.server_url() == "http://127.0.0.1:4519"
+    assert list(home.iterdir()) == [home / "profile.json"]
+    assert (home / "profile.json").read_bytes() == marker
+    assert not (Path.home() / ".duckterm").exists()
+
+
+def test_pane_cli_keeps_workspace_when_inbox_is_explicitly_disabled(monkeypatch):
+    disabled = editions.EditionConfig("lite", editions.LITE.features - {"inbox"})
+    monkeypatch.setitem(editions.PRESETS, "lite", disabled)
     select(monkeypatch, "lite")
     instance.home().mkdir()
     profile_state.remember_new_home()
@@ -96,7 +143,7 @@ def test_lite_pane_cli_keeps_workspace_without_inbox_enrollment(monkeypatch):
         monkeypatch.setenv(name, value)
     monkeypatch.setenv("DUCKTERM_APP_PROFILE", "full")
     apply_app_profile()
-    assert editions.configured() is editions.LITE
+    assert editions.configured() is disabled
     assert instance.server_url() == "http://127.0.0.1:4519"
     assert not session_credentials.credential_path("lite-fixture").exists()
 
