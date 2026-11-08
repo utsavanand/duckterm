@@ -12,22 +12,84 @@ final class ConnectionStatusUITests: XCTestCase {
         let item = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
         item.name = name; item.lifetime = .keepAlways; add(item)
     }
-    @MainActor private func open(_ mode: String) {
+    @MainActor private func open(_ mode: String, expectsReceipt: Bool = true) {
         app.launchArguments = ["--ducky-status-ui-fixture", "--ducky-status-mode=" + mode]
         app.launch()
         let folder = app.buttons["folder:Status fixture"]
         XCTAssertTrue(folder.waitForExistence(timeout: 10))
+        if mode.hasPrefix("no-cache-offline") {
+            XCTAssertTrue(app.staticTexts["Showing last known status"].waitForExistence(timeout: 5))
+        }
         let session = app.buttons["session:status-ui-agent"]
         if !session.exists { folder.tap() }
         XCTAssertTrue(session.waitForExistence(timeout: 5)); session.tap()
         XCTAssertTrue(element("conversation-header").waitForExistence(timeout: 5))
-        XCTAssertTrue(element("conversation-receipt:33333333-3333-4333-8333-333333333333").waitForExistence(timeout: 5))
+        if expectsReceipt {
+            XCTAssertTrue(element("conversation-receipt:33333333-3333-4333-8333-333333333333").waitForExistence(timeout: 5))
+        }
     }
     @MainActor private func rotate(_ orientation: UIDeviceOrientation) {
         XCUIDevice.shared.orientation = orientation
         let landscape = orientation == .landscapeLeft || orientation == .landscapeRight
         expectation(for: NSPredicate { _, _ in (self.app.frame.width > self.app.frame.height) == landscape }, evaluatedWith: nil)
         waitForExpectations(timeout: 8)
+    }
+    @MainActor private func openEmbeddedConversation() {
+        app.buttons["conversation-back"].tap()
+        element("show-map").tap(); rotate(.landscapeLeft)
+        app.buttons["Show as list"].tap()
+        let folder = app.buttons["constellation-row:folder:Status fixture"]
+        XCTAssertTrue(folder.waitForExistence(timeout: 5)); folder.tap()
+        let agent = app.buttons["constellation-row:session:status-ui-agent"]
+        XCTAssertTrue(agent.waitForExistence(timeout: 5)); agent.tap()
+        XCTAssertTrue(app.buttons["conversation-close"].waitForExistence(timeout: 5))
+        app.buttons["Show as map"].tap()
+    }
+    @MainActor func testOfflineWithoutCachedConversationNeverShowsLoading() {
+        open("no-cache-offline", expectsReceipt: false)
+        XCTAssertTrue(element("conversation-unavailable").waitForExistence(timeout: 5))
+        XCTAssertFalse(element("conversation-loading").exists)
+        XCTAssertFalse(element("conversation-message:status-reply").exists)
+        XCTAssertTrue(element("conversation-connection").label.contains("Can’t reach your Mac"))
+        XCTAssertTrue(app.buttons["conversation-retry"].isHittable)
+        capture("no-cache-offline-portrait")
+        openEmbeddedConversation()
+        XCTAssertTrue(element("conversation-unavailable").waitForExistence(timeout: 5))
+        XCTAssertFalse(element("conversation-loading").exists)
+        XCTAssertTrue(app.buttons["conversation-retry"].isHittable)
+        capture("no-cache-offline-landscape-left")
+        rotate(.landscapeRight)
+        XCTAssertFalse(element("conversation-loading").exists)
+        XCTAssertTrue(app.buttons["conversation-retry"].isHittable)
+        capture("no-cache-offline-landscape-right")
+    }
+    @MainActor func testOfflineWithLastKnownUnreadableSessionIsUnavailable() {
+        open("no-cache-offline-unreadable", expectsReceipt: false)
+        XCTAssertTrue(element("conversation-unavailable").waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["No conversation yet"].exists)
+        XCTAssertFalse(element("conversation-loading").exists)
+        capture("no-cache-offline-unreadable")
+    }
+    @MainActor func testFailedFirstReplyReadIsUnavailableWithoutAnIdleSpinner() {
+        open("no-cache-read-failure", expectsReceipt: false)
+        XCTAssertTrue(element("conversation-refresh-error").waitForExistence(timeout: 5))
+        XCTAssertTrue(element("conversation-unavailable").exists)
+        XCTAssertFalse(element("conversation-loading").exists)
+        XCTAssertTrue(element("conversation-connection").label.contains("Status is current"))
+        capture("no-cache-reply-failure")
+    }
+    @MainActor func testDeliveredReceiptsRequireTheirOriginalMessage() {
+        open("orphan-delivered")
+        XCTAssertTrue(app.staticTexts["Last seen working"].waitForExistence(timeout: 5))
+        let primary = "33333333-3333-4333-8333-333333333333"
+        XCTAssertTrue(element("conversation-receipt-message:" + primary).exists)
+        XCTAssertTrue(element("conversation-receipt:" + primary).label.contains("Delivered to agent"))
+        for id in ["44444444-4444-4444-8444-444444444444", "55555555-5555-4555-8555-555555555555"] {
+            XCTAssertFalse(element("conversation-receipt:" + id).exists)
+        }
+        XCTAssertEqual(app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH %@", "conversation-receipt:")).count, 1)
+        XCTAssertTrue(element("conversation-message:status-reply").exists)
+        capture("delivered-with-body-no-orphan-labels")
     }
     @MainActor private func focusComposer() {
         let field = element("conversation-composer")

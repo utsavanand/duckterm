@@ -4,6 +4,10 @@ import XCTest
 private func statusDecode<T: Decodable>(_ raw: Any) -> T {
     try! JSONDecoder().decode(T.self, from: JSONSerialization.data(withJSONObject: raw))
 }
+private func presentationReceipt(requestID: String = UUID().uuidString.lowercased(), status: String, text: String?) -> MessageReceipt {
+    statusDecode(["request_id": requestID, "session_id": "a", "status": status,
+        "created_at": 1_000_000, "updated_at": 1_010_000, "text": text.map { $0 as Any } ?? NSNull()])
+}
 private final class StatusClock { var date = Date(timeIntervalSince1970: 1000) }
 private final class StatusTransport: DuckyTransport {
     let host: PairedHost
@@ -63,20 +67,175 @@ private final class StatusTransport: DuckyTransport {
 
 @MainActor
 final class ConnectionStatusTests: XCTestCase {
-    private func setup() async -> (SessionModel, StatusTransport, StatusClock) {
+    private func setup(loadConversation: Bool = true) async -> (SessionModel, StatusTransport, StatusClock) {
         let invitation = Invitation(version: 1, hostID: String(repeating: "a", count: 32), invite: String(repeating: "i", count: 43),
             expiresAt: Int(Date().timeIntervalSince1970) + 600, url: URL(string: "https://127.0.0.1:9")!, certificateSHA256: String(repeating: "c", count: 64))
         let host = PairedHost(invitation: invitation, token: String(repeating: "t", count: 43))
         let client = StatusTransport(host), clock = StatusClock()
         let model = SessionModel(credentials: FakeStore(host), makeTransport: { _ in client }, now: { clock.date })
-        await model.restore(); model.selectSession("a"); await model.refreshConversation()
+        await model.restore()
+        if loadConversation { model.selectSession("a"); await model.refreshConversation() }
         return (model, client, clock)
     }
     private func settle() async { for _ in 0..<100 { await Task.yield() } }
+    private func waitForConversation(_ client: StatusTransport) async -> Bool {
+        let deadline = ProcessInfo.processInfo.systemUptime + 2
+        while client.conversationGate == nil && ProcessInfo.processInfo.systemUptime < deadline {
+            try? await Task.sleep(nanoseconds: 1_000_000)
+        }
+        return client.conversationGate != nil
+    }
+    private func releaseConversation(_ client: StatusTransport) {
+        client.holdConversation = false
+        let continuation = client.conversationGate; client.conversationGate = nil
+        continuation?.resume()
+    }
     private func queued(_ model: SessionModel, _ client: StatusTransport) async -> MessageReceipt {
         model.setDraft("Fixture message"); await model.sendMessage()
         guard case .acknowledged(let receipt) = model.sendState else { XCTFail("Expected Mac acknowledgment"); return client.makeReceipt(client.posts[0]) }
         return receipt
+    }
+
+    func testDeliveredReceiptRestoresOriginalLocalBodyAfterServerClearsText() async {
+        for clearedText: String? in [nil, "", " \n\t "] {
+            let (model, client, _) = await setup(); defer { model.forget() }
+            model.setDraft("Original message\nwith a second line"); await model.sendMessage()
+            let sent = client.posts[0]
+            let delivered = presentationReceipt(requestID: sent.requestID, status: "delivered", text: clearedText)
+            client.receipts = [delivered]; await model.refreshConversation()
+            XCTAssertEqual(model.sendState, .acknowledged(delivered))
+            XCTAssertEqual(model.messageText(for: delivered), sent.text)
+            XCTAssertEqual(model.conversationReceipts, [delivered])
+            XCTAssertEqual(client.posts.count, 1, "Presentation must not resend a cleared message")
+            model.forget()
+            XCTAssertNil(model.messageText(for: delivered), "Forgetting clears the local body fallback")
+        }
+    }
+
+    func testOfflineSelectionWithoutCachedRepliesOrConversationErrorIsNotLoading() async {
+        let (model, client, _) = await setup(loadConversation: false); defer { model.forget() }
+        client.snapshotError = URLError(.timedOut); await model.refresh()
+        model.selectSession("a"); await model.refreshConversation()
+        XCTAssertEqual(model.phase, .stale)
+        XCTAssertNil(model.conversation); XCTAssertNil(model.conversationError)
+        XCTAssertFalse(model.conversationIsLoading)
+        XCTAssertEqual(client.conversationCalls, 0)
+    }
+
+    func testFirstLiveConversationLoadsOnlyWhileTheActualReadIsHeld() async {
+        let (model, client, _) = await setup(loadConversation: false)
+        defer { model.forget(); releaseConversation(client) }
+        XCTAssertFalse(model.conversationIsLoading)
+        client.holdConversation = true; model.selectSession("a")
+        let reading = Task { await model.refreshConversation() }
+        guard await waitForConversation(client) else {
+            reading.cancel(); return XCTFail("Fixture conversation read did not start")
+        }
+        XCTAssertEqual(model.phase, .live); XCTAssertNil(model.conversation)
+        XCTAssertTrue(model.conversationRefreshing); XCTAssertTrue(model.conversationIsLoading)
+        releaseConversation(client); await reading.value
+        XCTAssertNotNil(model.conversation); XCTAssertFalse(model.conversationIsLoading)
+    }
+
+    func testCachedRepliesStayVisibleDuringRefreshAndOffline() async {
+        let (model, client, _) = await setup()
+        defer { model.forget(); releaseConversation(client) }
+        let cached = model.conversation?.messages
+        client.holdConversation = true
+        let reading = Task { await model.refreshConversation() }
+        guard await waitForConversation(client) else {
+            reading.cancel(); return XCTFail("Fixture conversation read did not start")
+        }
+        XCTAssertTrue(model.conversationRefreshing); XCTAssertFalse(model.conversationIsLoading)
+        client.snapshotError = URLError(.timedOut); await model.refresh()
+        XCTAssertEqual(model.phase, .stale); XCTAssertFalse(model.conversationIsLoading)
+        XCTAssertEqual(model.conversation?.messages.map(\.text), cached?.map(\.text))
+        releaseConversation(client); await reading.value
+        XCTAssertEqual(model.conversation?.messages.map(\.text), cached?.map(\.text))
+    }
+
+    func testDeliveredOrphansAreHiddenButOtherReceiptStatesRemainVisible() async {
+        let (model, client, _) = await setup(); defer { model.forget() }
+        let orphans = [nil, "", " \n\t "].map {
+            presentationReceipt(status: "delivered", text: $0)
+        }
+        let preserved = ["queued", "delivering", "unknown", "cancelled", "expired"].map {
+            presentationReceipt(status: $0, text: nil)
+        }
+        let known = presentationReceipt(status: "delivered", text: " Current reply\n")
+        client.receipts = orphans + preserved + [known]; await model.refreshConversation()
+        XCTAssertEqual(model.conversationReceipts, preserved + [known])
+        XCTAssertEqual(model.messageText(for: known), " Current reply\n", "Keep the original nonblank wire body")
+        XCTAssertEqual(model.conversation?.receipts, client.receipts, "Presentation must not mutate receipt history")
+        XCTAssertEqual(model.conversation?.messages.first?.text, "Current reply", "Do not guess receipt/transcript associations")
+        XCTAssertTrue(client.posts.isEmpty)
+    }
+
+    func testAcknowledgedReceiptMergesOnceWithoutCollapsingIdenticalMessages() async {
+        let (model, client, _) = await setup(); defer { model.forget() }
+        model.setDraft("Same words"); await model.sendMessage()
+        let first = client.makeReceipt(client.posts[0], status: "delivered", updated: 1_010_000)
+        client.receipts = [first]; await model.refreshConversation()
+        model.setDraft("Same words"); await model.sendMessage()
+        let second = client.makeReceipt(client.posts[1])
+        XCTAssertNotEqual(first.id, second.id)
+        XCTAssertEqual(model.conversationReceipts, [first, second], "Include the new acknowledgment before the next conversation read")
+        client.receipts = [first, second]; await model.refreshConversation()
+        XCTAssertEqual(model.conversationReceipts, [first, second], "The same acknowledged request appears once")
+        XCTAssertEqual(model.conversationReceipts.compactMap { model.messageText(for: $0) }, ["Same words", "Same words"])
+        model.selectSession(nil)
+        XCTAssertTrue(model.conversationReceipts.isEmpty)
+        XCTAssertFalse(model.conversationIsLoading)
+    }
+
+    func testExplicitConversationDenialHidesKnownDeliveredBodyUntilAuthorizedRead() async {
+        for status in [403, 404] {
+            let (model, client, _) = await setup(); defer { model.forget() }
+            let queued = await queued(model, client)
+            let delivered = presentationReceipt(requestID: queued.requestID, status: "delivered", text: "")
+            client.receipts = [delivered]; await model.refreshConversation()
+            XCTAssertEqual(model.messageText(for: delivered), "Fixture message")
+            client.conversationFailure = DuckyError.unavailable(status); await model.refreshConversation()
+            XCTAssertNil(model.conversation)
+            XCTAssertTrue(model.conversationReceipts.isEmpty, "Explicit denial must hide the acknowledged body immediately")
+            XCTAssertNil(model.messageText(for: delivered))
+            XCTAssertEqual(model.sendState, .acknowledged(delivered), "Keep the delivery identity; denial is not a new send")
+
+            let reads = client.conversationCalls
+            await model.refresh()
+            XCTAssertEqual(model.phase, .live); XCTAssertEqual(client.conversationCalls, reads)
+            XCTAssertTrue(model.conversationReceipts.isEmpty, "Status alone cannot restore conversation access")
+            XCTAssertNil(model.messageText(for: delivered))
+            client.conversationFailure = URLError(.timedOut); await model.refreshConversation()
+            XCTAssertTrue(model.conversationReceipts.isEmpty, "A timeout cannot undo an explicit denial")
+            XCTAssertNil(model.messageText(for: delivered))
+
+            client.conversationFailure = nil; await model.refreshConversation()
+            XCTAssertEqual(model.conversationReceipts, [delivered])
+            XCTAssertEqual(model.messageText(for: delivered), "Fixture message")
+            client.conversationFailure = URLError(.timedOut); await model.refreshConversation()
+            XCTAssertNotNil(model.conversation, "Normal timeouts keep authorized cached replies")
+            XCTAssertEqual(model.conversationReceipts, [delivered])
+            XCTAssertEqual(model.messageText(for: delivered), "Fixture message")
+            XCTAssertEqual(client.posts.count, 1)
+        }
+    }
+
+    func testDeniedPendingReceiptStaysHiddenAcrossSelectionWithoutLosingRequestIdentity() async {
+        let (model, client, _) = await setup(); defer { model.forget() }
+        let pending = await queued(model, client)
+        client.conversationFailure = DuckyError.unavailable(403); await model.refreshConversation()
+        XCTAssertTrue(model.conversationReceipts.isEmpty); XCTAssertNil(model.messageText(for: pending))
+        XCTAssertEqual(model.sendState, .acknowledged(pending))
+        model.selectSession(nil); model.selectSession("a"); await model.refreshConversation()
+        XCTAssertTrue(model.conversationReceipts.isEmpty); XCTAssertNil(model.messageText(for: pending))
+        client.conversationFailure = URLError(.timedOut); await model.retryConnection()
+        XCTAssertTrue(model.conversationReceipts.isEmpty)
+        XCTAssertEqual(model.sendState, .acknowledged(pending))
+        client.conversationFailure = nil; client.receipts = [pending]; await model.refreshConversation()
+        XCTAssertEqual(model.conversationReceipts, [pending])
+        XCTAssertEqual(model.messageText(for: pending), "Fixture message")
+        XCTAssertEqual(client.posts.count, 1, "Recovery must never replay the POST")
     }
 
     func testIndependentStatusAndReplyErrorsPreserveSafeSnapshotSending() async {

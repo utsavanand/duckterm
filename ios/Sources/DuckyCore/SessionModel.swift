@@ -68,6 +68,9 @@ public final class SessionModel: ObservableObject {
     @Published public private(set) var receiptError: String?
     @Published private var receiptConfirmations: [String: Date] = [:]
     @Published private var staleReceipts: Set<String> = []
+    // Keep send identity for safe recovery, but do not display bodies after an
+    // explicit conversation denial until that session's read succeeds again.
+    @Published private var deniedConversationDisplays: Set<String> = []
     @Published public private(set) var drafts: [String: String] = [:]
     @Published public private(set) var sends: [String: SendState] = [:]
     public enum SendState: Equatable {
@@ -213,6 +216,7 @@ public final class SessionModel: ObservableObject {
                 invalidateConversationRead()
                 conversation = nil; conversationAt = nil; conversationError = nil
                 drafts = [:]; sends = [:]; pendingMessages = [:]; sentTexts = [:]
+                deniedConversationDisplays = []
                 receiptConfirmations = [:]; staleReceipts = []; receiptError = nil
             }
             snapshot = next
@@ -299,6 +303,22 @@ public final class SessionModel: ObservableObject {
     public var selectedSession: AgentStatus? { snapshot?.sessions.first { $0.id == selectedSessionID } }
     public var draft: String { selectedSessionID.flatMap { drafts[$0] } ?? "" }
     public var sendState: SendState? { selectedSessionID.flatMap { sends[$0] } }
+    public var conversationIsLoading: Bool {
+        conversation == nil && phase == .live && conversationRefreshing && conversationError == nil
+    }
+    public var conversationReceipts: [MessageReceipt] {
+        guard let selectedSessionID, !deniedConversationDisplays.contains(selectedSessionID) else { return [] }
+        var receipts = conversation?.receipts ?? []
+        if case .acknowledged(let receipt) = sendState,
+           !receipts.contains(where: { $0.id == receipt.id }) {
+            receipts.append(receipt)
+        }
+        var seen: Set<String> = []
+        return receipts.filter { receipt in
+            guard seen.insert(receipt.id).inserted else { return false }
+            return receipt.status != "delivered" || messageText(for: receipt) != nil
+        }
+    }
     public var canEditDraft: Bool {
         guard phase == .live, foreground, !sendRefreshRequired, snapshot?.allows("session:send") == true,
               let selectedSession, selectedSession.isActive, selectedSession.runtime != "generic",
@@ -320,7 +340,13 @@ public final class SessionModel: ObservableObject {
         }
         return selectedSession?.sendContext.flatMap { $0.isEmpty ? nil : $0 }
     }
-    public func messageText(for receipt: MessageReceipt) -> String? { receipt.text ?? sentTexts[receipt.requestID] }
+    public func messageText(for receipt: MessageReceipt) -> String? {
+        guard !deniedConversationDisplays.contains(receipt.sessionID) else { return nil }
+        for text in [receipt.text, sentTexts[receipt.requestID]].compactMap({ $0 }) {
+            if !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return text }
+        }
+        return nil
+    }
     public func setDraft(_ text: String) {
         guard let selectedSessionID else { return }
         drafts[selectedSessionID] = text
@@ -380,6 +406,7 @@ public final class SessionModel: ObservableObject {
             let next = try await transport.conversation(sessionID: id)
             try next.validate(hostID: hostID, sessionID: id)
             guard current(), snapshot?.allows("conversation:read") == true, selectedSession?.canRead == true else { return }
+            deniedConversationDisplays.remove(id)
             let receipts = next.receipts.map { newerReceipt($0) }
             conversation = ConversationSnapshot(version: next.version, hostID: next.hostID, sessionID: next.sessionID,
                 messages: next.messages, truncated: next.truncated, receipts: receipts, canSend: next.canSend,
@@ -411,10 +438,12 @@ public final class SessionModel: ObservableObject {
             if let pending = pendingMessages[id] { staleReceipts.insert(pending.requestID) }
             if case DuckyError.unavailable(403) = error {
                 sendRefreshRequired = true
+                deniedConversationDisplays.insert(id)
                 conversation = nil
                 conversationError = "Conversation access is unavailable. Check Ducky access on your Mac."
             } else if case DuckyError.unavailable(404) = error {
                 sendRefreshRequired = true
+                deniedConversationDisplays.insert(id)
                 conversation = nil
                 conversationError = "This session is no longer available."
             } else {
@@ -492,6 +521,7 @@ public final class SessionModel: ObservableObject {
         selectionGeneration += 1; invalidateConversationRead()
         selectedSessionID = nil; conversation = nil; conversationAt = nil; conversationFresh = false; conversationError = nil
         receiptConfirmations = [:]; staleReceipts = []; receiptError = nil; sendRefreshRequired = false
+        deniedConversationDisplays = []
         drafts = [:]; sends = [:]; pendingMessages = [:]; sentTexts = [:]
     }
 

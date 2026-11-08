@@ -222,7 +222,7 @@ public struct ConstellationFrame: Equatable {
 }
 
 public struct ConstellationPlacement: Equatable {
-    public enum Role: Equatable { case top, peripheral, focus, ancestor, child, context, content, hidden, oracle }
+    public enum Role: Equatable { case top, peripheral, focus, ancestor, child, content, hidden, oracle }
     public var x: Double
     public var y: Double
     public var r: Double
@@ -286,7 +286,8 @@ public struct ConstellationLayout: Equatable {
         var width: Double, height: Double, cx: Double, top: Double
         switch p.role {
         case .focus:
-            width = min(220, measure(name) + 80); height = 18; cx = p.x; top = p.y - p.r + 11
+            // Sized from the ring, not the label measure: the title uses a larger font than node labels.
+            width = min(Double(map.width) - 16, 2 * p.r + 40); height = 18; cx = p.x; top = p.y - p.r + 11
         case .ancestor:
             return nil
         case .oracle:
@@ -510,12 +511,11 @@ private struct Builder {
         for (column, x) in [(left, Double(map.minX) + (narrow ? 12 : 44)), (right, Double(map.maxX) - (narrow ? 12 : 44))] {
             let sorted = column.sorted { (home.out[$0]?.y ?? 0, $0) < (home.out[$1]?.y ?? 0, $1) }
             let spacing = h / Double(max(1, sorted.count))
-            if spacing < 30 { dense = true }
+            // Unnamed edge circles read as clutter; without room for names the breadcrumb is the way back.
+            guard !narrow && spacing >= 48 else { continue }
             for (i, id) in sorted.enumerated() {
-                let n = node(id)!
-                let r = narrow ? (n.total > 0 ? 6.0 : 4.5) : (n.total > 0 ? 12.0 : 8.0)
-                set(id, x, Double(map.minY) + spacing * (Double(i) + 0.5) - 6, min(r, spacing / 3), .peripheral,
-                    labelled: !narrow && spacing >= 48)
+                let r = node(id)!.total > 0 ? 12.0 : 8.0
+                set(id, x, Double(map.minY) + spacing * (Double(i) + 0.5) - 6, min(r, spacing / 3), .peripheral, labelled: true)
             }
         }
     }
@@ -533,29 +533,7 @@ private struct Builder {
             let cx = x + side * (1 - Self.nestRatio) * 0.45 * rad
             set(next, cx, y, cr, next == nav.path.last ? .focus : .ancestor, labelled: true)
             fill(next, cx, y, cr)
-            let others = n.children.filter { $0 != next }
-            let k = others.count, opp = dx >= 0 ? Double.pi : 0, dist = rad * (1 + Self.nestRatio - (1 - Self.nestRatio) * 0.45) / 2
-            // Siblings sit on the crescent, spread over at most ±70° so they stay inside a short map.
-            func arc(_ step: Double) -> (spots: [(Double, Double)], gap: Double) {
-                let spots = others.indices.map { j -> (Double, Double) in
-                    let a = opp + (Double(j) - Double(k - 1) / 2) * step
-                    return (x + cos(a) * dist, y + sin(a) * dist)
-                }
-                var gap = 45.0
-                for i in spots.indices { for j in spots.indices where j > i {
-                    gap = min(gap, max(abs(spots[i].0 - spots[j].0), abs(spots[i].1 - spots[j].1)))
-                } }
-                return (spots, gap)
-            }
-            // Widen the spread until neighbouring 44pt squares clear each other, up to about ±70°.
-            var step = 46 / dist, (spots, gap) = arc(step)
-            while gap < 45 && step * Double(max(1, k - 1)) < 2.4 { step += 3 / dist; (spots, gap) = arc(step) }
-            let hit = min(44, gap - 1)
-            if hit < 44 { dense = true }
-            for (j, other) in others.enumerated() {
-                let isFolder = node(other)?.isFolder ?? false
-                set(other, spots[j].0, spots[j].1, isFolder ? min(hit / 2, max(8, 0.06 * rad)) : 3.4, .context, labelled: false, hit: hit)
-            }
+            // The crescent is too thin to name the parent's other children, so they stay hidden; the breadcrumb reaches them.
             return
         }
         let (spots, crowded) = pack(n, x, y, rad, labelled: deep, tappable: deep)

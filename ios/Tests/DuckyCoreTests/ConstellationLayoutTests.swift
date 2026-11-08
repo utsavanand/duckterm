@@ -117,7 +117,7 @@ final class ConstellationLayoutTests: XCTestCase {
                     case .ancestor:
                         // An ancestor rim may run past the top and bottom, never the sides.
                         XCTAssertTrue(p.x - p.r >= map.minX && p.x + p.r <= map.maxX && map.contains(CGPoint(x: p.x, y: p.y)), tag)
-                    case .child, .context, .content:
+                    case .child, .content:
                         let parent = l.placements[tree.nodes[id]!.parentID!]!
                         XCTAssertLessThanOrEqual(hypot(p.x - parent.x, p.y - parent.y) + p.r, parent.r + 0.5, tag)
                         if p.interactive { XCTAssertTrue(map.contains(CGPoint(x: p.x, y: p.y)), tag + " reachable on screen") }
@@ -184,8 +184,36 @@ final class ConstellationLayoutTests: XCTestCase {
             XCTAssertEqual(agents.count, 9)
             XCTAssertTrue(agents.allSatisfy { l.placements[$0]!.role == .child && l.placements[$0]!.labelled }, size)
             XCTAssertEqual(l.placements[f("DuckTerm")]!.role, .ancestor)
-            XCTAssertEqual(l.placements[f("DuckTerm/Core")]!.role, .context, "the sibling stays reachable on the ancestor rim")
+            XCTAssertEqual(l.placements[f("DuckTerm/Core")]!.alpha, 0, "the unnamed sibling stays off the thin rim; the breadcrumb reaches it")
             XCTAssertEqual(l.placements[f("Bodhbytes")]!.role, .peripheral)
+        }
+    }
+
+    /// Nested focus with a long folder title, an open agent and many top folders.
+    func testNestedFocusShowsFullTitleAndNoUnnamedEdgeCircles() {
+        let tops = ["Agent Experiments", "Workspace - Platform Tools", "Learning - Mobile App", "Projects",
+                    "Desktop Utilities", "Notes", "Research", "Sky", "Taxes", "Travel", "Writing", "Music", "Garden", "Health"]
+        let sessions = ["architect", "product", "release-dev", "startup"].enumerated().map {
+            session($1, "DuckTerm/platform-leadership", $0 == 2 ? "busy" : "waiting")
+        } + [session("ui-dev", "DuckTerm/Core"), session("main-qa", "DuckTerm/QA"), session("x", "")]
+        let tree = ConstellationTree(sessions: sessions, folders: tops + ["DuckTerm", "DuckTerm/Core", "DuckTerm/QA", "DuckTerm/platform-leadership"])
+        let leadership = f("DuckTerm/platform-leadership")
+        var nav = ConstellationNav(); nav.focus(leadership, in: tree)
+        for (size, stage) in stages {
+            for panels in [false, true] {
+                let l = ConstellationLayout(tree: tree, nav: nav, selectedAgent: panels ? a("startup") : nil,
+                                            map: ConstellationFrame(stage: stage, panelsOpen: panels, composing: false).map)
+                let title = l.labelFrame(leadership, name: "platform-leadership", tree: tree, nav: nav)!
+                // 13pt "platform-leadership", a 6pt gap and 12pt "3 need you" measure about 191pt.
+                if l.map.width >= 230 { XCTAssertGreaterThanOrEqual(title.width, 200, "\(size) panels:\(panels)") }
+                XCTAssertTrue(l.map.insetBy(dx: -0.5, dy: -0.5).contains(title), "\(size) panels:\(panels)")
+                for (id, p) in l.placements where p.alpha > 0.05 && [.top, .peripheral].contains(p.role) {
+                    XCTAssertTrue(p.labelled, "\(size) panels:\(panels): \(id) is drawn without a name")
+                }
+                XCTAssertEqual(l.placements[f("DuckTerm/Core")]!.alpha, 0, "\(size) panels:\(panels)")
+                XCTAssertEqual(l.placements[f("DuckTerm/QA")]!.alpha, 0, "\(size) panels:\(panels)")
+                XCTAssertTrue(tree.nodes[leadership]!.children.allSatisfy { l.placements[$0]!.role == .child && l.placements[$0]!.labelled })
+            }
         }
     }
 
@@ -228,7 +256,8 @@ final class ConstellationLayoutTests: XCTestCase {
             for id in big.roots { XCTAssertTrue(map.insetBy(dx: -1, dy: -1).contains(CGPoint(x: l.placements[id]!.x, y: l.placements[id]!.y)), id) }
             var nav = ConstellationNav(); nav.focus(big.roots[5], in: big)
             let focused = ConstellationLayout(tree: big, nav: nav, selectedAgent: nil, map: map)
-            XCTAssertEqual(big.roots.filter { focused.placements[$0]!.interactive }.count, 39, "\(size): all siblings tappable at the edges")
+            // 39 siblings can't be named at the edges, so they're left off; the all-folders crumb above shows all 40.
+            XCTAssertTrue(big.roots.allSatisfy { focused.placements[$0]!.alpha < 0.05 || focused.placements[$0]!.labelled }, size)
         }
     }
 
