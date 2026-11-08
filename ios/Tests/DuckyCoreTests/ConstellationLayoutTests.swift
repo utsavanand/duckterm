@@ -219,7 +219,8 @@ final class ConstellationLayoutTests: XCTestCase {
 
     func testSubfoldersShrinkBeforeLosingTheirNames() {
         let subs = ["platform-leadership", "Core", "QA", "alpha-team", "beta-team", "Pairing"]
-        // Long names: three subfolders stay named on every phone, six on the largest; beyond that the list takes over.
+        // Three subfolders stay named on every phone. A denser group retains
+        // reachable targets and explicitly offers the list if names do not fit.
         for count in [3, 6] {
             let tree = ConstellationTree(sessions: subs.prefix(count).enumerated().flatMap { i, sub in
                 (0..<3).map { session("s\(i)-\($0)", "DuckTerm/" + sub) } } + [session("lead", "DuckTerm")],
@@ -228,8 +229,15 @@ final class ConstellationLayoutTests: XCTestCase {
             for (size, stage) in stages where count == 3 || size == "932x430" {
                 let l = ConstellationLayout(tree: tree, nav: nav, selectedAgent: nil,
                                             map: ConstellationFrame(stage: stage, panelsOpen: false, composing: false).map)
-                XCTAssertTrue(tree.nodes[f("DuckTerm")]!.children.allSatisfy { l.placements[$0]!.labelled && l.placements[$0]!.target >= 44 },
-                              "\(size): \(count) subfolders")
+                let children = tree.nodes[f("DuckTerm")]!.children.map { l.placements[$0]! }
+                XCTAssertTrue(children.allSatisfy { $0.interactive && $0.target >= 44 }, "\(size): \(count) subfolders")
+                if count == 3 {
+                    XCTAssertTrue(children.allSatisfy(\.labelled), "\(size): three subfolders keep their names")
+                    XCTAssertFalse(l.dense, "\(size): named children with full-sized targets fit without the fallback")
+                } else {
+                    XCTAssertEqual(l.dense, children.contains(where: { !$0.labelled }),
+                                   "\(size): missing child names must offer the list even when 44pt targets fit")
+                }
             }
         }
     }

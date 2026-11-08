@@ -78,9 +78,16 @@ private enum StatusUIFixture {
                     if model.snapshot != nil { break }
                     try? await Task.sleep(nanoseconds: 10_000_000)
                 }
-                guard model?.snapshot != nil else { return }
+                guard let model, model.snapshot != nil else { return }
                 client.failSnapshots = true
-                await model?.refresh()
+                // The snapshot can be visible while its refresh is still
+                // finishing. Wait through that coalesced read, then request
+                // the failing read rather than leaving the fixture live.
+                for _ in 0..<100 {
+                    await model.refresh()
+                    if model.phase == .stale { return }
+                    try? await Task.sleep(nanoseconds: 10_000_000)
+                }
             }
         }
         client.afterFirstRead = { [weak model] in

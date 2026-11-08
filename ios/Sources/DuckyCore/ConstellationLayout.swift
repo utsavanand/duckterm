@@ -243,7 +243,7 @@ public struct ConstellationLayout: Equatable {
     public static let duration = 0.56
     public var placements: [String: ConstellationPlacement] = [:]
     public var map: CGRect = .zero
-    /// True when something could not be placed without crowding; the view offers the list.
+    /// True when names or full-sized targets cannot fit; the view offers the list.
     public var dense = false
 
     /// Rough width of an 11pt name; the app passes a measured one.
@@ -547,7 +547,7 @@ private struct Builder {
     }
 
     /// Children of a folder packed inside its circle. Tries readable labels first,
-    /// then bare 44pt targets, then bare dots, and finally flags the folder as dense.
+    /// then bare 44pt targets, then bare dots. Missing names or smaller targets flag it as dense.
     typealias Spot = (x: Double, y: Double, r: Double, labelled: Bool, hit: Double)
     func pack(_ n: ConstellationNode, _ x: Double, _ y: Double, _ rad: Double, labelled wantLabels: Bool, tappable: Bool)
         -> (spots: [String: Spot], crowded: Bool) {
@@ -592,7 +592,10 @@ private struct Builder {
                 placed.append((item, spot.0, spot.1))
                 result[k.id] = (spot.0, spot.1, r, named, setup.minTarget)
             }
-            if ok { return (result, tappable && setup.minTarget < 44) }
+            if ok {
+                let hidesRequestedLabels = wantLabels && result.values.contains { !$0.labelled }
+                return (result, tappable && (setup.minTarget < 44 || hidesRequestedLabels))
+            }
         }
         // Too many children for this circle: keep every one reachable on a sunflower and let the view offer the list.
         var result: [String: Spot] = [:]
