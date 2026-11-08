@@ -6,7 +6,7 @@ import { ContextPanel } from "./ContextPanel";
 import { edition, FULL } from "./test/editions";
 import type { SessionView } from "./types";
 const { toast } = vi.hoisted(() => ({ toast: vi.fn() }));
-vi.mock("./api", () => ({ api: { checkpoints: vi.fn(), checkpoint: vi.fn(), sendInput: vi.fn() } }));
+vi.mock("./api", () => ({ api: { checkpoints: vi.fn(), checkpoint: vi.fn(), sendInput: vi.fn(), submitFollowUp: vi.fn() } }));
 vi.mock("./memoryViewApi", () => ({ memoryGet: vi.fn() }));
 vi.mock("./ui", () => ({ useToast: () => toast }));
 vi.mock("./Duck", () => ({ Duck: () => null, duckPhrase: () => "idle", poseFor: () => "idle" }));
@@ -82,5 +82,17 @@ it("retains a compact failure link and sends compact only on request", async () 
   fireEvent.click(await screen.findByRole("button", { name: /Latest checkpoint/ })); expect(open).toHaveBeenCalledWith("c");
   const activeContext = screen.getByText("Active context").closest("details")!;
   fireEvent.click(within(activeContext).getByRole("button", { name: "Compact" }));
-  await act(async () => {}); expect(api.sendInput).toHaveBeenCalledWith("one", "/compact\n");
+  await act(async () => {}); expect(api.submitFollowUp).toHaveBeenCalledWith("one", "/compact");
+  expect(api.sendInput).not.toHaveBeenCalled();
+});
+
+it.each(["codex", "claude-code"])("reports failed Compact submission for %s without a success toast", async runtime => {
+  vi.mocked(api.submitFollowUp).mockRejectedValue(new Error("Terminal disconnected"));
+  render(<ContextPanel session={{ ...session, runtime }} />, { wrapper: edition(FULL) });
+  const button = screen.getByRole("button", { name: "Compact" });
+  fireEvent.click(button);
+  await act(async () => {});
+  expect(toast).toHaveBeenCalledWith("Compact failed: Terminal disconnected", "err");
+  expect(toast).not.toHaveBeenCalledWith("Sent /compact to the agent");
+  expect(button).toBeEnabled();
 });

@@ -55,7 +55,7 @@ export function ContextPanel({ session, active = true, onMemory, onCheckpointMem
   async function compact() {
     setActing("compact");
     try {
-      await api.sendInput(session.key, "/compact\n");
+      await api.submitFollowUp(session.key, "/compact");
       toast("Sent /compact to the agent");
     } catch (e) {
       toast(`Compact failed: ${(e as Error).message}`, "err");
