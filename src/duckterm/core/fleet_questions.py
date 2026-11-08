@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
@@ -170,15 +170,24 @@ def current(server: Server, value: Capture, *, observed_binding: str | None = No
         return False
 
 
+async def _checked(check: Callable[[], Awaitable[None] | None]) -> None:
+    pending = check()
+    if pending is not None:
+        await pending
+
+
 async def digest(
-    server: Server, row: dict[str, Any], question: str, check: Callable[[], None] = lambda: None
+    server: Server,
+    row: dict[str, Any],
+    question: str,
+    check: Callable[[], Awaitable[None] | None] = lambda: None,
 ) -> str:
-    check()
+    await _checked(check)
     key = str(row.get("session_key") or "")
     name = str(row.get("name") or row.get("source_app") or key)
     focus = name.lower() in question.lower()
     stats = await server._transcript_stats_for(row)
-    check()
+    await _checked(check)
     meta = [
         f"folder: {row.get('grp') or '-'}",
         f"state: {row.get('state') or '?'}",
@@ -198,9 +207,9 @@ async def digest(
         )
     supervisor = server.orchestrator.get(key)
     if supervisor is not None:
-        check()
+        await _checked(check)
         screen = await asyncio.to_thread(supervisor.screen_text, 120 if focus else 30)
-        check()
+        await _checked(check)
         if screen:
             lines.extend(["recent terminal output:", screen])
     return "\n".join(lines)
@@ -248,9 +257,9 @@ async def prepare(
     value: Capture,
     question: str,
     prior: list[dict[str, Any]],
-    check: Callable[[], None],
+    check: Callable[[], Awaitable[None] | None],
 ) -> Prepared:
-    check()
+    await _checked(check)
     if not value.rows:
         label = "right now"
         if value.scope.kind == "folder":
@@ -278,7 +287,7 @@ async def prepare(
     bounded = clip(joined, max(0, MAX_PROMPT_BYTES - len(overhead.encode())))
     truncated = truncated or bounded != joined
     text = prefix + prompt(question, bounded, previous, value.scope.path)
-    check()
+    await _checked(check)
     return Prepared(text, tuple(str(row["session_key"]) for row in value.rows), truncated)
 
 

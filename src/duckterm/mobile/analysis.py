@@ -36,6 +36,12 @@ CONTEXT_MS = 60000
 MAX_ANSWER_BYTES = 32768
 SWEEP_SECONDS = 30.0
 CHECK_SECONDS = 1.0
+GRANT_WAIT_SECONDS = 0.1
+
+
+class _GrantBusy(AnalysisError):
+    def __init__(self) -> None:
+        super().__init__(503, "analysis_unavailable")
 
 
 def _now() -> int:
@@ -211,10 +217,12 @@ class Analysis:
         self, device: dict[str, Any], scope: fleet.Scope, revision: int | None = None
     ) -> Iterator[dict[str, Any]]:
         required = "analysis:oracle" if scope.kind == "oracle" else "analysis:folder"
+        entered = False
         try:
             with self.grants.authorized_device(
                 device["id"], required, host_id=device["host_id"], lock_timeout=0
             ) as live:
+                entered = True
                 field = "oracle_questions" if scope.kind == "oracle" else "folder_questions"
                 if not self.effective_access(live)[field]:
                     raise AnalysisError(403, "permission_required")
@@ -224,8 +232,24 @@ class Analysis:
                 yield live
         except Denied as exc:
             raise AnalysisError(403, "permission_required") from exc
-        except (OSError, ValueError, KeyError, TimeoutError) as exc:
+        except TimeoutError as exc:
+            if not entered:
+                raise _GrantBusy() from exc
             raise AnalysisError(503, "analysis_unavailable") from exc
+        except (OSError, ValueError, KeyError) as exc:
+            raise AnalysisError(503, "analysis_unavailable") from exc
+
+    async def _retry_grant(self, function: Callable[P, T], *args: P.args, **kwargs: P.kwargs) -> T:
+        """Only retry contention, before the protected operation has begun."""
+        deadline = asyncio.get_running_loop().time() + GRANT_WAIT_SECONDS
+        while True:
+            try:
+                return function(*args, **kwargs)
+            except _GrantBusy:
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    raise
+                await asyncio.sleep(min(0.01, remaining))
 
     def _binding(self, scope: fleet.Scope) -> str:
         try:
@@ -310,7 +334,7 @@ class Analysis:
             self.store.find, device["host_id"], device["id"], request["request_id"], _now()
         )
         if old is not None:
-            self._check(old)
+            await self._retry_grant(self._check, old)
             if old["payload_hash"] != digest:
                 raise AnalysisError(409, "request_conflict")
             return self._response(old)
@@ -366,7 +390,7 @@ class Analysis:
         row = self._store(self.store.find, device["host_id"], device["id"], identifier, _now())
         if row is None:
             raise AnalysisError(404, "request_not_found")
-        self._check(row)
+        await self._retry_grant(self._check, row)
         return self._response(row)
 
     @staticmethod
@@ -439,7 +463,7 @@ class Analysis:
     async def _run(self, row: dict[str, Any]) -> None:
         future: asyncio.Future[Summary] | None = None
         try:
-            self._check_work(row)
+            await self._retry_grant(self._check_work, row)
             scope = self._scope(json.loads(row["scope"]))
             capture = fleet.capture(self.server, scope)
             if capture.binding != row["binding"]:
@@ -461,14 +485,14 @@ class Analysis:
             history = self._store(self.store.history, row, _now())
             prior = [{"q": item["question"], "a": item["answer"]} for item in history]
 
-            def check() -> None:
-                self._check_work(row, capture)
+            async def check() -> None:
+                await self._retry_grant(self._check_work, row, capture)
 
             remaining = min((row["expires_at"] - _now()) / 1000, WORK_MS / 1000)
             prepared = await asyncio.wait_for(
                 fleet.prepare(self.server, capture, row["question"], prior, check), remaining
             )
-            check()
+            await check()
             if prepared.empty_answer is not None:
                 result = fleet.generate(prepared)
             else:
@@ -476,35 +500,45 @@ class Analysis:
                     key = str(self.directory.resolve())
                     self.pool = _POOLS.get(key) or _ProviderPool()
                     _POOLS[key] = self.pool
-                while future is None:
-                    check()
-                    device = {"id": row["device"], "host_id": row["host"]}
+                device = {"id": row["device"], "host_id": row["host"]}
+
+                def submit() -> asyncio.Future[Summary] | None:
+                    self._check_work(row, capture)
                     with self._authorized(device, scope, row["revision"]):
                         self._check_identity(row, capture)
-                        future = self.pool.submit(prepared)
+                        assert self.pool is not None
+                        return self.pool.submit(prepared)
+
+                while future is None:
+                    future = await self._retry_grant(submit)
                     if future is None:
                         await asyncio.sleep(self._poll_delay(row))
                 while not future.done():
                     await asyncio.wait({future}, timeout=self._poll_delay(row))
-                    check()
+                    await check()
                 result = future.result()
-            check()
+            await check()
             if not result.text:
                 raise AnalysisError(503, "provider_unavailable")
             answer = fleet.clip(result.text, MAX_ANSWER_BYTES)
             device = {"id": row["device"], "host_id": row["host"]}
-            with self._authorized(device, scope, row["revision"]):
-                self._check_identity(row, capture)
-                self._store(
-                    self.store.transition,
-                    row,
-                    "complete",
-                    _now(),
-                    answer=answer,
-                    captured_at=row["captured_at"],
-                    source_count=row["source_count"],
-                    truncated=prepared.truncated or answer != result.text,
-                )
+
+            def publish() -> None:
+                self._check_work(row, capture)
+                with self._authorized(device, scope, row["revision"]):
+                    self._check_identity(row, capture)
+                    self._store(
+                        self.store.transition,
+                        row,
+                        "complete",
+                        _now(),
+                        answer=answer,
+                        captured_at=row["captured_at"],
+                        source_count=row["source_count"],
+                        truncated=prepared.truncated or answer != result.text,
+                    )
+
+            await self._retry_grant(publish)
         except asyncio.CancelledError:
             self._terminal(row, "cancelled", "cancelled")
             raise

@@ -10,6 +10,7 @@ from tests.runtime.test_ducky_analysis import ask, phone, raw, run, session, set
 
 from duckterm.core import fleet_questions as fleet
 from duckterm.llm.summarizer import Summary
+from duckterm.mobile import analysis as analysis_module
 from duckterm.mobile import grants as grant_module
 from duckterm.mobile.analysis import AnalysisError
 from duckterm.mobile.grants import Grants
@@ -221,5 +222,78 @@ def test_polling_caps_wait_at_existing_deadline(app, monkeypatch, deadline):
         finally:
             release.set()
         await settled(app.service)
+
+    run(app, scenario)
+
+
+def test_timeout_inside_authorized_operation_is_never_retried(app):
+    device = phone(app)
+    calls = []
+
+    def operation():
+        with app.service._authorized(device, fleet.Scope("oracle")):
+            calls.append(1)
+            raise TimeoutError("operation already started")
+
+    async def scenario():
+        with pytest.raises(AnalysisError, match="analysis_unavailable"):
+            await app.service._retry_grant(operation)
+        assert calls == [1]
+
+    run(app, scenario)
+
+
+@pytest.mark.parametrize("phase", ["pending", "completion", "revocation"])
+def test_brief_contention_does_not_discard_paid_answer_and_revocation_still_wins(
+    app, monkeypatch, phase
+):
+    session(app)
+    device = phone(app)
+    provider_entered, provider_release = threading.Event(), threading.Event()
+    held, unlock = threading.Event(), threading.Event()
+    monkeypatch.setattr(analysis_module, "CHECK_SECONDS", 0.01)
+
+    def provider(*args, **kwargs):
+        provider_entered.set()
+        assert provider_release.wait(5)
+        return Summary("Paid result", "fixture")
+
+    def holder():
+        with Grants(app.root).locked(write=phase == "revocation") as state:
+            if phase == "revocation":
+                state["devices"][device["id"]]["status"] = "revoked"
+            held.set()
+            assert unlock.wait(2)
+
+    monkeypatch.setattr(fleet, "summarize", provider)
+    thread = threading.Thread(target=holder)
+
+    async def scenario():
+        try:
+            payload, _ = await ask(app, device)
+            assert await asyncio.to_thread(provider_entered.wait, 2)
+            thread.start()
+            assert await asyncio.to_thread(held.wait, 1)
+            if phase != "pending":
+                provider_release.set()
+            # The owner loop must keep progressing while another thread owns
+            # the lock. No speculative authorization is granted during retry.
+            for _ in range(3):
+                await asyncio.sleep(0.01)
+                assert raw(app, device, payload)["answer"] is None
+            unlock.set()
+            await asyncio.to_thread(thread.join, 1)
+            provider_release.set()
+            await settled(app.service)
+            result = raw(app, device, payload)
+            if phase == "revocation":
+                assert result["status"] == "cancelled" and result["answer"] is None
+            else:
+                assert result["status"] == "complete" and result["answer"] == "Paid result"
+        finally:
+            unlock.set()
+            provider_release.set()
+            if thread.ident is not None:
+                await asyncio.to_thread(thread.join, 1)
 
     run(app, scenario)
