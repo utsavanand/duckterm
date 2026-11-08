@@ -5920,11 +5920,33 @@ class Server:
             if not text.strip() or len(text.encode()) > 16384:
                 await _write_json(writer, 400, {"error": "text must be 1 to 16384 bytes"})
                 return
+            compact = text.strip() == "/compact"
+
+            def compact_idle() -> bool:
+                row = self.history.session(session_key)
+                return (
+                    row is not None
+                    and row.get("state") == "idle"
+                    and not self.restarts.pending(session_key)
+                )
+
+            # The UI can be stale, and an approval may arrive during the paste gap.
+            # Never use Compact's Enter to answer a busy or approval prompt.
+            if compact and not compact_idle():
+                await _write_json(writer, 409, {"error": "Compact requires an idle session."})
+                return
             # A multiline paste is one prompt. Enter must arrive separately once
             # the harness has left paste mode, not in the same tmux/PTY burst.
             wrote = await supervisor.write_queued_bytes(b"\x1b[200~" + text.encode() + b"\x1b[201~")
             if wrote:
                 await asyncio.sleep(Server._SUBMIT_GAP_S)
+                if compact and not compact_idle():
+                    await _write_json(
+                        writer,
+                        409,
+                        {"error": "Session is no longer idle. Check the terminal before retrying."},
+                    )
+                    return
                 wrote = await supervisor.write_queued_bytes(b"\r")
             if not wrote:
                 await _write_json(
