@@ -238,5 +238,13 @@ subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(30)'])
         os.kill(killed[0], 0)
 
 
-def test_opencode_extra_output_does_not_claim_existing_exact_probe_would_pass():
-    assert discovery.parsed_version("opencode", (VERSION + "\nextra\n").encode()) is None
+@pytest.mark.parametrize("extra", ["", "\nprivate-extra-output"])
+def test_opencode_version_probe_requires_exact_output(tmp_path, extra):
+    binary(tmp_path, "opencode", f"print({(VERSION + extra)!r})\n")
+    result = inspect(tmp_path, "opencode", "opencode")
+    assert result["installed"]
+    assert (result["probe"], result["support"], result["version"]) == (
+        ("unrecognized", "unknown", None) if extra else ("ok", "available", VERSION)
+    )
+    assert result["authentication"] == "not_checked"
+    assert "private-extra-output" not in json.dumps(result)
