@@ -1,4 +1,5 @@
 import XCTest
+import UIKit
 
 /// Uses a disposable host from tests/fixtures/ducky_ui.py, never the user's Mac state.
 @available(iOS 16.4, *)
@@ -341,5 +342,225 @@ final class ChatPolishTests: XCTestCase {
             "Reopening must retain the position within a long reply, not merely its message ID")
         XCTAssertFalse(isVisible(element("conversation-message:formatted-reply"), in: scroll))
         capture("chat-reading-after-reopen")
+    }
+}
+
+/// Forty-eight synthetic sessions, in-memory credentials and transport, no Mac connection.
+@available(iOS 16.4, *)
+final class ConstellationUITests: XCTestCase {
+    private let app = XCUIApplication()
+    override func setUpWithError() throws {
+        continueAfterFailure = false
+        app.launchArguments = ["--ducky-map-ui-fixture"]
+        XCUIDevice.shared.orientation = .portrait
+    }
+    override func tearDownWithError() throws {
+        app.terminate()
+        XCUIDevice.shared.orientation = .portrait
+    }
+    @MainActor private func element(_ id: String) -> XCUIElement {
+        app.descendants(matching: .any).matching(identifier: id).firstMatch
+    }
+    @MainActor private func node(_ name: String) -> XCUIElement {
+        app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", name + ",")).firstMatch
+    }
+    @MainActor private func capture(_ name: String) {
+        // App-only screenshots are portrait-cropped after rotation on iOS 26.
+        let item = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        item.name = name; item.lifetime = .keepAlways; add(item)
+    }
+    @MainActor private func rotate(_ orientation: UIDeviceOrientation) {
+        XCUIDevice.shared.orientation = orientation
+        let landscape = orientation == .landscapeLeft || orientation == .landscapeRight
+        let predicate = NSPredicate { _, _ in (self.app.frame.width > self.app.frame.height) == landscape }
+        expectation(for: predicate, evaluatedWith: nil)
+        waitForExpectations(timeout: 8)
+    }
+    @MainActor private func focusComposer() {
+        let composer = element("conversation-composer")
+        var previous = CGRect.null
+        var stableSince = Date()
+        // Hit-test the settled panel, not coordinates from its insertion animation.
+        expectation(for: NSPredicate { _, _ in
+            guard composer.exists, composer.isHittable else { return false }
+            let frame = composer.frame
+            if frame != previous { previous = frame; stableSince = Date(); return false }
+            return Date().timeIntervalSince(stableSince) > 0.4
+        }, evaluatedWith: nil)
+        waitForExpectations(timeout: 5)
+        composer.tap()
+        XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+    }
+    @MainActor private func openMap() {
+        app.launch()
+        XCTAssertTrue(element("show-map").waitForExistence(timeout: 10))
+        XCTAssertGreaterThanOrEqual(element("show-map").frame.width, 44 - 0.01)
+        XCTAssertGreaterThanOrEqual(element("show-map").frame.height, 44 - 0.01)
+        element("show-map").tap()
+        XCTAssertTrue(app.staticTexts["Turn your phone sideways to see the map"].waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["Show list"].isHittable)
+        capture("map-portrait-guide")
+        rotate(.landscapeLeft)
+        XCTAssertTrue(node("DuckTerm").waitForExistence(timeout: 5))
+    }
+    @MainActor private func tapNode(_ name: String) {
+        let item = node(name)
+        XCTAssertTrue(item.waitForExistence(timeout: 5), "Missing node: \(name)")
+        expectation(for: NSPredicate(format: "hittable == true"), evaluatedWith: item)
+        waitForExpectations(timeout: 5)
+        item.tap()
+    }
+    @MainActor private func allFolders() {
+        app.buttons["All folders"].tap()
+        XCTAssertTrue(node("DuckTerm").waitForExistence(timeout: 5))
+    }
+    @MainActor private func openPrimaryAgent() {
+        tapNode("DuckTerm"); tapNode("Features"); tapNode("Pairing"); tapNode("Pairing engineer")
+        XCTAssertTrue(element("conversation-composer").waitForExistence(timeout: 5))
+        XCTAssertTrue(app.buttons["conversation-close"].isHittable)
+        XCTAssertFalse(app.buttons["conversation-back"].exists, "Embedded chat must not replace the map with list navigation")
+    }
+
+    @MainActor
+    func testFoldersNestedEmptyUngroupedLongNamesAndDenseListStayReachable() {
+        openMap()
+        for name in ["DuckTerm", "Design", "Research", "Personal", "Dense", "Empty", "Ungrouped"] {
+            let item = node(name)
+            XCTAssertTrue(item.exists)
+            XCTAssertGreaterThanOrEqual(item.frame.minX, app.frame.minX - 1)
+            XCTAssertLessThanOrEqual(item.frame.maxX, app.frame.maxX + 1)
+        }
+        capture("map-all-folders")
+        app.buttons["constellation-mode-oracle"].tap()
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "All folders on this Mac")).firstMatch.waitForExistence(timeout: 5))
+        XCTAssertFalse(element("conversation-composer").exists, "The status overview does not imply question access")
+        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@ AND label CONTAINS %@", "Folders", "13")).firstMatch.exists)
+        XCTAssertTrue(app.descendants(matching: .any).matching(NSPredicate(format: "label BEGINSWITH %@ AND label CONTAINS %@", "Empty folders", "2")).firstMatch.exists)
+        capture("map-passive-oracle-overview")
+        app.buttons["constellation-mode-map"].tap()
+        tapNode("Empty")
+        XCTAssertTrue(app.staticTexts["No sessions yet"].waitForExistence(timeout: 5))
+        capture("map-empty-folder")
+        allFolders()
+        tapNode("Ungrouped")
+        XCTAssertTrue(node("Agent 21").waitForExistence(timeout: 5))
+        allFolders()
+        tapNode("DuckTerm"); tapNode("Features"); tapNode("Pairing")
+        XCTAssertTrue(node("Pairing engineer").waitForExistence(timeout: 5))
+        capture("map-nested-folder")
+        allFolders()
+        tapNode("Research")
+        tapNode("An exceptionally long folder name for viewport verification")
+        XCTAssertTrue(node("A deliberately long agent name for layout verification").waitForExistence(timeout: 5))
+        capture("map-long-names")
+        allFolders()
+        tapNode("Dense")
+        app.buttons["Show as list"].tap()
+        let last = node("Agent 47")
+        let list = app.scrollViews.firstMatch
+        for _ in 0..<15 {
+            if last.isHittable { break }
+            list.swipeUp(velocity: .fast)
+        }
+        XCTAssertTrue(last.isHittable, "Every dense-folder member must remain reachable through the list")
+        capture("map-dense-list")
+        rotate(.landscapeRight)
+        XCTAssertTrue(app.buttons["Show as map"].isHittable)
+        app.buttons["Show as map"].tap()
+        capture("map-landscape-right")
+    }
+
+    @MainActor
+    func testEmbeddedDraftSurvivesSwitchAndRotationThenQueuesAboveKeyboard() {
+        openMap(); openPrimaryAgent()
+        capture("map-agent-conversation")
+        let composer = element("conversation-composer")
+        focusComposer(); composer.typeText("Keep my first draft\nand its second line")
+        XCTAssertTrue(app.buttons["conversation-send"].isHittable)
+        let keyboard = app.keyboards.firstMatch
+        XCTAssertTrue(keyboard.exists)
+        XCTAssertLessThanOrEqual(composer.frame.maxY, keyboard.frame.minY + 1)
+        XCTAssertLessThanOrEqual(app.buttons["conversation-send"].frame.maxY, keyboard.frame.minY + 1)
+        capture("map-typing")
+        app.buttons["conversation-close"].tap()
+        tapNode("Mobile reviewer")
+        XCTAssertNotEqual(composer.value as? String, "Keep my first draft\nand its second line")
+        focusComposer(); composer.typeText("A separate second-agent draft")
+        app.buttons["conversation-close"].tap()
+        tapNode("Pairing engineer")
+        XCTAssertEqual(composer.value as? String, "Keep my first draft\nand its second line")
+        rotate(.portrait)
+        XCTAssertTrue(app.buttons["Show list"].waitForExistence(timeout: 5))
+        rotate(.landscapeRight)
+        XCTAssertTrue(composer.waitForExistence(timeout: 5))
+        XCTAssertEqual(composer.value as? String, "Keep my first draft\nand its second line")
+        focusComposer()
+        XCTAssertTrue(app.buttons["conversation-send"].isHittable)
+        app.buttons["conversation-send"].tap()
+        XCTAssertTrue(app.staticTexts["Queued on your Mac"].waitForExistence(timeout: 10))
+        composer.typeText("Next draft")
+        XCTAssertEqual(composer.value as? String, "Next draft")
+        capture("map-queued-keyboard")
+        app.buttons["conversation-close"].tap()
+        XCTAssertTrue(node("Pairing engineer").waitForExistence(timeout: 5))
+        XCTAssertFalse(element("global-tabs").exists)
+        rotate(.portrait)
+        app.buttons["Show list"].tap()
+        XCTAssertTrue(element("global-header").waitForExistence(timeout: 5))
+        XCTAssertTrue(element("global-tabs").exists)
+    }
+
+    @MainActor
+    func testStaleMapKeepsLastKnownDataButDisablesSending() {
+        app.launchArguments.append("--ducky-map-ui-stale")
+        openMap(); openPrimaryAgent()
+        let composer = element("conversation-composer")
+        focusComposer(); composer.typeText("An unsent stale draft")
+        XCTAssertTrue(app.staticTexts["Last known"].waitForExistence(timeout: 30))
+        XCTAssertFalse(app.buttons["conversation-send"].isEnabled)
+        XCTAssertEqual(composer.value as? String, "An unsent stale draft")
+        capture("map-stale-access")
+    }
+
+    @MainActor
+    func testRevocationRemovesConversationAndMapData() {
+        app.launchArguments.append("--ducky-map-ui-revoked")
+        openMap(); openPrimaryAgent()
+        let composer = element("conversation-composer")
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: composer)
+        waitForExpectations(timeout: 30)
+        XCTAssertFalse(node("Pairing engineer").exists)
+        XCTAssertFalse(app.staticTexts["Scope checked"].exists)
+        XCTAssertFalse(app.buttons["conversation-send"].exists)
+        XCTAssertTrue(app.staticTexts["Check access on your Mac"].waitForExistence(timeout: 5))
+        XCTAssertFalse(element("show-map").exists)
+        capture("map-revoked-access")
+    }
+
+    /// The runner configures the dedicated device; the fixture verifies the real UIKit motion setting.
+    @MainActor
+    func testLargerTextAndSystemReducedMotionKeepComposerUsable() throws {
+        try XCTSkipUnless(UIAccessibility.isReduceMotionEnabled,
+            "Run on the dedicated device with system Reduce Motion enabled")
+        app.launchArguments.append("--ducky-map-ui-reduced-motion")
+        openMap(); openPrimaryAgent()
+        let composer = element("conversation-composer")
+        focusComposer(); composer.typeText("Larger text\nSecond line")
+        let send = app.buttons["conversation-send"]
+        XCTAssertTrue(send.isHittable)
+        XCTAssertTrue(app.buttons["conversation-close"].isHittable)
+        XCTAssertLessThanOrEqual(composer.frame.maxY, app.keyboards.firstMatch.frame.minY + 1)
+        XCTAssertLessThanOrEqual(send.frame.maxY, app.keyboards.firstMatch.frame.minY + 1)
+        capture("map-larger-text-reduced-motion-typing")
+        send.tap()
+        XCTAssertTrue(app.staticTexts["Queued on your Mac"].waitForExistence(timeout: 10))
+        capture("map-larger-text-reduced-motion-queued")
+        app.buttons["constellation-back"].tap()
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.keyboards.firstMatch)
+        waitForExpectations(timeout: 5)
+        XCTAssertTrue(app.buttons["conversation-close"].exists, "Dismissing the keyboard keeps the conversation open")
+        expectation(for: NSPredicate(format: "hittable == true"), evaluatedWith: app.staticTexts["Queued on your Mac"])
+        waitForExpectations(timeout: 5)
+        capture("map-larger-text-reduced-motion-receipt")
     }
 }
