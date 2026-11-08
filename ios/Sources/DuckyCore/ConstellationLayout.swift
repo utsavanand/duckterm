@@ -36,38 +36,71 @@ public struct ConstellationNode: Identifiable, Equatable {
 /// sessions are dropped, ended ones count, explicit empty folders stay, and
 /// Ungrouped exists only while it holds sessions.
 public struct ConstellationTree: Equatable {
+    public static let maximumHierarchyDepth = 32
+    public static let maximumExpandedNodes = 4096
+    public static let maximumPathBytes = 1024
+    public static let maximumLabelBytes = 256
     public static func folderID(_ path: String) -> String { "folder:" + path }
     public static func agentID(_ id: String) -> String { "session:" + id }
+    /// Only the presentation is shortened. IDs, folder paths and agents remain unchanged.
+    public static func displayLabel(_ value: String) -> String {
+        var bytes = Array(value.utf8.prefix(maximumLabelBytes))
+        while !bytes.isEmpty {
+            if let text = String(bytes: bytes, encoding: .utf8) { return text }
+            bytes.removeLast() // At most three incomplete trailing UTF-8 bytes.
+        }
+        return ""
+    }
     public let nodes: [String: ConstellationNode]
     public let roots: [String]
     /// Parents before children, siblings in display order.
     public let order: [String]
+    /// Oversize hierarchies retain actual folders/sessions in the existing list,
+    /// without synthesizing ancestors or running the map's packing search.
+    public let requiresListFallback: Bool
 
     public init(sessions: [AgentStatus], folders: [String]) {
         let kept = sessions.filter { !["archived", "merged"].contains($0.state) }
         var paths = Set(folders.filter { !$0.isEmpty })
         for s in kept where !s.folder.isEmpty { paths.insert(s.folder) }
-        for path in paths {
-            let pieces = path.split(separator: "/", omittingEmptySubsequences: false)
-            if pieces.count > 1 { for i in 1..<pieces.count { paths.insert(pieces.prefix(i).joined(separator: "/")) } }
+        let actualPaths = paths
+        let hasUngrouped = kept.contains { $0.folder.isEmpty }
+        let remaining = Self.maximumExpandedNodes - kept.count - (hasUngrouped ? 1 : 0)
+        var flat = paths.count > remaining || paths.contains { path in
+            // Check before split/prefix expansion: even a small response can
+            // contain thousands of slash-separated components.
+            path.utf8.count > Self.maximumPathBytes ||
+                path.utf8.lazy.filter { $0 == 47 }.prefix(Self.maximumHierarchyDepth).count >= Self.maximumHierarchyDepth
         }
+        if !flat {
+            expansion: for path in actualPaths {
+                let pieces = path.split(separator: "/", omittingEmptySubsequences: false)
+                if pieces.count > 1 {
+                    for i in 1..<pieces.count {
+                        paths.insert(pieces.prefix(i).joined(separator: "/"))
+                        if paths.count > remaining { flat = true; break expansion }
+                    }
+                }
+            }
+        }
+        if flat { paths = actualPaths }
+        requiresListFallback = flat
         func parentPath(_ path: String) -> String? { path.lastIndex(of: "/").map { String(path[..<$0]) } }
         func byName(_ a: String, _ b: String) -> Bool {
             let c = a.localizedCaseInsensitiveCompare(b)
             return c == .orderedSame ? a < b : c == .orderedAscending
         }
         var nodes: [String: ConstellationNode] = [:]
-        let hasUngrouped = kept.contains { $0.folder.isEmpty }
         let allPaths = paths.union(hasUngrouped ? [""] : [])
         for path in allPaths {
-            let depth = path.isEmpty ? 1 : path.split(separator: "/", omittingEmptySubsequences: false).count
-            let name = path.isEmpty ? "Ungrouped" : String(path.split(separator: "/", omittingEmptySubsequences: false).last ?? "")
-            nodes[Self.folderID(path)] = .init(id: Self.folderID(path), name: name, kind: .folder(path: path),
-                                               parentID: parentPath(path).map(Self.folderID), depth: depth)
+            let depth = flat || path.isEmpty ? 1 : path.split(separator: "/", omittingEmptySubsequences: false).count
+            let name = path.isEmpty ? "Ungrouped" : flat ? path : String(path.split(separator: "/", omittingEmptySubsequences: false).last ?? "")
+            nodes[Self.folderID(path)] = .init(id: Self.folderID(path), name: Self.displayLabel(name), kind: .folder(path: path),
+                                               parentID: flat ? nil : parentPath(path).map(Self.folderID), depth: depth)
         }
         for s in kept {
             let folder = Self.folderID(s.folder)
-            nodes[Self.agentID(s.id)] = .init(id: Self.agentID(s.id), name: s.name, kind: .agent(s),
+            nodes[Self.agentID(s.id)] = .init(id: Self.agentID(s.id), name: Self.displayLabel(s.name), kind: .agent(s),
                                               parentID: folder, depth: (nodes[folder]?.depth ?? 0) + 1)
             var cursor: String? = folder
             let status = ConstellationStatus(state: s.state)
@@ -81,7 +114,7 @@ public struct ConstellationTree: Equatable {
             }
         }
         var childFolders: [String: [String]] = [:], childAgents: [String: [AgentStatus]] = [:]
-        for path in allPaths where !path.isEmpty {
+        for path in allPaths where !flat && !path.isEmpty {
             if let parent = parentPath(path) { childFolders[parent, default: []].append(path) }
         }
         for s in kept { childAgents[s.folder, default: []].append(s) }
@@ -93,7 +126,7 @@ public struct ConstellationTree: Equatable {
             }.map { Self.agentID($0.id) }
             nodes[Self.folderID(path)]?.children = folders + agents
         }
-        let tops = allPaths.filter { !$0.isEmpty && !$0.contains("/") }.sorted(by: byName)
+        let tops = allPaths.filter { !$0.isEmpty && (flat || !$0.contains("/")) }.sorted(by: byName)
         roots = (hasUngrouped ? [Self.folderID("")] : []) + tops.map(Self.folderID)
         var order: [String] = [], queue = roots
         while !queue.isEmpty {
@@ -114,6 +147,20 @@ public struct ConstellationTree: Equatable {
         var out: [String] = [], cursor = nodes[id]?.parentID
         while let c = cursor, let node = nodes[c] { out.insert(c, at: 0); cursor = node.parentID }
         return out
+    }
+}
+
+/// Rebuild only when snapshot content changes, never from an animation frame.
+public struct ConstellationProjection {
+    private var sessions: [AgentStatus] = []
+    private var folders: [String] = []
+    public private(set) var tree = ConstellationTree(sessions: [], folders: [])
+    public init() {}
+    @discardableResult public mutating func update(sessions: [AgentStatus], folders: [String]) -> Bool {
+        guard sessions != self.sessions || folders != self.folders else { return false }
+        self.sessions = sessions; self.folders = folders
+        tree = ConstellationTree(sessions: sessions, folders: folders)
+        return true
     }
 }
 
@@ -200,7 +247,7 @@ public struct ConstellationLayout: Equatable {
     public var dense = false
 
     /// Rough width of an 11pt name; the app passes a measured one.
-    public static func approxLabelWidth(_ text: String) -> Double { min(110, Double(text.count) * 5.9) + 4 }
+    public static func approxLabelWidth(_ text: String) -> Double { min(110, Double(ConstellationTree.displayLabel(text).count) * 5.9) + 4 }
 
     /// Folder names carry a count line ("12 sessions", "3 need you") that can be wider than the name.
     public static func folderLabelWidth(_ name: String, measure: (String) -> Double) -> Double { max(measure(name), measure("00 need you")) }
@@ -209,6 +256,15 @@ public struct ConstellationLayout: Equatable {
 
     public init(tree: ConstellationTree, nav: ConstellationNav, selectedAgent: String?, map: CGRect,
                 measure: @escaping (String) -> Double = ConstellationLayout.approxLabelWidth) {
+        if tree.requiresListFallback {
+            self.map = map
+            dense = true
+            if nav.mode == .oracle {
+                placements[Self.oracleID] = .init(x: Double(map.midX), y: Double(map.midY), r: 15,
+                                                 alpha: 1, role: .oracle, labelled: true)
+            }
+            return
+        }
         var b = Builder(tree: tree, nav: nav, map: map, measure: measure)
         b.build()
         placements = b.out

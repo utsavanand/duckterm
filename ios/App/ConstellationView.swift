@@ -23,9 +23,9 @@ private enum Sky {
 
 private let labelFont = UIFont.systemFont(ofSize: 11)
 /// Stable per-id phase; String.hashValue changes every launch.
-private func phase(_ id: String) -> Double { Double(id.unicodeScalars.reduce(7) { ($0 &* 31 &+ Int($1.value)) % 6283 }) / 1000 }
+private func phase(_ id: String) -> Double { Double(id.unicodeScalars.prefix(256).reduce(7) { ($0 &* 31 &+ Int($1.value)) % 6283 }) / 1000 }
 private func measureLabel(_ text: String) -> Double {
-    min(110, Double((text as NSString).size(withAttributes: [.font: labelFont]).width.rounded(.up))) + 4
+    min(110, Double((ConstellationTree.displayLabel(text) as NSString).size(withAttributes: [.font: labelFont]).width.rounded(.up))) + 4
 }
 
 /// Optional landscape map of folders and agents. Selection lives in SessionModel;
@@ -58,6 +58,7 @@ struct ConstellationView<AgentConversation: View, AssistantConversation: View>: 
     }
 
     @State private var nav = ConstellationNav()
+    @State private var projection = ConstellationProjection()
     @State private var showList = false
     @State private var from = ConstellationLayout()
     @State private var to = ConstellationLayout()
@@ -68,9 +69,7 @@ struct ConstellationView<AgentConversation: View, AssistantConversation: View>: 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
 
-    private var tree: ConstellationTree {
-        ConstellationTree(sessions: model.snapshot?.sessions ?? [], folders: model.snapshot?.folders ?? [])
-    }
+    private var tree: ConstellationTree { projection.tree }
     private var selectedAgent: String? { nav.mode == .map ? model.selectedSessionID : nil }
     private var panelsOpen: Bool { nav.mode == .oracle || nav.asking || selectedAgent != nil }
     private var chatOpen: Bool { nav.mode == .oracle ? oracleQuestionsAvailable : nav.asking || selectedAgent != nil }
@@ -93,8 +92,8 @@ struct ConstellationView<AgentConversation: View, AssistantConversation: View>: 
         .background(Sky.background.ignoresSafeArea())
         .foregroundStyle(Sky.text)
         .tint(Sky.mint)
-        .onAppear { reconcile() }
-        .onChange(of: model.snapshot?.generatedAt) { _ in reconcile() }
+        .onAppear { updateProjection() }
+        .onChange(of: SnapshotContent(model.snapshot)) { _ in updateProjection() }
         .onChange(of: model.selectedSessionID) { _ in reconcile() }
     }
 
@@ -126,7 +125,7 @@ struct ConstellationView<AgentConversation: View, AssistantConversation: View>: 
                     .frame(width: 44, height: 44).contentShape(Rectangle())
             }
             .foregroundStyle(to.dense && !showList ? Sky.mint : Sky.muted)
-            .disabled(nav.mode == .oracle)
+            .disabled(nav.mode == .oracle || tree.requiresListFallback)
             .accessibilityLabel(showList ? "Show as map" : "Show as list")
             .accessibilityIdentifier("constellation-list-toggle")
         }
@@ -201,7 +200,7 @@ struct ConstellationView<AgentConversation: View, AssistantConversation: View>: 
     private func stageView(_ frame: ConstellationFrame) -> some View {
         ZStack(alignment: .topLeading) {
             if frame.showsMap {
-                if showList && nav.mode == .map {
+                if (showList || tree.requiresListFallback) && nav.mode == .map {
                     memberList.frame(width: frame.map.width + 16, height: frame.map.height + 6).offset(x: frame.map.minX - 8)
                 } else {
                     mapLayer
@@ -255,6 +254,22 @@ struct ConstellationView<AgentConversation: View, AssistantConversation: View>: 
         let nav: ConstellationNav
         let selected: String?
         let map: CGRect
+    }
+
+    private struct SnapshotContent: Equatable {
+        let sessions: [AgentStatus]
+        let folders: [String]
+        init(_ snapshot: HostSnapshot?) {
+            sessions = snapshot?.sessions ?? []
+            folders = snapshot?.folders ?? []
+        }
+    }
+
+    private func updateProjection() {
+        let content = SnapshotContent(model.snapshot)
+        projection.update(sessions: content.sessions, folders: content.folders)
+        if tree.requiresListFallback { showList = true }
+        reconcile()
     }
 
     private func relayout(_ map: CGRect) {
@@ -481,8 +496,8 @@ struct ConstellationView<AgentConversation: View, AssistantConversation: View>: 
 
     private func accessibilityName(_ node: ConstellationNode) -> String {
         if let agent = node.agent {
-            let folder = agent.folder.isEmpty ? "Ungrouped" : agent.folder
-            return "\(agent.name), \(agent.stateLabel), in \(folder)"
+            let folder = agent.folder.isEmpty ? "Ungrouped" : ConstellationTree.displayLabel(agent.folder)
+            return "\(node.name), \(agent.stateLabel), in \(folder)"
         }
         var parts = [node.name, node.total == 0 ? "empty" : "\(node.total) session\(node.total == 1 ? "" : "s")"]
         if node.waiting > 0 { parts.append("\(node.waiting) need you") }
@@ -512,9 +527,9 @@ struct ConstellationView<AgentConversation: View, AssistantConversation: View>: 
                 fact("Ended", "\(folder.ended)")
             } else if let agent = model.selectedSession {
                 let status = ConstellationStatus(state: agent.state)
-                title(agent.name, sub: agent.stateLabel, color: status == .waiting ? Sky.amber : status == .busy ? Sky.blue : Sky.muted, dot: Sky.status(status))
-                detail("Harness", agent.runtimeLabel)
-                detail("Folder", agent.folder.isEmpty ? "Ungrouped" : agent.folder.replacingOccurrences(of: "/", with: " / "))
+                title(ConstellationTree.displayLabel(agent.name), sub: agent.stateLabel, color: status == .waiting ? Sky.amber : status == .busy ? Sky.blue : Sky.muted, dot: Sky.status(status))
+                detail("Harness", ConstellationTree.displayLabel(agent.runtimeLabel))
+                detail("Folder", agent.folder.isEmpty ? "Ungrouped" : ConstellationTree.displayLabel(agent.folder).replacingOccurrences(of: "/", with: " / "))
                 detail("Last seen", lastSeen(agent.observedAt) + (stale ? " · last known" : ""))
             }
         }
@@ -528,7 +543,7 @@ struct ConstellationView<AgentConversation: View, AssistantConversation: View>: 
         }
         if nav.asking, let f = focusedFolder { return "\(f.total) sessions · \(f.waiting) need you · includes subfolders" }
         // The chat header already shows harness and status; the strip adds where and when.
-        if let a = model.selectedSession { return "\(a.folder.isEmpty ? "Ungrouped" : a.folder.replacingOccurrences(of: "/", with: " / ")) · seen \(lastSeen(a.observedAt))" }
+        if let a = model.selectedSession { return "\(a.folder.isEmpty ? "Ungrouped" : ConstellationTree.displayLabel(a.folder).replacingOccurrences(of: "/", with: " / ")) · seen \(lastSeen(a.observedAt))" }
         return nil
     }
 

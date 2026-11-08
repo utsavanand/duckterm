@@ -309,3 +309,112 @@ final class ConstellationMotionTests: XCTestCase {
         XCTAssertFalse(short.showsMap)
     }
 }
+
+final class ConstellationBoundsTests: XCTestCase {
+    func testDepthBoundaryKeepsNormalHierarchyAndFlattensBeforeExpansion() {
+        let path = Array(repeating: "a", count: 32).joined(separator: "/")
+        let normal = ConstellationTree(sessions: [session("normal", path)], folders: [])
+        XCTAssertFalse(normal.requiresListFallback)
+        XCTAssertEqual(normal.folderCount, 32)
+        XCTAssertEqual(normal.ancestors(of: a("normal")).count, 32)
+
+        let deep = Array(repeating: "a", count: 3000).joined(separator: "/")
+        let value = session("same-agent", deep, "waiting")
+        let bounded = ConstellationTree(sessions: [value], folders: ["Explicit empty", deep])
+        XCTAssertTrue(bounded.requiresListFallback)
+        XCTAssertEqual(bounded.nodes.count, 3, "Only actual folders plus the original agent survive")
+        XCTAssertEqual(bounded.nodes[f(deep)]?.folderPath, deep)
+        XCTAssertEqual(bounded.nodes[a("same-agent")]?.agent, value)
+        XCTAssertEqual(bounded.ancestors(of: a("same-agent")), [f(deep)])
+        XCTAssertEqual(bounded.nodes[f(deep)]?.waiting, 1)
+        XCTAssertNil(bounded.nodes[f("a")], "Do not synthesize thousands of prefixes")
+    }
+
+    func testExpandedNodeBudgetFallsBackWithoutLosingActualFolders() {
+        func path(_ i: Int) -> String { (["root-\(i)"] + Array(repeating: "a", count: 31)).joined(separator: "/") }
+        let paths = (0..<129).map(path)
+        let boundary = ConstellationTree(sessions: [], folders: Array(paths.prefix(128)))
+        XCTAssertFalse(boundary.requiresListFallback)
+        XCTAssertEqual(boundary.nodes.count, 4096)
+        let bounded = ConstellationTree(sessions: [], folders: paths)
+        XCTAssertTrue(bounded.requiresListFallback)
+        XCTAssertEqual(Set(bounded.roots), Set(paths.map(f)))
+        XCTAssertEqual(bounded.nodes.count, paths.count)
+        XCTAssertEqual(bounded.folderCount, paths.count)
+    }
+
+    func testFlatFallbackPreservesProtocolMaximumActualSessionsAndFolders() {
+        let long = String(repeating: "a/", count: 40)
+        let sessions = (0..<1000).map { session("agent-\($0)", long + "session-\($0)", $0 % 2 == 0 ? "busy" : "terminated") }
+        let folders = (0..<1000).map { "Empty-\($0)" }
+        let tree = ConstellationTree(sessions: sessions, folders: folders)
+        XCTAssertTrue(tree.requiresListFallback)
+        XCTAssertEqual(tree.nodes.count, 3000)
+        XCTAssertEqual(tree.roots.count, 2000)
+        XCTAssertEqual(tree.order.count, 3000)
+        XCTAssertEqual(tree.roots.reduce(0) { $0 + tree.nodes[$1]!.total }, 1000)
+        XCTAssertEqual(tree.roots.reduce(0) { $0 + tree.nodes[$1]!.busy }, 500)
+        XCTAssertEqual(tree.roots.reduce(0) { $0 + tree.nodes[$1]!.ended }, 500)
+        XCTAssertEqual(Set(tree.nodes.values.compactMap { $0.agent?.id }), Set(sessions.map(\.id)))
+        XCTAssertTrue(folders.allSatisfy { tree.nodes[f($0)] != nil })
+    }
+
+    func testOversizeHierarchySkipsPackingAndKeepsOracleFacts() {
+        let deep = Array(repeating: "a", count: 3000).joined(separator: "/")
+        let tree = ConstellationTree(sessions: [session("agent", deep)], folders: ["Empty", deep])
+        let map = CGRect(x: 8, y: 2, width: 640, height: 300)
+        let forbidden: (String) -> Double = { _ in XCTFail("Fallback must not enter measured packing"); return 0 }
+        let layout = ConstellationLayout(tree: tree, nav: .init(), selectedAgent: "agent", map: map, measure: forbidden)
+        XCTAssertTrue(layout.dense)
+        XCTAssertTrue(layout.placements.isEmpty)
+        var oracle = ConstellationNav(); oracle.mode = .oracle
+        let overview = ConstellationLayout(tree: tree, nav: oracle, selectedAgent: nil, map: map, measure: forbidden)
+        XCTAssertEqual(Set(overview.placements.keys), [ConstellationLayout.oracleID])
+        XCTAssertEqual(tree.folderCount, 2)
+        XCTAssertEqual(tree.emptyFolderCount, 1)
+    }
+
+    func testUTF8LabelAndPathBoundsNeverAlterRoutingIdentity() {
+        let path = String(repeating: "p", count: 1024)
+        XCTAssertFalse(ConstellationTree(sessions: [], folders: [path]).requiresListFallback)
+        XCTAssertTrue(ConstellationTree(sessions: [], folders: [path + "p"]).requiresListFallback)
+        let name = "a" + String(repeating: "🦆", count: 10000)
+        let original = session("id-" + name, path + "p", name: name)
+        let tree = ConstellationTree(sessions: [original], folders: [])
+        let projected = tree.nodes[a(original.id)]!
+        XCTAssertLessThanOrEqual(projected.name.utf8.count, 256)
+        XCTAssertFalse(projected.name.contains("�"))
+        XCTAssertEqual(projected.agent, original)
+        XCTAssertEqual(tree.nodes[f(original.folder)]?.folderPath, original.folder)
+        XCTAssertEqual(ConstellationTree.displayLabel("Regular name"), "Regular name")
+    }
+
+    func testProjectionReusesUnchangedContentAndDropsOldHostState() {
+        var projection = ConstellationProjection()
+        let old = session("same-id", "Old folder", "waiting")
+        XCTAssertTrue(projection.update(sessions: [old], folders: ["Empty"]))
+        let initial = projection.tree
+        for _ in 0..<120 {
+            XCTAssertFalse(projection.update(sessions: [old], folders: ["Empty"]))
+            XCTAssertEqual(projection.tree, initial)
+        }
+        let changed = session("same-id", "New folder", "busy")
+        XCTAssertTrue(projection.update(sessions: [changed], folders: []))
+        XCTAssertNil(projection.tree.nodes[f("Old folder")])
+        XCTAssertEqual(projection.tree.nodes[a("same-id")]?.agent, changed)
+        XCTAssertTrue(projection.update(sessions: [], folders: []))
+        XCTAssertTrue(projection.tree.nodes.isEmpty)
+    }
+
+    func testFallbackNavigationKeepsOriginalAgentAndFolderIdentity() {
+        let deep = Array(repeating: "a", count: 3000).joined(separator: "/")
+        let tree = ConstellationTree(sessions: [session("first", deep), session("second", "Other")], folders: [])
+        var nav = ConstellationNav(); nav.focus(f(deep), in: tree)
+        XCTAssertEqual(nav.path, [f(deep)])
+        XCTAssertEqual(nav.reconcile(with: tree, selectedSession: "first"), "first")
+        XCTAssertEqual(nav.path, [f(deep)])
+        let gone = ConstellationTree(sessions: [session("second", "Other")], folders: [deep])
+        XCTAssertNil(nav.reconcile(with: gone, selectedSession: "first"))
+        XCTAssertEqual(nav.path, [f(deep)], "Never replace a deleted selection with another agent")
+    }
+}
