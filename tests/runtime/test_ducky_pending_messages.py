@@ -266,18 +266,18 @@ def test_terminal_receipts_disappear_without_injecting_history(queued, status):
 
 
 @pytest.mark.parametrize(
-    "condition,expected",
+    "condition,expected,desktop_expected",
     [
-        ("idle", "safe_prompt"),
-        ("waiting", "safe_prompt"),
-        ("busy", "agent_busy"),
-        ("approval", "approval_pending"),
-        ("typing", "desktop_input"),
-        ("delivering", "delivering"),
+        ("idle", "safe_prompt", "safe_prompt"),
+        ("waiting", "safe_prompt", "safe_prompt"),
+        ("busy", "agent_busy", "agent_busy"),
+        ("approval", "approval_pending", "approval_pending"),
+        ("typing", "safe_prompt", "desktop_input"),
+        ("delivering", "delivering", "delivering"),
     ],
 )
 def test_known_wait_reasons_enrich_all_phone_receipt_paths(
-    queued, monkeypatch, condition, expected
+    queued, monkeypatch, condition, expected, desktop_expected
 ):
     server, root, service, device, token, sup, _ = queued
     bridge = Bridge(server, root, service)
@@ -315,7 +315,14 @@ def test_known_wait_reasons_enrich_all_phone_receipt_paths(
         result = (await service.receipts(device, "a"))[0]
         assert result == found["receipt"]
         assert result["expires_at"] == accepted["receipt"]["created_at"] + TTL_MS
-        assert (await read(server))[1]["mobile_messages"][0]["wait_reason"] == expected
+        code, replayed = await bridge.dispatch(
+            "POST",
+            "/v2/messages",
+            {"authorization": "Ducky " + token},
+            json.dumps(payload).encode(),
+        )
+        assert code == 202 and replayed["receipt"]["wait_reason"] == expected
+        assert (await read(server))[1]["mobile_messages"][0]["wait_reason"] == desktop_expected
 
     asyncio.run(run())
 
@@ -380,16 +387,20 @@ def test_unavailable_status_is_not_reported_as_an_empty_queue(queued, monkeypatc
     asyncio.run(run())
 
 
-def test_conversation_wire_receipt_is_additive_without_changing_transcript(queued):
-    server, root, service, device, token, _, _ = queued
+@pytest.mark.parametrize("typing", [False, True])
+def test_conversation_wire_receipt_is_additive_without_changing_transcript(queued, typing):
+    server, root, service, device, token, sup, _ = queued
     source = conversation_fixtures.source((server, root), runtime="codex", state="idle")
     conversation_fixtures.write(source, [conversation_fixtures.codex("assistant", "Fixture reply")])
     original = source.read_bytes()
     bridge = Bridge(server, root, service)
 
     async def run():
+        if typing:
+            sup.last_owner_input_ms = int(time.time() * 1000)
         payload = fixtures.request(service, device)
         accepted = await service.accept(device, payload)
+        assert accepted["wait_reason"] == "safe_prompt"
         code, result = await bridge.dispatch(
             "GET", "/v2/conversation?session_id=a", {"authorization": "Ducky " + token}, b""
         )
@@ -411,6 +422,63 @@ def test_conversation_wire_receipt_is_additive_without_changing_transcript(queue
             "updated_at": accepted["created_at"],
         }
         assert source.read_bytes() == original
+
+    asyncio.run(run())
+
+
+def test_busy_grant_lock_returns_503_without_sleep_or_queue_mutation(queued, monkeypatch):
+    server, _, service, device, _, _, _ = queued
+    locked, release = threading.Event(), threading.Event()
+    lock_errors = []
+
+    def hold_grant_lock():
+        try:
+            with service.grants.locked():
+                locked.set()
+                if not release.wait(5):
+                    raise AssertionError("Fixture grant lock was not released")
+        except BaseException as error:
+            lock_errors.append(error)
+
+    async def run():
+        payloads = [fixtures.request(service, device, f"Queued fixture {i}") for i in range(5)]
+        for payload in payloads:
+            await service.accept(device, payload)
+        no_terminal_probes(monkeypatch)
+        before = service.store.path.read_bytes()
+        grants_before = service.grants.path.read_bytes()
+        loop_thread = threading.get_ident()
+        sleep = time.sleep
+        sleeps = []
+
+        def reject_loop_sleep(seconds):
+            if threading.get_ident() == loop_thread:
+                sleeps.append(seconds)
+                pytest.fail("A pending-message read must not sleep on the server event loop")
+            sleep(seconds)
+
+        holder = threading.Thread(target=hold_grant_lock)
+        holder.start()
+        try:
+            assert await asyncio.to_thread(locked.wait, 3)
+            with monkeypatch.context() as scoped:
+                scoped.setattr(time, "sleep", reject_loop_sleep)
+                assert await read(server) == (503, {"error": "mobile_status_unavailable"})
+            assert sleeps == []
+            assert service.store.path.read_bytes() == before
+            assert service.grants.path.read_bytes() == grants_before
+        finally:
+            release.set()
+            await asyncio.to_thread(holder.join, 3)
+        assert not holder.is_alive() and not lock_errors
+        code, result = await read(server)
+        assert code == 200
+        assert [row["request_id"] for row in result["mobile_messages"]] == [
+            payload["request_id"] for payload in payloads
+        ]
+        service.grants.revoke(device["id"])
+        assert await read(server) == (200, {"mobile_messages": []})
+        assert service.store.path.read_bytes() == before
 
     asyncio.run(run())
 

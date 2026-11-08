@@ -244,13 +244,17 @@ class Messages:
         rows = await asyncio.to_thread(self.store.for_session, device["id"], key)
         return [self.describe_receipt(row) for row in rows]
 
-    def describe_receipt(self, row: dict[str, Any]) -> dict[str, Any]:
+    def describe_receipt(
+        self, row: dict[str, Any], *, include_desktop_activity: bool = False
+    ) -> dict[str, Any]:
         result = receipt(row)
         if row["status"] == "queued":
             # Advisory enrichment must never turn a durably accepted POST
             # into a rejection if the session is closing concurrently.
             with contextlib.suppress(Exception):
                 result["wait_reason"] = self.wait_reason(row["session_id"])
+            if not include_desktop_activity and result["wait_reason"] == "desktop_input":
+                result["wait_reason"] = "safe_prompt"
         return result
 
     def wait_reason(self, key: str) -> str:
@@ -285,8 +289,9 @@ class Messages:
             try:
                 # Serialize this short publication against device revocation.
                 # Target/config checks stay on the owning event-loop thread.
+                # Contention must propagate as 503, never sleep this loop.
                 with self.grants.authorized_device(
-                    row["device"], "session:send", host_id=row["host"], lock_timeout=0.1
+                    row["device"], "session:send", host_id=row["host"], lock_timeout=0
                 ):
                     current, _ = self.target(key)
                     if (
@@ -297,7 +302,7 @@ class Messages:
                         return []
                     if row["created_at"] + TTL_MS <= time.time() * 1000:
                         continue
-                    item = self.describe_receipt(row)
+                    item = self.describe_receipt(row, include_desktop_activity=True)
                     del item["reason"]
                     result.append(item)
             except Denied:
