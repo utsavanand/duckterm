@@ -48,7 +48,7 @@ async function mount(features: string[] | null, id: "lite" | "code" | "full" = "
   render(<App />);
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 20)); });
 }
-const tab = (name: string) => screen.queryByRole("button", { name: new RegExp(`^${name}`) });
+const tab = (name: string) => screen.queryByRole("button", { name: new RegExp(`^${name}(?:$| [0-9])`) });
 
 it("Lite exposes continuity, inbox, artifacts and folder overview without coding or Oracle requests", async () => {
   await mount(LITE, "lite");
@@ -148,4 +148,55 @@ it("returns to the mounted terminal when a selected folder loses its overview ca
   expect(screen.queryByRole("region", { name: "Folder Team" })).toBeNull();
   expect(screen.getByLabelText("Terminal input")).toBe(terminal);
   expect(terminal).toBeVisible();
+});
+
+it("Full Oracle keeps the live sidebar usable and terminals mounted underneath", async () => {
+  await mount(FULL);
+  const terminal = screen.getByLabelText("Terminal input");
+  fireEvent.change(terminal, { target: { value: "keep the terminal draft" } });
+  const expansion = probe.tree.expansion as { folders: [Set<string>, (folders: Set<string>) => void] };
+  await act(async () => { expansion.folders[1](new Set(["Team"])); });
+  const row = screen.getByRole("button", { name: "Oracle main chat" });
+  expect(row).toHaveTextContent("All folders");
+  expect(row.querySelector("img")?.getAttribute("src")).toContain("duckmark.svg");
+  await act(async () => { fireEvent.click(row); });
+  expect(row).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByRole("heading", { name: /Control tower/ })).toBeVisible();
+  expect(row.closest("[inert]")).toBeNull();
+  expect(terminal.closest("[inert]")).not.toBeNull();
+  expect(screen.getByLabelText("Terminal input")).toBe(terminal);
+  expect(probe.tree.selectedKey).toBeNull();
+  expect(probe.tree.selectedFolder).toBeNull();
+  expect((probe.tree.expansion as typeof expansion).folders[0]).toEqual(new Set(["Team"]));
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Collapse Agents panel" })); });
+  expect(row.closest(".rd-agents")).toHaveClass("rd-side-collapsed");
+  expect(screen.getByLabelText("Terminal input")).toBe(terminal);
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Show Agents panel" })); });
+  await act(async () => { (probe.tree.onOpen as (key: string) => void)("one"); });
+  expect(row).toHaveAttribute("aria-pressed", "false");
+  expect(screen.queryByRole("heading", { name: /Control tower/ })).toBeNull();
+  expect(terminal.closest("[inert]")).toBeNull();
+  expect(screen.getByLabelText("Terminal input")).toBe(terminal);
+  expect(terminal).toHaveValue("keep the terminal draft");
+});
+
+it("Full Oracle and folder navigation preserve folder state and block the covered folder", async () => {
+  await mount(FULL);
+  await act(async () => { (probe.tree.onOpenFolder as (folder: string) => void)("Team"); });
+  const folder = screen.getByRole("region", { name: "Folder Team" });
+  await act(async () => { fireEvent.click(tab("Oracle")!); });
+  expect(folder.closest("[inert]")).not.toBeNull();
+  expect(screen.getByRole("button", { name: "Oracle main chat" })).toHaveAttribute("aria-pressed", "true");
+  await act(async () => { (probe.tree.onOpenFolder as (folder: string) => void)("Team"); });
+  expect(screen.getByRole("region", { name: "Folder Team" })).toBe(folder);
+  expect(folder.closest("[inert]")).toBeNull();
+  expect(screen.queryByRole("heading", { name: /Control tower/ })).toBeNull();
+});
+
+it.each([["lite", LITE], ["code", CODE], ["full", FULL.filter(feature => feature !== "oracle")]] as const)("%s without Oracle has no sidebar entry or Oracle requests", async (id, features) => {
+  await mount([...features], id);
+  expect(screen.queryByRole("button", { name: "Oracle main chat" })).toBeNull();
+  await act(async () => { fireEvent.click(tab("Overview")!); });
+  expect(screen.queryByRole("button", { name: "Oracle main chat" })).toBeNull();
+  expect(probe.requests.filter(path => /^\/relay|^\/oracle|^\/fleet\/ask/.test(path))).toEqual([]);
 });

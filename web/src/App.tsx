@@ -71,6 +71,7 @@ import { useTheme } from "./useTheme";
 import { useSidebarDensity } from "./useSidebarDensity";
 import { useFolders } from "./useFolders";
 import "./sidebarDensity.css";
+import "./oracleNavigation.css";
 import { useAttended } from "./useAttended";
 import { EditionProvider, useEdition } from "./edition";
 
@@ -118,6 +119,7 @@ function Dashboard() {
   const [bugSession, setBugSession] = useState<string | null>(null);
   const [towerChosen, setTowerOpen] = useState(false);
   const towerOpen = towerChosen && has("overview");
+  const sidebarOracle = editionId === "full" && has("oracle") && has("overview");
   const [analyticsTab, setAnalyticsTab] = useState<AnalyticsTab | null>(null);
   const relayOpen = useRelayCount(has("oracle"));
   const defaultSelection = sessions.find(s => s.state !== "archived")?.key ?? null;
@@ -127,6 +129,7 @@ function Dashboard() {
   const [chosenFolder, setSelectedFolder] = useState<string | null>(null);
   const selectedFolder = has("overview") ? chosenFolder : null;
   const setSelectedKey = useCallback((key: string | null) => {
+    setTowerOpen(false);
     setSelectedFolder(null);
     setAppearanceFolder(null);
     selectSession(key);
@@ -326,6 +329,16 @@ function Dashboard() {
     };
   }, [candidates, agentsMdDir, modal, selected?.key]);
 
+  const towerVisible = towerOpen && !focusOpen && gridFolder === null;
+  const towerLayer = towerVisible && <div className="rd-tower-layer">
+    {analyticsTab ? <Analytics initialTab={analyticsTab} sessions={agents} onBack={() => setAnalyticsTab(null)} /> : <LiveControlTower
+      onAnalytics={setAnalyticsTab}
+      agents={agents}
+      onBack={() => setTowerOpen(false)}
+      onOpenTerminal={key => { setSelectedKey(key); setView("terminal"); }}
+    />}
+  </div>;
+
   return (
     <div className="rd-app" data-density={density}>
       <ArchiveUndo {...archives} />
@@ -390,24 +403,10 @@ function Dashboard() {
       </header>
 
       <div className="rd-workspace">
-      {/* The tower is a layer over the panes, not a replacement: terminals stay
-          mounted at their size, since a remount replays output at a different
-          width (B5). inert keeps keystrokes and focus out of the hidden panes. */}
-      {towerOpen && !focusOpen && gridFolder === null && (
-        <div className="rd-tower-layer">
-          {analyticsTab ? <Analytics initialTab={analyticsTab} sessions={agents} onBack={() => setAnalyticsTab(null)} /> : <LiveControlTower
-            onAnalytics={setAnalyticsTab}
-            agents={agents}
-            onBack={() => setTowerOpen(false)}
-            onOpenTerminal={(key) => {
-              setSelectedKey(key);
-              setView("terminal");
-              setTowerOpen(false);
-            }}
-          />}
-        </div>
-      )}
-      <div className="rd-workspace-panes" {...(towerOpen && !focusOpen && gridFolder === null ? { inert: "" } : {})}>
+      {/* Keep terminals mounted at their existing size beneath the tower. Full
+          leaves Agents interactive; other editions retain the fleet overview. */}
+      {!sidebarOracle && towerLayer}
+      <div className="rd-workspace-panes" {...(towerVisible && !sidebarOracle ? { inert: "" } : {})}>
       {focusOpen ? (
         <GridView key="focus" title="Focus" focus
           agents={pinnedSessions} folders={[]} themeFor={themeFor}
@@ -428,13 +427,19 @@ function Dashboard() {
           onClose={() => setGridFolder(null)}
         />
       ) : (
-        <div className={`rd-panels-3${selectedFolder !== null ? " rd-folder-selected" : ""}${sidePanels.collapsed.left ? " rd-agents-collapsed" : ""}${sidePanels.collapsed.right ? " rd-context-collapsed" : ""}`}>
+        <div className={`rd-panels-3${sidebarOracle ? " rd-oracle-navigation" : ""}${selectedFolder !== null ? " rd-folder-selected" : ""}${sidePanels.collapsed.left ? " rd-agents-collapsed" : ""}${sidePanels.collapsed.right ? " rd-context-collapsed" : ""}`}>
+          {sidebarOracle && towerLayer}
           <section className={`rd-agents${sidePanels.collapsed.left ? " rd-side-collapsed" : ""}`}>
             <div className="rd-panel-head">
               <span>Agents</span>
               {(agents.length > 0 || folders.length > 0) && <SidebarFilterToggle filters={sidebarFilters.filters} expanded={sidebarFilters.expanded} onToggle={sidebarFilters.toggleExpanded} />}
               <PanelToggle side="left" collapsed={sidePanels.collapsed.left} onToggle={() => sidePanels.toggle("left")} />
             </div>
+            {sidebarOracle && <button className="rd-oracle-row" type="button" aria-label="Oracle main chat" aria-pressed={towerVisible}
+              onClick={() => { setTowerOpen(true); setAnalyticsTab(null); }}>
+              <img src={fullDuckMark} alt="" />
+              <span>Oracle<small>All folders</small></span>
+            </button>}
             {sessions.length === 0 && folders.length === 0 ? (
               <p className="rd-panel-empty">
                 No agents yet. Choose New → New session to start one.
@@ -444,12 +449,12 @@ function Dashboard() {
                 expansion={{ folders: folderExpansion, archives: archiveExpansion, scroll: sidebarScroll }}
                 filterControls={sidebarFilters}
                 sessions={sessions}
-                active={!towerOpen && !sidePanels.collapsed.left}
+                active={(!towerOpen || sidebarOracle) && !sidePanels.collapsed.left}
                 folders={folders}
-                selectedKey={selectedFolder === null ? selectedKey : null}
+                selectedKey={!towerOpen && selectedFolder === null ? selectedKey : null}
                 contextKey={actionSession?.key}
-                selectedFolder={selectedFolder}
-                onOpenFolder={has("overview") ? setSelectedFolder : undefined}
+                selectedFolder={towerOpen ? null : selectedFolder}
+                onOpenFolder={has("overview") ? folder => { setTowerOpen(false); setSelectedFolder(folder); } : undefined}
                 onFolderRenamed={(from, to) => setSelectedFolder(current => current === from ? to : current?.startsWith(from + "/") ? to + current.slice(from.length) : current)}
                 onFolderDeleted={path => setSelectedFolder(current => current === path || current?.startsWith(path + "/") ? null : current)}
                 onOpen={key => { setSelectedKey(key); setTerminalFocus(previous => ({ key, revision: previous.revision + 1 })); }}
@@ -459,18 +464,19 @@ function Dashboard() {
                 onSessionMoved={(key, group) =>
                   patchSession(key, { group: group || undefined })
                 }
-                onOpenGrid={setGridFolder}
+                onOpenGrid={folder => { setTowerOpen(false); setGridFolder(folder); }}
                 onOpenFolderInbox={has("inbox") ? setInboxFolder : undefined}
                 onNewSessionIn={(folder) => {
                   setLaunchGroup(folder);
                   setModal("launch");
                 }}
                 folderThemes={themeOverrides.folders}
-                onOpenFolderAppearance={folder => { setAppearanceFolder(folder); setSelectedFolder(null); sidePanels.show("right"); }}
+                onOpenFolderAppearance={folder => { setTowerOpen(false); setAppearanceFolder(folder); setSelectedFolder(null); sidePanels.show("right"); }}
               />
             )}
           </section>
 
+          <div className="rd-workspace-content" {...(towerVisible && sidebarOracle ? { inert: "" } : {})}>
           {selectedFolder !== null && <FolderView key={selectedFolder} folder={selectedFolder} onOpenSession={setSelectedKey} onGrid={() => setGridFolder(selectedFolder)} onMessage={has("inbox") ? () => setInboxFolder(selectedFolder) : undefined} onNewSession={() => { setLaunchGroup(selectedFolder); setModal("launch"); }} />}
           <section className="rd-terminal-pane" style={selectedFolder !== null ? { display: "none" } : undefined}>
             <div className="rd-view-toggle">
@@ -605,6 +611,7 @@ function Dashboard() {
             </>} connectors={has("connectors") ? <Connectors key={selected?.host ?? "local"} sessionKey={selected?.key} /> : null} />}
 
           </section>
+          </div>
         </div>
       )}
       </div>
