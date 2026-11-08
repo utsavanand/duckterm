@@ -156,7 +156,7 @@ function FolderChat({ folder, active }: { folder: string; active: boolean }) {
       }} />
       <div><span><button type="button" className="rd-folder-mention" aria-label="Choose recipient" disabled={pending !== null} onClick={() => setPicker(picker === null ? "" : null)}> @ </button> {recipient ? recipient.kind === "folder" ? "Broadcast to subfolder" : "Direct message" : "Folder answer"}</span>{recipient?.kind === "session" && <button type="button" className="rd-btn rd-btn-sm" disabled={!loaded || pending !== null || !question.trim()} onClick={() => void ask(question, false, true)}>Assign &amp; send</button>}<button className="rd-btn rd-btn-primary rd-btn-sm" disabled={!loaded || pending !== null || !question.trim()}>{recipient ? recipient.kind === "folder" ? "Review recipients" : `Send to ${recipient.name}` : "Ask"}</button></div>
     </form>
-    <p className="rd-folder-helper">{recipient ? recipient.kind === "folder" ? "Review who receives your message before sending. Replies are optional." : "Send a message, or choose Assign & send to create a task with the same message." : "Without a recipient, the folder answers from its sessions. No work is sent."}</p>
+    <p className="rd-folder-helper">{recipient ? recipient.kind === "folder" ? "Review who receives your message before sending. Replies are optional." : "Send a message, or choose Assign & send to create a task with the same message." : "Ask about this folder, or tell me who to message and what to say. Use @ to choose a recipient."}</p>
     {reviewing && recipient && <Modal title="Review recipients" onClose={() => setReviewing(false)}>
       <section role="dialog" aria-label="Review recipients">
       <p>Message {recipient.name} and its subfolders.</p>
