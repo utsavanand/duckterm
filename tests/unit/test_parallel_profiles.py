@@ -183,7 +183,7 @@ def test_restart_identity_requires_authenticated_matching_facets(monkeypatch, ch
         assert request.get_header("X-duckterm-token") == "fixture-token"
         return io.BytesIO(json.dumps({"id": "code", "instance": identity}).encode())
 
-    monkeypatch.setattr(cli.urllib.request, "urlopen", read)
+    monkeypatch.setattr(cli.instance, "open_local", read)
     assert cli._restart_identity_matches("127.0.0.1", 4800) is (changed is None)
 
 

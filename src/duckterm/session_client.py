@@ -15,6 +15,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
+from duckterm.helpers import instance
 from duckterm.helpers.session_credentials import client_credentials
 from duckterm.persistence.artifacts import MAX_FILE_BYTES, MEDIA_TYPES, registration
 from duckterm.runtimes.base import AT_REST_STATES
@@ -132,7 +133,7 @@ def _resolve_target(url: str, headers: dict[str, str], target: str) -> str:
         request = urllib.request.Request(
             url + "/api/v1/session/peers?" + urllib.parse.urlencode(query), headers=headers
         )
-        with urllib.request.urlopen(request, timeout=15) as response:
+        with instance.open_local(request, timeout=15) as response:
             page = json.load(response)
         if page.get("cross_computer_status") == "unavailable":
             raise ValueError(
@@ -312,7 +313,7 @@ def main(args: argparse.Namespace) -> int:
             headers=headers,
             data=json.dumps(body).encode() if body is not None else None,
         )
-        with urllib.request.urlopen(request, timeout=15) as response:
+        with instance.open_local(request, timeout=15) as response:
             result = json.load(response)
         if download:
             result = _save_artifact(result, args.output)

@@ -17,8 +17,10 @@ import hashlib
 import json
 import os
 import re
+import sys
+import urllib.request
 from pathlib import Path
-from typing import TypedDict
+from typing import Any, TypedDict
 
 _DEFAULT_PORT = 4300
 # Ports for derived instances live above the default so they don't collide with
@@ -188,14 +190,40 @@ def port() -> int:
     return _port_for(instance_id())
 
 
+_LOOPBACK_URL = re.compile(r"http://(127\.0\.0\.1|localhost|\[::1\]):[0-9]{1,5}")
+
+
 def server_url() -> str:
     """The base URL agents' hooks call back on (heartbeats, event ingest,
     approvals). Explicit DUCKTERM_URL wins; else this instance's own host:port —
     so a dev-launched agent never reports into prod."""
-    override = os.environ.get("DUCKTERM_URL")
+    override = (os.environ.get("DUCKTERM_URL") or "").rstrip("/")
+    # Callers send the owner token here. Servers only listen on loopback, and a
+    # repository's .claude/settings.json "env" can set DUCKTERM_URL for agents.
+    if _LOOPBACK_URL.fullmatch(override):
+        return override
     if override:
-        return override.rstrip("/")
+        # Never echo the value: it may hold userinfo or terminal control characters.
+        print(
+            "duckterm: ignoring DUCKTERM_URL; only http://127.0.0.1, localhost or [::1] is allowed",
+            file=sys.stderr,
+        )
     return f"http://127.0.0.1:{port()}"
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args: object, **kwargs: object) -> None:
+        return None
+
+
+# Requests to this machine's server carry the owner token or a session
+# credential. The same env block can set http_proxy/ALL_PROXY, so they never use
+# a proxy, and a redirect is an error rather than a second request elsewhere.
+_local_opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), _NoRedirect)
+
+
+def open_local(request: urllib.request.Request | str, timeout: float) -> Any:
+    return _local_opener.open(request, timeout=timeout)
 
 
 def heartbeat_url() -> str:
