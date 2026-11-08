@@ -1,11 +1,12 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
+import { bindSetupClipboard } from "./clipboardBridge";
 import "@xterm/xterm/css/xterm.css";
 
 export type RuntimeSetupTerminalHandle = { write: (base64: string) => void; clear: () => void };
 
-// This terminal has no session ID, WebSocket, recorder, clipboard bridge or reconnect.
+// This terminal has no session ID, WebSocket, recorder, image paste or reconnect.
 // Its only transport is the initiating wizard's native-owned setup job.
 export const RuntimeSetupTerminal = forwardRef<RuntimeSetupTerminalHandle, {
   active: boolean; enabled: boolean; onInput: (data: string) => void; onResize: (cols: number, rows: number) => void;
@@ -52,6 +53,7 @@ export const RuntimeSetupTerminal = forwardRef<RuntimeSetupTerminalHandle, {
     });
     const addon = new FitAddon(); term.loadAddon(addon); term.open(host.current);
     terminal.current = term; fit.current = addon;
+    const releaseClipboard = bindSetupClipboard(term, () => handlers.current.enabled);
     const measure = () => { if (host.current?.clientWidth && host.current.clientHeight) addon.fit(); };
     const observer = new ResizeObserver(measure); observer.observe(host.current); measure();
     const input = term.onData(text => {
@@ -63,7 +65,7 @@ export const RuntimeSetupTerminal = forwardRef<RuntimeSetupTerminalHandle, {
     });
     const resize = term.onResize(({ cols, rows }) => handlers.current.onResize(Math.min(500, cols), Math.min(300, rows)));
     handlers.current.onResize(Math.min(500, term.cols), Math.min(300, term.rows));
-    return () => { observer.disconnect(); input.dispose(); resize.dispose(); term.dispose(); queue.current = { bytes: 0, omitted: false }; terminal.current = null; fit.current = null; };
+    return () => { releaseClipboard(); observer.disconnect(); input.dispose(); resize.dispose(); term.dispose(); queue.current = { bytes: 0, omitted: false }; terminal.current = null; fit.current = null; };
   }, []);
   useEffect(() => {
     if (terminal.current) terminal.current.options.disableStdin = !enabled;

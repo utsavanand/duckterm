@@ -557,6 +557,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
             let pasteboard = NSPasteboard.general
+            if target == "runtime-setup" {
+                // Recheck setup focus after the asynchronous bridge round trip.
+                // Never save an image or send setup text to an agent session.
+                if let text = pasteboard.string(forType: .string), !text.isEmpty,
+                   let data = try? JSONSerialization.data(withJSONObject: [text]) {
+                    let json = String(decoding: data, as: UTF8.self)
+                    self.window?.evaluate("window.__rtPasteSetup && window.__rtPasteSetup((\(json))[0])")
+                }
+                return
+            }
             do {
                 if let png = try ClipboardImage.png(from: pasteboard) {
                     if target.hasPrefix("~remote~") {
