@@ -268,21 +268,13 @@ def test_repair_cannot_approve_if_existing_identity_or_authority_changed(phone, 
     else:
         with grants.locked(write=True) as state:
             row = state["devices"][device["id"]]
-            row[
-                {
-                    "name": "name",
-                    "capabilities": "capabilities",
-                    "revision": "authorization_revision",
-                    "credential": "token_hash",
-                }[change]
-            ] = {
-                "name": "Replacement",
-                "capabilities": ["status:read"],
-                "revision": 2,
-                "credential": "f" * 64,
-            }[
-                change
-            ]
+            field, replacement = {
+                "name": ("name", "Replacement"),
+                "capabilities": ("capabilities", ["status:read"]),
+                "revision": ("authorization_revision", 2),
+                "credential": ("token_hash", "f" * 64),
+            }[change]
+            row[field] = replacement
     before = grants.path.read_bytes()
     with pytest.raises(Denied):
         grants.approve_invitation(
