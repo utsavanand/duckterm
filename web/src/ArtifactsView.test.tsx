@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api, Artifact, ArtifactContent } from "./api";
 import { ArtifactsView, previewDocument } from "./ArtifactsView";
@@ -52,6 +52,17 @@ it("authorizes only the app selection reporter in an opaque-origin frame", () =>
   expect(doc).toContain('nonce="abc123"');
   expect(doc).not.toContain("attacker");
   expect(doc).not.toContain("onclick");
+});
+
+it.each(["text/html", "image/svg+xml", "text/markdown"])("downloads %s as inert bytes instead of active dashboard-origin content", async media_type => {
+  const artifact = { ...first, media_type, source_path: "/tmp/hostile.html" };
+  vi.mocked(api.artifacts).mockResolvedValue({ artifacts: [artifact] });
+  vi.mocked(api.artifact).mockResolvedValue({ artifact: { ...artifact, content_base64: btoa("<script>fetch('/sessions')</script>") } });
+  render(<ArtifactsView sessionKey="session" sessionName="Agent" />);
+  await waitFor(() => expect(screen.getByRole("link", { name: "Download" })).toHaveAttribute("href", "blob:artifact"));
+  const blob = vi.mocked(URL.createObjectURL).mock.calls.at(-1)![0] as Blob;
+  expect(blob.type).toBe("application/octet-stream");
+  expect(blob.size).toBe("<script>fetch('/sessions')</script>".length);
 });
 
 it("restores background access and history when an expanded session unmounts", async () => {

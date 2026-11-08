@@ -48,7 +48,7 @@ test("side panels reclaim space independently, preserve PTY drafts, and remember
     await expect(rows).not.toContainText("SUBMITTED:");
     await page.screenshot({ path: "/tmp/duckterm-panels-collapsed.png" });
     const wideCols = sizes.at(-1)!.cols;
-    await page.getByRole("button", { name: "Oracle", exact: true }).click();
+    await page.locator(".rd-topbar").getByRole("button", { name: /^Oracle/ }).click();
     await expect(page.getByLabel("Message Oracle")).toBeVisible();
     await page.getByRole("button", { name: "← Sessions", exact: true }).click();
     await expect.poll(() => sizes.at(-1)!.cols).toBe(wideCols);

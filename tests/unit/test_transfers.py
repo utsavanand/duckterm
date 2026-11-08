@@ -384,6 +384,11 @@ def test_codex_resume_uses_reviewed_destination_instead_of_recorded_source(
         "ext::command",
         "-oProxyCommand=bad",
         "https://github.com/repo?token=secret",
+        "ssh://-host/repo.git",
+        "ssh://git@-host/repo.git",
+        "git@-host:repo.git",
+        "ssh://%2dhost/repo.git",
+        "ssh://git@%2Dhost/repo.git",
     ],
 )
 def test_clone_refuses_credentials_and_untrusted_transports(url):
@@ -461,6 +466,170 @@ def test_clone_includes_committed_branch_without_local_edits(tmp_path, homes, mo
     assert (dest / "file.txt").read_text() == "initial\n"
     assert t.git(dest, "branch", "--show-current").strip() == b"feature"
     assert t.clone(identifier, str(root), "feature", str(dest)) == state
+
+
+def test_clone_preserves_two_directory_loops_without_expanding_them(tmp_path, homes, monkeypatch):
+    source = tmp_path / "origin"
+    repo(source)
+    for name in ("a", "b"):
+        (source / name).symlink_to(".", target_is_directory=True)
+    t.git(source, "add", "a", "b")
+    t.git(source, "commit", "-qm", "two directory links")
+    monkeypatch.setattr(t, "check_url", lambda url: None)  # Local Git fixture only.
+    copytree = t.shutil.copytree
+
+    def bounded_copy(src, dst, *args, **kwargs):
+        # Abort before traversing either loop if link preservation regresses.
+        assert not Path(src).is_symlink(), "Clone copy followed a repository symlink"
+        return copytree(src, dst, *args, **kwargs)
+
+    monkeypatch.setattr(t.shutil, "copytree", bounded_copy)
+    identifier = uuid.uuid4().hex
+    dest = tmp_path / "checkout"
+    state = t.clone(identifier, str(source), "", str(dest))
+    assert state["stage"] == "ready"
+    assert (dest / "file.txt").read_text() == "initial\n"
+    for name in ("a", "b"):
+        assert (dest / name).is_symlink()
+        assert os.readlink(dest / name) == "."
+    assert t.git(dest, "ls-files", "--stage", "a", "b").count(b"120000 ") == 2
+    assert not (homes[0] / "transfers" / identifier / "clone").exists()
+    assert not (dest.parent / (".duckterm-transfer-" + identifier)).exists()
+
+
+@pytest.mark.parametrize("failure", ["copy", "publish", "interrupt"])
+def test_clone_failure_cleans_owned_staging_and_keeps_destination(
+    tmp_path, homes, monkeypatch, failure
+):
+    from duckterm import github_projects
+
+    identifier = uuid.uuid4().hex
+    dest = tmp_path / "selected-empty-folder"
+    dest.mkdir()
+
+    def checkout(repository, branch, stage):
+        stage.mkdir()
+        (stage / "payload.txt").write_text("fixture")
+
+    def fail(stage, sibling, **kwargs):
+        # Another writer may populate the selected folder while the clone runs.
+        (dest / "keep.txt").write_text("not owned by this clone")
+        if failure != "publish":
+            (sibling / "partial.txt").write_text("incomplete copy")
+        if failure == "interrupt":
+            raise KeyboardInterrupt
+        raise OSError("Synthetic clone failure")
+
+    monkeypatch.setattr(github_projects, "clone", checkout)
+    if failure == "publish":
+        monkeypatch.setattr(t, "publish", fail)
+    else:
+        monkeypatch.setattr(t.shutil, "copytree", fail)
+    with pytest.raises(KeyboardInterrupt if failure == "interrupt" else OSError):
+        t.clone(identifier, "https://github.com/fixture/test.git", "", str(dest), "fixture/test")
+    assert (dest / "keep.txt").read_text() == "not owned by this clone"
+    assert list(dest.iterdir()) == [dest / "keep.txt"]
+    assert not (homes[0] / "transfers" / identifier / "clone").exists()
+    assert not (dest.parent / (".duckterm-transfer-" + identifier)).exists()
+
+
+def test_clone_publish_survives_journal_failure_and_preserves_reused_staging_path(
+    tmp_path, homes, monkeypatch
+):
+    from duckterm import github_projects
+
+    identifier = uuid.uuid4().hex
+    dest = tmp_path / "checkout"
+    sibling = dest.parent / (".duckterm-transfer-" + identifier)
+    downloads = []
+
+    def checkout(repository, branch, stage):
+        downloads.append(stage)
+        stage.mkdir()
+        (stage / "payload.txt").write_text("committed checkout")
+
+    save = t.save
+    fail_once = True
+
+    def save_after_publish(directory, state):
+        nonlocal fail_once
+        if state["stage"] == "ready" and fail_once:
+            fail_once = False
+            # The rename succeeded. An unrelated directory now occupies the old name.
+            sibling.mkdir()
+            (sibling / "keep.txt").write_text("unrelated replacement")
+            raise OSError("Synthetic journal failure after publish")
+        return save(directory, state)
+
+    monkeypatch.setattr(github_projects, "clone", checkout)
+    monkeypatch.setattr(t, "save", save_after_publish)
+    args = (identifier, "https://github.com/fixture/test.git", "", str(dest), "fixture/test")
+    with pytest.raises(OSError, match="journal failure"):
+        t.clone(*args)
+    assert (dest / "payload.txt").read_text() == "committed checkout"
+    assert (dest / ".duckterm-transfer-id").read_text() == identifier
+    assert (sibling / "keep.txt").read_text() == "unrelated replacement"
+    assert not (homes[0] / "transfers" / identifier / "clone").exists()
+    assert t.status(identifier)["stage"] == "publishing"
+    assert t.clone(*args)["stage"] == "ready"
+    assert len(downloads) == 1
+
+
+@pytest.mark.parametrize("kind", ["directory", "symlink", "marker-symlink"])
+def test_clone_failure_preserves_unowned_staging(tmp_path, homes, monkeypatch, kind):
+    from duckterm import github_projects
+
+    identifier = uuid.uuid4().hex
+    dest = tmp_path / "checkout"
+    sibling = dest.parent / (".duckterm-transfer-" + identifier)
+    other = tmp_path / "other"
+    other.mkdir()
+    (other / "keep.txt").write_text("unrelated")
+    (other / ".duckterm-transfer-id").write_text(identifier)
+    if kind == "symlink":
+        sibling.symlink_to(other, target_is_directory=True)
+    else:
+        sibling.mkdir()
+        (sibling / "keep.txt").write_text("unrelated")
+        if kind == "marker-symlink":
+            (sibling / ".duckterm-transfer-id").symlink_to(other / ".duckterm-transfer-id")
+
+    def checkout(repository, branch, stage):
+        stage.mkdir()
+        (stage / "payload.txt").write_text("fixture")
+
+    monkeypatch.setattr(github_projects, "clone", checkout)
+    with pytest.raises(ValueError, match="Staging destination exists"):
+        t.clone(identifier, "https://github.com/fixture/test.git", "", str(dest), "fixture/test")
+    assert (sibling / "keep.txt").read_text() == "unrelated"
+    assert (other / "keep.txt").read_text() == "unrelated"
+    assert not dest.exists()
+    assert not (homes[0] / "transfers" / identifier / "clone").exists()
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "ssh://git@code-host.example/repo.git",
+        "git@code-host.example:org/repo.git",
+        "ssh://[::1]/repo.git",
+    ],
+)
+def test_clone_accepts_normal_ssh_hosts_without_rewriting_url(tmp_path, homes, monkeypatch, url):
+    from types import SimpleNamespace
+
+    def checkout(argv, **kwargs):
+        assert argv[-3:-1] == ["--", url]
+        stage = Path(argv[-1])
+        stage.mkdir()
+        (stage / "payload.txt").write_text("fixture")
+        return SimpleNamespace(returncode=0)
+
+    monkeypatch.setattr(t.subprocess, "run", checkout)
+    dest = tmp_path / "checkout"
+    state = t.clone(uuid.uuid4().hex, url, "", str(dest))
+    assert state["url"] == url and state["stage"] == "ready"
+    assert (dest / "payload.txt").read_text() == "fixture"
 
 
 def test_snapshot_reader_never_follows_replaced_parent(tmp_path, homes):
@@ -598,7 +767,9 @@ def test_clone_error_records_failed_state(tmp_path, homes, monkeypatch):
     dest.mkdir()
     identifier = uuid.uuid4().hex
 
-    def fail(*args):
+    def fail(repository, branch, stage):
+        stage.mkdir()
+        (stage / "partial.txt").write_text("partial download")
         raise ValueError("Synthetic download failure before git checkout")
 
     monkeypatch.setattr(github_projects, "clone", fail)
@@ -607,6 +778,7 @@ def test_clone_error_records_failed_state(tmp_path, homes, monkeypatch):
     assert list(dest.iterdir()) == []
     assert t.status(identifier)["stage"] == "failed"
     assert "error" in t.status(identifier)
+    assert not (homes[0] / "transfers" / identifier / "clone").exists()
 
     import shutil
 

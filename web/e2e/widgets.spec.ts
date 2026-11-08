@@ -17,7 +17,7 @@ test("Oracle widgets save order and visibility across reloads", async ({ page })
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.emulateMedia({ colorScheme: "dark" });
     await page.goto(base());
-    await page.getByRole("button", { name: /^Oracle/ }).click();
+    await page.locator(".rd-topbar").getByRole("button", { name: /^Oracle/ }).click();
     const widgets = page.getByRole("region", { name: "Fleet insights" });
     await expect(widgets.getByRole("button", { name: "Add widget" })).toBeEnabled();
     await expect(widgets.locator(".rd-widget-grid > .rd-widget")).toHaveCount(7);
@@ -34,7 +34,7 @@ test("Oracle widgets save order and visibility across reloads", async ({ page })
     await widgets.getByRole("button", { name: "Remove widget" }).click();
     await expect(widgets.locator(".rd-widget-grid > .rd-widget")).toHaveCount(6);
     await page.reload();
-    await page.getByRole("button", { name: /^Oracle/ }).click();
+    await page.locator(".rd-topbar").getByRole("button", { name: /^Oracle/ }).click();
     await expect(widgets.getByRole("button", { name: "Add widget" })).toBeEnabled();
     await expect(widgets.locator(".rd-widget-grid > .rd-widget")).toHaveCount(6);
     await expect(widgets.locator(".rd-widget-grid > .rd-widget").nth(3)).toHaveAttribute("aria-label", "Last backup");

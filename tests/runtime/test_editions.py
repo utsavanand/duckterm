@@ -1,15 +1,17 @@
 """Edition boundaries preserve core sessions and reject unavailable work early."""
 
 import asyncio
+import base64
 import json
-from unittest.mock import AsyncMock
+from pathlib import Path
+from unittest.mock import AsyncMock, Mock
 
 import pytest
 from test_memory import memory_rig
 from test_session_api import Writer, dispatch
 
 from duckterm.core.session_api import APIError
-from duckterm.editions import CODE, CURRENT_EDITION, FULL, LITE
+from duckterm.editions import CODE, CURRENT_EDITION, FULL, LITE, EditionConfig
 from duckterm.helpers import session_instructions
 from duckterm.persistence.history import HistoryStore
 from duckterm.server import Server
@@ -17,11 +19,11 @@ from duckterm.server import Server
 __all__ = ["memory_rig"]
 
 
-def status(server, method, headers, body=b""):
+def status(server, method, headers, body=b"", *, path="/edition"):
     writer = Writer()
 
     async def run():
-        await server._dispatch(method, "/edition", asyncio.StreamReader(), writer, headers, body)
+        await server._dispatch(method, path, asyncio.StreamReader(), writer, headers, body)
 
     asyncio.run(run())
     return int(writer.data.split(b"\r\n", 1)[0].split()[1])
@@ -37,12 +39,28 @@ def test_editions_keep_the_agreed_core_and_separate_the_full_additions():
         "messages",
         "forks",
         "session_status",
+        "inbox",
+        "checkpoints",
+        "summaries",
+        "context",
+        "handoff",
+        "artifacts",
+        "overview",
     }
     assert LITE.features < CODE.features
     assert LITE.features < FULL.features
     assert CODE.features < FULL.features
-    assert FULL.features - CODE.features == {"oracle", "remote_workspaces", "artifacts"}
-    for feature in ("explorer", "inbox", "folder_chat", "checkpoints", "connectors"):
+    assert FULL.features - CODE.features == {"oracle", "remote_workspaces"}
+    assert CODE.features - LITE.features == {
+        "explorer",
+        "file_editing",
+        "git_changes",
+        "folder_chat",
+        "connectors",
+        "pr_review",
+        "rule_suggestions",
+    }
+    for feature in ("explorer", "folder_chat", "connectors", "rule_suggestions", "pr_review"):
         assert CODE.includes(feature)
         assert not LITE.includes(feature)
     for feature in ("checks", "ducky", "unknown"):
@@ -80,6 +98,7 @@ def test_edition_route_is_owner_read_only_and_preserves_data(memory_rig):
 @pytest.fixture
 def edition_rig(tmp_path, monkeypatch):
     monkeypatch.setenv("DUCKTERM_HOME", str(tmp_path / "home"))
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
     servers = []
 
     def create(edition):
@@ -114,30 +133,16 @@ def edition_rig(tmp_path, monkeypatch):
     [
         ("GET", "/connectors", b""),
         ("POST", "/connectors/github/enable", b"{}"),
+        ("POST", "/transfers/repositories", b"{}"),
+        ("POST", "/transfers/clone", b'{"github_repository":"owner/repository"}'),
         ("POST", "/agents-md/suggest", b"{}"),
-        ("GET", "/session-inbox-counts", b""),
-        ("GET", "/folder-interactions?folder=Tests", b""),
         ("GET", "/folders/Tests/chat", b""),
-        ("POST", "/folders/Tests/dispatch", b"{}"),
-        ("POST", "/folders/Tests/broadcast", b"{}"),
-        ("GET", "/sessions/agent/memory?format=text", b""),
-        ("POST", "/sessions/agent/restart-preparation", b"{}"),
-        ("GET", "/sessions/agent/checkpoint-plan", b""),
-        ("POST", "/sessions/agent/checkpoint", b"{}"),
-        ("GET", "/sessions/agent/checkpoint-attempts/example", b""),
-        ("GET", "/sessions/agent/digest", b""),
-        ("POST", "/sessions/agent/agent-merge/preview", b"{}"),
         ("GET", "/sessions/agent/files?path=", b""),
         ("GET", "/file?path=example.py", b""),
         ("POST", "/file", b"{}"),
-        ("POST", "/snapshots", b"{}"),
         # Routes match the raw path, so a folder named "Tests?x=" is reachable
         # with its query-looking part unencoded.
         ("GET", "/folders/Tests?x=/chat", b""),
-        ("GET", "/folders/Tests?x=/stats", b""),
-        ("GET", "/folders/Tests?x=/recipients", b""),
-        ("POST", "/folders/Tests?x=/dispatch", b"{}"),
-        ("GET", "/sessions/agent?x=/digest", b""),
     ],
 )
 def test_lite_rejects_optional_work_before_handlers(edition_rig, method, path, body):
@@ -153,13 +158,10 @@ def test_lite_rejects_optional_work_before_handlers(edition_rig, method, path, b
 @pytest.mark.parametrize(
     ("method", "path"),
     [
-        ("GET", "/control-tower"),
         ("GET", "/relay"),
         ("POST", "/relay/rules/propose"),
         ("POST", "/voice/warm"),
         ("POST", "/transfers/prepare"),
-        ("GET", "/sessions/agent/artifacts"),
-        ("GET", "/folders/Tests/artifacts"),
     ],
 )
 def test_restricted_editions_reject_full_features(edition_rig, edition, method, path):
@@ -193,30 +195,54 @@ def test_lite_refuses_pr_review_before_review_or_github_work(edition_rig, monkey
     assert lists.await_count == (0 if edition is LITE else 2)
 
 
-def test_code_keeps_folder_answers_without_global_oracle(edition_rig, monkeypatch):
-    server, owner, _ = edition_rig(CODE)
-    handler = AsyncMock()
-    monkeypatch.setattr(server, "_fleet_ask", handler)
+@pytest.mark.parametrize("edition", [LITE, CODE, FULL])
+def test_folder_answers_persist_in_code_and_full_but_global_oracle_stays_full(
+    edition_rig, monkeypatch, edition
+):
+    from duckterm.llm.summarizer import Summary
 
-    async def run():
-        writer = Writer()
-        await server._dispatch(
-            "POST",
-            "/fleet/ask",
-            asyncio.StreamReader(),
-            writer,
-            owner,
-            json.dumps({"folder": "Tests", "question": "Status?"}).encode(),
-        )
+    server, owner, _ = edition_rig(edition)
+    server.history.set_meta("agent", name="Included session")
+    server.history.record(
+        {
+            "_id": "outside",
+            "_ts": 1,
+            "event_type": "SessionStart",
+            "session_key": "outside",
+            "test": True,
+        }
+    )
+    server.history.set_meta("outside", group="TestsOther", name="Outside private session")
+    model = Mock(return_value=Summary("The included session is running.", "test"))
+    monkeypatch.setattr("duckterm.server.summarize", model)
+    path = "/fleet/ask"
+    body = b'{"folder":"Tests","question":"Status?"}'
+    assert dispatch(server, "POST", path, {}, body)[0] == 401
+    assert dispatch(server, "POST", path, {"authorization": "Bearer agent"}, body)[0] == 403
+    code, response = dispatch(server, "POST", path, owner, body)
+    if edition is LITE:
+        assert code == 403 and response["feature"] == "folder_chat"
+        model.assert_not_called()
+        assert dispatch(server, "GET", "/folders/Tests/chat", owner)[0] == 403
+    else:
+        assert code == 200 and response["sessions"] == ["agent"]
+        assert response["answer"] == "The included session is running."
+        model.assert_called_once()
+        prompt = model.call_args.args[0]
+        assert "Included session" in prompt and "Outside private session" not in prompt
+        code, history = dispatch(server, "GET", "/folders/Tests/chat", owner)
+        assert code == 200 and history["messages"] == [response["exchange"]]
+    code, response = dispatch(server, "POST", path, owner, b'{"question":"Global?"}')
+    if edition is FULL:
+        assert code == 200 and set(response["sessions"]) == {"agent", "outside"}
+        assert model.call_count == 2
+    else:
+        assert code == 403 and response["feature"] == "oracle"
+        assert model.call_count == (1 if edition is CODE else 0)
 
-    asyncio.run(run())
-    handler.assert_awaited_once()
-    assert dispatch(server, "POST", "/fleet/ask", owner, b'{"question":"Global?"}')[0] == 403
-    assert handler.await_count == 1
 
-
-def test_code_explorer_reads_files_without_querying_artifacts(edition_rig, monkeypatch):
-    server, owner, _ = edition_rig(CODE)
+def test_explorer_still_works_when_artifacts_are_explicitly_disabled(edition_rig, monkeypatch):
+    server, owner, _ = edition_rig(EditionConfig("code", CODE.features - {"artifacts"}))
 
     def unexpected(*args, **kwargs):
         raise AssertionError("Code Explorer must not read artifact registrations")
@@ -232,10 +258,22 @@ def test_code_explorer_reads_files_without_querying_artifacts(edition_rig, monke
     assert contents["available"]
 
 
-def test_lite_start_and_stop_do_not_enroll_or_schedule_model_work(edition_rig, monkeypatch):
-    server, owner, _ = edition_rig(LITE)
+def test_disabled_features_do_not_enroll_or_schedule_model_work(edition_rig, monkeypatch):
+    server, owner, _ = edition_rig(
+        EditionConfig(
+            "lite",
+            LITE.features
+            - {
+                "inbox",
+                "checkpoints",
+                "context",
+                "summaries",
+                "handoff",
+            },
+        )
+    )
     monkeypatch.setenv("DUCKTERM_SUMMARIZER_CMD", "configured-but-must-never-run")
-    classifier = AsyncMock(side_effect=AssertionError("No model classifier in Lite"))
+    classifier = AsyncMock(side_effect=AssertionError("No model classifier without Oracle"))
     monkeypatch.setattr(server, "_relay_detect_question", classifier)
     assert (
         server.history._conn.execute("SELECT COUNT(*) FROM session_api_members").fetchone()[0] == 0
@@ -263,6 +301,185 @@ def test_lite_start_and_stop_do_not_enroll_or_schedule_model_work(edition_rig, m
     assert dispatch(server, "GET", "/folders", owner)[0] == 200
 
 
+@pytest.mark.parametrize("edition", [LITE, CODE, FULL])
+def test_every_edition_exchanges_scoped_inbox_messages_with_real_credentials(edition_rig, edition):
+    server, owner, _ = edition_rig(edition)
+    credentials = {}
+    for key, folder in (("agent", "Tests"), ("peer", "Tests"), ("outside", "Other")):
+        if key != "agent":
+            server.history.record(
+                {
+                    "_id": key,
+                    "_ts": 1,
+                    "event_type": "SessionStart",
+                    "session_key": key,
+                    "test": True,
+                }
+            )
+            server.history.set_meta(key, group=folder)
+        token = server.history.session_api.enroll(key, {"root": folder})["token"]
+        credentials[key] = {"authorization": "Bearer " + token}
+    path = "/api/v1/session/questions"
+    body = json.dumps(
+        {"target_session_id": "peer", "question": "What contract is approved?"}
+    ).encode()
+    assert dispatch(server, "POST", path, {}, body)[0] == 401
+    headers = {**credentials["agent"], "idempotency-key": "edition-exchange"}
+    code, question = dispatch(server, "POST", path, headers, body)
+    assert code == 202 and question["status"] == "queued"
+    assert dispatch(server, "POST", path, headers, body)[1]["id"] == question["id"]
+    code, inbox = dispatch(server, "GET", "/api/v1/session/inbox", credentials["peer"])
+    assert code == 200 and [item["id"] for item in inbox["messages"]] == [question["id"]]
+    answer_path = path + "/" + question["id"] + "/answer"
+    answer = b'{"text":"Use the reviewed contract."}'
+    assert dispatch(server, "POST", answer_path, credentials["outside"], answer)[0] == 404
+    assert dispatch(server, "POST", answer_path, credentials["agent"], answer)[0] == 404
+    assert dispatch(server, "POST", answer_path, credentials["peer"], answer)[0] == 200
+    code, replied = dispatch(server, "GET", path + "/" + question["id"], credentials["agent"])
+    assert code == 200 and replied["answer"] == "Use the reviewed contract."
+    assert dispatch(server, "GET", "/sessions/peer/inbox", credentials["agent"])[0] == 403
+    assert (
+        dispatch(server, "GET", "/sessions/peer/inbox", owner)[1]["messages"][0]["id"]
+        == question["id"]
+    )
+    before = server.history._conn.total_changes
+    assert (
+        status(server, "POST", {**headers, "origin": "https://evil.test"}, body, path=path) == 403
+    )
+    assert server.history._conn.total_changes == before
+    server.history.set_state("agent", "stopped", now=2)
+    assert dispatch(server, "GET", "/api/v1/session/self", credentials["agent"])[0] == 401
+
+
+@pytest.mark.parametrize("edition", [LITE, CODE, FULL])
+def test_every_edition_registers_and_reads_artifacts_without_weakening_auth(edition_rig, edition):
+    from duckterm.persistence.artifacts import registration
+
+    server, owner, root = edition_rig(edition)
+    enrolled = server.history.session_api.enroll("agent", {"root": "Tests"})
+    agent = {"authorization": "Bearer " + enrolled["token"]}
+    code, card = dispatch(server, "GET", "/api/v1/session/self", agent)
+    assert code == 200 and "artifacts" in card["features"]
+    assert {"artifacts.register", "artifacts.list", "artifacts.read"} <= set(card["capabilities"])
+    source = root / "review.md"
+    source.write_text("# Reviewed output\n")
+    body = json.dumps(registration(source, kind="report")).encode()
+    path = "/api/v1/session/artifacts"
+    assert dispatch(server, "POST", path, {}, body)[0] == 401
+    code, result = dispatch(server, "POST", path, agent, body)
+    assert code == 200
+    artifact = result["artifact"]
+    source.unlink()
+    assert dispatch(server, "GET", path, agent)[1]["artifacts"] == [artifact]
+    endpoint = "/sessions/agent/artifacts/" + artifact["id"]
+    assert dispatch(server, "GET", endpoint, {})[0] == 401
+    assert dispatch(server, "GET", endpoint, agent)[0] == 403
+    assert status(server, "GET", {**owner, "origin": "https://evil.test"}, path=endpoint) == 403
+    code, saved = dispatch(server, "GET", endpoint, owner)
+    assert (
+        code == 200
+        and base64.b64decode(saved["artifact"]["content_base64"]) == b"# Reviewed output\n"
+    )
+    code, folder = dispatch(server, "GET", "/folders/Tests/artifacts", owner)
+    assert code == 200 and [item["id"] for item in folder["artifacts"]] == [artifact["id"]]
+    assert dispatch(server, "GET", endpoint.replace("/agent/", "/absent/"), owner)[0] == 404
+
+
+@pytest.mark.parametrize("edition", [LITE, CODE, FULL])
+def test_overview_reports_saved_facts_without_oracle_or_model_work(
+    edition_rig, monkeypatch, edition
+):
+    from duckterm.core.tokens import TokenLedger
+
+    server, owner, root = edition_rig(edition)
+    server._tokens = TokenLedger(root / "no-claude", root / "no-codex")
+    model = Mock(side_effect=AssertionError("Overview must not invoke a model"))
+    classifier = AsyncMock(side_effect=AssertionError("Overview must not classify questions"))
+    monkeypatch.setattr("duckterm.server.summarize", model)
+    monkeypatch.setattr(server, "_relay_detect_question", classifier)
+    server.history.session_api.enroll("agent", {"root": "Tests"})
+    code, delivered = dispatch(
+        server,
+        "POST",
+        "/sessions/agent/message",
+        owner,
+        b'{"text":"Review the saved result","mode":"inbox"}',
+    )
+    assert code == 200 and delivered["delivered"] == "inbox"
+    path = "/control-tower"
+    assert dispatch(server, "GET", path, {})[0] == 401
+    assert dispatch(server, "GET", path, {"authorization": "Bearer agent"})[0] == 403
+    assert status(server, "GET", {**owner, "origin": "https://evil.test"}, path=path) == 403
+    before = server.history._conn.total_changes
+    code, facts = dispatch(server, "GET", path, owner)
+    assert code == 200
+    # An owner notice is present, but it is not an agent-to-agent question or
+    # an Oracle nudge. The factual counters must preserve that distinction.
+    assert facts["mail"] == {"sent": 0, "answered": 0, "nudges": 0}
+    assert facts["tokens"]["days"] == 7 and facts["tokens"]["by_agent"]["codex"]["output"] == 0
+    assert facts["backup"] == {"destination": None, "status": None, "finished_at": None}
+    assert facts["remote"] == {"available": False, "count": 0}
+    assert server.history._conn.total_changes == before
+    assert not server.relay.notes
+    if edition is not FULL:
+
+        async def stop():
+            server._relay_observe({"event_type": "Stop", "session_key": "agent", "test": True})
+            await asyncio.sleep(0)
+
+        asyncio.run(stop())
+    model.assert_not_called()
+    classifier.assert_not_awaited()
+
+
+@pytest.mark.parametrize("edition", [LITE, CODE, FULL])
+def test_oracle_relay_notes_and_answers_remain_full_only(edition_rig, edition):
+    server, owner, _ = edition_rig(edition)
+    approval = server.approvals.register("agent", "Bash", {"command": "pytest"}, 1, blocking=True)
+    server._relay_sync_approvals()
+    code, response = dispatch(server, "GET", "/relay", owner)
+    if edition is not FULL:
+        assert code == 403 and response["feature"] == "oracle"
+        assert not server.relay.notes
+        assert (
+            dispatch(server, "POST", "/relay/unknown/answer", owner, b'{"answer":"approve"}')[0]
+            == 403
+        )
+        assert server.approvals.decision_of(approval.id) is None
+    else:
+        assert code == 200
+        [note] = response["notes"]
+        assert note["approval_id"] == approval.id
+        path = "/relay/" + note["id"] + "/answer"
+        assert dispatch(server, "POST", path, {}, b'{"answer":"approve"}')[0] == 401
+        assert dispatch(server, "POST", path, owner, b'{"answer":"approve"}')[0] == 200
+        assert server.approvals.decision_of(approval.id) == "approve"
+
+
+@pytest.mark.parametrize("edition", [LITE, CODE, FULL])
+def test_rule_suggestions_have_their_own_capability_and_never_write_rules(
+    edition_rig, monkeypatch, edition
+):
+    # Context remains available in Lite; it must not grant model-authored rule suggestions.
+    server, owner, root = edition_rig(edition)
+    rules = root / "AGENTS.md"
+    rules.write_text("Keep owner rules.\n")
+    model = Mock(return_value=[])
+    monkeypatch.setattr("duckterm.server.suggest_rules", model)
+    body = json.dumps({"dir": str(root)}).encode()
+    path = "/agents-md/suggest"
+    assert dispatch(server, "POST", path, {}, body)[0] == 401
+    assert dispatch(server, "POST", path, {"authorization": "Bearer agent"}, body)[0] == 403
+    code, response = dispatch(server, "POST", path, owner, body)
+    if edition is LITE:
+        assert code == 403 and response["feature"] == "rule_suggestions"
+        model.assert_not_called()
+    else:
+        assert code == 200 and response["suggestions"] == []
+        model.assert_called_once()
+    assert rules.read_text() == "Keep owner rules.\n"
+
+
 def test_generated_guides_follow_features_and_preserve_project_rules(tmp_path, monkeypatch):
     monkeypatch.setattr(session_instructions, "scoped_rules", lambda *args: "Keep project rules")
     lite = session_instructions.launch_prompt(
@@ -284,8 +501,8 @@ def test_generated_guides_follow_features_and_preserve_project_rules(tmp_path, m
     assert "duckterm session artifact" not in guides[0].read_text()
 
 
-def test_code_session_api_keeps_inbox_but_does_not_offer_artifacts(edition_rig):
-    server, _, _ = edition_rig(CODE)
+def test_session_api_respects_explicit_artifact_capability_removal(edition_rig):
+    server, _, _ = edition_rig(EditionConfig("code", CODE.features - {"artifacts"}))
     enrolled = server.history.session_api.enroll("agent", {"root": "Tests"})
     agent = {"authorization": "Bearer " + enrolled["token"]}
     status, card = dispatch(server, "GET", "/api/v1/session/self", agent)
@@ -384,8 +601,8 @@ def test_lite_stop_revokes_old_grants_without_reenrolling(edition_rig):
 @pytest.mark.parametrize(
     ("edition", "path", "missing"),
     [
-        (CODE, "/folders/Tests/chat?x=/artifacts", "artifacts"),
-        (CODE, "/sessions/agent/digest?x=/artifacts", "artifacts"),
+        (LITE, "/folders/Tests/artifacts?x=/chat", "folder_chat"),
+        (LITE, "/sessions/agent/digest?x=/files", "explorer"),
     ],
 )
 def test_allowed_parsed_path_cannot_hide_a_restricted_raw_route(
@@ -397,8 +614,8 @@ def test_allowed_parsed_path_cannot_hide_a_restricted_raw_route(
     assert response["feature"] == missing
 
 
-def test_session_api_query_cannot_hide_artifacts_in_code(edition_rig):
-    server, _, _ = edition_rig(CODE)
+def test_session_api_query_cannot_hide_a_disabled_artifact_capability(edition_rig):
+    server, _, _ = edition_rig(EditionConfig("code", CODE.features - {"artifacts"}))
     enrolled = server.history.session_api.enroll("agent", {"root": "Tests"})
     agent = {"authorization": "Bearer " + enrolled["token"]}
     with pytest.raises(APIError, match="artifacts is unavailable"):

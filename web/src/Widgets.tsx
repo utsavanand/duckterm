@@ -32,7 +32,7 @@ function WidgetContent({ type, instance, source }: { type: WidgetType; instance:
   const Render = type.render;
   return <Render streams={streams} params={instance.params} />;
 }
-export function Widgets({ surface, slot, registry, source }: { surface: string; slot: WidgetSlot; registry: WidgetType[]; source: WidgetStreams }) {
+export function Widgets({ surface, slot, registry, source, kindLabel = slot === "oracle" ? "Oracle" : "folder" }: { surface: string; slot: WidgetSlot; registry: WidgetType[]; source: WidgetStreams; kindLabel?: string }) {
   const defaults = useMemo(() => defaultLayout(slot, registry, slot === "folder" ? surface.slice(7) : undefined), [slot, registry, surface]);
   const [layout, setLayout] = useState<Layout>({ instances: defaults, revision: "default" });
   const [loading, setLoading] = useState(true), [saving, setSaving] = useState(false), [error, setError] = useState("");
@@ -79,7 +79,7 @@ export function Widgets({ surface, slot, registry, source }: { surface: string; 
     if (event.key === "Escape" && (add || menu)) { event.stopPropagation(); setAdd(false); setMenu(null); }
   }}>
     <header className="rd-widgets-heading"><h2>Widgets</h2><div><button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={disabled || !!error} onClick={() => void save(defaults)}>Reset</button><button className="rd-btn rd-btn-ghost rd-btn-sm" aria-expanded={add} disabled={disabled || !!error} onClick={() => setAdd(!add)}>Add widget</button></div>
-      {add && <div className="rd-widget-add" role="group" aria-label="Visible widgets">{registry.filter(type => type.slots.includes(slot)).map(type => <label key={type.type}><input type="checkbox" disabled={disabled} checked={layout.instances.some(item => item.type === type.type)} onChange={event => void save(event.target.checked ? [...layout.instances, defaults.find(item => item.type === type.type)!] : layout.instances.filter(item => item.type !== type.type))} />{type.title}</label>)}<p>Built-in {slot === "oracle" ? "Oracle" : "folder"} widgets</p></div>}
+      {add && <div className="rd-widget-add" role="group" aria-label="Visible widgets">{registry.filter(type => type.slots.includes(slot)).map(type => <label key={type.type}><input type="checkbox" disabled={disabled} checked={layout.instances.some(item => item.type === type.type)} onChange={event => void save(event.target.checked ? [...layout.instances, defaults.find(item => item.type === type.type)!] : layout.instances.filter(item => item.type !== type.type))} />{type.title}</label>)}<p>Built-in {kindLabel} widgets</p></div>}
     </header>
     {error && <p className="rd-widget-error" role="alert">{error} <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={() => void load()}>Reload layout</button></p>}
     <div className="rd-widget-grid">{layout.instances.map((instance, index) => {

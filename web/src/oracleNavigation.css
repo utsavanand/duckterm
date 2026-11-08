@@ -1,0 +1,40 @@
+/* A stable contents wrapper lets Oracle block hidden panes without disabling
+   Agents or changing the grid tracks that size mounted terminals. */
+.rd-workspace-content { display: contents; }
+.rd-panels-3 > .rd-workspace-content > section {
+  border-right: 1px solid var(--border);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+.rd-panels-3 > .rd-workspace-content > section:last-child { border-right: none; }
+.rd-oracle-navigation { position: relative; }
+.rd-oracle-navigation > .rd-tower-layer { grid-column: 2 / -1; grid-row: 1 / 2; }
+@media (max-width: 1100px) {
+  .rd-oracle-navigation > .rd-tower-layer { grid-column: 1; grid-row: 2 / -1; }
+}
+.rd-oracle-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  flex: none;
+  padding: 14px 18px;
+  text-align: left;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  border-radius: 0;
+  background: transparent;
+  color: var(--text);
+  font: inherit;
+  cursor: pointer;
+}
+.rd-oracle-row img { width: 26px; height: 26px; }
+.rd-oracle-row small { display: block; font-size: 11px; color: var(--text-soft); margin-top: 2px; }
+.rd-oracle-row[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--idle) 14%, transparent);
+  box-shadow: inset 3px 0 var(--idle);
+}
+.rd-oracle-row:focus-visible { outline: 2px solid var(--accent); outline-offset: -2px; }

@@ -57,7 +57,6 @@ def test_invalid_saved_selection_never_falls_back_to_full(home, value):
     "command",
     [
         ["voice", "install"],
-        ["snapshot"],
         ["connector-run", "github"],
         ["connector-serve"],
         ["connector-service"],
@@ -68,7 +67,6 @@ def test_invalid_saved_selection_never_falls_back_to_full(home, value):
 def test_lite_cli_blocks_before_optional_handler(home, monkeypatch, capsys, command):
     editions.remember(editions.LITE)
     monkeypatch.setattr(cli, "_voice", lambda *args: pytest.fail("voice ran"))
-    monkeypatch.setattr(cli, "_snapshot", lambda *args: pytest.fail("snapshot ran"))
     assert cli.main(command) == 1
     assert "unavailable in Duckterm Lite" in capsys.readouterr().err
     assert list(home.iterdir()) == [home / "edition.json"]
@@ -125,9 +123,21 @@ def test_old_full_terminal_cannot_run_voice_after_switching_edition(
     assert cli.main(["voice", "install"]) == 1
 
 
-def test_old_full_terminal_cannot_create_checkpoint_in_lite(home, monkeypatch):
+def test_checkpoint_uses_saved_lite_despite_inherited_full(home, monkeypatch):
     editions.remember(editions.LITE)
     monkeypatch.setenv("DUCKTERM_EDITION", "full")
+    observed = []
+    monkeypatch.setattr(cli, "_snapshot", lambda: observed.append(editions.configured()) or 0)
+    assert cli.main(["snapshot"]) == 0
+    assert observed == [editions.LITE]
+    assert json.loads((home / "edition.json").read_text()) == {"id": "lite"}
+
+
+def test_checkpoint_cli_respects_explicit_capability_removal(home, monkeypatch):
+    editions.remember(editions.LITE)
+    monkeypatch.setenv("DUCKTERM_EDITION", "full")
+    disabled = editions.EditionConfig("lite", editions.LITE.features - {"checkpoints"})
+    monkeypatch.setitem(editions.PRESETS, "lite", disabled)
     monkeypatch.setattr(cli, "_snapshot", lambda *args: pytest.fail("excluded checkpoint ran"))
     assert cli.main(["snapshot"]) == 1
 

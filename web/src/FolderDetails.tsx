@@ -1,5 +1,5 @@
 import { tasksWidget } from "./FolderTasks";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { api, FolderStats } from "./api";
 import { ARTIFACT_KINDS } from "./artifactKinds";
 import { compact } from "./tower";
@@ -7,25 +7,26 @@ import { Widgets, WidgetType } from "./Widgets";
 import { WidgetStreams } from "./widgetStreams";
 import { useFeature } from "./edition";
 export interface FolderActions { onOpenSession?: (key: string) => void; onGrid?: () => void; onMessage?: () => void; onNewSession?: () => void; }
-export function FolderDetails({ folder, onClose, onOpenSession, onGrid, onMessage, onNewSession }: FolderActions & { folder: string; onClose: () => void }) {
+export function FolderDetails({ folder, presentation = "details", onClose, onOpenSession, onGrid, onMessage, onNewSession }: FolderActions & { folder: string; presentation?: "details" | "overview"; onClose?: () => void }) {
   const [source] = useState(() => new WidgetStreams());
   const [retry, setRetry] = useState(0), [error, setError] = useState("");
   const [updated, setUpdated] = useState<number | null>(null);
   const open = useRef(onOpenSession); open.current = onOpenSession;
-  const artifacts = useFeature("artifacts");
-  const [registry] = useState(() => ([
+  const overview = useFeature("overview"), inbox = useFeature("inbox"), artifacts = useFeature("artifacts");
+  const registry = useMemo(() => ([
     tasksWidget(key => open.current?.(key)),
     { type: "folder-stats", title: "Activity", slots: ["folder"], streams: ["folder-stats"], render: ({ streams }) => <Activity stats={streams["folder-stats"].status === "ready" ? streams["folder-stats"].value as FolderStats : null} onOpen={key => open.current?.(key)} /> },
     { type: "artifacts-by-kind", title: "Artifacts by kind", slots: ["folder"], streams: ["artifacts-by-kind"], render: ({ streams }) => {
       const data = streams["artifacts-by-kind"].status === "ready" ? streams["artifacts-by-kind"].value as FolderStats["artifacts"] : null;
       return data && <div className="rd-folder-kind-counts">{Object.entries(ARTIFACT_KINDS).map(([key, label]) => <div key={key}><span>{label}</span><strong>{data.by_kind[key as keyof typeof ARTIFACT_KINDS] ?? 0}</strong></div>)}<p>{data.available} available · {data.removed} removed<br />Removed files are included in kind counts.</p></div>;
     } },
-  ] as WidgetType[]).filter(widget => artifacts || widget.type !== "artifacts-by-kind"));
+  ] as WidgetType[]).filter(widget => inbox && (artifacts || widget.type !== "artifacts-by-kind")), [inbox, artifacts]);
   useEffect(() => {
     const refresh = () => setRetry(n => n + 1); window.addEventListener("folder-stats-refresh", refresh);
     return () => window.removeEventListener("folder-stats-refresh", refresh);
   }, []);
   useEffect(() => {
+    if (!overview || !inbox) return;
     let stale = false; setError("");
     for (const name of ["folder-stats", "artifacts-by-kind"]) source.emit(name, { status: "loading" });
     void api.folderStats(folder).then(data => {
@@ -34,12 +35,13 @@ export function FolderDetails({ folder, onClose, onOpenSession, onGrid, onMessag
       source.emit("artifacts-by-kind", { status: "ready", value: data.artifacts });
     }).catch((e: Error) => { if (!stale) { setError(e.message); for (const name of ["folder-stats", "artifacts-by-kind"]) source.emit(name, { status: "unavailable", message: e.message }); } });
     return () => { stale = true; };
-  }, [folder, retry, source]);
-  return <aside className="rd-folder-details" aria-label="Folder details"><header><h2>Folder details</h2><button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={onClose} aria-label="Close folder details">×</button></header>
+  }, [folder, retry, source, overview, inbox]);
+  if (!overview) return null;
+  return <aside className={`rd-folder-details${presentation === "overview" ? " rd-folder-overview" : ""}`} aria-label={presentation === "overview" ? "Folder overview" : "Folder details"}>{presentation === "details" && <header><h2>Folder details</h2>{onClose && <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={onClose} aria-label="Close folder details">×</button>}</header>}
     <small>Includes this folder and subfolders · Local sessions</small>
     {error && <p role="alert">{error}</p>}
     <Widgets key={folder} surface={`folder:${folder}`} slot="folder" registry={registry} source={source} />
-    <section className="rd-folder-actions" aria-label="Folder actions">{onGrid && <button onClick={onGrid}>Grid view</button>}{onMessage && <button onClick={onMessage}>Message folder</button>}{onNewSession && <button onClick={onNewSession}>New session here</button>}</section>
+    <section className="rd-folder-actions" aria-label="Folder actions">{onGrid && <button onClick={onGrid}>Grid view</button>}{inbox && onMessage && <button onClick={onMessage}>Message folder</button>}{onNewSession && <button onClick={onNewSession}>New session here</button>}</section>
     <footer><button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={() => setRetry(n => n + 1)}>Refresh details</button>{updated && <small>Updated {new Date(updated).toLocaleTimeString()}</small>}</footer>
   </aside>;
 }

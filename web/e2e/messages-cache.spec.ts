@@ -31,7 +31,7 @@ test("Messages keeps its last reply on tab return and pauses reads behind Oracle
     // The next request must wait for the current one, even past the old interval.
     await page.waitForTimeout(3300);
     expect(reads).toBe(2);
-    await page.getByRole("button", { name: /^Oracle/ }).click();
+    await page.locator(".rd-topbar").getByRole("button", { name: /^Oracle/ }).click();
     await expect(page.getByRole("heading", { name: /Control tower/ })).toBeVisible();
     held = false; release?.();
     const commentCount = comments;

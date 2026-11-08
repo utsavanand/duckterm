@@ -28,6 +28,82 @@ final class DesktopEditionTests: XCTestCase {
         XCTAssertNil(DesktopEdition.requiredFeature(target: "local", operation: "terminal-open"))
     }
 
+    func testLocalCloneWorkflowIsAvailableInEveryEdition() throws {
+        let base = URL(string: "http://127.0.0.1:4519")!
+        let steps: [(String, [String: Any])] = [
+            ("mkdir", ["parent": "/tmp/projects", "name": "checkout"]),
+            ("preflight", ["destination": "/tmp/projects/checkout", "command": "codex"]),
+            ("clone", ["id": "clone-fixture", "url": "https://example.test/repository.git", "destination": "/tmp/projects/checkout"]),
+            ("status", ["id": "clone-fixture"]),
+            ("launch", ["id": "clone-fixture", "command": "codex", "test": true]),
+        ]
+        for id in ["lite", "code", "full"] {
+            let features = ["terminal"] + (id == "full" ? ["remote_workspaces"] : [])
+            let edition = try DesktopEdition(response: ["id": id, "features": features])
+            for (step, params) in steps {
+                let feature = try XCTUnwrap(DesktopEdition.requiredFeature(target: "local", operation: "project-" + step))
+                XCTAssertTrue(edition.includes(feature), "\(id) must support the local clone \(step) step")
+                // The permitted bridge operations keep the fixed local HTTP routes.
+                let request = try LaunchDestination.request(base: base, operation: "transfer-" + step, params: params)
+                XCTAssertEqual(request.url?.path, "/transfers/" + step)
+                XCTAssertEqual(request.url?.host, "127.0.0.1")
+                XCTAssertEqual(request.httpMethod, "POST")
+            }
+        }
+    }
+
+    func testLocalCloneUsesServerCapabilityInsteadOfEditionName() throws {
+        for id in ["lite", "code", "full"] {
+            let edition = try DesktopEdition(response: ["id": id, "features": ["remote_workspaces"]])
+            let feature = try XCTUnwrap(DesktopEdition.requiredFeature(target: "local", operation: "project-clone"))
+            XCTAssertEqual(feature, "terminal")
+            XCTAssertFalse(edition.includes(feature), "An edition label must not grant a missing core capability")
+        }
+    }
+
+    func testGitHubCatalogAndCredentialBackedClonesRequireConnectors() {
+        XCTAssertEqual(DesktopEdition.requiredFeature(target: "local", operation: "project-repositories"), "connectors")
+        for repository: Any in ["owner/repo", true, ["unexpected"]] {
+            XCTAssertEqual(DesktopEdition.requiredFeature(target: "local", operation: "project-clone", params: ["github_repository": repository]), "connectors")
+        }
+        for params: [String: Any] in [[:], ["github_repository": ""], ["github_repository": NSNull()]] {
+            XCTAssertEqual(DesktopEdition.requiredFeature(target: "local", operation: "project-clone", params: params), "terminal")
+        }
+        XCTAssertEqual(DesktopEdition.requiredFeature(target: "dev", operation: "project-clone", params: ["github_repository": "owner/repo"]), "remote_workspaces")
+    }
+
+    func testCloneOperationsCannotOpenRemoteTargetsInLiteOrCode() throws {
+        let operations = ["project-repositories", "project-mkdir", "project-preflight", "project-clone", "project-status", "project-launch"]
+        for id in ["lite", "code", "full"] {
+            let features = ["terminal"] + (id == "full" ? ["remote_workspaces"] : [])
+            let edition = try DesktopEdition(response: ["id": id, "features": features])
+            for target in ["dev", "add", "LOCAL", " local", "local "] {
+                for operation in operations {
+                    let feature = try XCTUnwrap(DesktopEdition.requiredFeature(target: target, operation: operation))
+                    XCTAssertEqual(feature, "remote_workspaces")
+                    XCTAssertEqual(edition.includes(feature), id == "full", "\(id): \(target)/\(operation)")
+                }
+            }
+        }
+    }
+
+    func testLocalCloneDoesNotGrantMoveTransferOrUnknownProjectOperations() throws {
+        let operations = [
+            "project-preview", "project-transfer", "project-continue", "project-pause",
+            "project-prepare", "project-chunk", "project-begin", "project-receive",
+            "project-finish", "project-link", "project-cancel", "project-future-operation",
+        ]
+        for id in ["lite", "code", "full"] {
+            let features = ["terminal"] + (id == "full" ? ["remote_workspaces"] : [])
+            let edition = try DesktopEdition(response: ["id": id, "features": features])
+            for operation in operations {
+                let feature = try XCTUnwrap(DesktopEdition.requiredFeature(target: "local", operation: operation))
+                XCTAssertEqual(feature, "remote_workspaces")
+                XCTAssertEqual(edition.includes(feature), id == "full", "\(id): \(operation)")
+            }
+        }
+    }
+
     func testEditionRequestHasFixedLocalRouteAndNoCallerParameters() throws {
         let base = URL(string: "http://127.0.0.1:4300")!
         let request = try LaunchDestination.request(base: base, operation: "edition", params: [:])

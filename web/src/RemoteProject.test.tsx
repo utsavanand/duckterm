@@ -2,9 +2,30 @@ import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-libra
 import { afterEach, expect, it, vi } from "vitest";
 import { RemoteProject } from "./RemoteProject";
 import { destinationRequest } from "./desktop";
+import { CODE, FULL, LITE, edition } from "./test/editions";
 vi.mock("./desktop", () => ({ destinationRequest: vi.fn(), desktop: () => ({ targets: [{ id: "dev", name: "Remote — dev" }] }), selectLaunchTarget: vi.fn() }));
 afterEach(() => { cleanup(); localStorage.clear(); vi.resetAllMocks(); });
 const snapshot = { fingerprint: "snapshot", source: "/local", bytes: 12, entries: [{ path: "file" }], excluded: [".env"], ignored: [], git: { kind: "git" }, conversation: {} };
+it.each([LITE, CODE, FULL].map(features => ({ features })))("gates GitHub connector browsing while keeping URL cloning", ({ features }) => {
+  render(<RemoteProject target="local" kind="clone" command="codex" onPrepared={vi.fn()} onBusy={vi.fn()} />, { wrapper: edition(features) });
+  expect(screen.getByLabelText("Repository URL")).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Choose from GitHub…" }) !== null).toBe(features.includes("connectors"));
+  expect(destinationRequest).not.toHaveBeenCalled();
+});
+
+it("drops a saved connector selection when cloning in Lite", async () => {
+  const url = "https://github.com/fixture/project.git";
+  localStorage.setItem("remote-project:local:new:clone", JSON.stringify({ id: "saved", source: "", selected: [], branch: "main", url, destination: "/synthetic", destination_source: url, github_repository: "fixture/project" }));
+  vi.mocked(destinationRequest).mockImplementation(async (_target, op) => op === "project-clone" ? { stage: "ready", destination: "/synthetic" } : {});
+  render(<RemoteProject target="local" kind="clone" command="codex" onPrepared={vi.fn()} onBusy={vi.fn()} />, { wrapper: edition(LITE, "lite") });
+  expect(screen.queryByText(/Uses the destination’s GitHub connector/)).not.toBeInTheDocument();
+  fireEvent.click(screen.getByText("Review transfer"));
+  const clone = await screen.findByRole("button", { name: "Clone repository" });
+  fireEvent.click(screen.getByRole("checkbox"));
+  fireEvent.click(clone);
+  await waitFor(() => expect(destinationRequest).toHaveBeenCalledWith("local", "project-clone", expect.objectContaining({ url, github_repository: undefined })));
+});
+
 it("requires a review and consent before copying, then reuses the operation on retry", async () => {
   const prepared = vi.fn();
   const request = vi.mocked(destinationRequest);

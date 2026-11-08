@@ -5,13 +5,15 @@ import { defaultLayout } from "./Widgets";
 import { oracleWidgets } from "./OracleWidgets";
 import { ControlTower } from "./ControlTower";
 import { TowerAgent } from "./tower";
+import { edition, CODE, FULL, LITE } from "./test/editions";
+import { StaticEdition } from "./edition";
 vi.mock("./api", () => ({ authHeaders: () => ({}), api: { controlTower: vi.fn(), messageSession: vi.fn(), oracleChat: vi.fn(), fleetAsk: vi.fn(), clearOracleChat: vi.fn(), relay: vi.fn() } }));
 beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn().mockImplementation(async (url: string) => new Response(JSON.stringify(url === "/tasks" ? { tasks: [] } : { revision: "default", instances: defaultLayout("oracle", oracleWidgets(() => {})) }))));
   vi.mocked(api.oracleChat).mockResolvedValue({ messages: [] });
   vi.mocked(api.relay).mockResolvedValue({ notes: [{ id: "n1", session_key: "qa", name: "qa", folder: "Nourish", runtime: "claude-code", kind: "question", status: "open", created_at: NOW - 4 * 86_400_000, question: "Deploy now?" }], rules: [], open: 1 });
 });
-afterEach(() => { cleanup(); vi.resetAllMocks(); vi.unstubAllGlobals(); });
+afterEach(() => { cleanup(); vi.useRealTimers(); vi.resetAllMocks(); vi.unstubAllGlobals(); });
 
 const NOW = 10_000_000_000;
 const insights: TowerInsights = {
@@ -28,8 +30,8 @@ const agents = [
   agent({ key: "architect", state: "busy", shownState: "busy", lastTool: "Bash" }),
   agent({ key: "qa", group: "Nourish", state: "waiting", shownState: "waiting", updatedAt: NOW - 4 * 86_400_000 }),
 ];
-function renderTower() {
-  return render(<ControlTower onAnalytics={() => {}} agents={agents} now={NOW} onBack={() => {}} onOpenTerminal={() => {}} />);
+function renderTower(features = FULL) {
+  return render(<ControlTower onAnalytics={() => {}} agents={agents} now={NOW} onBack={() => {}} onOpenTerminal={() => {}} />, { wrapper: edition(features) });
 }
 
 it("shows fleet tiles with the cache share and a missing backup as a warning", async () => {
@@ -75,7 +77,7 @@ it("offers typing into the prompt only for idle agents and shows the server's re
 it("Escape closes a pinned card first, then returns to the sessions, but not while typing", async () => {
   vi.mocked(api.controlTower).mockResolvedValue(insights);
   const onBack = vi.fn();
-  render(<ControlTower onAnalytics={() => {}} agents={agents} now={NOW} onBack={onBack} onOpenTerminal={() => {}} />);
+  render(<ControlTower onAnalytics={() => {}} agents={agents} now={NOW} onBack={onBack} onOpenTerminal={() => {}} />, { wrapper: edition(FULL) });
   fireEvent.click(screen.getByRole("button", { name: "main-qa, Duckterm, Idle" }));
   fireEvent.keyDown(screen.getByLabelText("Message main-qa"), { key: "Escape" });
   expect(screen.queryByRole("dialog")).toBeNull();
@@ -94,7 +96,7 @@ it("sends a menu question straight to the agent's terminal", async () => {
     open: 1,
   });
   const onOpenTerminal = vi.fn();
-  render(<ControlTower onAnalytics={() => {}} agents={agents} now={NOW} onBack={() => {}} onOpenTerminal={onOpenTerminal} />);
+  render(<ControlTower onAnalytics={() => {}} agents={agents} now={NOW} onBack={() => {}} onOpenTerminal={onOpenTerminal} />, { wrapper: edition(FULL) });
   const needs = await screen.findByRole("region", { name: "Needs you" });
   expect(needs).not.toHaveTextContent("Answer in the chat");
   const row = await within(needs).findByRole("button", { name: /release-dev/ });
@@ -107,11 +109,60 @@ it("sends a menu question straight to the agent's terminal", async () => {
 it("shows the remote cloud in Oracle fleet and needs-you ducks without adding nested tab stops", async () => {
   vi.mocked(api.controlTower).mockResolvedValue(insights);
   const remote = agent({ key: "qa", host: "build", hostLabel: "Build server", shownState: "waiting", hostOffline: true });
-  render(<ControlTower onAnalytics={() => {}} agents={[...agents.filter(a => a.key !== "qa"), remote]} now={NOW} onBack={() => {}} onOpenTerminal={() => {}} />);
+  render(<ControlTower onAnalytics={() => {}} agents={[...agents.filter(a => a.key !== "qa"), remote]} now={NOW} onBack={() => {}} onOpenTerminal={() => {}} />, { wrapper: edition(FULL) });
   const duck = screen.getByRole("button", { name: /qa, Duckterm, Waiting on you, Remote · Build server · Disconnected/ });
   expect(duck.querySelector('.rd-location-cloud')).not.toBeNull();
   expect(duck.querySelector('[tabindex]')).toBeNull();
   expect(screen.getByRole("button", { name: "architect, Duckterm, Busy" }).querySelector('.rd-location-cloud')).toBeNull();
   const needs = await screen.findByRole("region", { name: "Needs you" });
   expect(within(needs).getByRole("group", { name: "Remote · Build server · Disconnected" })).toBeInTheDocument();
+});
+
+it.each([["lite", LITE], ["code", CODE]])("%s shows factual widgets without hidden Oracle polls or saved Oracle widgets", async (_id, features) => {
+  vi.useFakeTimers();
+  vi.mocked(api.controlTower).mockResolvedValue(insights);
+  renderTower(features as string[]);
+  await act(async () => { await vi.advanceTimersByTimeAsync(12000); });
+  expect(api.controlTower).toHaveBeenCalled();
+  expect(screen.getByText("66 answered")).toBeVisible();
+  expect(screen.getByText("1k")).toBeVisible();
+  expect(screen.queryByLabelText("Message Oracle")).toBeNull();
+  expect(screen.queryByRole("region", { name: "Needs you" })).toBeNull();
+  expect(screen.queryByRole("article", { name: "Needs you" })).toBeNull();
+  expect(screen.queryByRole("article", { name: "Remote sessions" })).toBeNull();
+  expect(screen.queryByText(/Oracle nudge/)).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Add widget" }));
+  expect(screen.getByText("Built-in fleet widgets")).toBeVisible();
+  expect(screen.queryByRole("checkbox", { name: "Needs you" })).toBeNull();
+  expect(screen.queryByRole("checkbox", { name: "Remote sessions" })).toBeNull();
+  expect(api.relay).not.toHaveBeenCalled();
+  expect(api.oracleChat).not.toHaveBeenCalled();
+  expect(api.fleetAsk).not.toHaveBeenCalled();
+});
+
+it("drops cached Oracle notes and stops its polls when the capability is withdrawn", async () => {
+  vi.useFakeTimers();
+  vi.mocked(api.controlTower).mockResolvedValue(insights);
+  const content = <ControlTower onAnalytics={() => {}} agents={agents} now={NOW} onBack={() => {}} onOpenTerminal={() => {}} />;
+  const view = render(<StaticEdition features={FULL}>{content}</StaticEdition>);
+  await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+  expect(screen.getByRole("region", { name: "Needs you" })).toBeVisible();
+  vi.mocked(api.relay).mockClear(); vi.mocked(api.oracleChat).mockClear();
+  view.rerender(<StaticEdition features={LITE} id="lite">{content}</StaticEdition>);
+  await act(async () => { await vi.advanceTimersByTimeAsync(12000); });
+  expect(screen.queryByRole("region", { name: "Needs you" })).toBeNull();
+  expect(screen.queryByText("Deploy now?")).toBeNull();
+  expect(screen.queryByLabelText("Message Oracle")).toBeNull();
+  expect(api.relay).not.toHaveBeenCalled();
+  expect(api.oracleChat).not.toHaveBeenCalled();
+});
+
+it("starts no polling when its overview capability is unavailable", async () => {
+  renderTower([]);
+  await act(async () => {});
+  expect(screen.queryByRole("heading", { name: /Control tower/ })).toBeNull();
+  expect(api.controlTower).not.toHaveBeenCalled();
+  expect(api.relay).not.toHaveBeenCalled();
+  expect(api.oracleChat).not.toHaveBeenCalled();
+  expect(fetch).not.toHaveBeenCalled();
 });

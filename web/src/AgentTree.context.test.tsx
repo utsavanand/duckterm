@@ -10,7 +10,8 @@ it.each([
   { capacity: 128_000, tokens: 110_000, features: FULL, level: "high" },
   { capacity: 128_000, tokens: 75_000, features: FULL, level: "warm" },
   { capacity: undefined, tokens: 110_000, features: FULL, level: null },
-  { capacity: 128_000, tokens: 110_000, features: LITE, level: null },
+  { capacity: 128_000, tokens: 110_000, features: LITE, level: "high" },
+  { capacity: 128_000, tokens: 110_000, features: FULL.filter(feature => feature !== "context"), level: null },
 ])("uses reported capacity in existing sidebar warnings ($level, $capacity)", ({ capacity, tokens, features, level }) => {
   const session = viewFromPersisted({ session_key: "probe", name: "Context probe", state: "busy", event_count: 1,
     started_at: 1, updated_at: 2, runtime: "codex", model: "unlisted-codex-model", context_tokens: tokens, context_window_tokens: capacity });

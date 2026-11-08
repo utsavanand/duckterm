@@ -36,8 +36,8 @@ def apply_app_profile() -> None:
             from duckterm import editions
             from duckterm.helpers import profile_state
 
-            # Lite intentionally has callback identity but no inbox enrollment.
-            # Its complete, owned workspace context must still work in a pane.
+            # Configurations without inboxes still carry callback identity.
+            # Their complete, owned workspace context must work without enrollment.
             if not editions.configured().includes("inbox"):
                 if instance.configured_profile() and profile_state.validate_home():
                     raise ValueError("Lite session workspace ownership is unavailable")

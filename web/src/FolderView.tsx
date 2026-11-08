@@ -13,10 +13,10 @@ import { ReviewWorkspace } from "./review/ReviewWorkspace";
 import type { PrRow } from "./api";
 import { Feature, useEdition } from "./edition";
 
-const TABS = ["chat", "artifacts", "prs"] as const;
+const TABS = ["overview", "chat", "artifacts", "prs"] as const;
 type Tab = (typeof TABS)[number];
-const TAB_LABELS: Record<Tab, string> = { chat: "Chat", artifacts: "Artifacts", prs: "Pull requests" };
-const TAB_FEATURES: Record<Tab, Feature> = { chat: "folder_chat", artifacts: "artifacts", prs: "pr_review" };
+const TAB_LABELS: Record<Tab, string> = { overview: "Overview", chat: "Chat", artifacts: "Artifacts", prs: "Pull requests" };
+const TAB_FEATURES: Record<Tab, Feature> = { overview: "overview", chat: "folder_chat", artifacts: "artifacts", prs: "pr_review" };
 
 // Folder panels are ordinary internal components; sessions remain in the tree.
 export function FolderView({ folder, ...actions }: { folder: string } & FolderActions) {
@@ -26,16 +26,18 @@ export function FolderView({ folder, ...actions }: { folder: string } & FolderAc
     const collapse = () => { if (media.matches) setDetails(false); };
     media.addEventListener("change", collapse); return () => media.removeEventListener("change", collapse);
   }, []);
-  const [tab, setTab] = useState<Tab>("chat");
+  const [chosenTab, setTab] = useState<Tab>("chat");
   const [review, setReview] = useState<{ repo: string; ref: string; from?: string } | null>(null);
   const openReview = (row: PrRow) => setReview({ repo: row.repo, ref: row.pr ? String(row.pr.number) : row.branch, from: row.session?.name });
   const tabs = useRef<HTMLDivElement>(null);
   const { has } = useEdition();
   const shown = TABS.filter(name => has(TAB_FEATURES[name]));
-  return <section className={`rd-folder-view rd-folder-with-details${details ? " details-open" : ""}`} aria-label={`Folder ${folder}`}>
-    <div className="rd-folder-main"><header className="rd-folder-heading"><button className="rd-btn rd-btn-ghost rd-btn-sm rd-folder-details-toggle" aria-expanded={details} onClick={() => setDetails(!details)}>{details ? "Hide details" : "Details"}</button><small>Folder</small><h1>{folder.split("/").pop()}</h1><p>{folder} · Includes subfolders{desktop() ? " · This Mac" : ""}</p></header>
+  const tab = shown.includes(chosenTab) ? chosenTab : shown.includes("chat") ? "chat" : shown[0];
+  const detailsAvailable = has("overview") && tab !== "overview";
+  return <section className={`rd-folder-view rd-folder-with-details${details && detailsAvailable ? " details-open" : ""}`} aria-label={`Folder ${folder}`}>
+    <div className="rd-folder-main"><header className="rd-folder-heading">{detailsAvailable && <button className="rd-btn rd-btn-ghost rd-btn-sm rd-folder-details-toggle" aria-expanded={details} onClick={() => setDetails(!details)}>{details ? "Hide details" : "Details"}</button>}<small>Folder</small><h1>{folder.split("/").pop()}</h1><p>{folder} · Includes subfolders{desktop() ? " · This Mac" : ""}</p></header>
     <div ref={tabs} className="rd-folder-tabs" role="tablist" aria-label="Folder views" onKeyDown={event => {
-      if (!["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
+      if (!shown.length || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
       event.preventDefault();
       const index = shown.indexOf(tab);
       const next = event.key === "Home" ? shown[0] : event.key === "End" ? shown[shown.length - 1] : shown[(index + (event.key === "ArrowRight" ? 1 : shown.length - 1)) % shown.length];
@@ -44,10 +46,11 @@ export function FolderView({ folder, ...actions }: { folder: string } & FolderAc
     }}>
       {shown.map(name => <button key={name} id={`folder-${name}-tab`} role="tab" aria-controls={`folder-${name}`} aria-selected={tab === name} tabIndex={tab === name ? 0 : -1} onClick={() => setTab(name)}>{TAB_LABELS[name]}</button>)}
     </div>
-    <div id="folder-chat" role="tabpanel" aria-labelledby="folder-chat-tab" className="rd-folder-chat-panel" hidden={tab !== "chat"}><FolderChat key={folder} folder={folder} active={tab === "chat"} /></div>
+    {tab === "overview" && has("overview") && <div id="folder-overview" role="tabpanel" aria-labelledby="folder-overview-tab" className="rd-folder-overview-panel"><FolderDetails key={folder} folder={folder} presentation="overview" {...actions} /></div>}
+    {has("folder_chat") && <div id="folder-chat" role="tabpanel" aria-labelledby="folder-chat-tab" className="rd-folder-chat-panel" hidden={tab !== "chat"}><FolderChat key={folder} folder={folder} active={tab === "chat"} /></div>}
     <div id="folder-artifacts" role="tabpanel" aria-labelledby="folder-artifacts-tab" className="rd-folder-artifacts-panel" hidden={tab !== "artifacts"}>{tab === "artifacts" && has("artifacts") && <ArtifactsView key={folder} folder={folder} />}</div>
     <div id="folder-prs" role="tabpanel" aria-labelledby="folder-prs-tab" className="rd-folder-prs-panel" hidden={tab !== "prs"}>{tab === "prs" && has("pr_review") && review && <ReviewWorkspace key={`${review.repo}:${review.ref}`} repo={review.repo} target={review.ref} from={review.from} onBack={() => setReview(null)} />}{tab === "prs" && has("pr_review") && !review && <PrList key={folder} scope={{ kind: "folder", folder }} active={tab === "prs"} onOpenSession={actions.onOpenSession} onReview={openReview} />}</div>
-    </div>{details && <FolderDetails key={folder} folder={folder} onClose={() => setDetails(false)} {...actions} />}
+    </div>{details && detailsAvailable && <FolderDetails key={folder} folder={folder} onClose={() => setDetails(false)} {...actions} />}
   </section>;
 }
 

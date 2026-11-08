@@ -5,6 +5,7 @@ import { BrowseResult } from "./api";
 import { GitHubRepoPicker } from "./GitHubRepoPicker";
 import { DirBrowser } from "./DirBrowser";
 import { SessionView } from "./types";
+import { useFeature } from "./edition";
 
 const browseLocal = (path?: string) => destinationRequest<BrowseResult>("local", "browse", path ? { path } : {});
 
@@ -16,6 +17,7 @@ export function RemoteProject({ target, kind, command, sourceSession, sourcePath
   target: string; kind: "copy" | "clone"; command: string; sourceSession?: string; sourcePath?: string;
   onPrepared: (project: PreparedProject) => void | Promise<void>; onBusy: (busy: boolean) => void;
 }) {
+  const connectors = useFeature("connectors");
   const storage = `remote-project:${target}:${sourceSession ?? "new"}:${kind}`;
   const [draft, setDraft] = useState<Draft>(() => {
     try {
@@ -91,7 +93,7 @@ export function RemoteProject({ target, kind, command, sourceSession, sourcePath
     }, 1000);
     try {
       const requested = destinationRequest<PreparedProject>(target, kind === "copy" ? "project-transfer" : "project-clone", {
-        ...draft, ...(kind === "clone" ? { attempt_id: attemptId } : {}), source_session: sourceSession, fingerprint: review?.fingerprint, conversation_sha256: review?.conversation.sha256,
+        ...draft, github_repository: connectors ? draft.github_repository : undefined, ...(kind === "clone" ? { attempt_id: attemptId } : {}), source_session: sourceSession, fingerprint: review?.fingerprint, conversation_sha256: review?.conversation.sha256,
       });
       const result = await Promise.race([requested, terminalStatus]);
       finished = true;
@@ -110,8 +112,8 @@ export function RemoteProject({ target, kind, command, sourceSession, sourcePath
     </Field>
       {browsing && <DirBrowser browse={browseLocal} start={draft.source || undefined} onPick={folder => { change("source", folder.path); setBrowsing(false); }} onCancel={() => setBrowsing(false)} />}
     </> : <>
-      <Button variant="ghost" disabled={busy} onClick={() => setGithubOpen(true)}>Choose from GitHub…</Button>
-      {githubOpen && <GitHubRepoPicker key={target} target={target} onCancel={() => setGithubOpen(false)} onPick={repo => {
+      {connectors && <Button variant="ghost" disabled={busy} onClick={() => setGithubOpen(true)}>Choose from GitHub…</Button>}
+      {connectors && githubOpen && <GitHubRepoPicker key={target} target={target} onCancel={() => setGithubOpen(false)} onPick={repo => {
         change("url", `https://github.com/${repo.full_name}.git`);
         change("github_repository", repo.full_name);
         change("branch", repo.default_branch);
@@ -119,7 +121,7 @@ export function RemoteProject({ target, kind, command, sourceSession, sourcePath
       }} />}
       <Field label="Repository URL"><input aria-label="Repository URL" style={inputStyle} value={draft.url} disabled={busy} onChange={e => change("url", e.target.value)} placeholder="https://github.com/owner/project.git" /></Field>
       <Field label="Branch (optional)"><input aria-label="Clone branch" style={inputStyle} value={draft.branch} disabled={busy} onChange={e => change("branch", e.target.value)} /></Field>
-      <p>{draft.github_repository ? "Uses the destination’s GitHub connector to clone this repository." : `Uses Git authorization on ${target === "local" ? "This Mac" : "the remote computer"}.`} Local edits are not included.</p>
+      <p>{connectors && draft.github_repository ? "Uses the destination’s GitHub connector to clone this repository." : `Uses Git authorization on ${target === "local" ? "This Mac" : "the remote computer"}.`} Local edits are not included.</p>
     </>}
     <Field label={`Checkout folder on ${desktop()?.targets.find(t => t.id === target)?.name ?? target}`}>
       <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
