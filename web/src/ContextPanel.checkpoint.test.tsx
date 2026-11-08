@@ -96,3 +96,15 @@ it.each(["codex", "claude-code"])("reports failed Compact submission for %s with
   expect(toast).not.toHaveBeenCalledWith("Sent /compact to the agent");
   expect(button).toBeEnabled();
 });
+
+it.each(["codex", "claude-code"])("does not submit Compact while %s is busy or awaiting approval", async runtime => {
+  const view = render(<ContextPanel session={{ ...session, runtime, state: "busy" }} />, { wrapper: edition(FULL) });
+  await act(async () => {});
+  for (const state of ["busy", "waiting"] as const) {
+    view.rerender(<ContextPanel session={{ ...session, runtime, state }} />);
+    const button = screen.getByRole("button", { name: "Compact" });
+    expect(button).toBeDisabled();
+    fireEvent.click(button);
+    expect(api.submitFollowUp).not.toHaveBeenCalled();
+  }
+});

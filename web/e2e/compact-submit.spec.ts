@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { apiDelete, apiPost, base } from "./helpers";
+import { api, apiDelete, apiPost, base } from "./helpers";
 
 for (const runtime of ["codex", "claude-code"]) {
   test(`Compact submits a slash command to the terminal (${runtime})`, async ({ page }) => {
@@ -14,6 +14,10 @@ for (const runtime of ["codex", "claude-code"]) {
     try {
       const launch = await apiPost("/sessions/launch", { command: `python3 -u ${script}`, cwd: dir, name: `compact-proof-${runtime}`, runtime, test: true, in_terminal: false });
       expect(launch.status).toBe(200); key = String(launch.body.session_key);
+      const listing = await (await api("/sessions")).json();
+      const binding = JSON.parse(listing.sessions.find((s: { session_key: string }) => s.session_key === key).restart_json || "{}").native_binding;
+      const idle = await apiPost("/events", { event_type: "Notification", notification_type: "idle_prompt", session_key: key, session_id: binding?.native_id, launch_generation: binding?.generation, runtime, test: true });
+      expect(idle.status).toBe(200); expect(idle.body).not.toHaveProperty("dropped");
       await page.goto(base());
       await page.locator(".rd-row-name", { hasText: `compact-proof-${runtime}` }).click();
       const terminal = page.locator(".rd-terminal-slot:visible .xterm-rows");

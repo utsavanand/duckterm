@@ -40,7 +40,7 @@ export function ContextPanel({ session, active = true, onMemory, onCheckpointMem
   const attempt = useCheckpointAttempt(session.key);
   const checkpointRunning = attempt?.state === "running" || (attempt?.state === "unknown" && attempt.recovering);
   const tokens = typeof session.contextTokens === "number" && Number.isFinite(session.contextTokens) && session.contextTokens >= 0 ? session.contextTokens.toLocaleString() : null;
-  const compactAvailable = session.ptyOwned && ["claude-code", "codex"].includes(session.runtime ?? "");
+  const compactAvailable = state === "idle" && session.ptyOwned && ["claude-code", "codex"].includes(session.runtime ?? "");
   const harness = ({ "claude-code": "Claude Code", codex: "Codex", gemini: "Gemini CLI" } as Record<string, string>)[session.runtime ?? ""] ?? session.runtime ?? "Not reported";
 
   const evidenceReady = activityState === "loaded" && contextEvidence?.state === "available";
@@ -53,6 +53,7 @@ export function ContextPanel({ session, active = true, onMemory, onCheckpointMem
   }
 
   async function compact() {
+    if (!compactAvailable || acting !== null || session.hostOffline) return;
     setActing("compact");
     try {
       await api.submitFollowUp(session.key, "/compact");
@@ -138,7 +139,7 @@ export function ContextPanel({ session, active = true, onMemory, onCheckpointMem
           <span title={capacity !== null && tokens !== null ? "Remaining reported context capacity" : noEvidence}>{capacity !== null && tokens !== null ? Math.max(0, capacity - session.contextTokens!).toLocaleString() : "—"} left</span>
         </div>
         <div className="rd-section-actions"><span>{compactedAt && <>Compacted <time dateTime={compactedAt}>{new Date(compactedAt).toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" })}</time></>}</span>
-          <button className="rd-btn rd-btn-sm rd-btn-ghost" disabled={!compactAvailable || acting !== null || !!session.hostOffline} title={compactAvailable ? "Types /compact into the agent’s terminal" : "Requires a running Claude Code or Codex terminal"} onClick={compact}>{acting === "compact" ? "Sending…" : "Compact"}</button></div>
+          <button className="rd-btn rd-btn-sm rd-btn-ghost" disabled={!compactAvailable || acting !== null || !!session.hostOffline} title={compactAvailable ? "Submits /compact to the idle agent" : "Requires an idle Claude Code or Codex terminal"} onClick={compact}>{acting === "compact" ? "Sending…" : "Compact"}</button></div>
       </SessionPanelSection>}
       <SessionPanelSection key={`workspace-${session.key}`} title="Workspace" status={session.branch ? `${session.repoName || "Repository"} / ${session.branch}` : "Folder"}>
       {onBranch ? (
