@@ -2,6 +2,12 @@
 socket, port, and callback URL all derive from it, distinctly per id, while an
 explicit per-facet env var still wins (tests/e2e depend on that)."""
 
+import http.server
+import threading
+import urllib.error
+import urllib.request
+from collections.abc import Iterator
+
 import pytest
 
 from duckterm.agents import tmux
@@ -58,11 +64,91 @@ def test_explicit_overrides_still_win(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("DUCKTERM_HOME", "/tmp/custom-home")
     monkeypatch.setenv("DUCKTERM_TMUX_SOCKET", "custom-sock")
     monkeypatch.setenv("DUCKTERM_PORT", "9999")
-    monkeypatch.setenv("DUCKTERM_URL", "http://example.test:1234")
+    monkeypatch.setenv("DUCKTERM_URL", "http://localhost:1234")
     assert str(paths.home()) == "/tmp/custom-home"
     assert tmux.socket_name() == "custom-sock"
     assert instance.port() == 9999
-    assert instance.server_url() == "http://example.test:1234"
+    assert instance.server_url() == "http://localhost:1234"
+
+
+@pytest.mark.parametrize(
+    "url",
+    [
+        "https://attacker.example",
+        "http://attacker.example:4300",
+        "http://127.0.0.1:4300@attacker.example",
+        "http://127.0.0.1.attacker.example:4300",
+        "http://127.0.0.1:4300/../x",
+    ],
+)
+def test_an_off_machine_url_override_is_ignored(monkeypatch: pytest.MonkeyPatch, url: str) -> None:
+    # The CLI sends the owner token to server_url(); a repository's project
+    # settings can set DUCKTERM_URL for every agent it runs.
+    monkeypatch.setenv("DUCKTERM_PORT", "4555")
+    monkeypatch.setenv("DUCKTERM_URL", url)
+    assert instance.server_url() == "http://127.0.0.1:4555"
+
+
+def test_a_rejected_override_warns_without_echoing_it(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    monkeypatch.setenv("DUCKTERM_PORT", "4555")
+    monkeypatch.setenv("DUCKTERM_URL", "http://user:secret@evil.example\x1b]0;x")
+    assert instance.server_url() == "http://127.0.0.1:4555"
+    err = capsys.readouterr().err
+    assert "ignoring DUCKTERM_URL" in err
+    assert "secret" not in err and "evil" not in err and "\x1b" not in err
+
+
+@pytest.fixture
+def listeners() -> Iterator[tuple[dict[str, list[str]], int, int]]:
+    """A loopback server that redirects every request to a would-be proxy."""
+    seen: dict[str, list[str]] = {"server": [], "proxy": []}
+    ports: list[int] = []
+    servers = []
+    for name in seen:
+
+        class Handler(http.server.BaseHTTPRequestHandler):
+            role = name
+
+            def do_GET(self) -> None:
+                seen[self.role].append(self.headers.get("X-Duckterm-Token", ""))
+                if self.role == "server" and self.path == "/redirect":
+                    self.send_response(302)
+                    self.send_header("Location", f"http://127.0.0.1:{ports[1]}/")
+                else:
+                    self.send_response(200)
+                self.end_headers()
+
+            def log_message(self, *args: object) -> None:
+                pass
+
+        server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        threading.Thread(target=server.serve_forever, daemon=True).start()
+        servers.append(server)
+        ports.append(server.server_address[1])
+    yield seen, ports[0], ports[1]
+    for server in servers:
+        server.shutdown()
+        server.server_close()
+
+
+def test_local_requests_ignore_proxies_and_redirects(
+    monkeypatch: pytest.MonkeyPatch, listeners: tuple[dict[str, list[str]], int, int]
+) -> None:
+    # A repository's .claude/settings.json "env" can set proxy variables for
+    # every command an agent runs, including `duckterm session ...`.
+    seen, server_port, proxy_port = listeners
+    for name in ("http_proxy", "HTTP_PROXY", "all_proxy", "ALL_PROXY"):
+        monkeypatch.setenv(name, f"http://127.0.0.1:{proxy_port}")
+    monkeypatch.setenv("no_proxy", "")
+    headers = {"X-Duckterm-Token": "fixture-token"}
+    base = f"http://127.0.0.1:{server_port}"
+    instance.open_local(urllib.request.Request(base + "/", headers=headers), timeout=5).read()
+    with pytest.raises(urllib.error.HTTPError) as redirect:
+        instance.open_local(urllib.request.Request(base + "/redirect", headers=headers), timeout=5)
+    assert redirect.value.code == 302
+    assert seen == {"server": ["fixture-token", "fixture-token"], "proxy": []}
 
 
 def test_invalid_instance_id_is_rejected(monkeypatch: pytest.MonkeyPatch) -> None:

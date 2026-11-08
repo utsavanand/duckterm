@@ -43,6 +43,17 @@ if [ -n "${DUCKTERM_HOME:-}${DUCKTERM_URL:-}${DUCKTERM_PORT:-}${DUCKTERM_TMUX_SO
 fi
 INPUT=$(cat)
 URL="${DUCKTERM_URL:-http://127.0.0.1:4300}"
+# This hook sends the owner token. DuckTerm servers only listen on loopback, and
+# a repository's .claude/settings.json "env" can override DUCKTERM_URL, so any
+# other destination would carry the token and the prompt off this machine.
+if ! [[ "$URL" =~ ^http://(127\.0\.0\.1|localhost|\[::1\]):[0-9]{1,5}$ ]]; then
+  echo "duckterm: ignoring DUCKTERM_URL; only http://127.0.0.1, localhost or [::1] is allowed" >&2
+  exit 0
+fi
+# The same env block can set http_proxy/ALL_PROXY or point HOME/CURL_HOME at a
+# .curlrc, so every request below skips config files (-q) and proxies, and
+# never follows a redirect (curl's default without -L).
+CURL=(curl -q --noproxy '*')
 # Set by Duckterm when it launches the agent in a terminal, so the agent's
 # hook events attach to the row Duckterm already created instead of spawning
 # a duplicate session under Claude's own id. Empty for self-started sessions.
@@ -126,14 +137,14 @@ TOKEN=$(cat "$TOKEN_FILE" 2>/dev/null)
 # A turn-end notice travels through the runtime hook response, never terminal input.
 # The server decides capability and eligibility. Bound failure to two seconds.
 if [ "$EVENT_TYPE" = "Stop" ] && [ -n "$JQ" ]; then
-  curl -s -m 2 -X POST "$URL/events" \
+  "${CURL[@]}" -s -m 2 -X POST "$URL/events" \
     -H 'Content-Type: application/json' -H "X-Duckterm-Token: $TOKEN" \
     -d "$PAYLOAD" 2>/dev/null | "$JQ" -c 'select(.hook_output | type == "object") | .hook_output' 2>/dev/null
   exit 0
 fi
 
 # Record the event in the timeline (fire-and-forget) regardless of type.
-curl -s -X POST "$URL/events" \
+"${CURL[@]}" -s -X POST "$URL/events" \
   -H 'Content-Type: application/json' \
   -H "X-Duckterm-Token: $TOKEN" \
   -d "$PAYLOAD" >/dev/null 2>&1 &
@@ -163,7 +174,7 @@ case "$PAYLOAD" in *'"tool_name":"AskUserQuestion"'*) exit 0 ;; esac
 # Register the request; get an id to poll. (jq required for the blocking path;
 # without it we just fall through.)
 [ -n "$JQ" ] || exit 0
-RID=$(printf '%s' "$PAYLOAD" | curl -s -m 5 -X POST "$URL/approvals" \
+RID=$(printf '%s' "$PAYLOAD" | "${CURL[@]}" -s -m 5 -X POST "$URL/approvals" \
   -H 'Content-Type: application/json' -H "X-Duckterm-Token: $TOKEN" \
   -d @- 2>/dev/null | "$JQ" -r '.id // empty')
 [ -z "$RID" ] && exit 0
@@ -172,7 +183,7 @@ RID=$(printf '%s' "$PAYLOAD" | curl -s -m 5 -X POST "$URL/approvals" \
 # if you never answer (then fall through to its own prompt). ~3 minutes.
 DEADLINE=$(( $(date +%s) + 180 ))
 while [ "$(date +%s)" -lt "$DEADLINE" ]; do
-  STATUS=$(curl -s -m 5 "$URL/approvals/$RID/decision" \
+  STATUS=$("${CURL[@]}" -s -m 5 "$URL/approvals/$RID/decision" \
     -H "X-Duckterm-Token: $TOKEN" 2>/dev/null | "$JQ" -r '.status // "gone"')
   case "$STATUS" in
     approve)

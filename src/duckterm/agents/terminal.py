@@ -110,7 +110,7 @@ def with_heartbeat(agent: str, url: str, session_key: str) -> str:
     tty_var = "__rd_tty=$(tty 2>/dev/null); "
     ping = (
         f"{key_var}{token_var}"
-        "curl -s -X POST " + _q(url) + " -H 'Content-Type: application/json' "
+        "curl -q --noproxy '*' -s -X POST " + _q(url) + " -H 'Content-Type: application/json' "
         '-H "X-Duckterm-Token: $__rd_tok" '
         '-d "{\\"session_key\\":\\"$__rd_key\\",\\"tty\\":\\"$__rd_tty\\"}" '
         ">/dev/null 2>&1"
