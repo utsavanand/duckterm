@@ -47,11 +47,15 @@ final class ConnectionStatusUITests: XCTestCase {
         capture("status-working-portrait-keyboard")
         app.buttons["conversation-back"].tap()
         element("show-map").tap(); rotate(.landscapeLeft)
-        let folder = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Status fixture,")).firstMatch
+        // Use the existing dense/list fallback for deterministic node hit testing;
+        // return to the map before checking the embedded conversation and keyboard.
+        app.buttons["Show as list"].tap()
+        let folder = app.buttons["constellation-row:folder:Status fixture"]
         XCTAssertTrue(folder.waitForExistence(timeout: 5)); folder.tap()
-        let agent = app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", "Status review agent,")).firstMatch
+        let agent = app.buttons["constellation-row:session:status-ui-agent"]
         XCTAssertTrue(agent.waitForExistence(timeout: 5)); agent.tap()
         XCTAssertTrue(app.buttons["conversation-close"].waitForExistence(timeout: 5))
+        app.buttons["Show as map"].tap()
         XCTAssertEqual(element("conversation-composer").value as? String, "Please keep this draft\nacross rotation")
         focusComposer()
         XCTAssertLessThanOrEqual(app.buttons["conversation-send"].frame.maxY, app.keyboards.firstMatch.frame.minY + 1)
