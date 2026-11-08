@@ -70,7 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         window?.onLaunchRequest = { [weak self] target, operation, params in
             guard let self else { throw LaunchDestination.Failure.message("App closed") }
-            if let feature = DesktopEdition.requiredFeature(target: target, operation: operation) {
+            if let feature = DesktopEdition.requiredFeature(target: target, operation: operation, params: params) {
                 try await self.requireFeature(feature)
             }
             if operation == "collaboration-preview" || operation == "collaboration-connect" {

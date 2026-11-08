@@ -159,6 +159,15 @@ def _path_feature(method: str, path: str, body: bytes) -> str | None:
         return "pr_review"
     if re.fullmatch(r"/(sessions|folders)/.+/prs", path):
         return "pr_review"
+    if path == "/transfers/repositories" and method == "POST":
+        return "connectors"
+    if path == "/transfers/clone" and method == "POST":
+        try:
+            payload = json.loads(body or b"{}")
+        except (ValueError, UnicodeError):
+            payload = {}
+        if isinstance(payload, dict) and payload.get("github_repository"):
+            return "connectors"
     if (
         path.startswith("/transfers/")
         and method == "POST"

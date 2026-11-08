@@ -60,14 +60,17 @@ struct DesktopEdition: Equatable {
               instance.tmuxSocket == profile.tmuxSocket, instance.port == profile.port else { throw conflict }
     }
 
-    static func requiredFeature(target: String, operation: String) -> String? {
+    static func requiredFeature(target: String, operation: String, params: [String: Any] = [:]) -> String? {
         if operation.hasPrefix("collaboration-") { return "inbox" }
         if target != "local" { return "remote_workspaces" }
+        if operation == "project-repositories" { return "connectors" }
+        if operation == "project-clone", let repository = params["github_repository"],
+           !(repository is NSNull), repository as? String != "" { return "connectors" }
         if operation.hasPrefix("project-") {
             // These operations prepare and launch a local checkout. Copying or
             // continuing a moved session still requires remote workspaces.
             switch operation {
-            case "project-mkdir", "project-repositories", "project-preflight",
+            case "project-mkdir", "project-preflight",
                  "project-clone", "project-status", "project-launch":
                 return "terminal"
             default:

@@ -23,7 +23,7 @@ import uuid
 from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from duckterm.helpers import paths
 from duckterm.helpers.private_files import private_write
@@ -200,12 +200,13 @@ def check_url(url: str) -> None:
     if (
         parts.scheme == "ssh"
         and parts.hostname
+        and not unquote(parts.hostname).startswith("-")
         and not parts.password
         and not parts.query
         and not parts.fragment
     ):
         return
-    if re.fullmatch(r"[\w.-]+@[\w.-]+:[\w./~-]+", url):
+    if re.fullmatch(r"[\w.-]+@(?!-)[\w.-]+:[\w./~-]+", url):
         return
     raise ValueError(
         "Use HTTPS without embedded credentials, or SSH with the remote computer's login"
@@ -876,6 +877,8 @@ def clone(
                 "destination_empty": dest.is_dir(),
             },
         )
+        sibling = dest.parent / (".duckterm-transfer-" + identifier)
+        owned_sibling: os.stat_result | None = None
         try:
             args = ["git", "-c", "core.hooksPath=/dev/null", "clone", "--no-local"]
             if branch:
@@ -901,15 +904,20 @@ def clone(
             # Apply the same unsupported-project checks; no repository hooks are run.
             compatibility = scan(stage, [], cloned=True)
             check_requirements(compatibility["requirements"], compatibility["linux_compatible"])
-            sibling = dest.parent / (".duckterm-transfer-" + identifier)
-            if sibling.exists():
+            if sibling.exists() or sibling.is_symlink():
                 marker = sibling / ".duckterm-transfer-id"
-                if not marker.is_file() or marker.read_text() != identifier:
+                if (
+                    sibling.is_symlink()
+                    or marker.is_symlink()
+                    or not marker.is_file()
+                    or marker.read_text() != identifier
+                ):
                     raise ValueError("Staging destination exists; choose another destination")
                 shutil.rmtree(sibling)
             sibling.mkdir(mode=0o700)
+            owned_sibling = sibling.stat()
             private_write(sibling / ".duckterm-transfer-id", identifier)
-            shutil.copytree(stage, sibling, dirs_exist_ok=True)
+            shutil.copytree(stage, sibling, symlinks=True, dirs_exist_ok=True)
             save(directory, {**state, "stage": "publishing"})
             publish(sibling, dest, allow_empty=state["destination_empty"])
             return save(directory, {**state, "stage": "ready"})
@@ -924,6 +932,13 @@ def clone(
                 },
             )
             raise
+        finally:
+            shutil.rmtree(stage, ignore_errors=True)
+            if owned_sibling is not None:
+                # Publication renames this path; never remove the committed destination.
+                with contextlib.suppress(FileNotFoundError):
+                    if os.path.samestat(sibling.lstat(), owned_sibling):
+                        shutil.rmtree(sibling, ignore_errors=True)
 
 
 def claim_launch(

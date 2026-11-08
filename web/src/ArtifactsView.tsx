@@ -160,7 +160,9 @@ export function ArtifactsView({ sessionKey, sessionName, folder }: ArtifactScope
     setDownloadUrl("");
     if (!visibleContent) return;
     const bytes = Uint8Array.from(atob(visibleContent.content_base64), (character) => character.charCodeAt(0));
-    const url = URL.createObjectURL(new Blob([bytes], { type: visibleContent.media_type }));
+    // The saved bytes are untrusted. A blob opened outside the sandboxed
+    // preview must download rather than execute with the dashboard's origin.
+    const url = URL.createObjectURL(new Blob([bytes], { type: "application/octet-stream" }));
     setDownloadUrl(url);
     return () => URL.revokeObjectURL(url);
   }, [visibleContent]);

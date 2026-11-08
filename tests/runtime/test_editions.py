@@ -133,6 +133,8 @@ def edition_rig(tmp_path, monkeypatch):
     [
         ("GET", "/connectors", b""),
         ("POST", "/connectors/github/enable", b"{}"),
+        ("POST", "/transfers/repositories", b"{}"),
+        ("POST", "/transfers/clone", b'{"github_repository":"owner/repository"}'),
         ("POST", "/agents-md/suggest", b"{}"),
         ("GET", "/folders/Tests/chat", b""),
         ("GET", "/sessions/agent/files?path=", b""),

@@ -31,7 +31,6 @@ final class DesktopEditionTests: XCTestCase {
     func testLocalCloneWorkflowIsAvailableInEveryEdition() throws {
         let base = URL(string: "http://127.0.0.1:4519")!
         let steps: [(String, [String: Any])] = [
-            ("repositories", ["page": 1]),
             ("mkdir", ["parent": "/tmp/projects", "name": "checkout"]),
             ("preflight", ["destination": "/tmp/projects/checkout", "command": "codex"]),
             ("clone", ["id": "clone-fixture", "url": "https://example.test/repository.git", "destination": "/tmp/projects/checkout"]),
@@ -60,6 +59,17 @@ final class DesktopEditionTests: XCTestCase {
             XCTAssertEqual(feature, "terminal")
             XCTAssertFalse(edition.includes(feature), "An edition label must not grant a missing core capability")
         }
+    }
+
+    func testGitHubCatalogAndCredentialBackedClonesRequireConnectors() {
+        XCTAssertEqual(DesktopEdition.requiredFeature(target: "local", operation: "project-repositories"), "connectors")
+        for repository: Any in ["owner/repo", true, ["unexpected"]] {
+            XCTAssertEqual(DesktopEdition.requiredFeature(target: "local", operation: "project-clone", params: ["github_repository": repository]), "connectors")
+        }
+        for params: [String: Any] in [[:], ["github_repository": ""], ["github_repository": NSNull()]] {
+            XCTAssertEqual(DesktopEdition.requiredFeature(target: "local", operation: "project-clone", params: params), "terminal")
+        }
+        XCTAssertEqual(DesktopEdition.requiredFeature(target: "dev", operation: "project-clone", params: ["github_repository": "owner/repo"]), "remote_workspaces")
     }
 
     func testCloneOperationsCannotOpenRemoteTargetsInLiteOrCode() throws {

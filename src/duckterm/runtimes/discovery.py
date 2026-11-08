@@ -24,6 +24,10 @@ PROBE_TIMEOUT = 4.0
 CLEANUP_TIMEOUT = 1.0
 MAX_OUTPUT = 256
 PARALLEL_PROBES = 2
+PROBE_QUEUE_TIMEOUT = 0.25
+# Shared across requests and event loops. A worker releases its own slot only
+# after child reaping and temporary-directory cleanup, including cancellation.
+_PROBE_SLOTS = threading.BoundedSemaphore(PARALLEL_PROBES)
 _RUNTIMES = (
     ("claude-code", "Claude Code", "claude"),
     ("codex", "Codex", "codex"),
@@ -131,28 +135,89 @@ def _version_output(binary: str, launch_path: str, cancelled: threading.Event) -
             return bytes(output)
         finally:
             if child is not None:
-                if child.returncode is None:
-                    with contextlib.suppress(ProcessLookupError):
-                        os.killpg(child.pid, signal.SIGKILL)
-                    try:
-                        child.wait(timeout=CLEANUP_TIMEOUT)
-                    except subprocess.TimeoutExpired as exc:
-                        raise TimeoutError("probe_cleanup_timeout") from exc
-                if child.stdout is not None:
-                    child.stdout.close()
+                try:
+                    if child.returncode is None:
+                        signal_error: OSError | None = None
+                        try:
+                            os.killpg(child.pid, signal.SIGKILL)
+                        except ProcessLookupError:
+                            pass
+                        except OSError as exc:
+                            # Darwin can deny a group signal after its last live
+                            # member exits. Still reap our leader; a live leader
+                            # can be stopped by its exact, still-owned PID.
+                            signal_error = exc
+                            with contextlib.suppress(OSError):
+                                child.kill()
+                        finally:
+                            try:
+                                child.wait(timeout=CLEANUP_TIMEOUT)
+                            except subprocess.TimeoutExpired as exc:
+                                raise TimeoutError("probe_cleanup_timeout") from exc
+                        if signal_error is not None:
+                            # Reaping alone cannot prove descendants were
+                            # stopped when the group signal was denied.
+                            raise signal_error
+                finally:
+                    if child.stdout is not None:
+                        child.stdout.close()
 
 
 async def version_output(binary: str, launch_path: str) -> bytes:
+    deadline = time.monotonic() + PROBE_QUEUE_TIMEOUT
+    while not _PROBE_SLOTS.acquire(blocking=False):
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("probe_queue_timeout")
+        await asyncio.sleep(min(remaining, 0.02))
+
     cancelled = threading.Event()
-    work = asyncio.create_task(asyncio.to_thread(_version_output, binary, launch_path, cancelled))
+    loop = asyncio.get_running_loop()
+    work: asyncio.Future[bytes] = loop.create_future()
+
+    def publish(output: bytes, error: Exception | None) -> None:
+        if not work.done():
+            if error is None:
+                work.set_result(output)
+            else:
+                work.set_exception(error)
+
+    def probe() -> None:
+        output = b""
+        error: Exception | None = None
+        try:
+            output = _version_output(binary, launch_path, cancelled)
+        except BaseException as exc:
+            error = exc if isinstance(exc, Exception) else RuntimeError("probe_failed")
+        finally:
+            _PROBE_SLOTS.release()
+        with contextlib.suppress(RuntimeError):
+            loop.call_soon_threadsafe(publish, output, error)
+
+    try:
+        # Admission bounds subprocess work. Unlike a queued to_thread task,
+        # cancellation cannot prevent a reserved worker from ever starting or
+        # release its slot before its subprocess actually finishes cleanup.
+        threading.Thread(target=probe, name="duckterm-runtime-probe", daemon=True).start()
+    except BaseException:
+        _PROBE_SLOTS.release()
+        raise
     try:
         return await asyncio.shield(work)
     except asyncio.CancelledError:
         cancelled.set()
         # The worker checks cancellation at least every 100ms while reading and
         # owns process reaping and temporary-directory cleanup before returning.
-        with contextlib.suppress(Exception):
-            await asyncio.shield(work)
+        # Repeated cancellation must not leave cleanup running unobserved.
+        while not work.done():
+            try:
+                await asyncio.shield(work)
+            except asyncio.CancelledError:
+                continue
+            except Exception:
+                break
+        if not work.cancelled():
+            work.exception()
         raise
 
 
@@ -170,7 +235,13 @@ async def inspect_runtime(
         "support_reason": "not_installed",
         "authentication": "not_checked",
     }
-    launch_path = environment.get("PATH", os.defpath)
+    launch_path = os.pathsep.join(
+        entry
+        for entry in environment.get("PATH", os.defpath).split(os.pathsep)
+        if os.path.isabs(entry)
+    )
+    if not launch_path:
+        return result
     try:
         binary = await asyncio.to_thread(shutil.which, command, path=launch_path)
     except OSError:

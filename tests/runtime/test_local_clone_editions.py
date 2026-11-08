@@ -76,10 +76,19 @@ def save(identifier, state):
         transfers.save(directory, state)
 
 
-@pytest.mark.parametrize("edition", [editions.LITE, editions.CODE, editions.FULL])
+@pytest.mark.parametrize(
+    ("edition", "use_connector"),
+    [
+        (editions.LITE, False),
+        (editions.CODE, False),
+        (editions.FULL, False),
+        (editions.CODE, True),
+        (editions.FULL, True),
+    ],
+)
 @pytest.mark.parametrize("automatic", [False, True])
 def test_local_clone_chain_keeps_runtime_checks_and_one_test_launch(
-    clone_rig, git_repo, tmp_path, monkeypatch, edition, automatic
+    clone_rig, git_repo, tmp_path, monkeypatch, edition, use_connector, automatic
 ):
     server, owner = clone_rig(edition)
     identifier = uuid.uuid4().hex
@@ -90,9 +99,25 @@ def test_local_clone_chain_keeps_runtime_checks_and_one_test_launch(
     monkeypatch.setattr(
         github_projects, "clone", lambda repo, branch, stage: shutil.copytree(git_repo, stage)
     )
-    assert request(server, owner, "repositories", {}) == (200, {"repositories": []})
+    if use_connector:
+        assert request(server, owner, "repositories", {}) == (200, {"repositories": []})
     repository = "fixture/local-clone"
     url = f"https://github.com/{repository}.git"
+    real_run = transfers.subprocess.run
+
+    def clone_fixture(args, **kwargs):
+        if args[0] == "git" and "clone" in args:
+            assert args[-2] == url
+            args = [*args[:-2], str(git_repo), args[-1]]
+            result = real_run(args, **kwargs)
+            if result.returncode == 0:
+                # The clone is offline, but retains the permitted remote URL
+                # that a real HTTPS clone records for the verification scan.
+                real_run(["git", "-C", args[-1], "remote", "set-url", "origin", url], check=True)
+            return result
+        return real_run(args, **kwargs)
+
+    monkeypatch.setattr(transfers.subprocess, "run", clone_fixture)
     destination = tmp_path / "projects" / "checkout"
     preflight = {"destination": str(destination), "command": sys.executable}
     if automatic:
@@ -109,7 +134,7 @@ def test_local_clone_chain_keeps_runtime_checks_and_one_test_launch(
     clone = {
         "id": identifier,
         "url": url,
-        "github_repository": repository,
+        "github_repository": repository if use_connector else "",
         "attempt_id": uuid.uuid4().hex,
         "branch": "main",
         "destination": str(destination),
@@ -123,7 +148,7 @@ def test_local_clone_chain_keeps_runtime_checks_and_one_test_launch(
             "url": url,
             "repository": repository,
             "branch": "main",
-            "github_repository": repository,
+            "github_repository": repository if use_connector else "",
             "destination": str(destination),
             "auto_workspace": True,
         }
@@ -161,6 +186,22 @@ def test_local_clone_chain_keeps_runtime_checks_and_one_test_launch(
     assert request(server, owner, "launch", launch_request) == (200, launched)
     assert launcher.await_count == 1
     assert server.history.session(launched["session_key"])["test"] == 1
+
+
+@pytest.mark.parametrize("operation", ["repositories", "clone"])
+def test_lite_cannot_reach_github_connector_through_clone_routes(clone_rig, monkeypatch, operation):
+    server, owner = clone_rig(editions.LITE)
+
+    def forbidden(*args, **kwargs):
+        pytest.fail("Connector credentials must not be read")
+
+    monkeypatch.setattr(github_projects, "list_repositories", forbidden)
+    monkeypatch.setattr(github_projects, "clone", forbidden)
+    params = {} if operation == "repositories" else {"github_repository": "fixture/private"}
+    assert request(server, owner, operation, params)[0] == 403
+    with pytest.raises(APIError) as error:
+        asyncio.run(transfer_api.dispatch(server, operation, params))
+    assert error.value.status == 403
 
 
 @pytest.mark.parametrize("edition", [editions.LITE, editions.CODE])

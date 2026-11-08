@@ -57,6 +57,8 @@ def local_clone_only(server: "Server", operation: str, req: dict[str, Any]) -> b
     server.require_feature(
         "terminal" if operation in editions.LOCAL_PROJECT_OPERATIONS else "remote_workspaces"
     )
+    if operation == "repositories" or (operation == "clone" and req.get("github_repository")):
+        server.require_feature("connectors")
     if server.edition.includes("remote_workspaces"):
         return False
     # Optional undefined values from the existing web form may cross WebKit as

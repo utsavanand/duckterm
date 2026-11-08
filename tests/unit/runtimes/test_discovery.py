@@ -4,6 +4,9 @@ import asyncio
 import json
 import os
 import sys
+import threading
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 import pytest
@@ -248,3 +251,221 @@ def test_opencode_version_probe_requires_exact_output(tmp_path, extra):
     )
     assert result["authentication"] == "not_checked"
     assert "private-extra-output" not in json.dumps(result)
+
+
+@pytest.mark.parametrize("launch_path", ["", ":", ".", "relative-bin", ":.:relative-bin"])
+def test_relative_path_entries_cannot_execute_project_cli(tmp_path, monkeypatch, launch_path):
+    marker = tmp_path / "must-not-run"
+    script = f"from pathlib import Path\nPath({str(marker)!r}).touch()\nprint('1.2.3')\n"
+    binary(tmp_path, "claude", script)
+    relative = tmp_path / "relative-bin"
+    relative.mkdir()
+    binary(relative, "claude", script)
+    monkeypatch.chdir(tmp_path)
+    result = inspect(tmp_path, "claude-code", "claude", PATH=launch_path)
+    assert result["probe"] == "missing" and not result["installed"]
+    assert not marker.exists()
+
+
+def test_concurrent_discovery_requests_share_the_process_limit(tmp_path, monkeypatch):
+    for command in ("claude", "codex", "copilot", "opencode"):
+        binary(tmp_path, command, "print('1.2.3')\n")
+    lock = threading.Lock()
+    active = peak = 0
+
+    def probe(*_args):
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        try:
+            time.sleep(0.08)
+            return b"1.2.3\n"
+        finally:
+            with lock:
+                active -= 1
+
+    monkeypatch.setattr(discovery, "_version_output", probe)
+
+    async def run():
+        return await asyncio.gather(
+            *(discovery.discover({"PATH": str(tmp_path)}) for _ in range(8))
+        )
+
+    started = time.monotonic()
+    responses = asyncio.run(run())
+    assert peak <= discovery.PARALLEL_PROBES == 2
+    assert active == 0
+    assert time.monotonic() - started < 2
+    assert all(len(response["runtimes"]) == 4 for response in responses)
+    rows = [row for response in responses for row in response["runtimes"]]
+    assert all(row["installed"] and row["authentication"] == "not_checked" for row in rows)
+    assert any(
+        row["probe"] == "timeout" for row in rows
+    ), "Busy discovery must finish, not queue forever"
+
+
+@pytest.mark.parametrize("stays_alive", [False, True])
+def test_group_permission_error_still_reaps_owned_leader_and_closes_pipe(
+    tmp_path, monkeypatch, stays_alive
+):
+    binary(
+        tmp_path,
+        "codex",
+        "print('x' * 10000, flush=True)\n"
+        + ("import time\ntime.sleep(30)\n" if stays_alive else ""),
+    )
+    children = []
+    original_popen = discovery.subprocess.Popen
+
+    def spawn(*args, **kwargs):
+        child = original_popen(*args, **kwargs)
+        children.append(child)
+        return child
+
+    def denied(_pid, _signal):
+        raise PermissionError("synthetic group signal denial")
+
+    monkeypatch.setattr(discovery.subprocess, "Popen", spawn)
+    monkeypatch.setattr(discovery.os, "killpg", denied)
+    try:
+        result = inspect(tmp_path)
+        assert result["probe"] == "failed"
+        child = children[0]
+        assert child.returncode is not None, "A failed group signal must not skip wait()"
+        assert child.stdout.closed
+        with pytest.raises(ChildProcessError):
+            os.waitpid(child.pid, os.WNOHANG)
+    finally:
+        for child in children:
+            if child.poll() is None:
+                child.kill()
+            child.wait()
+            child.stdout.close()
+
+
+def test_safe_path_entries_remain_ordered_and_are_the_only_entries_in_child(tmp_path, monkeypatch):
+    report = tmp_path / "path.json"
+    trap = tmp_path / "must-not-run"
+    good = tmp_path / "absolute-bin"
+    good.mkdir()
+    binary(tmp_path, "claude", f"from pathlib import Path\nPath({str(trap)!r}).touch()\n")
+    binary(
+        good,
+        "claude",
+        f"import os,json\nopen({str(report)!r},'w').write(json.dumps(os.environ['PATH']))\n"
+        "print('2.1.3 (Claude Code)')\n",
+    )
+    monkeypatch.chdir(tmp_path)
+    result = inspect(tmp_path, "claude-code", "claude", PATH=f":.:relative:{good}:/usr/bin:")
+    assert result["probe"] == "ok" and result["version"] == "2.1.3"
+    assert json.loads(report.read_text()) == f"{good}:/usr/bin"
+    assert not trap.exists()
+
+
+def test_probe_limit_is_shared_between_event_loops(monkeypatch):
+    lock = threading.Lock()
+    active = peak = 0
+
+    def probe(*_args):
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(active, peak)
+        try:
+            time.sleep(0.04)
+            return b"1.2.3\n"
+        finally:
+            with lock:
+                active -= 1
+
+    monkeypatch.setattr(discovery, "_version_output", probe)
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        futures = [
+            executor.submit(asyncio.run, discovery.version_output("/synthetic/cli", "/synthetic"))
+            for _ in range(4)
+        ]
+        assert [future.result(timeout=2) for future in futures] == [b"1.2.3\n"] * 4
+    assert peak == 2 and active == 0
+
+
+def test_busy_and_cancelled_waiters_start_no_worker_or_release_another_slot(monkeypatch):
+    def forbidden(*_args):
+        raise AssertionError("A busy or cancelled waiter must not spawn a worker")
+
+    monkeypatch.setattr(discovery, "_version_output", forbidden)
+    monkeypatch.setattr(discovery, "PROBE_QUEUE_TIMEOUT", 0.04)
+    assert discovery._PROBE_SLOTS.acquire(blocking=False)
+    assert discovery._PROBE_SLOTS.acquire(blocking=False)
+
+    async def run():
+        with pytest.raises(TimeoutError, match="probe_queue_timeout"):
+            await discovery.version_output("/synthetic/cli", "/synthetic")
+        task = asyncio.create_task(discovery.version_output("/synthetic/cli", "/synthetic"))
+        await asyncio.sleep(0)
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert not discovery._PROBE_SLOTS.acquire(blocking=False)
+
+    try:
+        asyncio.run(run())
+    finally:
+        discovery._PROBE_SLOTS.release()
+        discovery._PROBE_SLOTS.release()
+
+
+def test_repeated_cancellation_retains_slots_until_worker_cleanup(monkeypatch):
+    cleanup = threading.Event()
+    lock = threading.Lock()
+    active = saw_cancel = 0
+
+    def probe(_binary, _path, cancelled):
+        nonlocal active, saw_cancel
+        with lock:
+            active += 1
+        try:
+            assert cancelled.wait(2), "Fixture request should have been cancelled"
+            with lock:
+                saw_cancel += 1
+            assert cleanup.wait(2), "Fixture cleanup should have been released"
+            raise RuntimeError("probe_cancelled")
+        finally:
+            with lock:
+                active -= 1
+
+    monkeypatch.setattr(discovery, "_version_output", probe)
+    monkeypatch.setattr(discovery, "PROBE_QUEUE_TIMEOUT", 0.04)
+
+    async def run():
+        tasks = [
+            asyncio.create_task(discovery.version_output("/synthetic/cli", "/synthetic"))
+            for _ in range(2)
+        ]
+        try:
+            async with asyncio.timeout(1):
+                while active != 2:
+                    await asyncio.sleep(0.005)
+                for task in tasks:
+                    task.cancel()
+                while saw_cancel != 2:
+                    await asyncio.sleep(0.005)
+            for task in tasks:
+                task.cancel()
+            with pytest.raises(TimeoutError, match="probe_queue_timeout"):
+                await discovery.version_output("/synthetic/cli", "/synthetic")
+            assert active == 2 and not any(task.done() for task in tasks)
+        finally:
+            cleanup.set()
+            for task in tasks:
+                task.cancel()
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+        assert all(isinstance(result, asyncio.CancelledError) for result in results)
+        assert active == 0
+
+    asyncio.run(run())
+    # Subsequent requests can still acquire both slots after all cleanup ends.
+    assert discovery._PROBE_SLOTS.acquire(blocking=False)
+    assert discovery._PROBE_SLOTS.acquire(blocking=False)
+    discovery._PROBE_SLOTS.release()
+    discovery._PROBE_SLOTS.release()
