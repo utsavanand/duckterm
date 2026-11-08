@@ -219,6 +219,7 @@ def _path_feature(method: str, path: str, body: bytes) -> str | None:
         return None
     operation = session[1].split("/", 1)[0]
     feature = {
+        "mobile-messages": "messages",
         "files": "explorer",
         "file-content": "explorer",
         "diff": "git_changes",

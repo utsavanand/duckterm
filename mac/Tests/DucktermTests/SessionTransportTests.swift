@@ -111,6 +111,21 @@ extension SessionTransportTests {
 }
 
 extension SessionTransportTests {
+    @MainActor func testPendingPhoneMessagesAreExactReadOnlySelectedHostRoutes() throws {
+        let base = URL(string: "http://127.0.0.1:14300")!
+        let path = "/sessions/same.id/mobile-messages"
+        let request = try SessionTransport.request(base: base, params: ["path": path, "method": "GET"])
+        XCTAssertEqual(request.url?.absoluteString, base.absoluteString + path)
+        XCTAssertEqual(request.httpMethod, "GET")
+        XCTAssertNil(request.value(forHTTPHeaderField: "X-Duckterm-Token"))
+        for method in ["POST", "PATCH", "DELETE"] {
+            XCTAssertThrowsError(try SessionTransport.request(base: base, params: ["path": path, "method": method]))
+        }
+        for invalid in [path + "?all=true", path + "?", path + "/extra", path + "#fragment", "/sessions/../mobile-messages", "/sessions/%2e%2e/mobile-messages", "/sessions/x%2Fy/mobile-messages", "/sessions/" + String(repeating: "a", count: 129) + "/mobile-messages"] {
+            XCTAssertThrowsError(try SessionTransport.request(base: base, params: ["path": invalid, "method": "GET"]), invalid)
+        }
+    }
+
     @MainActor func testCheckpointPlanIsAnExactReadOnlySelectedHostRoute() throws {
         let base = URL(string: "http://127.0.0.1:14300")!
         let path = "/sessions/same.id/checkpoint-plan"
