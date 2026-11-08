@@ -15,8 +15,8 @@ test("a permission request becomes an Oracle note and is approved from the chat"
   const id = reg.body.id as string;
 
   await page.goto(base());
-  await expect(page.getByRole("button", { name: /^Oracle/ })).toContainText("1");
-  await page.getByRole("button", { name: /^Oracle/ }).click();
+  await expect(page.locator(".rd-topbar").getByRole("button", { name: /^Oracle/ })).toContainText("1");
+  await page.locator(".rd-topbar").getByRole("button", { name: /^Oracle/ }).click();
   const note = page.getByRole("group", { name: "Approval from relay-bot" });
   await expect(note).toContainText("pytest -q tests/relay");
   await expect(page.getByRole("region", { name: "Needs you" })).toContainText("relay-bot");
