@@ -19,6 +19,7 @@ final class RuntimeSetupProcess: RuntimeSetupTransport {
         let executable: URL
         let arguments: [String]
         let environment: [String: String]
+        var selectedExecutable: RuntimeSetupExecutable? = nil
     }
     var onEvent: ((RuntimeSetupEvent) -> Void)?
     var onOutput: ((Data) async -> Void)?
@@ -55,19 +56,13 @@ final class RuntimeSetupProcess: RuntimeSetupTransport {
     /// A native-selected executable must still be the same regular executable
     /// after potentially slow stable-runtime preparation. No browser path is used.
     static func preparedCommand(executable: URL?, prepare: () async throws -> Command) async throws -> Command {
-        let before = try executable.map(executableIdentity)
-        let command = try await prepare()
-        guard try executable.map(executableIdentity) == before else { throw RuntimeSetupProtocolError.invalidFrame }
+        let before = try executable.map(RuntimeSetupExecutable.validate)
+        var command = try await prepare()
+        guard try executable.map(RuntimeSetupExecutable.validate) == before else {
+            throw RuntimeSetupProtocolError.invalidFrame
+        }
+        command.selectedExecutable = before
         return command
-    }
-
-    private static func executableIdentity(_ url: URL) throws -> [UInt64] {
-        var info = stat()
-        guard url.isFileURL, lstat(url.path, &info) == 0, info.st_mode & S_IFMT == S_IFREG,
-              access(url.path, X_OK) == 0 else { throw RuntimeSetupProtocolError.invalidFrame }
-        return [UInt64(info.st_dev), UInt64(info.st_ino), UInt64(info.st_size), UInt64(info.st_mode),
-                UInt64(bitPattern: Int64(info.st_mtimespec.tv_sec)), UInt64(info.st_mtimespec.tv_nsec),
-                UInt64(bitPattern: Int64(info.st_ctimespec.tv_sec)), UInt64(info.st_ctimespec.tv_nsec)]
     }
 
     static func bundledCommand(runtime: RuntimeSetupRuntime, action: RuntimeSetupAction,
@@ -119,7 +114,16 @@ final class RuntimeSetupProcess: RuntimeSetupTransport {
                 self?.finishIfEnded()
             }
         }
-        do { try process.run() }
+        do {
+            // Configuration may have suspended while preparing the bundled
+            // runtime. Recheck at the final synchronous launch boundary too.
+            if let selected = command.selectedExecutable {
+                guard try RuntimeSetupExecutable.validate(selected.source) == selected else {
+                    throw RuntimeSetupProtocolError.invalidFrame
+                }
+            }
+            try process.run()
+        }
         catch { finishWithoutProcess(.error(.setupUnavailable)); return }
         child = process
         input = stdin.fileHandleForWriting

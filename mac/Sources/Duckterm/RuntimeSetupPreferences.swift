@@ -22,7 +22,9 @@ struct RuntimeSetupPreferences {
             var result: [String: Any] = ["show_on_launch": !completed, "completed": completed]
             if let agent = record["default_agent"] as? String,
                let command = record["default_command"] as? String,
-               Self.agents.contains(agent), Self.validCommand(command) {
+               Self.agents.contains(agent), Self.validCommand(command),
+               (agent == "custom" || (record["default_executable"] == nil && command == agent)
+                || selectedExecutable(agent: agent) != nil) {
                 result["default_agent"] = agent; result["default_command"] = command
             }
             return result
@@ -37,13 +39,18 @@ struct RuntimeSetupPreferences {
             && !command.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) })
     }
 
+    func hasSelectedExecutable(agent: String) -> Bool {
+        guard let record = defaults.dictionary(forKey: key) else { return false }
+        return record["default_agent"] as? String == agent && record["default_executable"] != nil
+    }
+
     func selectedExecutable(agent: String) -> URL? {
         guard let record = defaults.dictionary(forKey: key), record["version"] as? Int == 1,
               record["default_agent"] as? String == agent,
               ["claude", "codex"].contains(agent),
               let path = record["default_executable"] as? String, path.hasPrefix("/"),
               Self.validCommand(path), record["default_command"] as? String == Self.quote(path) else { return nil }
-        return URL(fileURLWithPath: path)
+        return try? RuntimeSetupExecutable.validate(URL(fileURLWithPath: path)).url
     }
 
     static func quote(_ path: String) -> String { "'" + path.replacingOccurrences(of: "'", with: "'\\''") + "'" }
@@ -58,9 +65,16 @@ struct RuntimeSetupPreferences {
         if let executable {
             guard let agent, ["claude", "codex"].contains(agent), executable.isFileURL,
                   command == Self.quote(executable.path) else { throw RuntimeSetupProtocolError.invalidFrame }
-            result["default_executable"] = executable.path
+            let validated = try RuntimeSetupExecutable.validate(executable)
+            result["default_command"] = Self.quote(validated.url.path)
+            result["default_executable"] = validated.url.path
         } else if let oldExecutable, result["default_command"] as? String == Self.quote(oldExecutable.path) {
             result["default_executable"] = oldExecutable.path
+        }
+        if let agent = result["default_agent"] as? String,
+           agent != "custom", result["default_executable"] == nil,
+           result["default_command"] as? String != agent {
+            throw RuntimeSetupProtocolError.invalidFrame
         }
         result.removeValue(forKey: "show_on_launch")
         result["completed"] = true

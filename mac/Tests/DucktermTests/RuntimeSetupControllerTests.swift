@@ -119,7 +119,7 @@ final class RuntimeSetupControllerTests: XCTestCase {
     }
 
     @MainActor func testNativePickerBindsRuntimeAndRejectsReplacedExecutable() async throws {
-        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let directory = (try runtimeSetupTestTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let executable = directory.appendingPathComponent("codex' fixture")
@@ -141,8 +141,56 @@ final class RuntimeSetupControllerTests: XCTestCase {
         XCTAssertNil(selected)
     }
 
+    @MainActor func testPickerAndStaleSelectionRejectWritableExecutableOrParent() async throws {
+        let directory = (try runtimeSetupTestTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false,
+                                               attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let executable = directory.appendingPathComponent("codex")
+        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: executable)
+        var calls = 0
+        let prefs = preferences()
+        let controller = RuntimeSetupController(preferences: prefs, factory: { _, _, _ in
+            calls += 1; return SetupFakeTransport()
+        }, picker: { _ in executable })
+        XCTAssertEqual(chmod(executable.path, 0o720), 0)
+        await rejects { _ = try await controller.perform(operation: "choose-executable", params: ["runtime": "codex"]) }
+        XCTAssertEqual(chmod(executable.path, 0o700), 0)
+        let choice = try await controller.perform(operation: "choose-executable", params: ["runtime": "codex"])
+        let handle = try XCTUnwrap(choice["selection_handle"] as? String)
+        for path in [executable.path, directory.path] {
+            XCTAssertEqual(chmod(path, 0o770), 0)
+            await rejects { _ = try await controller.perform(operation: "start", params: ["runtime": "codex", "action": "login", "request_id": UUID().uuidString, "selection_handle": handle]) }
+            await rejects { _ = try await controller.perform(operation: "complete", params: ["skipped": false, "agent": "codex", "selection_handle": handle]) }
+            XCTAssertEqual(chmod(path, 0o700), 0)
+        }
+        XCTAssertEqual(calls, 0)
+        XCTAssertNil(prefs.defaults.object(forKey: prefs.key))
+    }
+
+    @MainActor func testUnsafeSavedChoiceCannotSilentlyRunDifferentPATHExecutable() async throws {
+        let directory = try runtimeSetupTestTemporaryDirectory().appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false,
+                                               attributes: [.posixPermissions: 0o700])
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let executable = directory.appendingPathComponent("codex")
+        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: executable)
+        XCTAssertEqual(chmod(executable.path, 0o700), 0)
+        let prefs = preferences()
+        _ = try prefs.complete(agent: "codex", command: RuntimeSetupPreferences.quote(executable.path), executable: executable)
+        XCTAssertEqual(chmod(executable.path, 0o720), 0)
+        var calls = 0
+        let controller = RuntimeSetupController(preferences: prefs, factory: { _, _, _ in
+            calls += 1; return SetupFakeTransport()
+        }, picker: { _ in nil })
+        await rejects { _ = try await controller.perform(operation: "status", params: ["runtime": "codex", "request_id": UUID().uuidString]) }
+        await rejects { _ = try await controller.perform(operation: "start", params: ["runtime": "codex", "action": "login", "request_id": UUID().uuidString]) }
+        XCTAssertEqual(calls, 0)
+        XCTAssertNil(controller.state["default_command"])
+    }
+
     @MainActor func testCompletedNativeSelectionSurvivesRelaunchAndInstallStillUsesFixedPath() async throws {
-        let prefs = preferences(), directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        let prefs = preferences(), directory = (try runtimeSetupTestTemporaryDirectory()).appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: directory) }
         let executable = directory.appendingPathComponent("chosen-codex")

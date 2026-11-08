@@ -33,7 +33,7 @@ final class RuntimeSetupController {
     private struct Selection {
         let runtime: RuntimeSetupRuntime
         let url: URL
-        let identity: [UInt64]
+        let identity: RuntimeSetupExecutable
     }
     private final class Job {
         let id = UUID().uuidString
@@ -90,8 +90,9 @@ final class RuntimeSetupController {
             let current = generation
             guard let chosen = await picker(runtime) else { return ["cancelled": true] }
             guard current == generation else { throw Failure.stale }
-            let url = chosen.resolvingSymlinksInPath().standardizedFileURL
-            let identity = try Self.identity(url)
+            let validated = try RuntimeSetupExecutable.validate(chosen)
+            let url = validated.url
+            let identity = try RuntimeSetupExecutable.validate(url)
             let handle = UUID().uuidString
             selections[handle] = Selection(runtime: runtime, url: url, identity: identity)
             return ["selection_handle": handle, "display_name": url.path]
@@ -246,13 +247,17 @@ final class RuntimeSetupController {
 
     private func selected(_ params: [String: Any], runtime: RuntimeSetupRuntime) throws -> URL? {
         guard params["selection_handle"] != nil else {
-            guard let url = preferences.selectedExecutable(agent: runtime == .claudeCode ? "claude" : "codex") else { return nil }
-            _ = try Self.identity(url)
+            let agent = runtime == .claudeCode ? "claude" : "codex"
+            guard let url = preferences.selectedExecutable(agent: agent) else {
+                guard !preferences.hasSelectedExecutable(agent: agent) else { throw Failure.invalid }
+                return nil
+            }
+            _ = try RuntimeSetupExecutable.validate(url)
             return url
         }
         let handle = try identifier(params, "selection_handle")
         guard let selection = selections[handle], selection.runtime == runtime,
-              try Self.identity(selection.url) == selection.identity else { throw Failure.stale }
+              try RuntimeSetupExecutable.validate(selection.url) == selection.identity else { throw Failure.stale }
         return selection.url
     }
     private func runtime(_ params: [String: Any]) throws -> RuntimeSetupRuntime {
@@ -276,12 +281,5 @@ final class RuntimeSetupController {
     private static func boolean(_ value: Any?) -> Bool? {
         guard let number = value as? NSNumber, CFGetTypeID(number) == CFBooleanGetTypeID() else { return nil }
         return number.boolValue
-    }
-    private static func identity(_ url: URL) throws -> [UInt64] {
-        var info = stat()
-        guard url.isFileURL, lstat(url.path, &info) == 0, info.st_mode & S_IFMT == S_IFREG,
-              access(url.path, X_OK) == 0 else { throw Failure.invalid }
-        return [UInt64(info.st_dev), UInt64(info.st_ino), UInt64(info.st_size),
-                UInt64(bitPattern: Int64(info.st_mtimespec.tv_sec)), UInt64(info.st_mtimespec.tv_nsec)]
     }
 }

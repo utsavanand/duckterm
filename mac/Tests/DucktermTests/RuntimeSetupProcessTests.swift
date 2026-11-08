@@ -288,7 +288,7 @@ final class RuntimeSetupProcessTests: XCTestCase {
     }
 
     @MainActor func testPickedExecutableIsRevalidatedAcrossAsynchronousPreparation() async throws {
-        for replacement in ["replace", "symlink", "rewrite", "permission"] {
+        for replacement in ["replace", "symlink", "rewrite", "permission", "writable-file", "writable-parent"] {
             let root = try SetupProcessFixture.makeRoot()
             defer { try? FileManager.default.removeItem(at: root) }
             let chosen = root.appendingPathComponent("chosen executable")
@@ -314,12 +314,39 @@ final class RuntimeSetupProcessTests: XCTestCase {
                     try FileManager.default.copyItem(at: saved, to: chosen)
                 }
             case "rewrite": try Data("#!/bin/sh\nexit 1\n".utf8).write(to: chosen)
+            case "writable-file": try FileManager.default.setAttributes([.posixPermissions: 0o720], ofItemAtPath: chosen.path)
+            case "writable-parent": try FileManager.default.setAttributes([.posixPermissions: 0o770], ofItemAtPath: root.path)
             default: try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: chosen.path)
             }
             gate.release()
             do { _ = try await start.value; XCTFail("Changed executable must be rejected: \(replacement)") }
             catch { XCTAssertEqual(error as? RuntimeSetupProtocolError, .invalidFrame) }
         }
+    }
+
+    @MainActor func testUnsafeSelectionAtFinalLaunchBoundaryNeverStartsHelper() async throws {
+        let root = try SetupProcessFixture.makeRoot()
+        defer { try? FileManager.default.removeItem(at: root) }
+        let chosen = root.appendingPathComponent("chosen executable")
+        let marker = root.appendingPathComponent("must-not-run")
+        try Data("#!/bin/sh\nexit 0\n".utf8).write(to: chosen)
+        XCTAssertEqual(chmod(chosen.path, 0o700), 0)
+        var ended = false
+        var events: [RuntimeSetupEvent] = []
+        let process = RuntimeSetupProcess(runtime: .codex, action: .login) {
+            let command = try await RuntimeSetupProcess.preparedCommand(executable: chosen) {
+                .init(executable: URL(fileURLWithPath: "/bin/sh"),
+                      arguments: ["-c", "touch \"$1\"", "fixture", marker.path], environment: ["PATH": "/bin:/usr/bin"])
+            }
+            XCTAssertEqual(chmod(root.path, 0o770), 0)
+            return command
+        }
+        process.onEvent = { events.append($0) }
+        process.onEnd = { ended = true }
+        try await process.start()
+        XCTAssertTrue(ended)
+        XCTAssertEqual(events, [.error(.setupUnavailable)])
+        XCTAssertFalse(FileManager.default.fileExists(atPath: marker.path))
     }
 
     @MainActor func testUnchangedPickedExecutablePassesAndInvalidChoiceNeverPrepares() async throws {
@@ -388,7 +415,7 @@ final class RuntimeSetupProcessTests: XCTestCase {
     }
 
     static func makeRoot() throws -> URL {
-        let root = URL(fileURLWithPath: "/private/tmp").appendingPathComponent("runtime-setup-native-\(UUID().uuidString)")
+        let root = (try runtimeSetupTestTemporaryDirectory()).appendingPathComponent("runtime-setup-native-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: root, withIntermediateDirectories: false,
                                                attributes: [.posixPermissions: 0o700])
         return root
