@@ -46,7 +46,7 @@ export function allowRemoteWorkspaces(allowed: boolean | null): void {
 
 // A computer the Mac app knows but desktop() hides: "pending" until the edition loads.
 export function hiddenHost(host: string): "pending" | "hidden" | null {
-  if (remoteWorkspaces === true || !window.__rubbertermDesktop?.targets.some(t => t.id === host)) return null;
+  if (host === "local" || remoteWorkspaces === true || !window.__rubbertermDesktop?.targets.some(t => t.id === host)) return null;
   return remoteWorkspaces === null ? "pending" : "hidden";
 }
 
