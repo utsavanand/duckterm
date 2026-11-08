@@ -10,14 +10,16 @@ import re
 import secrets
 import time
 import uuid
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
 from duckterm.helpers.private_files import private_read, private_write
 
 TOKEN = re.compile(r"^[A-Za-z0-9_-]{43,128}$")
-CAPABILITIES = frozenset({"status:read", "conversation:read", "session:send"})
+CAPABILITIES = frozenset(
+    {"status:read", "conversation:read", "session:send", "analysis:folder", "analysis:oracle"}
+)
 
 
 class Denied(ValueError):
@@ -53,7 +55,48 @@ def _public_device(identifier: str, device: dict[str, Any], host_id: str) -> dic
             capabilities(device.get("capabilities")) if device["status"] == "active" else []
         ),
         "api_version": 2,
+        "authorization_revision": _revision(device),
     }
+
+
+def _revision(device: dict[str, Any]) -> int:
+    value = device.get("authorization_revision", 0)
+    if type(value) is not int or value < 0:
+        raise Denied("Invalid Ducky authorization revision")
+    return value
+
+
+def _pending(
+    state: dict[str, Any], invitation: dict[str, Any] | None, now: int
+) -> dict[str, Any] | None:
+    if not invitation or invitation["expires_at"] <= now or invitation.get("approved"):
+        return None
+    identifier = invitation.get("claimed_by")
+    device = state["devices"].get(identifier)
+    if not device or (
+        invitation.get("credential_hash") is not None
+        and invitation["credential_hash"] != device.get("token_hash")
+    ):
+        return None
+    if invitation.get("re_pair") is True:
+        if (
+            device["status"] != "active"
+            or _revision(device) != invitation.get("authorization_revision")
+            or device["name"] != invitation.get("previous_name")
+            or capabilities(device.get("capabilities")) != invitation.get("previous_capabilities")
+        ):
+            return None
+        return {
+            "id": identifier,
+            "name": device["name"],
+            "expires_at": invitation["expires_at"],
+            "re_pair": True,
+            "capabilities": capabilities(device.get("capabilities")),
+            "authorization_revision": _revision(device),
+        }
+    if device["status"] != "pending" or device["expires_at"] <= now:
+        return None
+    return {"id": identifier, "name": device["name"], "expires_at": device["expires_at"]}
 
 
 class Grants:
@@ -147,7 +190,39 @@ class Grants:
                 device = state["devices"].get(identifier)
                 if not device or not secrets.compare_digest(device["token_hash"], token_hash):
                     raise Denied("Invitation has already been used")
-                return {"id": identifier, "status": device["status"], "host_id": state["host_id"]}
+                result = {"id": identifier, "status": device["status"], "host_id": state["host_id"]}
+                if grant.get("re_pair") is True and not grant.get("approved"):
+                    if _pending(state, grant, now) is None:
+                        raise Denied("Pairing permissions changed")
+                    result.update(
+                        status="pending", re_pair=True, authorization_revision=_revision(device)
+                    )
+                return result
+            for identifier, device in state["devices"].items():
+                if not secrets.compare_digest(device["token_hash"], token_hash):
+                    continue
+                if device["status"] != "active" or any(
+                    item.get("claimed_by") == identifier and _pending(state, item, now)
+                    for item in state["invites"].values()
+                ):
+                    raise Denied("This device already has a pending invitation")
+                # Only proof of the existing credential identifies a re-pair.
+                # Preserve its name, token and live authority until Mac approval.
+                grant.update(
+                    claimed_by=identifier,
+                    credential_hash=token_hash,
+                    re_pair=True,
+                    authorization_revision=_revision(device),
+                    previous_name=device["name"],
+                    previous_capabilities=capabilities(device.get("capabilities")),
+                )
+                return {
+                    "id": identifier,
+                    "status": "pending",
+                    "host_id": state["host_id"],
+                    "re_pair": True,
+                    "authorization_revision": _revision(device),
+                }
             state["devices"] = {
                 key: value
                 for key, value in state["devices"].items()
@@ -165,6 +240,7 @@ class Grants:
                 "last_seen_at": None,
             }
             grant["claimed_by"] = identifier
+            grant["credential_hash"] = token_hash
             return {"id": identifier, "status": "pending", "host_id": state["host_id"]}
 
     def authenticate(
@@ -186,7 +262,19 @@ class Grants:
                     if seen is None or now - seen >= 60:
                         device["last_seen_at"] = now
                         private_write(self.path, json.dumps(state))
-                    return _public_device(identifier, device, state["host_id"])
+                    public = _public_device(identifier, device, state["host_id"])
+                    if (
+                        pending
+                        and active
+                        and any(
+                            item.get("claimed_by") == identifier
+                            and item.get("re_pair") is True
+                            and _pending(state, item, now)
+                            for item in state["invites"].values()
+                        )
+                    ):
+                        public.update(status="pending", capabilities=[], re_pair=True)
+                    return public
         raise Denied("Device is unapproved, expired, or revoked")
 
     def authenticated_by_id(
@@ -261,19 +349,14 @@ class Grants:
             device["status"] = "active"
             device["expires_at"] = 0
             device["capabilities"] = approved
+            device["authorization_revision"] = _revision(device) + 1
 
     def pending_invitation(self, invite: str, *, now: int | None = None) -> dict[str, Any] | None:
         """Only the phone which claimed this ceremony's invitation may be offered."""
         now = int(time.time()) if now is None else now
         with self.locked() as state:
             invitation = state["invites"].get(digest(invite))
-            if not invitation or invitation["expires_at"] <= now:
-                return None
-            identifier = invitation.get("claimed_by")
-            device = state["devices"].get(identifier)
-            if not device or device["status"] != "pending" or device["expires_at"] <= now:
-                return None
-            return {"id": identifier, "name": device["name"], "expires_at": device["expires_at"]}
+            return _pending(state, invitation, now)
 
     def approve_invitation(
         self,
@@ -282,22 +365,30 @@ class Grants:
         *,
         now: int | None = None,
         capabilities: list[str] | None = None,
+        expected: dict[str, Any] | None = None,
+        validate: Callable[[], None] | None = None,
     ) -> None:
         approved = _approval_capabilities(capabilities)
         now = int(time.time()) if now is None else now
         with self.locked(write=True) as state:
             invitation = state["invites"].get(digest(invite))
             device = state["devices"].get(identifier)
+            pending = _pending(state, invitation, now)
             if (
-                not invitation
-                or invitation["expires_at"] <= now
-                or invitation.get("claimed_by") != identifier
-                or not device
-                or device["status"] != "pending"
-                or device["expires_at"] <= now
+                not pending
+                or pending["id"] != identifier
+                or (expected is not None and pending != expected)
             ):
                 raise Denied("No unexpired pending device for this invitation")
-            device.update(status="active", expires_at=0, capabilities=approved)
+            if validate is not None:
+                validate()
+            device.update(
+                status="active",
+                expires_at=0,
+                capabilities=approved,
+                authorization_revision=_revision(device) + 1,
+            )
+            invitation["approved"] = True
 
     def cancel_invitation(self, invite: str) -> None:
         with self.locked(write=True) as state:

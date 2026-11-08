@@ -10,7 +10,7 @@ struct DuckyApp: App {
 
     init() {
         #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("--ducky-map-ui-fixture") {
+        if ProcessInfo.processInfo.arguments.contains("--ducky-map-ui-fixture") || ProcessInfo.processInfo.arguments.contains("--ducky-analysis-ui-fixture") {
             _model = StateObject(wrappedValue: MapUIFixture.model())
             return
         }
@@ -247,6 +247,8 @@ private enum MapUIFixture {
 private final class MapUIFixtureTransport: DuckyTransport {
     private let failure: Int?
     private var firstSnapshotAt: Date?
+    private let analysisEnabled = ProcessInfo.processInfo.arguments.contains("--ducky-analysis-ui-fixture")
+    private var analysisJobs: [String: (AnalysisSubmission, AnalysisScope, Date)] = [:]
     private var receipts: [MessageReceipt] = []
     init(failure: Int?) { self.failure = failure }
     func claim(_ invitation: Invitation, name: String) async throws -> PairStatus { throw DuckyError.unavailable(403) }
@@ -266,7 +268,10 @@ private final class MapUIFixtureTransport: DuckyTransport {
             "version": 2, "host_id": MapUIFixture.hostID, "read_only": true,
             "generated_at": Int(Date().timeIntervalSince1970), "truncated": false, "reset": false,
             "notices": [], "notification_delivery": "foreground_refresh", "folders": MapUIFixture.folders,
-            "features": ["conversations"], "capabilities": ["status:read", "conversation:read", "session:send"],
+            "features": analysisEnabled ? ["conversations", "analysis_jobs"] : ["conversations"],
+            "capabilities": ["status:read", "conversation:read", "session:send"] + (analysisEnabled ? ["analysis:folder", "analysis:oracle"] : []),
+            "analysis": ["folder_questions": analysisEnabled && !ProcessInfo.processInfo.arguments.contains("--ducky-analysis-lite"),
+                         "oracle_questions": analysisEnabled && !ProcessInfo.processInfo.arguments.contains("--ducky-analysis-lite") && !ProcessInfo.processInfo.arguments.contains("--ducky-analysis-code")],
             "sessions": sessions
         ])
         try result.validate(hostID: MapUIFixture.hostID)
@@ -315,6 +320,41 @@ private final class MapUIFixtureTransport: DuckyTransport {
             throw DuckyError.unavailable(404)
         }
         return receipt
+    }
+    func analysisContext(scope: AnalysisScope) async throws -> AnalysisContext {
+        guard analysisEnabled else { throw DuckyError.unavailable(404) }
+        let jobs = analysisJobs.values.filter { $0.1 == scope }
+        let completed = jobs.filter { Date().timeIntervalSince($0.2) >= 2.5 }
+        let pending = jobs.first { Date().timeIntervalSince($0.2) < 2.5 }
+        let scopeObject = try JSONSerialization.jsonObject(with: JSONEncoder().encode(scope))
+        return try ChatUIFixture.decode(["version": 1, "host_id": MapUIFixture.hostID, "scope": scopeObject,
+            "context_id": "analysis-ui-context", "expires_at": Int64(Date().timeIntervalSince1970 * 1000) + 60_000,
+            "history": try completed.map { try analysisObject($0.0, scope: $0.1, at: $0.2) },
+            "pending": try pending.map { try analysisObject($0.0, scope: $0.1, at: $0.2) } ?? NSNull()])
+    }
+    func askAnalysis(_ submission: AnalysisSubmission, scope: AnalysisScope) async throws -> AnalysisReceipt {
+        guard analysisEnabled else { throw DuckyError.unavailable(404) }
+        if analysisJobs[submission.requestID] == nil { analysisJobs[submission.requestID] = (submission, scope, Date()) }
+        return try await analysisReceipt(requestID: submission.requestID, scope: scope)
+    }
+    func analysisReceipt(requestID: String, scope: AnalysisScope) async throws -> AnalysisReceipt {
+        guard let job = analysisJobs[requestID], job.1 == scope else { throw DuckyError.unavailable(404) }
+        return try ChatUIFixture.decode(analysisObject(job.0, scope: scope, at: job.2))
+    }
+    private func analysisObject(_ submission: AnalysisSubmission, scope: AnalysisScope, at: Date) throws -> [String: Any] {
+        let elapsed = Date().timeIntervalSince(at)
+        let complete = elapsed >= 2.5
+        let failed = complete && ProcessInfo.processInfo.arguments.contains("--ducky-analysis-failed")
+        let created = Int64(at.timeIntervalSince1970 * 1000)
+        let answer = "## Scope checked\n\n**2 sessions need attention** in \(scope.title).\n\n- The reviewer has a question.\n- The release agent is waiting for review.\n\n```text\nNo provider was called.\n```"
+        return ["request_id": submission.requestID, "context_id": submission.contextID,
+            "scope": try JSONSerialization.jsonObject(with: JSONEncoder().encode(scope)),
+            "status": failed ? "failed" : complete ? "complete" : elapsed > 0.5 ? "running" : "queued",
+            "reason": failed ? "provider_failed" : NSNull(), "question": submission.question,
+            "answer": complete && !failed ? answer : NSNull(), "created_at": created,
+            "updated_at": Int64(Date().timeIntervalSince1970 * 1000), "expires_at": created + 240_000,
+            "captured_at": complete ? created : NSNull(), "source_count": scope == .oracle ? 40 : 8,
+            "truncated": scope == .oracle]
     }
     func close() {}
 }

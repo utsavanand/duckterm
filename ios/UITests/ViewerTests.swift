@@ -564,3 +564,96 @@ final class ConstellationUITests: XCTestCase {
         capture("map-larger-text-reduced-motion-receipt")
     }
 }
+
+final class AnalysisUITests: XCTestCase {
+    private var app: XCUIApplication!
+    @MainActor override func setUp() {
+        continueAfterFailure = false
+        app = XCUIApplication()
+        app.launchArguments = ["--ducky-analysis-ui-fixture"]
+        XCUIDevice.shared.orientation = .portrait
+    }
+    @MainActor override func tearDown() { app.terminate(); XCUIDevice.shared.orientation = .portrait }
+    @MainActor private func element(_ id: String) -> XCUIElement { app.descendants(matching: .any).matching(identifier: id).firstMatch }
+    @MainActor private func node(_ name: String) -> XCUIElement { app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", name + ",")).firstMatch }
+    @MainActor private func capture(_ name: String) {
+        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
+    }
+    @MainActor private func rotate(_ direction: UIDeviceOrientation) {
+        XCUIDevice.shared.orientation = direction
+        expectation(for: NSPredicate { _, _ in self.app.frame.width > self.app.frame.height }, evaluatedWith: nil)
+        waitForExpectations(timeout: 8)
+    }
+    @MainActor private func openMap() {
+        app.launch(); XCTAssertTrue(element("show-map").waitForExistence(timeout: 10)); element("show-map").tap()
+        XCTAssertTrue(app.staticTexts["Turn your phone sideways to see the map"].waitForExistence(timeout: 5))
+        rotate(.landscapeLeft)
+        XCTAssertTrue(node("DuckTerm").waitForExistence(timeout: 5))
+    }
+    @MainActor private func focus() {
+        let composer = element("analysis-composer")
+        var prior = CGRect.null; var since = Date()
+        expectation(for: NSPredicate { _, _ in
+            guard composer.exists, composer.isHittable else { return false }
+            if composer.frame != prior { prior = composer.frame; since = Date(); return false }
+            return Date().timeIntervalSince(since) > 0.4
+        }, evaluatedWith: nil)
+        waitForExpectations(timeout: 6)
+        composer.tap(); XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+    }
+    @MainActor func testFolderQuestionKeepsDraftAcrossRotationAndAnswersAboveKeyboard() {
+        openMap(); node("DuckTerm").tap()
+        XCTAssertTrue(element("constellation-ask").waitForExistence(timeout: 5)); element("constellation-ask").tap()
+        XCTAssertTrue(element("analysis-header").waitForExistence(timeout: 5))
+        capture("analysis-folder-ready")
+        focus(); element("analysis-composer").typeText("What changed?\nInclude blockers.")
+        rotate(.landscapeRight)
+        XCTAssertEqual(element("analysis-composer").value as? String, "What changed?\nInclude blockers.")
+        XCTAssertTrue(element("analysis-send").isHittable)
+        XCTAssertLessThanOrEqual(element("analysis-send").frame.maxY, app.keyboards.firstMatch.frame.minY + 2)
+        capture("analysis-folder-keyboard")
+        element("analysis-send").tap()
+        XCTAssertTrue(element("analysis-pending").waitForExistence(timeout: 5))
+        XCTAssertTrue(element("analysis-answer").waitForExistence(timeout: 10))
+        XCTAssertTrue(element("analysis-facts").exists)
+        XCTAssertGreaterThanOrEqual(element("analysis-scroll").frame.minY, element("analysis-header").frame.maxY - 1)
+        capture("analysis-folder-answer-keyboard")
+        element("constellation-back").tap()
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.keyboards.firstMatch)
+        waitForExpectations(timeout: 5)
+        capture("analysis-folder-answer")
+        focus(); element("analysis-composer").typeText("Next scoped question")
+        element("analysis-close").tap()
+        XCTAssertTrue(element("constellation-ask").waitForExistence(timeout: 5)); element("constellation-ask").tap()
+        XCTAssertEqual(element("analysis-composer").value as? String, "Next scoped question")
+    }
+    @MainActor func testOracleAndUngroupedScopesStayDistinct() {
+        openMap(); element("constellation-mode-oracle").tap()
+        XCTAssertTrue(element("analysis-header").waitForExistence(timeout: 5))
+        focus(); element("analysis-composer").typeText("Where am I needed?"); element("analysis-send").tap()
+        XCTAssertTrue(element("analysis-answer").waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "partial context")).firstMatch.exists)
+        capture("analysis-oracle-answer")
+        element("analysis-close").tap(); node("Ungrouped").tap()
+        element("constellation-ask").tap()
+        XCTAssertTrue(app.staticTexts["Ask Ungrouped"].waitForExistence(timeout: 5))
+        XCTAssertFalse(element("analysis-answer").exists)
+        capture("analysis-ungrouped-ready")
+    }
+    @MainActor func testCodeKeepsOracleFactualAndAllowsEmptyFolderQuestion() {
+        app.launchArguments.append("--ducky-analysis-code")
+        openMap(); element("constellation-mode-oracle").tap()
+        XCTAssertFalse(element("analysis-composer").exists)
+        element("constellation-mode-map").tap(); node("Empty").tap()
+        XCTAssertTrue(element("constellation-ask").waitForExistence(timeout: 5)); element("constellation-ask").tap()
+        XCTAssertTrue(app.staticTexts["Ask Empty"].waitForExistence(timeout: 5))
+        capture("analysis-code-empty-folder")
+    }
+    @MainActor func testLiteKeepsOnlyFactualMap() {
+        app.launchArguments.append("--ducky-analysis-lite")
+        openMap(); node("DuckTerm").tap(); XCTAssertFalse(element("constellation-ask").exists)
+        element("constellation-mode-oracle").tap(); XCTAssertFalse(element("analysis-composer").exists)
+        capture("analysis-lite-no-questions")
+    }
+}

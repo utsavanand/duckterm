@@ -23,6 +23,13 @@ private extension View {
 @MainActor
 struct ContentView: View {
     @ObservedObject var model: SessionModel
+    @StateObject private var analysis: AnalysisModel
+    @Environment(\.scenePhase) private var scenePhase
+    @State private var analysisPositions: [AnalysisScope: ConversationReadingPosition] = [:]
+    init(model: SessionModel) {
+        self.model = model
+        _analysis = StateObject(wrappedValue: model.makeAnalysisModel())
+    }
     @State private var settings = false
     @State private var showMap = false
     @State private var composing = false
@@ -55,11 +62,16 @@ struct ContentView: View {
                 // Keep this view mounted across rotation and agent selection so the map
                 // retains its navigation. The map owns portrait hints and list fallback.
                 ConstellationView(model: model, onExit: closeMap,
-                    // The overview uses existing status; questions need the scoped assistant API.
-                    folderQuestionsAvailable: false, oracleAvailable: true,
-                    oracleQuestionsAvailable: false, composing: $composing,
+                    folderQuestionsAvailable: model.snapshot?.allowsAnalysis(.ungrouped) == true, oracleAvailable: true,
+                    oracleQuestionsAvailable: model.snapshot?.allowsAnalysis(.oracle) == true, composing: $composing,
                     agentConversation: { conversation(embedded: true) },
-                    assistantConversation: { _ in EmptyView() })
+                    assistantConversation: { path, close in
+                        let scope: AnalysisScope = path.map { $0.isEmpty ? .ungrouped : .folder($0) } ?? .oracle
+                        AnalysisConversationView(model: analysis, scope: scope, composing: $composing,
+                            position: Binding(get: { analysisPositions[scope] ?? ConversationReadingPosition() },
+                                              set: { analysisPositions[scope] = $0 }), onClose: close)
+                            .id(scope)
+                    })
                     .id(model.host?.hostID ?? "")
             } else if model.selectedSessionID != nil && !settings {
                 conversation()
@@ -91,7 +103,8 @@ struct ContentView: View {
         }
         .background(Palette.background.ignoresSafeArea())
         .foregroundStyle(Color(red: 0.90, green: 0.91, blue: 0.93))
-        .onAppear { loadExpansion() }
+        .onAppear { loadExpansion(); analysis.synchronize(); analysis.setForeground(scenePhase == .active) }
+        .onChange(of: scenePhase) { analysis.setForeground($0 == .active) }
         .onChange(of: model.phase) { phase in
             // Revoked access uses the existing recovery screen, not an empty map.
             if phase == .denied || phase == .unpaired { closeMap() }
@@ -99,7 +112,7 @@ struct ContentView: View {
         .onChange(of: model.host?.hostID) { _ in
             model.selectSession(nil)
             composing = false; showMap = false
-            loadExpansion(); search = ""; filter = .all; readingPositions = [:]
+            loadExpansion(); search = ""; filter = .all; readingPositions = [:]; analysisPositions = [:]
         }
     }
 

@@ -2,7 +2,7 @@ import DuckyCore
 import SwiftUI
 import UIKit
 
-private enum ChatColor {
+enum ChatColor {
     static let background = Color(red: 0.063, green: 0.071, blue: 0.082)
     static let text = Color(red: 0.831, green: 0.843, blue: 0.863)
     static let muted = Color(red: 0.588, green: 0.616, blue: 0.655)
@@ -365,7 +365,7 @@ struct ConversationView: View {
     }
 }
 
-private struct FormattedReply: View, Equatable {
+struct FormattedReply: View, Equatable {
     let text: String
     let messageID: String
 
