@@ -269,9 +269,8 @@ async def _run(
         if "checkpoint_settings" not in leaf
         and not leaf.get("span_input", {}).get("selection_window")
     ]
-    latest = leaves[-1] if leaves else None
-    # Spans written in parallel are saved out of order; continue after the span
-    # furthest along the conversation, not the one saved last.
+    latest = memory_folding.furthest(leaves)
+    # The next span continues after the span furthest along, not the last saved.
     sequential.sort(key=lambda leaf: memory_folding.span_position(leaf) or 0)
     predecessor = sequential[-1] if sequential and selection is None else None
     if latest and latest.get("policy") != captured["policy"]:

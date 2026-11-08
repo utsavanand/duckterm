@@ -122,6 +122,42 @@ def test_backlog_completes_bounded_spans_and_failure_preserves_completed_summary
     asyncio.run(run())
 
 
+def test_reuse_returns_the_span_furthest_along_even_when_it_was_saved_first(
+    memory_rig, monkeypatch
+):
+    # Parallel spans save in completion order. Flaky in the full gate: when an
+    # earlier span finished last, a reused refresh returned it as the latest.
+    import time
+
+    from duckterm import server as sm
+
+    server, _, _, tmp = memory_rig
+    path = transcript(tmp, "agent-claude", "Older original")
+    for n in range(100):
+        append(path, f"Fact {n}: " + "x" * 1000)
+    calls = provider(monkeypatch)
+    write = sm.summarize
+
+    def first_span_finishes_last(prompt, **kwargs):
+        if "Older original" in prompt:
+            time.sleep(0.5)
+        return write(prompt, **kwargs)
+
+    monkeypatch.setattr("duckterm.server.summarize", first_span_finishes_last)
+
+    async def run():
+        first = await server.progress_coordinator.refresh("agent")
+        count = len(calls)
+        assert count > 1
+        second = await server.progress_coordinator.refresh("agent")
+        assert second["id"] == first["id"] and len(calls) == count
+        # The session's published summary is the newest span, not the last saved.
+        progress = json.loads(server.history.session("agent")["progress"])
+        assert progress["revision_id"] == first["id"]
+
+    asyncio.run(run())
+
+
 def test_rewritten_record_refuses_reuse_without_reciting_removed_claim(memory_rig, monkeypatch):
     server, _, _, tmp = memory_rig
     transcript(tmp, "agent-claude", "Prior owner direction")
