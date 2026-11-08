@@ -478,7 +478,9 @@ def test_two_real_provider_slots_survive_timeouts_until_threads_return(app, monk
             for key in list(app.service.deadlines):
                 if key[1] in {devices[0]["id"], devices[1]["id"]}:
                     app.service.deadlines[key] = 0
-            await asyncio.sleep(0.2)
+            async with asyncio.timeout(2):
+                while raw(app, devices[0], payloads[0])["status"] != "expired":
+                    await asyncio.sleep(0.01)
             assert len(calls) == 2
             assert raw(app, devices[0], payloads[0])["status"] == "expired"
             assert raw(app, devices[2], payloads[2])["status"] == "queued"

@@ -1199,6 +1199,35 @@ class HistoryStore:
                 (ts, key),
             )
 
+    def analysis_sessions(
+        self,
+        folder: str | None = None,
+        *,
+        ungrouped: bool = False,
+        binding_only: bool = False,
+        include_test: bool = False,
+    ) -> list[dict[str, Any]]:
+        """Scoped analysis rows, with no metrics or unrelated session enrichment."""
+        fields = (
+            "session_key, grp, runtime, cwd, started_at, state, restart_json, test"
+            if binding_only
+            else "*"
+        )
+        where = "state NOT IN ('archived', 'merged')"
+        parameters: tuple[object, ...] = ()
+        if not include_test:
+            where += " AND test = 0"
+        if folder is not None:
+            # Literal, case-sensitive subtree boundary; % and _ are folder text.
+            where += " AND (grp = ? OR substr(grp, 1, ?) = ?)"
+            parameters = (folder, len(folder) + 1, folder + "/")
+        elif ungrouped:
+            where += " AND (grp IS NULL OR grp = '')"
+        rows = self._conn.execute(
+            f"SELECT {fields} FROM sessions WHERE {where} ORDER BY session_key", parameters
+        ).fetchall()
+        return [dict(row) for row in rows]
+
     def sessions(self) -> list[dict[str, Any]]:
         """All session rows, newest-updated first, each with its metrics."""
         rows = self._conn.execute("SELECT * FROM sessions ORDER BY updated_at DESC").fetchall()

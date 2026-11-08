@@ -9,7 +9,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from duckterm.llm.summarizer import Summary, summarize
+from duckterm import memory_provider
+from duckterm.core.session_api import APIError
+from duckterm.llm import backend
+from duckterm.llm.summarizer import Summary
+from duckterm.persistence import native_identity
 from duckterm.persistence.folder_chats import valid_folder, within
 from duckterm.runtimes.base import AT_REST_STATES
 
@@ -69,15 +73,22 @@ def clip(text: str, maximum: int) -> str:
     return text.encode("utf-8")[:maximum].decode("utf-8", errors="ignore")
 
 
-def _scope_rows(server: Server, scope: Scope) -> tuple[str, list[dict[str, Any]]]:
+def _scope_rows(
+    server: Server, scope: Scope, *, binding_only: bool = False
+) -> tuple[str, list[dict[str, Any]]]:
     identity = scope.kind
     if scope.kind == "folder":
         if scope.path not in server.history.folders(include_test=False):
             raise ValueError("Folder unavailable")
         identity, _ = server.history.folder_chats.snapshot(scope.path or "")
+    candidates = server.history.analysis_sessions(
+        scope.path if scope.kind == "folder" else None,
+        ungrouped=scope.kind == "ungrouped",
+        binding_only=binding_only,
+    )
     rows = [
         row
-        for row in server.history.sessions()
+        for row in candidates
         if not row.get("test")
         and row.get("state") not in {"archived", "merged"}
         and scope.contains(row)
@@ -91,6 +102,11 @@ def _binding(server: Server, identity: str, rows: list[dict[str, Any]]) -> str:
     for row in rows:
         key = str(row["session_key"])
         supervisor = server.orchestrator.get(key)
+        identity_info = native_identity.info(row)
+        if identity_info["status"] == "missing":
+            identity_info = native_identity.info(
+                row, native_identity.legacy(server.history._conn, key)
+            )
         value = (
             key,
             row.get("grp") or "",
@@ -98,7 +114,7 @@ def _binding(server: Server, identity: str, rows: list[dict[str, Any]]) -> str:
             row.get("cwd"),
             row.get("started_at"),
             row.get("state") not in AT_REST_STATES,
-            server.history.native_identity(key),
+            identity_info,
             getattr(supervisor, "_tmux_target", None),
             getattr(getattr(supervisor, "_proc", None), "pid", None),
             (json.loads(row.get("restart_json") or "{}").get("native_binding") or {}).get(
@@ -111,7 +127,7 @@ def _binding(server: Server, identity: str, rows: list[dict[str, Any]]) -> str:
 
 
 def binding(server: Server, scope: Scope) -> str:
-    identity, rows = _scope_rows(server, scope)
+    identity, rows = _scope_rows(server, scope, binding_only=True)
     return _binding(server, identity, rows)
 
 
@@ -137,9 +153,13 @@ def capture(server: Server, scope: Scope) -> Capture:
     )
 
 
-def current(server: Server, value: Capture) -> bool:
+def current(server: Server, value: Capture, *, observed_binding: str | None = None) -> bool:
+    """Recheck generation; reuse a binding only within the same synchronous check."""
     try:
-        return binding(server, value.scope) == value.binding and all(
+        current_binding = (
+            binding(server, value.scope) if observed_binding is None else observed_binding
+        )
+        return current_binding == value.binding and all(
             (live := _generation(server.orchestrator.get(str(row["session_key"]))))[0]
             is generation[0]
             and live[1] is generation[1]
@@ -260,6 +280,19 @@ async def prepare(
     text = prefix + prompt(question, bounded, previous, value.scope.path)
     check()
     return Prepared(text, tuple(str(row["session_key"]) for row in value.rows), truncated)
+
+
+def summarize(prompt: str, *, tier: str) -> Summary:
+    """Phone inference uses only the text-only backend, never legacy shell overrides."""
+    try:
+        if not backend.ready():
+            return Summary("", "none", "provider_unavailable")
+        reply = asyncio.run(backend.complete(prompt, tier=tier))
+    except memory_provider.BatchTimeout:
+        return Summary("", "none", "provider_timeout")
+    except APIError:
+        return Summary("", "none", "provider_failed")
+    return Summary(reply.text.strip(), "cli" if reply.backend == "harness" else "api")
 
 
 def generate(prepared: Prepared, provider: Callable[..., Summary] | None = None) -> Summary:

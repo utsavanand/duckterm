@@ -35,6 +35,7 @@ T = TypeVar("T")
 CONTEXT_MS = 60000
 MAX_ANSWER_BYTES = 32768
 SWEEP_SECONDS = 30.0
+CHECK_SECONDS = 1.0
 
 
 def _now() -> int:
@@ -212,7 +213,7 @@ class Analysis:
         required = "analysis:oracle" if scope.kind == "oracle" else "analysis:folder"
         try:
             with self.grants.authorized_device(
-                device["id"], required, host_id=device["host_id"], lock_timeout=0.1
+                device["id"], required, host_id=device["host_id"], lock_timeout=0
             ) as live:
                 field = "oracle_questions" if scope.kind == "oracle" else "folder_questions"
                 if not self.effective_access(live)[field]:
@@ -241,8 +242,10 @@ class Analysis:
             raise AnalysisError(409, "configuration_changed")
         device = {"id": row["device"], "host_id": row["host"]}
         with self._authorized(device, scope, row["revision"]):
-            if self._binding(scope) != row["binding"] or (
-                capture is not None and not fleet.current(self.server, capture)
+            binding = self._binding(scope)
+            if binding != row["binding"] or (
+                capture is not None
+                and not fleet.current(self.server, capture, observed_binding=binding)
             ):
                 raise AnalysisError(409, "scope_changed")
 
@@ -349,8 +352,10 @@ class Analysis:
         scope = self._scope(json.loads(row["scope"]))
         if self._configuration() != row["configuration"]:
             raise AnalysisError(409, "configuration_changed")
-        if self._binding(scope) != row["binding"] or (
-            capture is not None and not fleet.current(self.server, capture)
+        binding = self._binding(scope)
+        if binding != row["binding"] or (
+            capture is not None
+            and not fleet.current(self.server, capture, observed_binding=binding)
         ):
             raise AnalysisError(409, "scope_changed")
 
@@ -405,6 +410,18 @@ class Analysis:
         ):
             raise AnalysisError(409, "work_expired")
         self._check(row, capture)
+
+    def _poll_delay(self, row: dict[str, Any]) -> float:
+        """Poll cheaply while waiting, without moving either expiry deadline."""
+        return max(
+            0.0,
+            min(
+                CHECK_SECONDS,
+                (float(row["expires_at"]) - _now()) / 1000,
+                self.deadlines.get(self._key(row), float("inf"))
+                - asyncio.get_running_loop().time(),
+            ),
+        )
 
     def _terminal(self, row: dict[str, Any], status: str, reason: str) -> None:
         with contextlib.suppress(AnalysisError):
@@ -466,9 +483,9 @@ class Analysis:
                         self._check_identity(row, capture)
                         future = self.pool.submit(prepared)
                     if future is None:
-                        await asyncio.sleep(0.05)
+                        await asyncio.sleep(self._poll_delay(row))
                 while not future.done():
-                    await asyncio.wait({future}, timeout=0.1)
+                    await asyncio.wait({future}, timeout=self._poll_delay(row))
                     check()
                 result = future.result()
             check()
