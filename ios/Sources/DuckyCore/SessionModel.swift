@@ -9,9 +9,15 @@ public protocol DuckyTransport: AnyObject {
     func conversation(sessionID: String) async throws -> ConversationSnapshot
     func send(_ message: OutgoingMessage) async throws -> MessageReceipt
     func receipt(requestID: String, sessionID: String) async throws -> MessageReceipt
+    func analysisContext(scope: AnalysisScope) async throws -> AnalysisContext
+    func askAnalysis(_ submission: AnalysisSubmission, scope: AnalysisScope) async throws -> AnalysisReceipt
+    func analysisReceipt(requestID: String, scope: AnalysisScope) async throws -> AnalysisReceipt
     func close()
 }
 public extension DuckyTransport {
+    func analysisContext(scope: AnalysisScope) async throws -> AnalysisContext { throw DuckyError.unavailable(404) }
+    func askAnalysis(_ submission: AnalysisSubmission, scope: AnalysisScope) async throws -> AnalysisReceipt { throw DuckyError.unavailable(404) }
+    func analysisReceipt(requestID: String, scope: AnalysisScope) async throws -> AnalysisReceipt { throw DuckyError.unavailable(404) }
     func conversation(sessionID: String) async throws -> ConversationSnapshot { throw DuckyError.unavailable(404) }
     func send(_ message: OutgoingMessage) async throws -> MessageReceipt { throw DuckyError.unavailable(404) }
     func receipt(requestID: String, sessionID: String) async throws -> MessageReceipt { throw DuckyError.unavailable(404) }
@@ -100,6 +106,8 @@ public final class SessionModel: ObservableObject {
         self.expansionStore = expansionStore
     }
 
+    public func makeAnalysisModel() -> AnalysisModel { AnalysisModel(session: self, makeTransport: makeTransport) }
+
     /// Reconnects to the saved Mac, if any. Shows stale until the Mac answers.
     public func restore() async {
         let saved: PairedHost?
@@ -118,7 +126,9 @@ public final class SessionModel: ObservableObject {
         let invitation: Invitation
         do {
             invitation = try Invitation.parse(link, now: now())
-            paired = PairedHost(invitation: invitation, token: try DuckyClient.newCredential())
+            let existing = host ?? (try? credentials.load())
+            let reuse = existing?.hostID == invitation.hostID && existing?.certificateSHA256 == invitation.certificateSHA256
+            paired = PairedHost(invitation: invitation, token: reuse ? existing!.token : try DuckyClient.newCredential())
             candidate = try makeTransport(paired)
         } catch { self.error = error.localizedDescription; return }
         pairingAttempt += 1

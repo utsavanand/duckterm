@@ -82,7 +82,7 @@ final class DuckyPairingTests: XCTestCase {
         auth.finish(true)
         await settle { transport.commands.count == 1 }
         XCTAssertEqual(transport.scopes, [DuckyPairingModel.conversationCapabilities.sorted()])
-        XCTAssertTrue(reasons.first?.contains("read conversations and send messages") == true)
+        XCTAssertEqual(reasons, ["allow Test iPhone to view status and use conversations"])
         let confirmed = DuckyPairingDevice(id: deviceID, name: device.name, expiresAt: nil,
                                           capabilities: DuckyPairingModel.conversationCapabilities.sorted())
         transport.onEvent?(.approved(confirmed))
@@ -119,10 +119,109 @@ final class DuckyPairingTests: XCTestCase {
     }
 
     func testUnknownOrDuplicatedConfirmationScopesAreRejected() throws {
-        for scopes in [["status:read", "admin"], ["session:send", "session:send"]] {
+        for scopes in [["status:read", "admin"], ["session:send", "session:send"], ["analysis:folder", "analysis:folder"]] {
             let data = try JSONSerialization.data(withJSONObject: ["version": 1, "state": "approved",
                 "device": ["id": deviceID, "name": "Phone", "capabilities": scopes]])
             XCTAssertThrowsError(try DuckyPairingEvent.decode(data))
+        }
+    }
+
+    @MainActor func testAnalysisDefaultsAndIndependentEditionGates() async throws {
+        for (id, features, expected) in [
+            ("lite", ["folder_chat", "oracle"], Set<String>()),
+            ("code", ["folder_chat", "oracle"], Set(["analysis:folder"])),
+            ("full", ["folder_chat", "oracle"], Set(["analysis:folder", "analysis:oracle"])),
+            ("full", [], Set<String>())
+        ] {
+            let edition = try DesktopEdition(response: ["id": id, "features": features])
+            let transport = FakePairingTransport()
+            let model = DuckyPairingModel(makeTransport: { transport }, authenticate: { _ in true }, now: { self.now }, verifiedEdition: { edition })
+            model.start(); transport.onEvent?(.invitation(invite)); transport.onEvent?(.pending(device))
+            XCTAssertFalse(model.allowsFolderQuestions); XCTAssertFalse(model.allowsOracleQuestions); XCTAssertFalse(model.allowsConversations)
+            model.setAllowsFolderQuestions(true); model.setAllowsOracleQuestions(true); model.approve()
+            await settle { transport.commands.count == 1 }
+            XCTAssertEqual(transport.scopes, [expected.union(["status:read"]).sorted()])
+            model.close()
+        }
+        let transport = FakePairingTransport()
+        let unknown = DuckyPairingModel(makeTransport: { transport }, authenticate: { _ in true }, now: { self.now })
+        unknown.start(); transport.onEvent?(.invitation(invite)); transport.onEvent?(.pending(device))
+        unknown.setAllowsFolderQuestions(true); unknown.setAllowsOracleQuestions(true)
+        unknown.approve(); await settle { transport.commands.count == 1 }
+        XCTAssertEqual(transport.scopes, [["status:read"]]); unknown.close()
+    }
+
+    @MainActor func testAnalysisSelectionAndExactIdentityAreFrozenAcrossAuthentication() async throws {
+        let edition = try DesktopEdition(response: ["id":"full", "features":["folder_chat", "oracle"]])
+        let transport = FakePairingTransport(), auth = SuspendedPairingAuthentication()
+        var reasons: [String] = []
+        let model = DuckyPairingModel(makeTransport: { transport }, authenticate: { reason in reasons.append(reason); return await auth.wait() }, now: { self.now }, verifiedEdition: { edition })
+        model.start(); transport.onEvent?(.invitation(invite)); transport.onEvent?(.pending(device))
+        model.setAllowsFolderQuestions(true); model.approve(); await settle { auth.continuation != nil }
+        model.setAllowsFolderQuestions(false); model.setAllowsOracleQuestions(true); model.setAllowsConversations(true)
+        auth.finish(true); await settle { transport.commands.count == 1 }
+        XCTAssertEqual(reasons, ["allow Test iPhone to view status and ask folder questions"])
+        XCTAssertEqual(transport.scopes, [["analysis:folder", "status:read"]])
+        transport.onEvent?(.approved(.init(id: deviceID, name: device.name, expiresAt: nil, capabilities: ["analysis:oracle", "status:read"])))
+        XCTAssertEqual(model.state, .error("approval_unavailable"))
+    }
+
+    @MainActor func testRejectedAuthenticationOrChangedEditionCannotApproveAnalysis() async throws {
+        var edition: DesktopEdition? = try DesktopEdition(response: ["id":"full", "features":["folder_chat", "oracle"]])
+        let transport = FakePairingTransport(), auth = SuspendedPairingAuthentication()
+        let model = DuckyPairingModel(makeTransport: { transport }, authenticate: { _ in await auth.wait() }, now: { self.now }, verifiedEdition: { edition })
+        model.start(); transport.onEvent?(.invitation(invite)); transport.onEvent?(.pending(device))
+        model.setAllowsOracleQuestions(true); model.approve(); await settle { auth.continuation != nil }
+        auth.finish(false); await settle { !model.busy }; XCTAssertTrue(transport.commands.isEmpty)
+        model.approve(); await settle { auth.continuation != nil }; edition = nil
+        auth.finish(true); await settle { model.state == .error("approval_unavailable") }
+        XCTAssertTrue(transport.commands.isEmpty)
+    }
+
+    @MainActor func testRepairPreservesExactExistingScopesAndRequiresNewAuthorizationRevision() async throws {
+        let edition = try DesktopEdition(response: ["id":"full", "features":["folder_chat", "oracle"]])
+        let transport = FakePairingTransport()
+        let model = DuckyPairingModel(makeTransport: { transport }, authenticate: { _ in true }, now: { self.now }, verifiedEdition: { edition })
+        let scopes = ["analysis:folder", "conversation:read", "status:read"]
+        let repair = DuckyPairingDevice(id: deviceID, name: device.name, expiresAt: 1090, capabilities: scopes, rePair: true, authorizationRevision: 7)
+        model.start(); transport.onEvent?(.invitation(invite)); transport.onEvent?(.pending(repair))
+        XCTAssertTrue(model.allowsConversations); XCTAssertTrue(model.allowsFolderQuestions); XCTAssertFalse(model.allowsOracleQuestions)
+        model.approve(); await settle { transport.commands.count == 1 }
+        XCTAssertEqual(transport.scopes, [scopes], "A partial legacy conversation grant must not silently gain sending")
+        transport.onEvent?(.approved(.init(id: deviceID, name: device.name, expiresAt: nil, capabilities: scopes, authorizationRevision: 7)))
+        XCTAssertEqual(model.state, .error("approval_unavailable"))
+        model.start(); transport.onEvent?(.invitation(invite)); transport.onEvent?(.pending(repair)); model.approve()
+        await settle { transport.commands.count == 2 }
+        let approved = DuckyPairingDevice(id: deviceID, name: device.name, expiresAt: nil, capabilities: scopes, authorizationRevision: 8)
+        transport.onEvent?(.approved(approved)); XCTAssertEqual(model.state, .approved(approved))
+        model.start(); transport.onEvent?(.invitation(invite))
+        transport.onEvent?(.pending(.init(id: deviceID, name: device.name, expiresAt: 1090, capabilities: scopes)))
+        XCTAssertFalse(model.allowsConversations); XCTAssertFalse(model.allowsFolderQuestions)
+        model.close()
+    }
+
+    @MainActor func testApprovedQuestionControlsMatchEditionAndSingleDisclosure() throws {
+        for id in ["lite", "code", "full"] {
+            let edition = try DesktopEdition(response: ["id":id, "features":["folder_chat", "oracle"]])
+            let availability = DuckyPairingAvailability(edition: edition)
+            let view = DuckyPairingView(state: .pending(device), availability: availability, icon: nil, now: now)
+            let controls = view.subviews.compactMap { $0 as? NSButton }
+            let folder = controls.first { $0.identifier?.rawValue == "folderQuestions" }
+            let oracle = controls.first { $0.identifier?.rawValue == "oracleQuestions" }
+            XCTAssertEqual(folder != nil, id != "lite"); XCTAssertEqual(oracle != nil, id != "lite")
+            if id != "lite" { XCTAssertEqual(folder?.state, .off); XCTAssertEqual(oracle?.state, .off); XCTAssertEqual(oracle?.isEnabled, id == "full") }
+            XCTAssertFalse(view.subviews.contains { $0.identifier?.rawValue == "analysisDisclosure" })
+            let selected = DuckyPairingView(state: .pending(device), allowsFolderQuestions: true, allowsOracleQuestions: true, availability: availability, icon: nil, now: now)
+            let labels = selected.subviews.compactMap { $0 as? NSTextField }.filter { $0.identifier?.rawValue == "analysisDisclosure" }
+            XCTAssertEqual(labels.count, id == "lite" ? 0 : 1)
+            if let disclosure = labels.first { XCTAssertTrue(disclosure.stringValue.contains("recent terminal output")); XCTAssertTrue(disclosure.stringValue.contains("API credits")) }
+            for label in selected.subviews.compactMap({ $0 as? NSTextField }) {
+                let required = label.cell?.cellSize(forBounds: NSRect(x: 0, y: 0, width: label.frame.width, height: 500)).height ?? 0
+                XCTAssertGreaterThanOrEqual(label.frame.height, required, "Full disclosure and captions must fit their native text cells")
+            }
+            XCTAssertNil(view.window); XCTAssertTrue(selected.subviews.allSatisfy { selected.bounds.contains($0.frame) })
+            let busy = DuckyPairingView(state: .pending(device), busy: true, availability: availability, icon: nil, now: now)
+            XCTAssertTrue(busy.subviews.compactMap { $0 as? NSButton }.filter { ["folderQuestions", "oracleQuestions"].contains($0.identifier?.rawValue ?? "") }.allSatisfy { !$0.isEnabled })
         }
     }
 
@@ -268,13 +367,13 @@ final class DuckyPairingTests: XCTestCase {
         try await transport.start(); await settle { events == [.invitation(self.invite)] }
         XCTAssertThrowsError(try transport.send(action: "approve", deviceID: deviceID, capabilities: ["admin"]))
         XCTAssertThrowsError(try transport.send(action: "deny", deviceID: deviceID, capabilities: ["session:send"]))
-        try transport.send(action: "approve", deviceID: deviceID, capabilities: DuckyPairingModel.conversationCapabilities.sorted())
+        try transport.send(action: "approve", deviceID: deviceID, capabilities: ["analysis:folder", "analysis:oracle", "status:read"])
         await settle { events.last == .cancelled }
         let body = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(contentsOf: marker)) as? [String: Any])
         XCTAssertEqual(Set(body.keys), ["action", "device_id", "capabilities"])
         XCTAssertEqual(body["action"] as? String, "approve")
         XCTAssertEqual(body["device_id"] as? String, deviceID)
-        XCTAssertEqual(body["capabilities"] as? [String], DuckyPairingModel.conversationCapabilities.sorted())
+        XCTAssertEqual(body["capabilities"] as? [String], ["analysis:folder", "analysis:oracle", "status:read"])
         let pid = try XCTUnwrap(Int32(String(contentsOf: pidFile, encoding: .utf8)))
         await settle { kill(pid, 0) == -1 && errno == ESRCH }
     }

@@ -355,7 +355,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard launchAdmission.canStart, edition?.includes("folders") == true,
               edition?.includes("session_status") == true else { return }
         if let duckyPairing { duckyPairing.show(); return }
-        let controller = DuckyPairingController(prepare: { [weak self] in
+        let controller = DuckyPairingController(verifiedEdition: { [weak self] in self?.edition }, prepare: { [weak self] in
             guard let self, await self.ensureLocalServer() else { throw DuckyPairingEvent.Failure.invalid }
             let current = try await self.refreshEdition()
             guard current.includes("folders"), current.includes("session_status") else { throw DuckyPairingEvent.Failure.invalid }

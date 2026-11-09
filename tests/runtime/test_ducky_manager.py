@@ -167,6 +167,43 @@ def test_address_change_preserves_certificate_and_approved_phone(app, monkeypatc
     asyncio.run(run())
 
 
+def test_analysis_service_survives_address_rebind_but_observes_opt_out(app, monkeypatch):
+    server, root = app
+    setup(root)
+    current = ["127.0.0.1"]
+    monkeypatch.setattr(manager_module.network, "detect_address", lambda **_: current[0])
+
+    async def run():
+        manager = Manager(server, root)
+        analysis = manager.analysis
+        close = AsyncMock(wraps=analysis.close)
+        disable = AsyncMock(wraps=analysis.disable)
+        monkeypatch.setattr(analysis, "close", close)
+        monkeypatch.setattr(analysis, "disable", disable)
+        try:
+            await manager.tick()
+            first = manager.bridge
+            assert first.analysis is analysis and not first.owns_analysis
+            # Simulate DHCP/interface discovery without replacing the opted-in
+            # configuration or starting a second provider queue.
+            current[0] = "::1"
+            await manager.tick()
+            assert manager.bridge is not first
+            assert manager.bridge.analysis is analysis
+            close.assert_not_awaited()
+            disable.assert_not_awaited()
+            (root / "ducky-bridge.json").unlink()
+            await manager.tick()
+            disable.assert_awaited_once()
+            close.assert_not_awaited()
+            assert manager.bridge is None
+        finally:
+            await manager.close_listener()
+            await analysis.close()
+
+    asyncio.run(run())
+
+
 @pytest.mark.parametrize("failure", [ValueError("ambiguous interface"), "8.8.8.8"])
 def test_invalid_discovery_closes_old_listener_and_recovers(app, monkeypatch, failure):
     server, root = app

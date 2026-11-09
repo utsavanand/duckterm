@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any
 from duckterm.helpers import instance
 from duckterm.helpers.private_files import private_read, private_write
 from duckterm.mobile import network
+from duckterm.mobile.analysis import Analysis
 from duckterm.mobile.bridge import Bridge, start
 from duckterm.mobile.cli import address, local_name
 from duckterm.mobile.messages import Messages
@@ -31,6 +32,7 @@ class Manager:
         self.signature: tuple[str, str, str, int] | None = None
         self.status: dict[str, Any] | None = None
         self.messages = Messages(server, self.directory)
+        self.analysis = Analysis(server, self.directory)
 
     def desired(self) -> tuple[tuple[str, str, str, int], dict[str, Any]] | None:
         raw = private_read(self.directory / "ducky-bridge.json")
@@ -78,6 +80,7 @@ class Manager:
             desired = await asyncio.to_thread(self.desired)
             if desired is None:
                 await self.messages.disable()
+                await self.analysis.disable()
                 await self.close_listener()
                 if self.status is not None:
                     await self.report({"state": "disabled"})
@@ -91,6 +94,7 @@ class Manager:
                 directory=self.directory,
                 bind_address=status["address"],
                 messages=self.messages,
+                analysis=self.analysis,
             )
             if self.bridge is None:
                 return  # Disabled while the new listener was being prepared.
@@ -100,6 +104,7 @@ class Manager:
                 await self.close_listener()
                 return
             await self.messages.start()
+            await self.analysis.start()
             self.signature = signature
             await self.report({"state": "ready", **status})
         except (OSError, ValueError, KeyError, TypeError):
@@ -118,6 +123,7 @@ class Manager:
                 await asyncio.sleep(2)
         finally:
             await self.messages.close()
+            await self.analysis.close()
             await self.close_listener()
             if self.status is not None:
                 with contextlib.suppress(OSError, ValueError):

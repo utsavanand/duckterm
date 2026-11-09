@@ -206,6 +206,141 @@ def test_native_approval_commits_and_echoes_only_selected_capabilities(ceremony,
     assert_others_unchanged(ceremony)
 
 
+@pytest.mark.parametrize("edition", ["lite", "code", "full", None, "invalid"])
+@pytest.mark.parametrize(
+    "scopes", [["analysis:folder"], ["analysis:oracle"], ["analysis:folder", "analysis:oracle"]]
+)
+def test_analysis_approval_intersects_verified_selected_edition(
+    ceremony, edition, scopes, monkeypatch
+):
+    if edition is not None:
+        (ceremony.root / "edition.json").write_text(json.dumps({"id": edition}))
+    # An inherited Full environment must not override the listener's saved edition.
+    monkeypatch.setenv("DUCKTERM_EDITION", "full")
+
+    def react(state, fields):
+        if state == "invitation":
+            ceremony.claim()
+        elif state == "pending":
+            ceremony.pipe.send(
+                json.dumps(
+                    {"action": "approve", "device_id": ceremony.phone["id"], "capabilities": scopes}
+                ).encode()
+                + b"\n"
+            )
+
+    ceremony.on_emit = react
+    allowed = edition == "full" or (edition == "code" and scopes == ["analysis:folder"])
+    assert stream.pair_json(ceremony.root) == (0 if allowed else 1)
+    if allowed:
+        assert ceremony.events[-1]["device"]["capabilities"] == sorted(["status:read", *scopes])
+        assert ceremony.events[-1]["device"]["authorization_revision"] == 1
+    else:
+        assert ceremony.events[-1] == {
+            "version": 1,
+            "state": "error",
+            "code": "approval_unavailable",
+        }
+        with pytest.raises(Denied):
+            ceremony.grants.authenticate(ceremony.token, pending=True)
+    assert_others_unchanged(ceremony)
+    assert_own_invite_removed(ceremony)
+
+
+def test_edition_is_rechecked_at_approval_and_corrupt_or_symlink_file_fails_closed(ceremony):
+    path = ceremony.root / "edition.json"
+    for text in (
+        '{"id":[]}',
+        "null",
+        "not-json",
+        '{"id":"full"}' + " " * 5000,
+        "[" * 1200 + "0" + "]" * 1200,
+    ):
+        path.write_text(text)
+        with pytest.raises(Denied):
+            stream.validate_analysis_scopes(ceremony.root, ["analysis:folder"])
+    path.unlink()
+    target = ceremony.root / "other-edition.json"
+    target.write_text('{"id":"full"}')
+    path.symlink_to(target)
+    with pytest.raises(Denied):
+        stream.validate_analysis_scopes(ceremony.root, ["analysis:folder"])
+    path.unlink()
+    path.write_text('{"id":"full"}')
+
+    def react(state, fields):
+        if state == "invitation":
+            ceremony.claim()
+        elif state == "pending":
+            path.write_text('{"id":"lite"}')
+            ceremony.pipe.send(
+                json.dumps(
+                    {
+                        "action": "approve",
+                        "device_id": ceremony.phone["id"],
+                        "capabilities": ["analysis:folder"],
+                    }
+                ).encode()
+                + b"\n"
+            )
+
+    ceremony.on_emit = react
+    assert stream.pair_json(ceremony.root) == 1
+    assert ceremony.events[-1]["code"] == "approval_unavailable"
+
+
+@pytest.mark.parametrize("action", ["approve", "deny", "cancel", "eof"])
+def test_repair_stream_offers_existing_scopes_and_preserves_or_replaces_exactly(ceremony, action):
+    (ceremony.root / "edition.json").write_text('{"id":"code"}')
+    prior = ceremony.grants.authenticated_by_id(ceremony.active["id"], "status:read")
+
+    def react(state, fields):
+        if state == "invitation":
+            ceremony.phone = ceremony.grants.claim(
+                ceremony.issued["invite"], ceremony.active_token, "Untrusted replacement name"
+            )
+        elif state == "pending":
+            assert fields["device"]["re_pair"] is True
+            assert fields["device"]["capabilities"] == prior["capabilities"]
+            assert fields["device"]["name"] == "Existing approved phone"
+            assert (
+                ceremony.grants.authenticate(ceremony.active_token, pending=True)["status"]
+                == "pending"
+            )
+            if action == "eof":
+                ceremony.pipe.close()
+            elif action == "approve":
+                ceremony.pipe.send(
+                    json.dumps(
+                        {
+                            "action": "approve",
+                            "device_id": ceremony.phone["id"],
+                            "capabilities": ["analysis:folder"],
+                        }
+                    ).encode()
+                    + b"\n"
+                )
+            else:
+                ceremony.command(action, ceremony.phone["id"] if action == "deny" else None)
+
+    ceremony.on_emit = react
+    assert stream.pair_json(ceremony.root) == 0
+    result = ceremony.grants.authenticate(ceremony.active_token, pending=True)
+    assert result["status"] == "active" and result["id"] == prior["id"]
+    assert result["capabilities"] == (
+        ["analysis:folder", "status:read"] if action == "approve" else prior["capabilities"]
+    )
+    assert result["authorization_revision"] == prior["authorization_revision"] + (
+        action == "approve"
+    )
+    if action == "approve":
+        assert (
+            ceremony.events[-1]["device"]["authorization_revision"]
+            == result["authorization_revision"]
+        )
+    assert_own_invite_removed(ceremony)
+
+
 @pytest.mark.parametrize("action", ["approve", "deny", "cancel", "eof"])
 def test_only_this_invitation_can_be_decided_and_existing_grants_survive(ceremony, capsys, action):
     def react(state, fields):
