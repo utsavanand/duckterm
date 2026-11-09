@@ -26,11 +26,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var pollers: [String: SessionPoller] = [:]
     private var window: DashboardWindow?
     private var bugReport: BugReportController?
-    private var duckyPairing: DuckyPairingController?
+    private var duckyPairing: DuckyPairingPresenting?
     private var capturingReport = false
     private var notified: [String: Set<String>] = [:]
     private var edition: DesktopEdition?
-    private let launchAdmission = WorkspaceLaunchAdmission()
+    private let launchAdmission: WorkspaceLaunchAdmission
+    private let editionRequest: ((URL) async throws -> Any)?
+    private let makePairing: (@escaping () async throws -> Void) -> DuckyPairingPresenting
+
+    override convenience init() {
+        self.init(launchAdmission: WorkspaceLaunchAdmission(), editionRequest: nil,
+                  makePairing: { DuckyPairingController(prepare: $0) })
+    }
+
+    init(launchAdmission: WorkspaceLaunchAdmission,
+         editionRequest: ((URL) async throws -> Any)?,
+         makePairing: @escaping (@escaping () async throws -> Void) -> DuckyPairingPresenting) {
+        self.launchAdmission = launchAdmission
+        self.editionRequest = editionRequest
+        self.makePairing = makePairing
+        super.init()
+    }
 
     func applicationDidFinishLaunching(_ note: Notification) {
         guard launchAdmission.decide(
@@ -352,14 +368,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func pairIPhone(_ sender: Any?) {
-        guard launchAdmission.canStart, edition?.includes("folders") == true,
-              edition?.includes("session_status") == true else { return }
+        // A failed startup probe must not prevent an explicit pairing retry.
+        // Preparation below validates the current edition before creating an invite.
+        guard launchAdmission.canStart else { return }
         if let duckyPairing { duckyPairing.show(); return }
-        let controller = DuckyPairingController(prepare: { [weak self] in
+        let controller = makePairing { [weak self] in
             guard let self, await self.ensureLocalServer() else { throw DuckyPairingEvent.Failure.invalid }
             let current = try await self.refreshEdition()
             guard current.includes("folders"), current.includes("session_status") else { throw DuckyPairingEvent.Failure.invalid }
-        })
+        }
         duckyPairing = controller
         controller.onClose = { [weak self] in self?.duckyPairing = nil }
         controller.show()
@@ -455,9 +472,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         alert.runModal()
     }
 
-    private func refreshEdition() async throws -> DesktopEdition {
+    func refreshEdition() async throws -> DesktopEdition {
         do {
-            let response = try await launchAPI.perform(base: server.url, operation: "edition", params: [:])
+            let response: Any
+            if let editionRequest {
+                response = try await editionRequest(server.url)
+            } else {
+                response = try await launchAPI.perform(base: server.url, operation: "edition", params: [:])
+            }
             let current = try DesktopEdition(response: response)
             try current.validate(edition: AppIdentity.edition, profile: AppIdentity.profile)
             applyEdition(current)
@@ -534,7 +556,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     // did nothing). These actions bypass that: ask the page for its selection
     // via the __rtCopy/__rtPaste globals the dashboard exposes.
     @objc func copyFromDashboard(_ sender: Any?) {
-        if bugReport?.isKeyWindow == true || duckyPairing?.panel.isKeyWindow == true {
+        if bugReport?.isKeyWindow == true || duckyPairing?.isKeyWindow == true {
             NSApp.sendAction(Selector(("copy:")), to: nil, from: sender)
             return
         }
@@ -546,7 +568,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc func pasteToDashboard(_ sender: Any?) {
-        if bugReport?.isKeyWindow == true || duckyPairing?.panel.isKeyWindow == true {
+        if bugReport?.isKeyWindow == true || duckyPairing?.isKeyWindow == true {
             NSApp.sendAction(Selector(("paste:")), to: nil, from: sender)
             return
         }
@@ -622,7 +644,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 extension AppDelegate: NSMenuItemValidation {
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         if menuItem.action == #selector(pairIPhone(_:)) {
-            return launchAdmission.canStart && edition?.includes("folders") == true && edition?.includes("session_status") == true
+            return launchAdmission.canStart
         }
         return true
     }

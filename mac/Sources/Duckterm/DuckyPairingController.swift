@@ -15,8 +15,17 @@ final class DuckyPairingAuthentication {
 }
 
 @MainActor
-final class DuckyPairingController: NSObject, NSWindowDelegate {
+protocol DuckyPairingPresenting: AnyObject {
+    var onClose: (() -> Void)? { get set }
+    var isKeyWindow: Bool { get }
+    func show()
+    func close()
+}
+
+@MainActor
+final class DuckyPairingController: NSObject, NSWindowDelegate, DuckyPairingPresenting {
     let panel: NSPanel
+    var isKeyWindow: Bool { panel.isKeyWindow }
     let model: DuckyPairingModel
     var onClose: (() -> Void)?
     private var timer: Timer?
