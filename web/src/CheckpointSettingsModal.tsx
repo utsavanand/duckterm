@@ -1,9 +1,20 @@
 import { useEffect, useRef, useState } from "react";
-import { api, type CheckpointSettings } from "./api";
+import { api, type AiState, type CheckpointSettings } from "./api";
 import { Button, inputStyle, Modal } from "./ui";
 import "./checkpointSettings.css";
 
 const defaults: CheckpointSettings = { lookback_records: "all", writer_model: "sonnet" };
+
+// The writer model applies only when Claude Code serves the checkpoint;
+// other backends use their own fast model (backend.complete).
+function otherWriter(ai: AiState | null): string {
+  if (!ai) return "";
+  const { backend, provider } = ai.settings;
+  if (backend === "api") return `Checkpoints use your fast API model, ${provider}/${ai.models.fast}.`;
+  if (backend === "duckterm") return "Checkpoints use DuckTerm's fast model.";
+  if (ai.harness === "codex") return "Codex runs checkpoints with its own default model.";
+  return "";
+}
 
 export function CheckpointSettingsModal({ onClose }: { onClose: () => void }) {
   const [settings, setSettings] = useState<CheckpointSettings | null>(null);
@@ -12,7 +23,14 @@ export function CheckpointSettingsModal({ onClose }: { onClose: () => void }) {
   const [saved, setSaved] = useState(false);
   const [saving, setSaving] = useState(false);
   const [retry, setRetry] = useState(0);
+  const [ai, setAi] = useState<AiState | null>(null);
   const sending = useRef(false);
+  useEffect(() => {
+    let canceled = false;
+    // Only adds a note; the dialog works without it.
+    void api.aiSettings().then(value => { if (!canceled) setAi(value); }).catch(() => {});
+    return () => { canceled = true; };
+  }, []);
   useEffect(() => {
     let canceled = false;
     setError("");
@@ -45,11 +63,12 @@ export function CheckpointSettingsModal({ onClose }: { onClose: () => void }) {
           {!valid && <div role="alert">Enter a whole number from 1 to 1,000.</div>}
           <div className="rd-checkpoint-models">
             <div>
-              <label htmlFor="checkpoint-writer_model">Summary writer</label>
+              <label htmlFor="checkpoint-writer_model">Summary writer (Claude Code)</label>
               <select id="checkpoint-writer_model" style={inputStyle} value={settings.writer_model} onChange={e => { setSettings({ ...settings, writer_model: e.target.value as CheckpointSettings["writer_model"] }); setSaved(false); }}>
                 <option value="haiku">Claude Haiku</option><option value="sonnet">Claude Sonnet</option><option value="opus">Claude Opus</option>
               </select>
               <small>Checkpoint summaries only. Other AI features use Settings → AI models.</small>
+              {otherWriter(ai) && <small className="rd-checkpoint-writer-note">{otherWriter(ai)} This setting applies when Claude Code runs them.</small>}
             </div>
           </div>
           <footer><span role="status">{saved ? "Settings saved" : saving ? "Saving…" : ""}</span>
