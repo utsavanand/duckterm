@@ -32,6 +32,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var edition: DesktopEdition?
     private let launchAdmission: WorkspaceLaunchAdmission
     private let editionRequest: ((URL) async throws -> Any)?
+    private let localServerReadiness: (() async -> Bool)?
     private let makePairing: (@escaping () -> DesktopEdition?, @escaping () async throws -> Void) -> DuckyPairingPresenting
 
     override convenience init() {
@@ -41,9 +42,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     init(launchAdmission: WorkspaceLaunchAdmission,
          editionRequest: ((URL) async throws -> Any)?,
+         localServerReadiness: (() async -> Bool)? = nil,
          makePairing: @escaping (@escaping () -> DesktopEdition?, @escaping () async throws -> Void) -> DuckyPairingPresenting) {
         self.launchAdmission = launchAdmission
         self.editionRequest = editionRequest
+        self.localServerReadiness = localServerReadiness
         self.makePairing = makePairing
         super.init()
     }
@@ -333,6 +336,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func ensureLocalServer() async -> Bool {
         guard launchAdmission.canStart else { return false }
+        if let localServerReadiness { return await localServerReadiness() }
         if let localStart { return await localStart.value }
         let pending = Task { await server.start() }
         localStart = pending

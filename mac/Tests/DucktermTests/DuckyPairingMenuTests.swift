@@ -8,8 +8,8 @@ private final class MenuPairingPresenter: DuckyPairingPresenting {
     var isKeyWindow: Bool { false }
     private(set) var shows = 0
     private(set) var closes = 0
-    // Retain the real preparation contract, but never run its server setup in
-    // a menu test. No controller, window, authentication or backend is created.
+    // Retain the real preparation contract. Tests that execute it inject server
+    // readiness and edition responses; no window or backend is created.
     let prepare: () async throws -> Void
 
     init(prepare: @escaping () async throws -> Void) { self.prepare = prepare }
@@ -194,5 +194,53 @@ final class DuckyPairingMenuTests: XCTestCase {
         XCTAssertNil(released, "The presenter callback must not retain the app delegate")
         XCTAssertNil(current())
         XCTAssertFalse(pairing.availability.showsQuestions)
+    }
+
+    @MainActor func testCapturedPreparationRequiresReadyServerAndFreshCapabilities() async throws {
+        let permitted: [String: Any] = ["id": "full", "features": ["terminal", "folders", "session_status"]]
+        let cases: [(String, Bool, Result<Any, Error>, Bool)] = [
+            ("server unavailable", false, .success(permitted), false),
+            ("edition request fails", true, .failure(URLError(.timedOut)), false),
+            ("folders missing", true, .success(["id": "full", "features": ["terminal", "session_status"]]), false),
+            ("session status missing", true, .success(["id": "full", "features": ["terminal", "folders"]]), false),
+            ("both capabilities missing", true, .success(["id": "full", "features": ["terminal"]]), false),
+            ("malformed edition", true, .success(["id": "full"]), false),
+            ("current capabilities verified", true, .success(permitted), true),
+        ]
+        for (name, ready, response, shouldSucceed) in cases {
+            let admission = WorkspaceLaunchAdmission(); allow(admission)
+            var preparing = false
+            var calls: [String] = []
+            var presenter: MenuPairingPresenter?
+            let app = AppDelegate(launchAdmission: admission, editionRequest: { _ in
+                guard preparing else { return permitted }
+                calls.append("edition")
+                return try response.get()
+            }, localServerReadiness: {
+                calls.append("server")
+                return ready
+            }, makePairing: { _, prepare in
+                let result = MenuPairingPresenter(prepare: prepare)
+                presenter = result
+                return result
+            })
+            // A previously permitted cache must not authorize a new invitation.
+            _ = try await app.refreshEdition()
+            preparing = true
+            click(item(for: app), on: app)
+            let captured = try XCTUnwrap(presenter, name)
+            defer { captured.close() }
+            XCTAssertTrue(calls.isEmpty, "Opening the fake presenter must not start preparation: \(name)")
+            do {
+                try await captured.prepare()
+                XCTAssertTrue(shouldSucceed, "Preparation must reject \(name)")
+            } catch {
+                XCTAssertFalse(shouldSucceed, "Preparation unexpectedly rejected \(name): \(error)")
+                if case .failure = response {
+                    XCTAssertEqual((error as? URLError)?.code, .timedOut, name)
+                }
+            }
+            XCTAssertEqual(calls, ready ? ["server", "edition"] : ["server"], name)
+        }
     }
 }
