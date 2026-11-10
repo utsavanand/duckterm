@@ -7,6 +7,8 @@ final class DuckyPairingView: NSView {
     enum Action: String { case copy, cancel, approve, deny, restart, done }
     var onAction: ((Action) -> Void)?
     var onConversationsChanged: ((Bool) -> Void)?
+    var onFolderQuestionsChanged: ((Bool) -> Void)?
+    var onOracleQuestionsChanged: ((Bool) -> Void)?
     private(set) var preferredFocus: NSView?
     private var countdown: NSTextField?
     private var expiresAt: Int?
@@ -15,7 +17,9 @@ final class DuckyPairingView: NSView {
     private let inset: CGFloat = 17
     override var isFlipped: Bool { true }
 
-    init(state: DuckyPairingModel.State, busy: Bool = false, allowsConversations: Bool = false, icon: NSImage?, now: Date = Date()) {
+    init(state: DuckyPairingModel.State, busy: Bool = false, allowsConversations: Bool = false,
+         allowsFolderQuestions: Bool = false, allowsOracleQuestions: Bool = false,
+         availability: DuckyPairingAvailability = .init(edition: nil), icon: NSImage?, now: Date = Date()) {
         super.init(frame: .zero)
         let column = width - inset * 2
         let iconView = NSImageView(frame: NSRect(x: (width - 64) / 2, y: 21, width: 64, height: 64))
@@ -30,8 +34,11 @@ final class DuckyPairingView: NSView {
             body = "Scan with your iPhone camera."; qr = invitation.link; expires = invitation.expiresAt
             buttons = [("Copy link", .copy, true), ("Cancel", .cancel, false)]
         case .pending(let pending):
-            title = "\(pending.name) wants to connect"
+            title = "\(pending.name) wants to \(pending.rePair == true ? "pair again" : "connect")"
             body = "View your folders and session status."; device = pending; expires = pending.expiresAt
+            if pending.rePair == true {
+                body = "It can already view status\(pending.grantedCapabilities.isDisjoint(with: ["conversation:read", "session:send"]) ? "" : " and use conversations"). Approving replaces these permissions."
+            }
             buttons = [("Deny", .deny, false), ("Approve", .approve, true)]
         case .approved(let device):
             title = "\(device.name) is paired"; body = "Open Ducky to view your agents."
@@ -65,7 +72,7 @@ final class DuckyPairingView: NSView {
             y = addLabel(device.id, y: y, font: .monospacedSystemFont(ofSize: 11, weight: .regular), color: PairingColors.text, selectable: true) + 12
             addSeparator(y: y)
         }
-        var scopeControl: NSButton?
+        var scopeControls: [NSButton] = []
         if device != nil {
             y += 14
             let scope = PairingScopeBox(frame: NSRect(x: inset, y: y, width: column, height: 82))
@@ -76,11 +83,54 @@ final class DuckyPairingView: NSView {
             checkbox.setAccessibilityLabel("Allow conversations with agents")
             checkbox.setAccessibilityHelp("Read conversations and send messages. Agents can act on your messages.")
             checkbox.frame = NSRect(x: inset + 12, y: y + 10, width: column - 24, height: 22)
-            addSubview(checkbox); scopeControl = checkbox
+            addSubview(checkbox); scopeControls.append(checkbox)
             let caption = NSTextField(wrappingLabelWithString: "Read conversations and send messages. Agents can act on your messages.")
             caption.font = .systemFont(ofSize: 11); caption.textColor = PairingColors.body
             caption.frame = NSRect(x: inset + 34, y: y + 35, width: column - 46, height: 35)
             addSubview(caption); y += scope.frame.height
+            if availability.showsQuestions {
+                y += 8
+                let questions = PairingScopeBox(frame: NSRect(x: inset, y: y, width: column, height: 0))
+                questions.identifier = NSUserInterfaceItemIdentifier("questions")
+                addSubview(questions)
+                y = addScopeLabel("Questions", x: inset + 12, y: y + 10, width: column - 24, weight: .semibold) + 6
+                for (id, title, caption, checked, enabled) in [
+                    ("folderQuestions", "Allow folder questions", "Ask about the sessions in any folder on this Mac.", allowsFolderQuestions, availability.folder),
+                    ("oracleQuestions", "Allow Oracle questions", availability.oracle ? "Ask about every session on this Mac." : "Needs DuckTerm Full.", allowsOracleQuestions, availability.oracle)
+                ] {
+                    let control = PairingCheckbox(title: title, target: self, action: #selector(scopeChanged(_:)))
+                    control.setButtonType(.switch); control.identifier = NSUserInterfaceItemIdentifier(id)
+                    control.state = checked && enabled ? .on : .off; control.isEnabled = enabled && !busy
+                    control.setAccessibilityLabel(title); control.setAccessibilityHelp(caption)
+                    control.frame = NSRect(x: inset + 12, y: y, width: column - 24, height: 22)
+                    addSubview(control); scopeControls.append(control)
+                    y = addScopeLabel(caption, x: inset + 34, y: y + 23, width: column - 46) + 10
+                }
+                if (allowsFolderQuestions && availability.folder) || (allowsOracleQuestions && availability.oracle) {
+                    let line = NSBox(frame: NSRect(x: inset + 12, y: y - 1, width: column - 24, height: 1))
+                    line.boxType = .separator; addSubview(line)
+                    y = addScopeLabel("Answers come from the AI set up in DuckTerm on this Mac. It reads those sessions’ details, including recent terminal output, and may use API credits.",
+                                      x: inset + 12, y: y + 8, width: column - 24, identifier: "analysisDisclosure") + 10
+                }
+                questions.frame.size.height = y - questions.frame.minY + 1
+                y = questions.frame.maxY
+            }
+        }
+        if case .approved(let granted) = state {
+            y += 12
+            for (name, allowed) in [("Status", true),
+                ("Conversations", !granted.grantedCapabilities.isDisjoint(with: ["conversation:read", "session:send"])),
+                ("Folder questions", granted.grantedCapabilities.contains("analysis:folder")),
+                ("Oracle questions", granted.grantedCapabilities.contains("analysis:oracle"))] {
+                addSeparator(y: y); y += 6
+                let next = addScopeLabel(name, x: inset, y: y, width: column / 2)
+                let label = NSTextField(labelWithString: allowed ? "Allowed" : "Not allowed")
+                label.font = .systemFont(ofSize: 11); label.textColor = PairingColors.text; label.alignment = .right
+                label.frame = NSRect(x: inset + column / 2, y: y, width: column / 2, height: next - y)
+                addSubview(label); y = next + 6
+            }
+            addSeparator(y: y)
+            y = addLabel("To change these, pair again from DuckTerm.", y: y + 10, font: .systemFont(ofSize: 11), color: PairingColors.body)
         }
         if let expires {
             y += device == nil ? 10 : 16
@@ -91,7 +141,7 @@ final class DuckyPairingView: NSView {
             countdown = subviews.last as? NSTextField; expiresAt = expires; pendingExpiry = device != nil
         }
         y += 14
-        var controls: [NSButton] = scopeControl.map { [$0] } ?? []
+        var controls: [NSButton] = scopeControls
         for (index, entry) in buttons.enumerated() {
             let button = PairingButton(title: entry.0, target: self, action: #selector(performAction(_:)))
             button.identifier = NSUserInterfaceItemIdentifier(entry.1.rawValue); button.primary = entry.2
@@ -128,15 +178,29 @@ final class DuckyPairingView: NSView {
     }
     @objc private func scopeChanged(_ sender: NSButton) {
         guard sender.isEnabled else { return }
-        onConversationsChanged?(sender.state == .on)
+        switch sender.identifier?.rawValue {
+        case "conversations": onConversationsChanged?(sender.state == .on)
+        case "folderQuestions": onFolderQuestionsChanged?(sender.state == .on)
+        case "oracleQuestions": onOracleQuestionsChanged?(sender.state == .on)
+        default: break
+        }
+    }
+    private func addScopeLabel(_ value: String, x: CGFloat, y: CGFloat, width: CGFloat,
+                               weight: NSFont.Weight = .regular, identifier: String? = nil) -> CGFloat {
+        let label = NSTextField(wrappingLabelWithString: value)
+        let font = NSFont.systemFont(ofSize: 11, weight: weight)
+        label.font = font; label.textColor = PairingColors.body
+        if let identifier { label.identifier = NSUserInterfaceItemIdentifier(identifier) }
+        let height = ceil(label.cell?.cellSize(forBounds: NSRect(x: 0, y: 0, width: width, height: 500)).height ?? 16)
+        label.frame = NSRect(x: x, y: y, width: width, height: max(16, height))
+        addSubview(label); return label.frame.maxY
     }
     private func addLabel(_ value: String, y: CGFloat, font: NSFont, color: NSColor, selectable: Bool = false) -> CGFloat {
         let label = NSTextField(wrappingLabelWithString: value)
         label.font = font; label.textColor = color; label.alignment = .center
         label.isSelectable = selectable
         let column = width - inset * 2
-        let height = ceil((value as NSString).boundingRect(with: NSSize(width: column, height: 500),
-            options: [.usesLineFragmentOrigin, .usesFontLeading], attributes: [.font: font]).height)
+        let height = ceil(label.cell?.cellSize(forBounds: NSRect(x: 0, y: 0, width: column, height: 500)).height ?? 16)
         label.frame = NSRect(x: inset, y: y, width: column, height: max(height, 16))
         addSubview(label)
         return label.frame.maxY

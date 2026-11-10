@@ -1,6 +1,181 @@
 import XCTest
 import UIKit
 
+/// DEBUG-only synthetic states; never connects to a Mac or accesses real credentials.
+@available(iOS 16.4, *)
+final class ConnectionStatusUITests: XCTestCase {
+    private let app = XCUIApplication()
+    override func setUpWithError() throws { continueAfterFailure = false; XCUIDevice.shared.orientation = .portrait }
+    override func tearDownWithError() throws { app.terminate(); XCUIDevice.shared.orientation = .portrait }
+    @MainActor private func element(_ id: String) -> XCUIElement { app.descendants(matching: .any).matching(identifier: id).firstMatch }
+    @MainActor private func capture(_ name: String) {
+        let item = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        item.name = name; item.lifetime = .keepAlways; add(item)
+    }
+    @MainActor private func open(_ mode: String, expectsReceipt: Bool = true) {
+        app.launchArguments = ["--ducky-status-ui-fixture", "--ducky-status-mode=" + mode]
+        app.launch()
+        let folder = app.buttons["folder:Status fixture"]
+        XCTAssertTrue(folder.waitForExistence(timeout: 10))
+        if mode.hasPrefix("no-cache-offline") {
+            XCTAssertTrue(app.staticTexts["Showing last known status"].waitForExistence(timeout: 5))
+        }
+        let session = app.buttons["session:status-ui-agent"]
+        if !session.exists { folder.tap() }
+        XCTAssertTrue(session.waitForExistence(timeout: 5)); session.tap()
+        XCTAssertTrue(element("conversation-header").waitForExistence(timeout: 5))
+        if expectsReceipt {
+            XCTAssertTrue(element("conversation-receipt:33333333-3333-4333-8333-333333333333").waitForExistence(timeout: 5))
+        }
+    }
+    @MainActor private func rotate(_ orientation: UIDeviceOrientation) {
+        XCUIDevice.shared.orientation = orientation
+        let landscape = orientation == .landscapeLeft || orientation == .landscapeRight
+        expectation(for: NSPredicate { _, _ in (self.app.frame.width > self.app.frame.height) == landscape }, evaluatedWith: nil)
+        waitForExpectations(timeout: 8)
+    }
+    @MainActor private func openEmbeddedConversation() {
+        app.buttons["conversation-back"].tap()
+        element("show-map").tap(); rotate(.landscapeLeft)
+        app.buttons["Show as list"].tap()
+        let folder = app.buttons["constellation-row:folder:Status fixture"]
+        XCTAssertTrue(folder.waitForExistence(timeout: 5)); folder.tap()
+        let agent = app.buttons["constellation-row:session:status-ui-agent"]
+        XCTAssertTrue(agent.waitForExistence(timeout: 5)); agent.tap()
+        XCTAssertTrue(app.buttons["conversation-close"].waitForExistence(timeout: 5))
+        app.buttons["Show as map"].tap()
+    }
+    @MainActor func testOfflineWithoutCachedConversationNeverShowsLoading() {
+        open("no-cache-offline", expectsReceipt: false)
+        XCTAssertTrue(element("conversation-unavailable").waitForExistence(timeout: 5))
+        XCTAssertFalse(element("conversation-loading").exists)
+        XCTAssertFalse(element("conversation-message:status-reply").exists)
+        XCTAssertTrue(element("conversation-connection").label.contains("Can’t reach your Mac"))
+        XCTAssertTrue(app.buttons["conversation-retry"].isHittable)
+        capture("no-cache-offline-portrait")
+        openEmbeddedConversation()
+        XCTAssertTrue(element("conversation-unavailable").waitForExistence(timeout: 5))
+        XCTAssertFalse(element("conversation-loading").exists)
+        XCTAssertTrue(app.buttons["conversation-retry"].isHittable)
+        capture("no-cache-offline-landscape-left")
+        rotate(.landscapeRight)
+        XCTAssertFalse(element("conversation-loading").exists)
+        XCTAssertTrue(app.buttons["conversation-retry"].isHittable)
+        capture("no-cache-offline-landscape-right")
+    }
+    @MainActor func testOfflineWithLastKnownUnreadableSessionIsUnavailable() {
+        open("no-cache-offline-unreadable", expectsReceipt: false)
+        XCTAssertTrue(element("conversation-unavailable").waitForExistence(timeout: 5))
+        XCTAssertFalse(app.staticTexts["No conversation yet"].exists)
+        XCTAssertFalse(element("conversation-loading").exists)
+        capture("no-cache-offline-unreadable")
+    }
+    @MainActor func testFailedFirstReplyReadIsUnavailableWithoutAnIdleSpinner() {
+        open("no-cache-read-failure", expectsReceipt: false)
+        XCTAssertTrue(element("conversation-refresh-error").waitForExistence(timeout: 5))
+        XCTAssertTrue(element("conversation-unavailable").exists)
+        XCTAssertFalse(element("conversation-loading").exists)
+        XCTAssertTrue(element("conversation-connection").label.contains("Status is current"))
+        capture("no-cache-reply-failure")
+    }
+    @MainActor func testDeliveredReceiptsRequireTheirOriginalMessage() {
+        open("orphan-delivered")
+        XCTAssertTrue(app.staticTexts["Last seen working"].waitForExistence(timeout: 5))
+        let primary = "33333333-3333-4333-8333-333333333333"
+        XCTAssertTrue(element("conversation-receipt-message:" + primary).exists)
+        XCTAssertTrue(element("conversation-receipt:" + primary).label.contains("Delivered to agent"))
+        for id in ["44444444-4444-4444-8444-444444444444", "55555555-5555-4555-8555-555555555555"] {
+            XCTAssertFalse(element("conversation-receipt:" + id).exists)
+        }
+        XCTAssertEqual(app.staticTexts.matching(NSPredicate(format: "identifier BEGINSWITH %@", "conversation-receipt:")).count, 1)
+        XCTAssertTrue(element("conversation-message:status-reply").exists)
+        capture("delivered-with-body-no-orphan-labels")
+    }
+    @MainActor private func focusComposer() {
+        let field = element("conversation-composer")
+        expectation(for: NSPredicate(format: "hittable == true"), evaluatedWith: field)
+        waitForExpectations(timeout: 5)
+        field.tap(); XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+    }
+    @MainActor func testWorkingQueueAndCompactKeyboardInPortraitAndEmbeddedLandscape() {
+        open("waiting")
+        XCTAssertEqual(element("conversation-agent-activity").label, "Working")
+        XCTAssertEqual(element("conversation-receipt:33333333-3333-4333-8333-333333333333").label,
+                       "On your Mac · waiting for this turn to finish")
+        capture("status-working-portrait")
+        focusComposer(); element("conversation-composer").typeText("Please keep this draft\nacross rotation")
+        XCTAssertTrue(app.buttons["conversation-send"].isHittable)
+        XCTAssertLessThanOrEqual(app.buttons["conversation-send"].frame.maxY, app.keyboards.firstMatch.frame.minY + 1)
+        capture("status-working-portrait-keyboard")
+        app.buttons["conversation-back"].tap()
+        element("show-map").tap(); rotate(.landscapeLeft)
+        // Use the existing dense/list fallback for deterministic node hit testing;
+        // return to the map before checking the embedded conversation and keyboard.
+        app.buttons["Show as list"].tap()
+        let folder = app.buttons["constellation-row:folder:Status fixture"]
+        XCTAssertTrue(folder.waitForExistence(timeout: 5)); folder.tap()
+        let agent = app.buttons["constellation-row:session:status-ui-agent"]
+        XCTAssertTrue(agent.waitForExistence(timeout: 5)); agent.tap()
+        XCTAssertTrue(app.buttons["conversation-close"].waitForExistence(timeout: 5))
+        app.buttons["Show as map"].tap()
+        XCTAssertEqual(element("conversation-composer").value as? String, "Please keep this draft\nacross rotation")
+        focusComposer()
+        XCTAssertLessThanOrEqual(app.buttons["conversation-send"].frame.maxY, app.keyboards.firstMatch.frame.minY + 1)
+        capture("status-working-landscape-left-keyboard")
+        rotate(.landscapeRight)
+        XCTAssertTrue(app.buttons["conversation-close"].isHittable)
+        XCTAssertTrue(app.buttons["conversation-send"].isHittable)
+        capture("status-working-landscape-right-keyboard")
+        app.buttons["conversation-send"].tap()
+        XCTAssertTrue(["", "Message agent…"].contains(element("conversation-composer").value as? String ?? "missing"))
+        element("conversation-composer").typeText("Next draft")
+        XCTAssertEqual(element("conversation-composer").value as? String, "Next draft")
+    }
+    @MainActor func testConnectionFailureShowsLastConfirmedAndRetryNearHeader() {
+        open("failed")
+        XCTAssertTrue(app.staticTexts["Last seen working"].waitForExistence(timeout: 5))
+        let detail = element("conversation-refresh-error")
+        XCTAssertEqual(detail.label, "Connection timed out."); XCTAssertTrue(detail.isHittable)
+        XCTAssertTrue(element("conversation-connection").label.contains("updated"))
+        XCTAssertTrue(element("conversation-receipt:33333333-3333-4333-8333-333333333333").label.hasPrefix("Last confirmed:"))
+        XCTAssertFalse(element("conversation-composer").isEnabled)
+        XCTAssertFalse(app.buttons["conversation-send"].isEnabled)
+        XCTAssertEqual(element("conversation-status").label, "Reconnect to send another message.")
+        XCTAssertTrue(app.buttons["conversation-retry"].isHittable)
+        capture("status-connection-failed")
+        app.buttons["conversation-retry"].tap()
+        expectation(for: NSPredicate(format: "enabled == true"), evaluatedWith: app.buttons["conversation-retry"])
+        waitForExpectations(timeout: 5)
+        XCTAssertTrue(detail.isHittable)
+    }
+    @MainActor func testReplyFailureKeepsWorkingStateAndShowsErrorAboveHistory() {
+        open("reading")
+        XCTAssertTrue(element("conversation-refresh-error").waitForExistence(timeout: 5))
+        XCTAssertEqual(element("conversation-agent-activity").label, "Working")
+        XCTAssertTrue(element("conversation-connection").label.contains("Status is current"))
+        XCTAssertEqual(element("conversation-refresh-error").label, "Connection timed out.")
+        XCTAssertTrue(element("conversation-refresh-error").isHittable)
+        XCTAssertTrue(element("conversation-composer").isEnabled)
+        capture("status-reply-refresh-failed")
+    }
+    @MainActor func testServerConfirmedDeliveredAndExpiredReceipts() {
+        open("delivered")
+        XCTAssertEqual(element("conversation-agent-activity").label, "Idle")
+        XCTAssertTrue(element("conversation-receipt:33333333-3333-4333-8333-333333333333").label.hasPrefix("Delivered to agent · "))
+        capture("status-delivered")
+        app.terminate(); open("expired")
+        XCTAssertEqual(element("conversation-receipt:33333333-3333-4333-8333-333333333333").label, "Not sent · expired while waiting")
+        capture("status-expired")
+    }
+    @MainActor func testReconnectingShowsProgressAndLastConfirmedReceipt() {
+        open("reconnecting")
+        XCTAssertTrue(element("conversation-connection").waitForExistence(timeout: 5))
+        XCTAssertTrue(element("conversation-connection").label.contains("Reconnecting to Mac"))
+        XCTAssertEqual(element("conversation-agent-activity").label, "Last seen working")
+        capture("status-reconnecting")
+    }
+}
+
 /// Uses a disposable host from tests/fixtures/ducky_ui.py, never the user's Mac state.
 @available(iOS 16.4, *)
 final class ViewerTests: XCTestCase {
@@ -233,14 +408,14 @@ final class ChatPolishTests: XCTestCase {
         composer.typeText("First line\nSecond line")
         XCTAssertEqual(composer.value as? String, "First line\nSecond line")
         XCTAssertTrue(send.isEnabled)
-        XCTAssertFalse(app.staticTexts["Queued on your Mac"].exists, "Return must not submit a message")
+        XCTAssertFalse(app.staticTexts["On your Mac · waiting to send"].exists, "Return must not submit a message")
         capture("chat-multiline-composer")
 
         composer.typeText(String(repeating: XCUIKeyboardKey.delete.rawValue, count: "First line\nSecond line".count))
         composer.typeText("/clear")
         XCTAssertEqual(composer.value as? String, "/clear")
         XCTAssertFalse(send.isEnabled, "Compact UI must preserve the existing local-command guard")
-        XCTAssertFalse(app.staticTexts["Queued on your Mac"].exists)
+        XCTAssertFalse(app.staticTexts["On your Mac · waiting to send"].exists)
     }
 
     @MainActor
@@ -251,7 +426,7 @@ final class ChatPolishTests: XCTestCase {
         composer.typeText("Queue this fixture message\nwith its second line")
         let keyboardWasVisible = app.keyboards.firstMatch.exists
         app.buttons["conversation-send"].tap()
-        let queued = app.staticTexts["Queued on your Mac"]
+        let queued = app.staticTexts["On your Mac · waiting to send"]
         XCTAssertTrue(queued.waitForExistence(timeout: 10))
         XCTAssertTrue(isVisible(queued, in: app.scrollViews["conversation-scroll"]),
             "A delayed receipt must remain visible above the composer")
@@ -296,7 +471,7 @@ final class ChatPolishTests: XCTestCase {
         capture("chat-larger-text-multiline-keyboard")
 
         send.tap()
-        let queued = app.staticTexts["Queued on your Mac"]
+        let queued = app.staticTexts["On your Mac · waiting to send"]
         XCTAssertTrue(queued.waitForExistence(timeout: 10))
         XCTAssertTrue(isVisible(queued, in: scroll))
         composer.typeText("Still editable")
@@ -497,7 +672,7 @@ final class ConstellationUITests: XCTestCase {
         focusComposer()
         XCTAssertTrue(app.buttons["conversation-send"].isHittable)
         app.buttons["conversation-send"].tap()
-        XCTAssertTrue(app.staticTexts["Queued on your Mac"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["On your Mac · waiting to send"].waitForExistence(timeout: 10))
         composer.typeText("Next draft")
         XCTAssertEqual(composer.value as? String, "Next draft")
         capture("map-queued-keyboard")
@@ -553,14 +728,107 @@ final class ConstellationUITests: XCTestCase {
         XCTAssertLessThanOrEqual(send.frame.maxY, app.keyboards.firstMatch.frame.minY + 1)
         capture("map-larger-text-reduced-motion-typing")
         send.tap()
-        XCTAssertTrue(app.staticTexts["Queued on your Mac"].waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts["On your Mac · waiting to send"].waitForExistence(timeout: 10))
         capture("map-larger-text-reduced-motion-queued")
         app.buttons["constellation-back"].tap()
         expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.keyboards.firstMatch)
         waitForExpectations(timeout: 5)
         XCTAssertTrue(app.buttons["conversation-close"].exists, "Dismissing the keyboard keeps the conversation open")
-        expectation(for: NSPredicate(format: "hittable == true"), evaluatedWith: app.staticTexts["Queued on your Mac"])
+        expectation(for: NSPredicate(format: "hittable == true"), evaluatedWith: app.staticTexts["On your Mac · waiting to send"])
         waitForExpectations(timeout: 5)
         capture("map-larger-text-reduced-motion-receipt")
+    }
+}
+
+final class AnalysisUITests: XCTestCase {
+    private var app: XCUIApplication!
+    @MainActor override func setUp() {
+        continueAfterFailure = false
+        app = XCUIApplication()
+        app.launchArguments = ["--ducky-analysis-ui-fixture"]
+        XCUIDevice.shared.orientation = .portrait
+    }
+    @MainActor override func tearDown() { app.terminate(); XCUIDevice.shared.orientation = .portrait }
+    @MainActor private func element(_ id: String) -> XCUIElement { app.descendants(matching: .any).matching(identifier: id).firstMatch }
+    @MainActor private func node(_ name: String) -> XCUIElement { app.buttons.matching(NSPredicate(format: "label BEGINSWITH %@", name + ",")).firstMatch }
+    @MainActor private func capture(_ name: String) {
+        let attachment = XCTAttachment(screenshot: XCUIScreen.main.screenshot())
+        attachment.name = name; attachment.lifetime = .keepAlways; add(attachment)
+    }
+    @MainActor private func rotate(_ direction: UIDeviceOrientation) {
+        XCUIDevice.shared.orientation = direction
+        expectation(for: NSPredicate { _, _ in self.app.frame.width > self.app.frame.height }, evaluatedWith: nil)
+        waitForExpectations(timeout: 8)
+    }
+    @MainActor private func openMap() {
+        app.launch(); XCTAssertTrue(element("show-map").waitForExistence(timeout: 10)); element("show-map").tap()
+        XCTAssertTrue(app.staticTexts["Turn your phone sideways to see the map"].waitForExistence(timeout: 5))
+        rotate(.landscapeLeft)
+        XCTAssertTrue(node("DuckTerm").waitForExistence(timeout: 5))
+    }
+    @MainActor private func focus() {
+        let composer = element("analysis-composer")
+        var prior = CGRect.null; var since = Date()
+        expectation(for: NSPredicate { _, _ in
+            guard composer.exists, composer.isHittable else { return false }
+            if composer.frame != prior { prior = composer.frame; since = Date(); return false }
+            return Date().timeIntervalSince(since) > 0.4
+        }, evaluatedWith: nil)
+        waitForExpectations(timeout: 6)
+        composer.tap(); XCTAssertTrue(app.keyboards.firstMatch.waitForExistence(timeout: 5))
+    }
+    @MainActor func testFolderQuestionKeepsDraftAcrossRotationAndAnswersAboveKeyboard() {
+        openMap(); node("DuckTerm").tap()
+        XCTAssertTrue(element("constellation-ask").waitForExistence(timeout: 5)); element("constellation-ask").tap()
+        XCTAssertTrue(element("analysis-header").waitForExistence(timeout: 5))
+        capture("analysis-folder-ready")
+        focus(); element("analysis-composer").typeText("What changed?\nInclude blockers.")
+        rotate(.landscapeRight)
+        XCTAssertEqual(element("analysis-composer").value as? String, "What changed?\nInclude blockers.")
+        XCTAssertTrue(element("analysis-send").isHittable)
+        XCTAssertLessThanOrEqual(element("analysis-send").frame.maxY, app.keyboards.firstMatch.frame.minY + 2)
+        capture("analysis-folder-keyboard")
+        element("analysis-send").tap()
+        XCTAssertTrue(element("analysis-pending").waitForExistence(timeout: 5))
+        XCTAssertTrue(element("analysis-answer").waitForExistence(timeout: 10))
+        XCTAssertTrue(element("analysis-facts").exists)
+        XCTAssertGreaterThanOrEqual(element("analysis-scroll").frame.minY, element("analysis-header").frame.maxY - 1)
+        capture("analysis-folder-answer-keyboard")
+        element("constellation-back").tap()
+        expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.keyboards.firstMatch)
+        waitForExpectations(timeout: 5)
+        capture("analysis-folder-answer")
+        focus(); element("analysis-composer").typeText("Next scoped question")
+        element("analysis-close").tap()
+        XCTAssertTrue(element("constellation-ask").waitForExistence(timeout: 5)); element("constellation-ask").tap()
+        XCTAssertEqual(element("analysis-composer").value as? String, "Next scoped question")
+    }
+    @MainActor func testOracleAndUngroupedScopesStayDistinct() {
+        openMap(); element("constellation-mode-oracle").tap()
+        XCTAssertTrue(element("analysis-header").waitForExistence(timeout: 5))
+        focus(); element("analysis-composer").typeText("Where am I needed?"); element("analysis-send").tap()
+        XCTAssertTrue(element("analysis-answer").waitForExistence(timeout: 10))
+        XCTAssertTrue(app.staticTexts.matching(NSPredicate(format: "label CONTAINS %@", "partial context")).firstMatch.exists)
+        capture("analysis-oracle-answer")
+        element("analysis-close").tap(); node("Ungrouped").tap()
+        element("constellation-ask").tap()
+        XCTAssertTrue(app.staticTexts["Ask Ungrouped"].waitForExistence(timeout: 5))
+        XCTAssertFalse(element("analysis-answer").exists)
+        capture("analysis-ungrouped-ready")
+    }
+    @MainActor func testCodeKeepsOracleFactualAndAllowsEmptyFolderQuestion() {
+        app.launchArguments.append("--ducky-analysis-code")
+        openMap(); element("constellation-mode-oracle").tap()
+        XCTAssertFalse(element("analysis-composer").exists)
+        element("constellation-mode-map").tap(); node("Empty").tap()
+        XCTAssertTrue(element("constellation-ask").waitForExistence(timeout: 5)); element("constellation-ask").tap()
+        XCTAssertTrue(app.staticTexts["Ask Empty"].waitForExistence(timeout: 5))
+        capture("analysis-code-empty-folder")
+    }
+    @MainActor func testLiteKeepsOnlyFactualMap() {
+        app.launchArguments.append("--ducky-analysis-lite")
+        openMap(); node("DuckTerm").tap(); XCTAssertFalse(element("constellation-ask").exists)
+        element("constellation-mode-oracle").tap(); XCTAssertFalse(element("analysis-composer").exists)
+        capture("analysis-lite-no-questions")
     }
 }

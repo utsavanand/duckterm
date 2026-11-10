@@ -33,14 +33,15 @@ final class DuckyPairingController: NSObject, NSWindowDelegate, DuckyPairingPres
     private let icon: NSImage?
     private var lastState: DuckyPairingModel.State?
 
-    init(prepare: @escaping () async throws -> Void) {
+    init(verifiedEdition: @escaping () -> DesktopEdition? = { nil }, prepare: @escaping () async throws -> Void) {
         let authentication = DuckyPairingAuthentication()
         model = DuckyPairingModel(makeTransport: {
             DuckyPairingProcess(command: {
                 try await prepare()
                 return try await DuckyPairingProcess.bundledCommand()
             })
-        }, authenticate: { await authentication.authenticate(reason: $0) }, cancelAuthentication: { authentication.cancel() })
+        }, authenticate: { await authentication.authenticate(reason: $0) }, cancelAuthentication: { authentication.cancel() },
+        verifiedEdition: verifiedEdition)
         panel = DuckyPairingPanel(contentRect: .zero, styleMask: [.borderless], backing: .buffered, defer: false)
         icon = NSApp.applicationIconImage
         super.init()
@@ -82,8 +83,12 @@ final class DuckyPairingController: NSObject, NSWindowDelegate, DuckyPairingPres
         }
         let previous = panel.frame
         let focusedID = (panel.firstResponder as? NSButton)?.identifier
-        let view = DuckyPairingView(state: model.state, busy: model.busy, allowsConversations: model.allowsConversations, icon: icon)
+        let view = DuckyPairingView(state: model.state, busy: model.busy, allowsConversations: model.allowsConversations,
+                                   allowsFolderQuestions: model.allowsFolderQuestions, allowsOracleQuestions: model.allowsOracleQuestions,
+                                   availability: model.availability, icon: icon)
         view.onConversationsChanged = { [weak self] allowed in self?.model.setAllowsConversations(allowed) }
+        view.onFolderQuestionsChanged = { [weak self] allowed in self?.model.setAllowsFolderQuestions(allowed) }
+        view.onOracleQuestionsChanged = { [weak self] allowed in self?.model.setAllowsOracleQuestions(allowed) }
         view.onAction = { [weak self] action in
             guard let self else { return }
             switch action {

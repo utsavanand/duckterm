@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import hashlib
 import hmac
 import secrets
@@ -14,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 from duckterm.mobile import delivery
 from duckterm.mobile.grants import Denied, Grants
-from duckterm.mobile.message_store import MessageError, MessageStore, payload_hash, receipt
+from duckterm.mobile.message_store import TTL_MS, MessageError, MessageStore, payload_hash, receipt
 
 if TYPE_CHECKING:
     from duckterm.core.orchestrator import SessionSupervisor
@@ -168,7 +169,7 @@ class Messages:
                 raise MessageError(404, "session_unavailable")
             if existing["payload_hash"] != digest:
                 raise MessageError(409, "request_conflict")
-            return receipt(existing)
+            return self.describe_receipt(existing)
         key = request["session_id"]
         sup, reason = self.target(key)
         if sup is None:
@@ -215,7 +216,7 @@ class Messages:
 
         saved = await asyncio.to_thread(commit)
         self.ensure_worker()
-        return receipt(saved)
+        return self.describe_receipt(saved)
 
     def hidden_test_session(self, key: str) -> bool:
         row = self.server.history.session(key)
@@ -232,7 +233,7 @@ class Messages:
             or self.hidden_test_session(row["session_id"])
         ):
             raise MessageError(404, "request_not_found")
-        return receipt(row)
+        return self.describe_receipt(row)
 
     async def receipts(self, device: dict[str, Any], key: str) -> list[dict[str, Any]]:
         if self.hidden_test_session(key):
@@ -240,7 +241,73 @@ class Messages:
         if not self.initialized and not self.store.path.exists():
             return []
         await self.ensure_store()
-        return await asyncio.to_thread(self.store.for_session, device["id"], key)
+        rows = await asyncio.to_thread(self.store.for_session, device["id"], key)
+        return [self.describe_receipt(row) for row in rows]
+
+    def describe_receipt(
+        self, row: dict[str, Any], *, include_desktop_activity: bool = False
+    ) -> dict[str, Any]:
+        result = receipt(row)
+        if row["status"] == "queued":
+            # Advisory enrichment must never turn a durably accepted POST
+            # into a rejection if the session is closing concurrently.
+            with contextlib.suppress(Exception):
+                result["wait_reason"] = self.wait_reason(row["session_id"])
+            if not include_desktop_activity and result["wait_reason"] == "desktop_input":
+                result["wait_reason"] = "safe_prompt"
+        return result
+
+    def wait_reason(self, key: str) -> str:
+        session = self.server.history.session(key)
+        sup = self.server.orchestrator.get(key)
+        # Only already-observed state is evidence. Never inspect a terminal
+        # (or infer a harness approval from a generic waiting state) here.
+        if any(a.session_key == key for a in self.server.approvals.pending()):
+            return "approval_pending"
+        if session and session["state"] == "busy":
+            return "agent_busy"
+        if sup and time.time() * 1000 - sup.last_owner_input_ms < QUIET_MS:
+            return "desktop_input"
+        return "safe_prompt"
+
+    async def pending_for_desktop(self, key: str) -> list[dict[str, Any]]:
+        """Project the live queue without creating it or acquiring delivery authority."""
+        if not self.initialized or not self.enabled():
+            return []
+        sup, _ = self.target(key)
+        if sup is None:
+            return []
+        binding = self.binding(key, sup)
+        rows = await asyncio.to_thread(self.store.pending_for_session, key, int(time.time() * 1000))
+        current, _ = self.target(key)
+        if not self.enabled() or current is not sup or self.binding(key, sup) != binding:
+            return []
+        result = []
+        for row in rows:
+            if row["binding"] != binding or row["created_at"] + TTL_MS <= time.time() * 1000:
+                continue
+            try:
+                # Serialize this short publication against device revocation.
+                # Target/config checks stay on the owning event-loop thread.
+                # Contention must propagate as 503, never sleep this loop.
+                with self.grants.authorized_device(
+                    row["device"], "session:send", host_id=row["host"], lock_timeout=0
+                ):
+                    current, _ = self.target(key)
+                    if (
+                        not self.enabled()
+                        or current is not sup
+                        or self.binding(key, sup) != binding
+                    ):
+                        return []
+                    if row["created_at"] + TTL_MS <= time.time() * 1000:
+                        continue
+                    item = self.describe_receipt(row, include_desktop_activity=True)
+                    del item["reason"]
+                    result.append(item)
+            except Denied:
+                continue
+        return result
 
     def ready(self, row: dict[str, Any], sup: SessionSupervisor) -> bool:
         current, _ = self.target(row["session_id"])

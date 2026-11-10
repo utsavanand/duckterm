@@ -15,6 +15,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from duckterm.helpers import instance
 from duckterm.helpers.private_files import private_read
+from duckterm.mobile.analysis import Analysis, AnalysisError
 from duckterm.mobile.conversation import (
     ConversationNotFound,
     ConversationUnavailable,
@@ -32,12 +33,20 @@ if TYPE_CHECKING:
 
 
 class Bridge:
-    def __init__(self, server: Server, directory: Path, messages: Messages | None = None) -> None:
+    def __init__(
+        self,
+        server: Server,
+        directory: Path,
+        messages: Messages | None = None,
+        analysis: Analysis | None = None,
+    ) -> None:
         self.server = server
         self.directory = directory
         self.grants = Grants(directory)
         self.messages = messages or Messages(server, directory)
         self.owns_messages = messages is None
+        self.analysis = analysis or Analysis(server, directory)
+        self.owns_analysis = analysis is None
         self.listener: asyncio.Server | None = None
         self.connections: set[asyncio.StreamWriter] = set()
         self.claims: deque[float] = deque()
@@ -80,10 +89,14 @@ class Bridge:
                 "/v2/snapshot",
                 "/v2/conversation",
                 "/v2/messages",
+                "/v2/analysis/questions",
             }
             if not (
                 (method == "GET" and parsed.path in reads)
-                or (method == "POST" and target == "/v2/messages")
+                or (
+                    method == "POST"
+                    and target in {"/v2/messages", "/v2/analysis/context", "/v2/analysis/questions"}
+                )
             ):
                 return 404, {"error": "Endpoint unavailable"}
             authorization = headers.get("authorization", "")
@@ -101,6 +114,17 @@ class Bridge:
             query = parse_qs(parsed.query, keep_blank_values=True, strict_parsing=True)
             if any(len(values) != 1 for values in query.values()):
                 raise ValueError("Duplicate query")
+            if parsed.path in {"/v2/analysis/context", "/v2/analysis/questions"}:
+                if method == "POST":
+                    if len(body) > 32768:
+                        raise AnalysisError(413, "request_too_large")
+                    request = json.loads(body)
+                    if parsed.path == "/v2/analysis/context":
+                        return 200, await self.analysis.context(device, request)
+                    return 202, await self.analysis.accept(device, request)
+                if set(query) != {"request_id"} or len(query["request_id"][0]) > 64:
+                    raise ValueError("Invalid analysis receipt query")
+                return 200, await self.analysis.lookup(device, query["request_id"][0])
             if parsed.path == "/v2/messages":
                 if "session:send" not in device["capabilities"]:
                     raise Denied("Mac conversation permission required")
@@ -162,7 +186,11 @@ class Bridge:
             )
             if expanded:
                 result.update(
-                    version=2, features=["conversations"], capabilities=device["capabilities"]
+                    version=2,
+                    features=["conversations", "analysis_jobs"],
+                    capabilities=device["capabilities"],
+                    authorization_revision=device.get("authorization_revision", 0),
+                    analysis=self.analysis.effective_access(device),
                 )
                 for session in result["sessions"]:
                     session.update(self.messages.fields(session["id"], device))
@@ -175,6 +203,8 @@ class Bridge:
         except ConversationUnavailable as exc:
             return 503, {"error": exc.reason}
         except MessageError as exc:
+            return exc.status, {"error": exc.reason}
+        except AnalysisError as exc:
             return exc.status, {"error": exc.reason}
         except TimeoutError:
             return 503, {"error": "Ducky access temporarily unavailable"}
@@ -201,7 +231,12 @@ class Bridge:
                 if not target.startswith("/") or len(target) > 2048:
                     raise ValueError("Invalid target")
                 headers = await read_headers(reader)
-                limit = 32768 if method == "POST" and target == "/v2/messages" else 2048
+                limit = (
+                    32768
+                    if method == "POST"
+                    and target in {"/v2/messages", "/v2/analysis/context", "/v2/analysis/questions"}
+                    else 2048
+                )
                 if int(headers.get("content-length", "0")) > limit:
                     await write_response(
                         writer,
@@ -242,6 +277,8 @@ class Bridge:
     async def close(self) -> None:
         if self.owns_messages:
             await self.messages.close()
+        if self.owns_analysis:
+            await self.analysis.close()
         if self.listener is not None:
             self.listener.close()
             await self.listener.wait_closed()
@@ -255,6 +292,7 @@ async def start(
     directory: Path | None = None,
     bind_address: str | None = None,
     messages: Messages | None = None,
+    analysis: Analysis | None = None,
 ) -> Bridge | None:
     directory = directory or instance.home()
     raw = private_read(directory / "ducky-bridge.json")
@@ -270,7 +308,7 @@ async def start(
     context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.load_cert_chain(directory / "ducky-cert.pem", directory / "ducky-key.pem")
-    bridge = Bridge(server, directory, messages)
+    bridge = Bridge(server, directory, messages, analysis)
     bridge.listener = await asyncio.start_server(
         bridge.handle, host, config["port"], ssl=context, ssl_handshake_timeout=5, limit=8192
     )

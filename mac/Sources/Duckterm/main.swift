@@ -32,16 +32,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var edition: DesktopEdition?
     private let launchAdmission: WorkspaceLaunchAdmission
     private let editionRequest: ((URL) async throws -> Any)?
-    private let makePairing: (@escaping () async throws -> Void) -> DuckyPairingPresenting
+    private let makePairing: (@escaping () -> DesktopEdition?, @escaping () async throws -> Void) -> DuckyPairingPresenting
 
     override convenience init() {
         self.init(launchAdmission: WorkspaceLaunchAdmission(), editionRequest: nil,
-                  makePairing: { DuckyPairingController(prepare: $0) })
+                  makePairing: { DuckyPairingController(verifiedEdition: $0, prepare: $1) })
     }
 
     init(launchAdmission: WorkspaceLaunchAdmission,
          editionRequest: ((URL) async throws -> Any)?,
-         makePairing: @escaping (@escaping () async throws -> Void) -> DuckyPairingPresenting) {
+         makePairing: @escaping (@escaping () -> DesktopEdition?, @escaping () async throws -> Void) -> DuckyPairingPresenting) {
         self.launchAdmission = launchAdmission
         self.editionRequest = editionRequest
         self.makePairing = makePairing
@@ -372,7 +372,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Preparation below validates the current edition before creating an invite.
         guard launchAdmission.canStart else { return }
         if let duckyPairing { duckyPairing.show(); return }
-        let controller = makePairing { [weak self] in
+        let controller = makePairing({ [weak self] in self?.edition }) { [weak self] in
             guard let self, await self.ensureLocalServer() else { throw DuckyPairingEvent.Failure.invalid }
             let current = try await self.refreshEdition()
             guard current.includes("folders"), current.includes("session_status") else { throw DuckyPairingEvent.Failure.invalid }

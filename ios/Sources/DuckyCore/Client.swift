@@ -9,6 +9,7 @@ public final class DuckyClient {
     private let lock = NSLock()
     private var sessions: [UUID: URLSession] = [:]
     private var closed = false
+    private struct AnalysisRejection: Decodable { let error: String }
 
     public convenience init(host: PairedHost) throws {
         try self.init(host: host, resolver: LocalEndpoint.resolve)
@@ -67,6 +68,25 @@ public final class DuckyClient {
     public func receipt(requestID: String, sessionID: String) async throws -> MessageReceipt {
         let result: ReceiptResponse = try await request(path: "/v2/messages", query: [URLQueryItem(name: "request_id", value: requestID)])
         try result.validate(hostID: host.hostID, sessionID: sessionID, requestID: requestID)
+        return result.receipt
+    }
+    public func analysisContext(scope: AnalysisScope) async throws -> AnalysisContext {
+        try scope.validate()
+        struct Body: Encodable { let scope: AnalysisScope }
+        let result: AnalysisContext = try await request(path: "/v2/analysis/context", body: JSONEncoder().encode(Body(scope: scope)))
+        try result.validate(hostID: host.hostID, scope: scope)
+        return result
+    }
+    public func askAnalysis(_ submission: AnalysisSubmission, scope: AnalysisScope) async throws -> AnalysisReceipt {
+        try submission.validate(); try scope.validate()
+        let result: AnalysisResponse = try await request(path: "/v2/analysis/questions", body: JSONEncoder().encode(submission))
+        try result.validate(hostID: host.hostID, scope: scope, submission: submission)
+        return result.receipt
+    }
+    public func analysisReceipt(requestID: String, scope: AnalysisScope) async throws -> AnalysisReceipt {
+        guard AnalysisSubmission.validID(requestID) else { throw DuckyError.invalidResponse }
+        let result: AnalysisResponse = try await request(path: "/v2/analysis/questions", query: [URLQueryItem(name: "request_id", value: requestID)])
+        try result.validate(hostID: host.hostID, scope: scope, requestID: requestID)
         return result.receipt
     }
     public func close() {
@@ -156,6 +176,20 @@ public final class DuckyClient {
                 }
             } catch { throw DuckyError.unavailable(400) }
             throw Self.messageRejection(rejection)
+        }
+        if path.hasPrefix("/v2/analysis/") {
+            let expected = path == "/v2/analysis/questions" && body != nil ? 202 : 200
+            if http.statusCode != expected {
+                var rejection = Data()
+                do {
+                    for try await byte in bytes {
+                        guard rejection.count < 4096 else { throw DuckyError.invalidResponse }
+                        rejection.append(byte)
+                    }
+                } catch { throw AnalysisServiceError(status: http.statusCode, reason: nil) }
+                throw AnalysisServiceError(status: http.statusCode,
+                    reason: (try? JSONDecoder().decode(AnalysisRejection.self, from: rejection))?.error)
+            }
         }
         guard (200..<300).contains(http.statusCode) else { throw DuckyError.unavailable(http.statusCode) }
         var data = Data()

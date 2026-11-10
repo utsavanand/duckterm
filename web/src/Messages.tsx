@@ -7,6 +7,7 @@ import "./messageAnnotations.css";
 import { useToast } from "./ui";
 import { Message, MessagePin, PinTarget } from "./MessagePins";
 import { useSessionResource } from "./useSessionResource";
+import { MobilePending } from "./MobilePending";
 import "./messages.css";
 
 // Structured view of an agent's latest reply (HTML-annotation mode,
@@ -216,9 +217,10 @@ export function Messages({ sessionKey, sessionName = "Messages", active = true, 
     {transcript.reason && <p>{transcript.reason}</p>}
     {transcript.status === "identity_missing" && <p>Messages will appear once the agent reports its conversation ID.</p>}
   </div>;
-  if (!latest) return <div className="rd-messages">{comments}{recoveryNotice}{loadError
+  if (!latest) return <div className="rd-messages"><div className="rd-message-reader">{comments}{recoveryNotice}{loadError
     ? <div className="rd-panel-empty" role="status">{loadError}</div>
-    : transcriptNotice || <div className="rd-panel-empty">{loaded ? "No agent reply yet." : "Loading messages…"}</div>}</div>;
+    : transcriptNotice || <div className="rd-panel-empty">{loaded ? "No agent reply yet." : "Loading messages…"}</div>}</div>
+    <MobilePending sessionKey={sessionKey} active={active} /></div>;
   const showingLatest = currentIndex === turns.length - 1;
   function navigate(index: number) {
     onClearTarget?.();
@@ -318,6 +320,7 @@ export function Messages({ sessionKey, sessionName = "Messages", active = true, 
         </div>
       )}
       </div>
+      <MobilePending sessionKey={sessionKey} active={active} />
       <div className="rd-followup">
         <input
           aria-label="Follow-up message"

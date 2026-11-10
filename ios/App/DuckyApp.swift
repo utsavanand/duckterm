@@ -10,7 +10,11 @@ struct DuckyApp: App {
 
     init() {
         #if DEBUG
-        if ProcessInfo.processInfo.arguments.contains("--ducky-map-ui-fixture") {
+        if ProcessInfo.processInfo.arguments.contains("--ducky-status-ui-fixture") {
+            _model = StateObject(wrappedValue: StatusUIFixture.model())
+            return
+        }
+        if ProcessInfo.processInfo.arguments.contains("--ducky-map-ui-fixture") || ProcessInfo.processInfo.arguments.contains("--ducky-analysis-ui-fixture") {
             _model = StateObject(wrappedValue: MapUIFixture.model())
             return
         }
@@ -48,6 +52,122 @@ struct DuckyApp: App {
 }
 
 #if DEBUG
+/// Connection states are synthetic; no persisted credentials or network requests.
+private enum StatusUIFixture {
+    static let hostID = "33333333333333333333333333333333"
+    static let sessionID = "status-ui-agent"
+    static let requestID = "33333333-3333-4333-8333-333333333333"
+    @MainActor static func model() -> SessionModel {
+        let invitation = Invitation(version: 1, hostID: hostID, invite: String(repeating: "i", count: 43),
+            expiresAt: Int(Date().timeIntervalSince1970) + 600, url: URL(string: "https://127.0.0.1:9")!, certificateSHA256: String(repeating: "a", count: 64))
+        let client = StatusUIFixtureTransport()
+        let domain = "com.rubberduckhq.ducky.status-ui-fixture"
+        let defaults = UserDefaults(suiteName: domain)!
+        defaults.removePersistentDomain(forName: domain)
+        let model = SessionModel(credentials: ChatUIFixtureStore(PairedHost(invitation: invitation, token: String(repeating: "t", count: 43))),
+            makeTransport: { _ in client }, pause: { try await Task.sleep(nanoseconds: 60_000_000_000) },
+            conversationPause: { try await Task.sleep(nanoseconds: 60_000_000_000) },
+            expansionStore: FolderExpansionStore(defaults: defaults))
+        client.afterFirstSnapshot = { [weak model] in
+            guard client.mode.hasPrefix("no-cache-offline") else { return }
+            Task { @MainActor in
+                // Scene startup can cancel an early read. Inject the outage only
+                // after a successful snapshot has actually reached the model.
+                for _ in 0..<1000 {
+                    guard let model else { return }
+                    if model.snapshot != nil { break }
+                    try? await Task.sleep(nanoseconds: 10_000_000)
+                }
+                guard let model, model.snapshot != nil else { return }
+                client.failSnapshots = true
+                // The snapshot can be visible while its refresh is still
+                // finishing. Wait through that coalesced read, then request
+                // the failing read rather than leaving the fixture live.
+                for _ in 0..<100 {
+                    await model.refresh()
+                    if model.phase == .stale { return }
+                    try? await Task.sleep(nanoseconds: 10_000_000)
+                }
+            }
+        }
+        client.afterFirstRead = { [weak model] in
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                if client.mode == "reading" { await model?.refreshConversation() }
+                else if ["failed", "reconnecting", "orphan-delivered"].contains(client.mode) {
+                    await model?.refresh()
+                    if client.mode == "reconnecting" { await model?.retryConnection() }
+                }
+            }
+        }
+        return model
+    }
+}
+private final class StatusUIFixtureTransport: DuckyTransport {
+    let mode = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--ducky-status-mode=") })?.components(separatedBy: "=").last ?? "waiting"
+    var afterFirstRead: (() -> Void)?
+    var afterFirstSnapshot: (() -> Void)?
+    var failSnapshots = false
+    private var reads = 0, failedReads = 0, snapshots = 0
+    private let created = Int64(Date().timeIntervalSince1970 * 1000) - 120_000
+    private var newReceipts: [MessageReceipt] = []
+    func claim(_ invitation: Invitation, name: String) async throws -> PairStatus { throw DuckyError.unavailable(403) }
+    func pairingStatus() async throws -> PairStatus {
+        try ChatUIFixture.decode(["id": "status-fixture-device", "status": "active", "host_id": StatusUIFixture.hostID])
+    }
+    func snapshot(cursor: String?) async throws -> HostSnapshot {
+        snapshots += 1
+        if failSnapshots { throw URLError(.timedOut) }
+        if reads > 0 && ["failed", "reconnecting", "orphan-delivered"].contains(mode) {
+            failedReads += 1
+            if mode == "reconnecting" && failedReads > 1 { try await Task.sleep(nanoseconds: 8_000_000_000) }
+            throw URLError(.timedOut)
+        }
+        if snapshots == 1 { afterFirstSnapshot?() }
+        return try ChatUIFixture.decode(["version": 2, "host_id": StatusUIFixture.hostID, "read_only": true,
+            "generated_at": 1, "truncated": false, "reset": false, "notices": [], "notification_delivery": "foreground_refresh",
+            "folders": ["Status fixture"], "features": ["conversations"], "capabilities": ["status:read", "conversation:read", "session:send"],
+            "sessions": [["id": StatusUIFixture.sessionID, "name": "Status review agent", "folder": "Status fixture", "runtime": "codex",
+                "state": mode == "delivered" ? "idle" : "busy", "observed_at": 1, "test": true,
+                "approval_visibility": "terminal_only", "can_read": mode != "no-cache-offline-unreadable", "can_send": true, "send_context": "status-context"]]])
+    }
+    func conversation(sessionID: String) async throws -> ConversationSnapshot {
+        reads += 1
+        if mode == "no-cache-read-failure" || (reads > 1 && mode == "reading") { throw URLError(.timedOut) }
+        let status = mode == "orphan-delivered" ? "delivered" : (["delivered", "expired"].contains(mode) ? mode : "queued")
+        var receipts: [[String: Any]] = [["request_id": StatusUIFixture.requestID, "session_id": sessionID, "status": status,
+            "created_at": created, "updated_at": created + 60_000, "expires_at": created + 900_000,
+            "wait_reason": status == "queued" ? "agent_busy" : NSNull(), "text": "Can you share the current release status?"]]
+        if mode == "orphan-delivered" {
+            for (id, text) in [("44444444-4444-4444-8444-444444444444", NSNull() as Any),
+                               ("55555555-5555-4555-8555-555555555555", "" as Any)] {
+                receipts.append(["request_id": id, "session_id": sessionID, "status": "delivered",
+                    "created_at": created, "updated_at": created + 60_000, "text": text])
+            }
+        }
+        receipts += newReceipts.map { ["request_id": $0.requestID, "session_id": $0.sessionID, "status": $0.status,
+            "created_at": $0.createdAt, "updated_at": $0.updatedAt, "wait_reason": "agent_busy", "text": $0.text ?? ""] }
+        let value: ConversationSnapshot = try ChatUIFixture.decode(["version": 1, "host_id": StatusUIFixture.hostID,
+            "session_id": sessionID, "messages": [["id": "status-reply", "role": "assistant",
+                "text": "The release review is still in progress. I’m checking the remaining changes before publishing.", "at": created]],
+            "receipts": receipts, "can_send": true, "send_context": "status-context", "truncated": false])
+        if reads == 1 { afterFirstRead?() }
+        return value
+    }
+    func send(_ message: OutgoingMessage) async throws -> MessageReceipt {
+        guard OutgoingMessage.validText(message.text), message.sessionID == StatusUIFixture.sessionID, message.sendContext == "status-context" else { throw DuckyError.unavailable(400) }
+        let receipt: MessageReceipt = try ChatUIFixture.decode(["request_id": message.requestID, "session_id": message.sessionID,
+            "status": "queued", "created_at": created + 100_000, "updated_at": created + 100_000, "wait_reason": "agent_busy", "text": message.text])
+        newReceipts.append(receipt)
+        return receipt
+    }
+    func receipt(requestID: String, sessionID: String) async throws -> MessageReceipt {
+        guard let found = newReceipts.first(where: { $0.id == requestID && $0.sessionID == sessionID }) else { throw DuckyError.unavailable(404) }
+        return found
+    }
+    func close() { afterFirstRead = nil }
+}
+
 /// UI-only data: no credential storage, sockets, real sessions or agent execution.
 private enum ChatUIFixture {
     static let hostID = "11111111111111111111111111111111"
@@ -247,6 +367,8 @@ private enum MapUIFixture {
 private final class MapUIFixtureTransport: DuckyTransport {
     private let failure: Int?
     private var firstSnapshotAt: Date?
+    private let analysisEnabled = ProcessInfo.processInfo.arguments.contains("--ducky-analysis-ui-fixture")
+    private var analysisJobs: [String: (AnalysisSubmission, AnalysisScope, Date)] = [:]
     private var receipts: [MessageReceipt] = []
     init(failure: Int?) { self.failure = failure }
     func claim(_ invitation: Invitation, name: String) async throws -> PairStatus { throw DuckyError.unavailable(403) }
@@ -266,7 +388,10 @@ private final class MapUIFixtureTransport: DuckyTransport {
             "version": 2, "host_id": MapUIFixture.hostID, "read_only": true,
             "generated_at": Int(Date().timeIntervalSince1970), "truncated": false, "reset": false,
             "notices": [], "notification_delivery": "foreground_refresh", "folders": MapUIFixture.folders,
-            "features": ["conversations"], "capabilities": ["status:read", "conversation:read", "session:send"],
+            "features": analysisEnabled ? ["conversations", "analysis_jobs"] : ["conversations"],
+            "capabilities": ["status:read", "conversation:read", "session:send"] + (analysisEnabled ? ["analysis:folder", "analysis:oracle"] : []),
+            "analysis": ["folder_questions": analysisEnabled && !ProcessInfo.processInfo.arguments.contains("--ducky-analysis-lite"),
+                         "oracle_questions": analysisEnabled && !ProcessInfo.processInfo.arguments.contains("--ducky-analysis-lite") && !ProcessInfo.processInfo.arguments.contains("--ducky-analysis-code")],
             "sessions": sessions
         ])
         try result.validate(hostID: MapUIFixture.hostID)
@@ -315,6 +440,41 @@ private final class MapUIFixtureTransport: DuckyTransport {
             throw DuckyError.unavailable(404)
         }
         return receipt
+    }
+    func analysisContext(scope: AnalysisScope) async throws -> AnalysisContext {
+        guard analysisEnabled else { throw DuckyError.unavailable(404) }
+        let jobs = analysisJobs.values.filter { $0.1 == scope }
+        let completed = jobs.filter { Date().timeIntervalSince($0.2) >= 2.5 }
+        let pending = jobs.first { Date().timeIntervalSince($0.2) < 2.5 }
+        let scopeObject = try JSONSerialization.jsonObject(with: JSONEncoder().encode(scope))
+        return try ChatUIFixture.decode(["version": 1, "host_id": MapUIFixture.hostID, "scope": scopeObject,
+            "context_id": "analysis-ui-context", "expires_at": Int64(Date().timeIntervalSince1970 * 1000) + 60_000,
+            "history": try completed.map { try analysisObject($0.0, scope: $0.1, at: $0.2) },
+            "pending": try pending.map { try analysisObject($0.0, scope: $0.1, at: $0.2) } ?? NSNull()])
+    }
+    func askAnalysis(_ submission: AnalysisSubmission, scope: AnalysisScope) async throws -> AnalysisReceipt {
+        guard analysisEnabled else { throw DuckyError.unavailable(404) }
+        if analysisJobs[submission.requestID] == nil { analysisJobs[submission.requestID] = (submission, scope, Date()) }
+        return try await analysisReceipt(requestID: submission.requestID, scope: scope)
+    }
+    func analysisReceipt(requestID: String, scope: AnalysisScope) async throws -> AnalysisReceipt {
+        guard let job = analysisJobs[requestID], job.1 == scope else { throw DuckyError.unavailable(404) }
+        return try ChatUIFixture.decode(analysisObject(job.0, scope: scope, at: job.2))
+    }
+    private func analysisObject(_ submission: AnalysisSubmission, scope: AnalysisScope, at: Date) throws -> [String: Any] {
+        let elapsed = Date().timeIntervalSince(at)
+        let complete = elapsed >= 2.5
+        let failed = complete && ProcessInfo.processInfo.arguments.contains("--ducky-analysis-failed")
+        let created = Int64(at.timeIntervalSince1970 * 1000)
+        let answer = "## Scope checked\n\n**2 sessions need attention** in \(scope.title).\n\n- The reviewer has a question.\n- The release agent is waiting for review.\n\n```text\nNo provider was called.\n```"
+        return ["request_id": submission.requestID, "context_id": submission.contextID,
+            "scope": try JSONSerialization.jsonObject(with: JSONEncoder().encode(scope)),
+            "status": failed ? "failed" : complete ? "complete" : elapsed > 0.5 ? "running" : "queued",
+            "reason": failed ? "provider_failed" : NSNull(), "question": submission.question,
+            "answer": complete && !failed ? answer : NSNull(), "created_at": created,
+            "updated_at": Int64(Date().timeIntervalSince1970 * 1000), "expires_at": created + 240_000,
+            "captured_at": complete ? created : NSNull(), "source_count": scope == .oracle ? 40 : 8,
+            "truncated": scope == .oracle]
     }
     func close() {}
 }

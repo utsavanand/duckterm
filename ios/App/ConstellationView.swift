@@ -41,12 +41,12 @@ struct ConstellationView<AgentConversation: View, AssistantConversation: View>: 
     var oracleQuestionsAvailable: Bool
     @Binding var composing: Bool
     private let agentConversation: () -> AgentConversation
-    private let assistantConversation: (_ folder: String?) -> AssistantConversation
+    private let assistantConversation: (_ folder: String?, _ close: @escaping () -> Void) -> AssistantConversation
 
     init(model: SessionModel, onExit: @escaping () -> Void, folderQuestionsAvailable: Bool, oracleAvailable: Bool,
          oracleQuestionsAvailable: Bool = false, composing: Binding<Bool>,
          @ViewBuilder agentConversation: @escaping () -> AgentConversation,
-         @ViewBuilder assistantConversation: @escaping (_ folder: String?) -> AssistantConversation) {
+         @ViewBuilder assistantConversation: @escaping (_ folder: String?, _ close: @escaping () -> Void) -> AssistantConversation) {
         self.model = model
         self.onExit = onExit
         self.folderQuestionsAvailable = folderQuestionsAvailable
@@ -113,7 +113,7 @@ struct ConstellationView<AgentConversation: View, AssistantConversation: View>: 
             if stale {
                 Text("Last known").font(.caption2).foregroundStyle(Sky.amber).padding(.trailing, 6)
             }
-            if let folder = focusedFolder, folderQuestionsAvailable, nav.mode == .map, !nav.asking, selectedAgent == nil, folder.total > 0 {
+            if let folder = focusedFolder, folderQuestionsAvailable, nav.mode == .map, !nav.asking, selectedAgent == nil {
                 Button("Ask \(folder.name)") { ask() }
                     .accessibilityIdentifier("constellation-ask")
                     .font(.footnote).lineLimit(1).frame(minHeight: 44).padding(.horizontal, 8)
@@ -240,9 +240,9 @@ struct ConstellationView<AgentConversation: View, AssistantConversation: View>: 
                     .overlay(alignment: .bottom) { Rectangle().fill(Sky.border).frame(height: 1) }
             }
             if nav.mode == .oracle {
-                assistantConversation(nil)
+                assistantConversation(nil) { nav.mode = .map; nav.asking = false; composing = false }
             } else if nav.asking, let folder = focusedFolder?.folderPath {
-                assistantConversation(folder)
+                assistantConversation(folder) { nav.asking = false; composing = false }
             } else if selectedAgent != nil {
                 agentConversation()
             }
@@ -459,6 +459,8 @@ struct ConstellationView<AgentConversation: View, AssistantConversation: View>: 
             Text(node.name).font(.footnote).foregroundStyle(current ? Sky.text : Sky.muted).lineLimit(1)
             if current, let sub = folderSub(node) { Text(sub.0).font(.caption).foregroundStyle(sub.1).lineLimit(1) }
         }
+        // The ring has fixed room; larger text sizes read in the breadcrumb, details panel and list.
+        .dynamicTypeSize(...DynamicTypeSize.xLarge)
         .frame(width: box.width, height: 44)
         .contentShape(Rectangle())
         .position(x: box.midX, y: box.midY)

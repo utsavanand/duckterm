@@ -42,7 +42,7 @@ final class DuckyPairingMenuTests: XCTestCase {
         let app = AppDelegate(launchAdmission: admission, editionRequest: { _ in
             requests += 1
             throw URLError(.timedOut)
-        }, makePairing: { prepare in
+        }, makePairing: { _, prepare in
             creations += 1
             return MenuPairingPresenter(prepare: prepare)
         })
@@ -63,7 +63,7 @@ final class DuckyPairingMenuTests: XCTestCase {
         let app = AppDelegate(launchAdmission: admission, editionRequest: { _ in
             requests += 1
             throw URLError(.timedOut)
-        }, makePairing: { prepare in
+        }, makePairing: { _, prepare in
             let presenter = MenuPairingPresenter(prepare: prepare)
             presenters.append(presenter)
             return presenter
@@ -98,7 +98,7 @@ final class DuckyPairingMenuTests: XCTestCase {
         let app = AppDelegate(launchAdmission: admission, editionRequest: { _ in
             requests += 1
             throw URLError(.timedOut)
-        }, makePairing: { prepare in
+        }, makePairing: { _, prepare in
             creations += 1
             return MenuPairingPresenter(prepare: prepare)
         })
@@ -126,7 +126,7 @@ final class DuckyPairingMenuTests: XCTestCase {
         let app = AppDelegate(launchAdmission: admission, editionRequest: { _ in
             requests += 1
             throw URLError(.timedOut)
-        }, makePairing: { prepare in
+        }, makePairing: { _, prepare in
             let presenter = MenuPairingPresenter(prepare: prepare)
             presenters.append(presenter)
             return presenter
@@ -139,5 +139,60 @@ final class DuckyPairingMenuTests: XCTestCase {
         XCTAssertEqual(presenters.count, 1); XCTAssertEqual(presenters.first?.shows, 1)
         XCTAssertEqual(requests, 0)
         presenters.first?.close()
+    }
+
+    @MainActor func testPresenterKeepsLiveVerifiedEditionAcrossRefreshFailureAndRelease() async throws {
+        let admission = WorkspaceLaunchAdmission(); allow(admission)
+        var response: Any = ["id": "full", "features": ["terminal", "folders", "session_status", "folder_chat", "oracle"]]
+        var shouldFail = false
+        var verifiedEdition: (() -> DesktopEdition?)?
+        var app: AppDelegate? = AppDelegate(launchAdmission: admission, editionRequest: { _ in
+            if shouldFail { throw URLError(.timedOut) }
+            return response
+        }, makePairing: { edition, prepare in
+            verifiedEdition = edition
+            return MenuPairingPresenter(prepare: prepare)
+        })
+        weak var released = app
+        app?.pairIPhone(nil)
+        let current = try XCTUnwrap(verifiedEdition)
+        let pairing = DuckyPairingModel(makeTransport: {
+            DuckyPairingProcess(command: {
+                XCTFail("Availability must not start pairing or a process")
+                throw DuckyPairingEvent.Failure.invalid
+            })
+        }, authenticate: { _ in
+            XCTFail("Availability must not request owner authentication")
+            return false
+        }, verifiedEdition: current)
+        XCTAssertNil(current(), "A fresh presenter must not invent an edition before a validated read")
+        XCTAssertFalse(pairing.availability.showsQuestions)
+
+        _ = try await app?.refreshEdition()
+        XCTAssertEqual(current()?.id, "full")
+        XCTAssertTrue(pairing.availability.folder)
+        XCTAssertTrue(pairing.availability.oracle)
+
+        response = ["id": "code", "features": ["terminal", "folders", "session_status", "folder_chat"]]
+        _ = try await app?.refreshEdition()
+        XCTAssertEqual(current()?.id, "code")
+        XCTAssertTrue(pairing.availability.folder)
+        XCTAssertFalse(pairing.availability.oracle)
+
+        response = ["id": "lite", "features": ["terminal", "folders", "session_status"]]
+        _ = try await app?.refreshEdition()
+        XCTAssertEqual(current()?.id, "lite")
+        XCTAssertFalse(pairing.availability.showsQuestions)
+
+        shouldFail = true
+        do { _ = try await app?.refreshEdition(); XCTFail("Expected read failure") }
+        catch { XCTAssertEqual((error as? URLError)?.code, .timedOut) }
+        XCTAssertNil(current(), "A failed read must not keep granting the previous analysis choices")
+        XCTAssertFalse(pairing.availability.showsQuestions)
+
+        app = nil
+        XCTAssertNil(released, "The presenter callback must not retain the app delegate")
+        XCTAssertNil(current())
+        XCTAssertFalse(pairing.availability.showsQuestions)
     }
 }
