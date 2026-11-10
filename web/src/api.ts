@@ -588,10 +588,10 @@ export const api = {
   folderDispatch: (folder: string, request: { assign?: boolean; identity: string; target: { kind: "session" | "folder"; id: string }; text: string; request_key: string; recipients: string[] }) =>
     post<{ exchange: OracleExchange }>(`/folders/${encodeURIComponent(folder)}/dispatch`, request),
   folderChat: (folder: string) => artifactRequest<{ messages: OracleExchange[] }>(`/folders/${encodeURIComponent(folder)}/chat`),
-  fleetAsk: (question: string, folder?: string) =>
+  fleetAsk: (question: string, folder?: string, requestKey?: string) =>
     post<{ answer: string; exchange: OracleExchange; sessions: string[] }>(
       "/fleet/ask",
-      { question, ...(folder !== undefined ? { folder } : {}) },
+      { question, ...(folder !== undefined ? { folder } : {}), ...(requestKey !== undefined ? { request_key: requestKey } : {}) },
     ),
   oracleChat: () => get<{ messages: OracleExchange[] }>("/oracle/chat"),
   controlTower: () => get<TowerInsights>("/control-tower"),

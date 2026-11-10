@@ -1,3 +1,17 @@
+## 2026-11-07 — Folder chat had a message broker its answer path could never reach
+
+The @ picker could send messages, but a plain-language request went to a prompt
+that prohibited dispatch. Adding more prompt instructions alone would only let
+the model claim a send. The fix resolves the owner's explicit request separately
+from terminal output, validates its recipients against the folder again after
+inference, and uses the existing inbox broker and delivery receipts.
+
+Keep interpretation separate from delivery: session transcripts are evidence,
+not authority to send an owner message. Preserve a submission key across network
+retries and check both broker paths after a history-write failure, because a new
+model response could otherwise change a direct send into a duplicate broadcast.
+Only a broker receipt proves delivery was queued.
+
 ## 2026-11-07 — A warning needs both data and a visible signal
 
 Context occupancy and capacity shipped without the duck colour ramp, leaving
