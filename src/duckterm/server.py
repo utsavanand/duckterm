@@ -52,6 +52,7 @@ import os
 import re
 import shlex
 import socket
+import sqlite3
 import sys
 import tempfile
 import time
@@ -276,6 +277,8 @@ _ROUTES: list[Route] = [
           **_mid("/sessions/", "/collaboration")),
     Route("GET", "", lambda s, r, w, h, b, seg: s._messages(w, seg),
           **_mid("/sessions/", "/messages")),
+    Route("GET", "", lambda s, r, w, h, b, seg: s._mobile_pending_messages(w, seg),
+          **_mid("/sessions/", "/mobile-messages")),
     Route("GET", "", lambda s, r, w, h, b, seg: s._list_annotations(w, seg),
           **_mid("/sessions/", "/annotations")),
     Route("POST", "", lambda s, r, w, h, b, seg: s._add_annotation(w, seg, b),
@@ -449,6 +452,10 @@ class Server:
         self.history.layouts.recover()
         self.bus = bus if bus is not None else EventBus(sink=self._sink)
         self.orchestrator = Orchestrator(self.bus, history=self.history)
+        from duckterm.mobile.messages import Messages
+
+        # Only the live manager owns target bindings and delivery state.
+        self._mobile_messages: Messages | None = None
         from duckterm.session_shells import SessionShells
 
         self.shells = SessionShells(self)
@@ -1385,6 +1392,17 @@ class Server:
 
     def _session_messages_response(self, session_key: str) -> bytes:
         return self._read_messages_response(self._message_source(session_key))
+
+    async def _mobile_pending_messages(
+        self, writer: asyncio.StreamWriter, session_key: str
+    ) -> None:
+        service = self._mobile_messages
+        try:
+            rows = await service.pending_for_desktop(session_key) if service is not None else []
+        except (OSError, ValueError, sqlite3.Error):
+            await _write_json(writer, 503, {"error": "mobile_status_unavailable"})
+            return
+        await _write_json(writer, 200, {"mobile_messages": rows})
 
     async def _messages(self, writer: asyncio.StreamWriter, session_key: str) -> None:
         if self.history.session(session_key) is None:
@@ -6527,13 +6545,16 @@ class Server:
             async with server:
                 from duckterm.mobile.manager import Manager as MobileManager
 
-                mobile_manager = asyncio.create_task(MobileManager(self).run())
+                manager = MobileManager(self)
+                self._mobile_messages = manager.messages
+                mobile_manager = asyncio.create_task(manager.run())
                 try:
                     # The optional phone listener has a separate TLS identity
                     # and read-only credential space. Failure cannot take down
                     # the loopback desktop or its process reconciliation.
                     await server.serve_forever()
                 finally:
+                    self._mobile_messages = None
                     mobile_manager.cancel()
                     with contextlib.suppress(asyncio.CancelledError):
                         await mobile_manager

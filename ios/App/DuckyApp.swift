@@ -10,6 +10,10 @@ struct DuckyApp: App {
 
     init() {
         #if DEBUG
+        if ProcessInfo.processInfo.arguments.contains("--ducky-status-ui-fixture") {
+            _model = StateObject(wrappedValue: StatusUIFixture.model())
+            return
+        }
         if ProcessInfo.processInfo.arguments.contains("--ducky-map-ui-fixture") || ProcessInfo.processInfo.arguments.contains("--ducky-analysis-ui-fixture") {
             _model = StateObject(wrappedValue: MapUIFixture.model())
             return
@@ -48,6 +52,88 @@ struct DuckyApp: App {
 }
 
 #if DEBUG
+/// Connection states are synthetic; no persisted credentials or network requests.
+private enum StatusUIFixture {
+    static let hostID = "33333333333333333333333333333333"
+    static let sessionID = "status-ui-agent"
+    static let requestID = "33333333-3333-4333-8333-333333333333"
+    @MainActor static func model() -> SessionModel {
+        let invitation = Invitation(version: 1, hostID: hostID, invite: String(repeating: "i", count: 43),
+            expiresAt: Int(Date().timeIntervalSince1970) + 600, url: URL(string: "https://127.0.0.1:9")!, certificateSHA256: String(repeating: "a", count: 64))
+        let client = StatusUIFixtureTransport()
+        let domain = "com.rubberduckhq.ducky.status-ui-fixture"
+        let defaults = UserDefaults(suiteName: domain)!
+        defaults.removePersistentDomain(forName: domain)
+        let model = SessionModel(credentials: ChatUIFixtureStore(PairedHost(invitation: invitation, token: String(repeating: "t", count: 43))),
+            makeTransport: { _ in client }, pause: { try await Task.sleep(nanoseconds: 60_000_000_000) },
+            conversationPause: { try await Task.sleep(nanoseconds: 60_000_000_000) },
+            expansionStore: FolderExpansionStore(defaults: defaults))
+        client.afterFirstRead = { [weak model] in
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 300_000_000)
+                if client.mode == "reading" { await model?.refreshConversation() }
+                else if ["failed", "reconnecting"].contains(client.mode) {
+                    await model?.refresh()
+                    if client.mode == "reconnecting" { await model?.retryConnection() }
+                }
+            }
+        }
+        return model
+    }
+}
+private final class StatusUIFixtureTransport: DuckyTransport {
+    let mode = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--ducky-status-mode=") })?.components(separatedBy: "=").last ?? "waiting"
+    var afterFirstRead: (() -> Void)?
+    private var reads = 0, failedReads = 0
+    private let created = Int64(Date().timeIntervalSince1970 * 1000) - 120_000
+    private var newReceipts: [MessageReceipt] = []
+    func claim(_ invitation: Invitation, name: String) async throws -> PairStatus { throw DuckyError.unavailable(403) }
+    func pairingStatus() async throws -> PairStatus {
+        try ChatUIFixture.decode(["id": "status-fixture-device", "status": "active", "host_id": StatusUIFixture.hostID])
+    }
+    func snapshot(cursor: String?) async throws -> HostSnapshot {
+        if reads > 0 && ["failed", "reconnecting"].contains(mode) {
+            failedReads += 1
+            if mode == "reconnecting" && failedReads > 1 { try await Task.sleep(nanoseconds: 8_000_000_000) }
+            throw URLError(.timedOut)
+        }
+        return try ChatUIFixture.decode(["version": 2, "host_id": StatusUIFixture.hostID, "read_only": true,
+            "generated_at": 1, "truncated": false, "reset": false, "notices": [], "notification_delivery": "foreground_refresh",
+            "folders": ["Status fixture"], "features": ["conversations"], "capabilities": ["status:read", "conversation:read", "session:send"],
+            "sessions": [["id": StatusUIFixture.sessionID, "name": "Status review agent", "folder": "Status fixture", "runtime": "codex",
+                "state": mode == "delivered" ? "idle" : "busy", "observed_at": 1, "test": true,
+                "approval_visibility": "terminal_only", "can_read": true, "can_send": true, "send_context": "status-context"]]])
+    }
+    func conversation(sessionID: String) async throws -> ConversationSnapshot {
+        reads += 1
+        if reads > 1 && mode == "reading" { throw URLError(.timedOut) }
+        let status = ["delivered", "expired"].contains(mode) ? mode : "queued"
+        var receipts: [[String: Any]] = [["request_id": StatusUIFixture.requestID, "session_id": sessionID, "status": status,
+            "created_at": created, "updated_at": created + 60_000, "expires_at": created + 900_000,
+            "wait_reason": status == "queued" ? "agent_busy" : NSNull(), "text": "Can you share the current release status?"]]
+        receipts += newReceipts.map { ["request_id": $0.requestID, "session_id": $0.sessionID, "status": $0.status,
+            "created_at": $0.createdAt, "updated_at": $0.updatedAt, "wait_reason": "agent_busy", "text": $0.text ?? ""] }
+        let value: ConversationSnapshot = try ChatUIFixture.decode(["version": 1, "host_id": StatusUIFixture.hostID,
+            "session_id": sessionID, "messages": [["id": "status-reply", "role": "assistant",
+                "text": "The release review is still in progress. I’m checking the remaining changes before publishing.", "at": created]],
+            "receipts": receipts, "can_send": true, "send_context": "status-context", "truncated": false])
+        if reads == 1 { afterFirstRead?() }
+        return value
+    }
+    func send(_ message: OutgoingMessage) async throws -> MessageReceipt {
+        guard OutgoingMessage.validText(message.text), message.sessionID == StatusUIFixture.sessionID, message.sendContext == "status-context" else { throw DuckyError.unavailable(400) }
+        let receipt: MessageReceipt = try ChatUIFixture.decode(["request_id": message.requestID, "session_id": message.sessionID,
+            "status": "queued", "created_at": created + 100_000, "updated_at": created + 100_000, "wait_reason": "agent_busy", "text": message.text])
+        newReceipts.append(receipt)
+        return receipt
+    }
+    func receipt(requestID: String, sessionID: String) async throws -> MessageReceipt {
+        guard let found = newReceipts.first(where: { $0.id == requestID && $0.sessionID == sessionID }) else { throw DuckyError.unavailable(404) }
+        return found
+    }
+    func close() { afterFirstRead = nil }
+}
+
 /// UI-only data: no credential storage, sockets, real sessions or agent execution.
 private enum ChatUIFixture {
     static let hostID = "11111111111111111111111111111111"

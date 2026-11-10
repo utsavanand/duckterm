@@ -107,7 +107,7 @@ struct ConversationView: View {
                 .coordinateSpace(name: "conversation")
                 .accessibilityIdentifier("conversation-scroll")
                 .scrollDismissesKeyboard(.interactively)
-                .refreshable { await model.refresh(); await model.refreshConversation() }
+                .refreshable { await model.retryConnection() }
                 .onPreferenceChange(MessageFrames.self) { frames in
                     // Track zero-sized viewports too: keyboard dismissal can return
                     // through the previous size before the panel reaches its final width.
@@ -152,6 +152,7 @@ struct ConversationView: View {
     }
 
     private var header: some View {
+        VStack(alignment: .leading, spacing: 0) {
         HStack(spacing: 6) {
             if !embedded {
                 Button(action: closeConversation) {
@@ -167,7 +168,8 @@ struct ConversationView: View {
                 HStack(spacing: 5) {
                     Text(model.selectedSession?.runtimeLabel ?? "")
                     Text("·")
-                    Text(live ? (model.selectedSession?.stateLabel ?? "") : "Offline")
+                    Text(model.agentActivityLabel)
+                        .accessibilityIdentifier("conversation-agent-activity")
                         .foregroundStyle(live ? ChatColor.accent : ChatColor.warning)
                 }.font(.caption2).foregroundStyle(ChatColor.muted)
             }
@@ -182,6 +184,8 @@ struct ConversationView: View {
             }
         }
         .padding(.horizontal, 8).padding(.vertical, embedded ? 0 : 7)
+        connectionDetails
+        }
         .background(ChatColor.background)
         .overlay(alignment: .bottom) {
             LinearGradient(colors: [ChatColor.background, ChatColor.background.opacity(0)],
@@ -191,6 +195,44 @@ struct ConversationView: View {
         }
         .accessibilityElement(children: .contain)
         .accessibilityIdentifier("conversation-header")
+    }
+
+    @ViewBuilder private var connectionDetails: some View {
+        if !live || model.retrying || model.conversationError != nil || model.receiptError != nil {
+            VStack(alignment: .leading, spacing: 3) {
+                HStack(alignment: .center, spacing: 8) {
+                    Text(connectionSummary)
+                        .fixedSize(horizontal: false, vertical: true)
+                        .accessibilityIdentifier("conversation-connection")
+                    Spacer(minLength: 0)
+                    Button("Retry") { Task { await model.retryConnection() } }
+                        .frame(minWidth: 44, minHeight: 44).contentShape(Rectangle())
+                        .buttonStyle(.plain).foregroundStyle(ChatColor.accent)
+                        .disabled(model.retrying)
+                        .accessibilityIdentifier("conversation-retry")
+                }
+                if let detail = !live ? model.error : model.conversationError ?? model.receiptError {
+                    Text(detail).fixedSize(horizontal: false, vertical: true)
+                        .foregroundStyle(ChatColor.muted)
+                        .accessibilityIdentifier("conversation-refresh-error")
+                }
+                if live, (model.conversationError != nil || model.receiptError != nil), let at = model.conversationAt {
+                    Text("Replies updated \(at.formatted(date: .omitted, time: .shortened))")
+                        .foregroundStyle(ChatColor.muted)
+                }
+            }
+            .font(.caption2).foregroundStyle(ChatColor.warning)
+            .padding(.leading, embedded ? 14 : 58).padding(.trailing, 16).padding(.bottom, 8)
+            .accessibilityElement(children: .contain)
+        }
+    }
+    private var connectionSummary: String {
+        if !live {
+            let state = model.statusRefreshing || model.retrying ? "Reconnecting to Mac" : "Can’t reach your Mac"
+            return state + (model.snapshotAt.map { " · updated " + $0.formatted(date: .omitted, time: .shortened) } ?? " · no successful refresh yet")
+        }
+        if model.retrying { return "Status is current. Refreshing replies…" }
+        return model.conversationError != nil ? "Status is current. Couldn’t refresh replies." : "Status is current. Couldn’t refresh delivery."
     }
 
     private func closeConversation() {
@@ -208,15 +250,6 @@ struct ConversationView: View {
         } else if model.snapshot?.allows("conversation:read") != true {
             note("Messaging isn’t enabled. On your Mac, choose DuckTerm → Pair iPhone… and pair again with messaging access.")
         } else {
-            if !live {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("Showing last known conversation").fontWeight(.medium)
-                    if let date = model.snapshotAt {
-                        Text("Last update \(date.formatted(date: .abbreviated, time: .shortened)). Pull to retry.")
-                    }
-                    if let error = model.error { Text(error) }
-                }.font(.footnote).foregroundStyle(ChatColor.warning)
-            }
             if let conversation = model.conversation {
                 if conversation.truncated {
                     note("Showing recent messages. Open DuckTerm on your Mac for the full conversation.")
@@ -231,9 +264,6 @@ struct ConversationView: View {
                      "No conversation yet" : "Conversation unavailable for this session.")
             } else if model.conversationError == nil {
                 ProgressView("Loading conversation…").tint(ChatColor.accent)
-            }
-            if let error = model.conversationError {
-                Text(error).font(.footnote).foregroundStyle(ChatColor.warning)
             }
             if case .acknowledged(let receipt) = model.sendState,
                model.conversation?.receipts.contains(where: { $0.id == receipt.id }) != true {
@@ -281,7 +311,8 @@ struct ConversationView: View {
     private func receiptView(_ receipt: MessageReceipt) -> some View {
         VStack(alignment: .trailing, spacing: 7) {
             if let text = model.messageText(for: receipt), receipt.status != "delivered" { outgoing(text) }
-            Text(receipt.label).font(.caption2)
+            Text(model.receiptLabel(receipt)).font(.caption2)
+                .accessibilityIdentifier("conversation-receipt:" + receipt.id)
                 .foregroundStyle(receipt.status == "unknown" ? ChatColor.warning : ChatColor.muted)
         }.frame(maxWidth: .infinity, alignment: .trailing)
     }
@@ -292,6 +323,7 @@ struct ConversationView: View {
                 TextField("Message agent…", text: Binding(get: { model.draft }, set: { model.setDraft($0) }),
                           prompt: Text("Message agent…").foregroundColor(ChatColor.muted), axis: .vertical)
                     .font(.callout).lineLimit(1...4).focused($composing)
+                    .disabled(!model.canEditDraft)
                     .padding(.leading, 13).padding(.vertical, 12)
                     .accessibilityLabel("Message agent").accessibilityIdentifier("conversation-composer")
                 Button { Task { await model.sendMessage() } } label: {
@@ -329,9 +361,11 @@ struct ConversationView: View {
         case .unconfirmed: return "Receipt unconfirmed. Checking your Mac; your message won’t be sent again."
         case .rejected(let message): return message
         case .acknowledged(let receipt) where receipt.status == "unknown": return "Delivery unconfirmed. Check your Mac before sending again."
+        case .acknowledged(let receipt) where receipt.status == "expired": return live ? "Copy your message above to send it again." : "Reconnect to send another message."
         default:
             if model.draft.utf8.count > 4096 { return "Message is too long (maximum 4,096 bytes)." }
-            if !live { return "Reconnect to your Mac to send." }
+            if !live { return "Reconnect to send another message." }
+            if model.sendState == nil, model.conversation?.receipts.last?.status == "expired" { return "Copy your message above to send it again." }
             if model.selectedSession?.runtime == "generic" { return "Messaging isn’t available for shell sessions." }
             return model.canSend ? nil : "Refresh the conversation before sending."
         }

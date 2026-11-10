@@ -158,6 +158,8 @@ final class SessionTransport: NSObject, URLSessionTaskDelegate, URLSessionWebSoc
             || (method == "POST" && route.range(of: #"^/sessions/[A-Za-z0-9._-]{1,128}/conversation-(adopt|hooks|detach)$"#, options: .regularExpression) != nil))
         let checkpointPlanRoute = method == "GET" && components.query == nil
             && route.range(of: #"^/sessions/[A-Za-z0-9._-]{1,128}/checkpoint-plan$"#, options: .regularExpression) != nil
+        let mobilePendingRoute = method == "GET" && components.query == nil
+            && route.range(of: #"^/sessions/[A-Za-z0-9._-]{1,128}/mobile-messages$"#, options: .regularExpression) != nil
         let checkpointAttemptRoute = method == "GET" && components.query == nil
             && route.range(of: #"^/sessions/[A-Za-z0-9._-]{1,128}/checkpoint-attempts/[A-Za-z0-9._-]{1,128}$"#, options: .regularExpression) != nil
         let timelineRoute = method == "GET"
@@ -170,7 +172,7 @@ final class SessionTransport: NSObject, URLSessionTaskDelegate, URLSessionWebSoc
         let memoryRoute = Self.memoryRestartRoute(components: components, method: method)
             || Self.memoryReadRoute(components: components, method: method)
         let checkpointSettingsRoute = path == "/checkpoint-settings" && ["GET", "POST"].contains(method)
-        guard archiveUndoRoute || checkpointPlanRoute || checkpointSettingsRoute || checkpointAttemptRoute || agentMergeRoute || memoryRoute || timelineRoute || recoveryRoute || shellRoute || bugReport || sessionRoute || approval || connector || harness || (method == "GET" && reads.contains(route)) || (method == "POST" && writes.contains(route)) else {
+        guard mobilePendingRoute || archiveUndoRoute || checkpointPlanRoute || checkpointSettingsRoute || checkpointAttemptRoute || agentMergeRoute || memoryRoute || timelineRoute || recoveryRoute || shellRoute || bugReport || sessionRoute || approval || connector || harness || (method == "GET" && reads.contains(route)) || (method == "POST" && writes.contains(route)) else {
             throw LaunchDestination.Failure.message("Unsupported session operation")
         }
         var url = URLComponents(url: base, resolvingAgainstBaseURL: false)!

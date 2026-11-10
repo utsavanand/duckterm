@@ -155,7 +155,7 @@ final class ConversationLifecycleTests: XCTestCase {
         transport.sendContinuation?.resume(); await sending.value
         XCTAssertEqual(model.draft, "")
         guard case .acknowledged(let receipt) = model.sendState else { return XCTFail("No acknowledgment") }
-        XCTAssertEqual(receipt.label, "Queued on your Mac")
+        XCTAssertEqual(receipt.label, "On your Mac · waiting to send")
         XCTAssertFalse(receipt.label.contains("seen"))
     }
     func testTimedOutSendNeverReplaysAndLaterReceiptResolvesSameID() async {
@@ -171,7 +171,7 @@ final class ConversationLifecycleTests: XCTestCase {
         await model.refreshConversation()
         guard case .acknowledged(let result) = model.sendState else { return XCTFail("No receipt") }
         XCTAssertEqual(result.requestID, transport.sends[0].requestID)
-        XCTAssertEqual(result.label, "Sent to session"); XCTAssertEqual(model.draft, "")
+        XCTAssertEqual(result.label, "Delivered to agent"); XCTAssertEqual(model.draft, "")
     }
     func testLateConversationCannotAppearInAnotherSession() async {
         let (model, transport) = await setup()

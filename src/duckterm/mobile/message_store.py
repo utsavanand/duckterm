@@ -29,6 +29,12 @@ def receipt(row: dict[str, Any]) -> dict[str, Any]:
         key: row[key]
         for key in ("request_id", "session_id", "status", "reason", "created_at", "updated_at")
     }
+    result["expires_at"] = row["created_at"] + TTL_MS
+    result["wait_reason"] = (
+        ("delivering" if row["status"] == "delivering" else "safe_prompt")
+        if row["status"] in PENDING
+        else None
+    )
     if row["status"] in PENDING:
         result["text"] = row["text"]
     return result
@@ -156,6 +162,33 @@ class MessageStore:
                 "ORDER BY created_at, rowid LIMIT 100"
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def pending_for_session(self, session: str, now: int) -> list[dict[str, Any]]:
+        """An observation only: never create, recover, prune or advance the queue."""
+        try:
+            root, file = self.root.lstat(), self.path.lstat()
+        except FileNotFoundError:
+            return []
+        if (
+            not stat.S_ISDIR(root.st_mode)
+            or not stat.S_ISREG(file.st_mode)
+            or root.st_uid != os.getuid()
+            or file.st_uid != os.getuid()
+        ):
+            raise ValueError("Invalid message journal")
+        db = sqlite3.connect(self.path.as_uri() + "?mode=ro", uri=True, timeout=1)
+        db.row_factory = sqlite3.Row
+        try:
+            rows = db.execute(
+                "SELECT * FROM messages WHERE session_id=? "
+                "AND status IN ('queued','delivering') AND created_at>? "
+                "AND (status!='delivering' OR updated_at>=?) "
+                "ORDER BY created_at, rowid LIMIT 5",
+                (session, now - TTL_MS, now - 60000),
+            ).fetchall()
+            return [dict(row) for row in rows]
+        finally:
+            db.close()
 
     def transition(self, row: dict[str, Any], status: str, reason: str | None = None) -> bool:
         with self.connect() as db:

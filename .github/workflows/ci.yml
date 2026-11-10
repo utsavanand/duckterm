@@ -124,6 +124,8 @@ jobs:
         with:
           python-version: "3.13"
       - name: Native phone protocol and real TLS host contracts
+        env:
+          NSUnbufferedIO: "YES"
         run: swift test --package-path ios
       - name: Compile for the iPhone SDK
         run: |

@@ -15,27 +15,42 @@ public struct MessageReceipt: Decodable, Identifiable, Equatable {
     public let createdAt: Int64
     public let updatedAt: Int64
     public let text: String?
+    public let expiresAt: Int64?
+    public let waitReason: String?
     public var id: String { requestID }
     public var isPending: Bool { ["queued", "delivering"].contains(status) }
-    public var label: String {
+    public var label: String { deliveryLabel() }
+    public func deliveryLabel(agentState: String? = nil) -> String {
         switch status {
-        case "queued": return "Queued on your Mac"
-        case "delivering": return "Sending to session"
-        case "delivered": return "Sent to session"
+        case "queued":
+            switch waitReason {
+            case "agent_busy": return "On your Mac · waiting for this turn to finish"
+            case "approval_pending": return "On your Mac · waiting for approval on your Mac"
+            case "desktop_input": return "On your Mac · waiting for desktop input to finish"
+            case "safe_prompt": return "On your Mac · waiting for a safe prompt"
+            case "delivering": return "On your Mac · sending to agent"
+            default: return agentState == "busy" ? "On your Mac · waiting for this turn to finish" : "On your Mac · waiting to send"
+            }
+        case "delivering": return "On your Mac · sending to agent"
+        case "delivered": return "Delivered to agent"
         case "cancelled": return "Not sent"
-        case "expired": return "Expired before sending"
+        case "expired": return "Not sent · expired while waiting"
         default: return "Delivery unconfirmed · Check your Mac"
         }
     }
     enum CodingKeys: String, CodingKey {
         case status, reason, text
+        case expiresAt = "expires_at", waitReason = "wait_reason"
         case requestID = "request_id", sessionID = "session_id", createdAt = "created_at", updatedAt = "updated_at"
     }
     func validate(sessionID expected: String, requestID: String? = nil) throws {
         guard sessionID == expected, UUID(uuidString: self.requestID) != nil,
               requestID == nil || self.requestID.caseInsensitiveCompare(requestID!) == .orderedSame,
               ["queued", "delivering", "delivered", "unknown", "cancelled", "expired"].contains(status),
-              (text?.utf8.count ?? 0) <= 4096 else { throw DuckyError.invalidResponse }
+              (text?.utf8.count ?? 0) <= 4096,
+              createdAt >= 0, updatedAt >= createdAt,
+              expiresAt.map({ $0 >= createdAt }) ?? true,
+              (waitReason?.utf8.count ?? 0) <= 64 else { throw DuckyError.invalidResponse }
     }
 }
 
