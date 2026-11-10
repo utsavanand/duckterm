@@ -152,6 +152,17 @@ export interface OracleExchange {
   };
 }
 
+// A plain-language folder message the owner must confirm before it is sent.
+export interface FolderMessagePlan {
+  identity: string;
+  target: { kind: "session" | "folder"; id: string };
+  label: string;
+  text: string;
+  recipients: { session_id: string; name: string }[];
+}
+
+export interface FleetAnswer { answer: string; exchange: OracleExchange; sessions: string[] }
+
 export interface FolderRecipients {
   identity: string;
   sessions: BroadcastTarget[];
@@ -601,11 +612,15 @@ export const api = {
   folderDispatch: (folder: string, request: { assign?: boolean; identity: string; target: { kind: "session" | "folder"; id: string }; text: string; request_key: string; recipients: string[] }) =>
     post<{ exchange: OracleExchange }>(`/folders/${encodeURIComponent(folder)}/dispatch`, request),
   folderChat: (folder: string) => artifactRequest<{ messages: OracleExchange[] }>(`/folders/${encodeURIComponent(folder)}/chat`),
-  fleetAsk: (question: string, folder?: string, requestKey?: string) =>
-    post<{ answer: string; exchange: OracleExchange; sessions: string[] }>(
+  // Only a folder request with a request key can come back as a message plan.
+  fleetAsk: ((question: string, folder?: string, requestKey?: string) =>
+    post<FleetAnswer | { plan: FolderMessagePlan }>(
       "/fleet/ask",
       { question, ...(folder !== undefined ? { folder } : {}), ...(requestKey !== undefined ? { request_key: requestKey } : {}) },
-    ),
+    )) as {
+    (question: string): Promise<FleetAnswer>;
+    (question: string, folder: string, requestKey?: string): Promise<FleetAnswer | { plan: FolderMessagePlan }>;
+  },
   oracleChat: () => get<{ messages: OracleExchange[] }>("/oracle/chat"),
   controlTower: () => get<TowerInsights>("/control-tower"),
   relay: (signal?: AbortSignal) => get<RelayState>("/relay", undefined, { signal }),

@@ -1,4 +1,4 @@
-"""Natural-language folder sends use the real broker, scope and saved replies."""
+"""Natural-language folder requests return a plan; only the owner's confirm sends."""
 
 import asyncio
 import json
@@ -27,6 +27,23 @@ def ask(server, question="Ask Session one what they are working on", key="first"
     )
 
 
+def confirm(server, body, key="confirm", **changes):
+    plan = body["plan"]
+    return req(
+        server,
+        "POST",
+        "/folders/a/dispatch",
+        {
+            "identity": plan["identity"],
+            "target": plan["target"],
+            "text": plan["text"],
+            "request_key": key,
+            "recipients": [r["session_id"] for r in plan["recipients"]],
+            **changes,
+        },
+    )
+
+
 def model(monkeypatch, output):
     prompts = []
 
@@ -38,25 +55,36 @@ def model(monkeypatch, output):
     return prompts
 
 
-def test_direct_message_retries_and_saved_reply(app, monkeypatch):  # noqa: F811
+def test_direct_message_waits_for_owner_confirm(app, monkeypatch):  # noqa: F811
     credentials = enroll(app.history, "one", "a")
     prompts = model(monkeypatch, plan())
     app.history.set_intention("one", "UNTRUSTED_TERMINAL_INSTRUCTIONS")
     status, result = ask(app)
     assert status == 200
-    exchange = result["exchange"]
-    assert exchange["q"] == "Ask Session one what they are working on"
-    assert exchange["dispatch"]["text"] == "What are you working on?"
-    assert result["sessions"] == ["one"]
+    assert result == {
+        "plan": {
+            "identity": result["plan"]["identity"],
+            "target": {"kind": "session", "id": "one"},
+            "label": "Session one",
+            "text": "What are you working on?",
+            "recipients": [{"session_id": "one", "name": "Session one"}],
+        }
+    }
     assert "UNTRUSTED_TERMINAL_INSTRUCTIONS" not in prompts[0]
     assert "Session outside" not in prompts[0]
+    assert app.history.session_api.pending_counts() == {}
+    assert req(app, "GET", "/folders/a/chat")[1]["messages"] == []
+    status, sent = confirm(app, result)
+    assert status == 200
+    exchange = sent["exchange"]
+    assert exchange["q"] == "What are you working on?"
     inbox = call(app.history, credentials, "GET", "/inbox")[1]["messages"]
     assert len(inbox) == 1
     assert inbox[0]["sender_kind"] == "owner"
     assert inbox[0]["question"] == "What are you working on?"
-    assert ask(app)[1] == result
-    assert len(prompts) == 1  # A lost response never reinterprets the request.
-    assert ask(app, "Send something different")[0] == 409
+    assert confirm(app, result) == (200, sent)
+    assert confirm(app, result, text="Something else")[0] == 409
+    assert app.history.session_api.pending_counts() == {"one": 1}
     mid = exchange["dispatch"]["recipients"][0]["message_id"]
     assert (
         call(app.history, credentials, "POST", f"/questions/{mid}/answer", {"text": "Testing"})[0]
@@ -73,9 +101,25 @@ def test_broadcast_to_current_folder_or_subfolder(app, monkeypatch, target, expe
     model(monkeypatch, plan("folder", target, "Report your progress"))
     status, body = ask(app, "Tell everyone in this folder to report progress")
     assert status == 200
-    assert set(body["sessions"]) == expected
+    assert {r["session_id"] for r in body["plan"]["recipients"]} == expected
+    assert body["plan"]["label"] == target
+    assert app.history.session_api.pending_counts() == {}
+    status, sent = confirm(app, body)
+    assert status == 200
+    assert {r["session_id"] for r in sent["exchange"]["dispatch"]["recipients"]} == expected
     assert set(app.history.session_api.pending_counts()) == expected
-    assert ask(app, "Tell everyone in this folder to report progress")[1] == body
+    assert confirm(app, body) == (200, sent)
+    assert set(app.history.session_api.pending_counts()) == expected
+
+
+def test_recipient_change_after_plan_blocks_confirm(app, monkeypatch):  # noqa: F811
+    enroll(app.history, "one", "a")
+    enroll(app.history, "two", "a")
+    model(monkeypatch, plan("folder", "a"))
+    body = ask(app)[1]
+    app.history.set_meta("two", group="ab")
+    assert confirm(app, body)[0] == 409
+    assert app.history.session_api.pending_counts() == {}
 
 
 @pytest.mark.parametrize(
@@ -162,7 +206,10 @@ def test_empty_folder_needs_no_model_and_stopped_agents_can_receive(app, monkeyp
     assert prompts == []
     enroll(app.history, "one", "a")
     app.history.set_state("one", "stopped")
-    assert ask(app)[0] == 200
+    status, body = ask(app)
+    assert status == 200
+    assert app.history.session_api.pending_counts() == {}
+    assert confirm(app, body)[0] == 200
     assert app.history.session_api.pending_counts() == {"one": 1}
 
 
@@ -195,25 +242,25 @@ def test_changes_during_inference(app, monkeypatch, change):  # noqa: F811
     monkeypatch.setattr(app, "_fleet_ask", handler)
     monkeypatch.setattr("duckterm.server.summarize", summarize)
     assert ask(app)[0] == (200 if change == "state" else 409)
-    if change != "state":
-        assert app.history.session_api.pending_counts() == {}
+    assert app.history.session_api.pending_counts() == {}
 
 
 def test_history_failure_and_changed_plan_cannot_duplicate_send(app, monkeypatch):  # noqa: F811
     enroll(app.history, "one", "a")
     enroll(app.history, "two", "a")
     model(monkeypatch, plan())
+    direct = ask(app)[1]
+    model(monkeypatch, plan("folder", "a"))
+    everyone = ask(app)[1]
     append = app.history.folder_chats.append
     monkeypatch.setattr(
         app.history.folder_chats,
         "append",
         lambda *a, **kw: (_ for _ in ()).throw(ValueError("write failed")),
     )
-    assert ask(app)[0] == 409
+    assert confirm(app, direct)[0] == 400
     monkeypatch.setattr(app.history.folder_chats, "append", append)
-    model(monkeypatch, plan("folder", "a"))
-    assert ask(app)[0] == 409
+    assert confirm(app, everyone)[0] == 409
     assert app.history.session_api.pending_counts() == {"one": 1}
-    model(monkeypatch, plan())
-    assert ask(app)[0] == 200
+    assert confirm(app, direct)[0] == 200
     assert app.history.session_api.pending_counts() == {"one": 1}
