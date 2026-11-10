@@ -31,7 +31,9 @@ class FolderMessages:
             ],
         }
 
-    def send(self, folder: str, req: dict[str, Any]) -> dict[str, Any]:
+    def send(
+        self, folder: str, req: dict[str, Any], *, owner_question: str | None = None
+    ) -> dict[str, Any]:
         assign = req.get("assign", False)
         if not isinstance(assign, bool):
             raise APIError(400, "assign must be true or false")
@@ -56,7 +58,8 @@ class FolderMessages:
             old = message.get("dispatch", {})
             if old.get("request_key") == request_key:
                 if (
-                    message["q"] != text
+                    message["q"] != (owner_question if owner_question is not None else text)
+                    or old.get("text", message["q"]) != text
                     or old["target"] != target
                     or old.get("assigned", False) != assign
                 ):
@@ -66,8 +69,8 @@ class FolderMessages:
         scope = folder
         if target["kind"] == "folder":
             scope = target["id"]
-            if scope == folder or not within(scope, folder) or scope not in self.history.folders():
-                raise APIError(400, "Select a subfolder of this folder")
+            if not within(scope, folder) or scope not in self.history.folders():
+                raise APIError(400, "Select this folder or one of its subfolders")
         candidates = broker.broadcast_targets(scope)
         if target["kind"] == "session":
             candidates = [r for r in candidates if r["session_id"] == target["id"]]
@@ -83,6 +86,21 @@ class FolderMessages:
             )
         if not eligible:
             raise APIError(409, "No eligible inbox in this scope")
+        broker_key = f"folder:{identity}:{request_key}"
+        # A failed history write can leave a delivered message without its
+        # receipt. The broker deduplicates retries within each kind; also
+        # reject a changed plan that switches between direct and broadcast.
+        other_table, other_column = (
+            ("session_broadcasts", "request_key")
+            if target["kind"] == "session"
+            else ("session_questions", "idempotency_key")
+        )
+        if self.history._conn.execute(
+            f"SELECT 1 FROM {other_table} WHERE {other_column} = ?", (broker_key,)
+        ).fetchone():
+            raise APIError(
+                409, "This request was already sent to a different target. Check the inbox."
+            )
         # There is no await between scope validation and enqueue. A retry uses
         # the same broker key even if the process stopped before saving JSON.
         recipients = []
@@ -95,7 +113,7 @@ class FolderMessages:
             mid = broker.owner_message(
                 row["session_id"],
                 text,
-                request_key=f"folder:{identity}:{request_key}",
+                request_key=broker_key,
                 question=True,
                 assignment=create_task if assign else None,
             )
@@ -109,9 +127,7 @@ class FolderMessages:
                 }
             ]
         else:
-            result = broker.broadcast(
-                scope, {"text": text, "request_key": f"folder:{identity}:{request_key}"}
-            )
+            result = broker.broadcast(scope, {"text": text, "request_key": broker_key})
             recipients = [
                 {
                     "session_id": r["session_id"],
@@ -126,11 +142,16 @@ class FolderMessages:
         return self.history.folder_chats.append(
             folder,
             identity,
-            text,
+            owner_question if owner_question is not None else text,
             "",
             int(time.time() * 1000),
             {
                 "request_key": request_key,
+                **(
+                    {"owner_question": owner_question, "text": text}
+                    if owner_question is not None
+                    else {}
+                ),
                 "assigned": assign,
                 "target": target,
                 "label": eligible[0]["name"] if target["kind"] == "session" else scope,

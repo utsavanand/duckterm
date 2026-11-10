@@ -70,6 +70,7 @@ from duckterm.core import events, fleet_questions, oracle
 from duckterm.core.approvals import Approval, ApprovalRegistry
 from duckterm.core.backup_jobs import BackupJobs
 from duckterm.core.eventbus import EventBus
+from duckterm.core.folder_intent import parse_intent, recipient_scope, routing_prompt
 from duckterm.core.folder_messages import FolderMessages
 from duckterm.core.orchestrator import Orchestrator, SessionSupervisor
 from duckterm.core.relay import (
@@ -3813,9 +3814,70 @@ class Server:
     async def _fleet_digest(self, row: dict[str, Any], question: str) -> str:
         return await fleet_questions.digest(self, row, question)
 
+    async def _folder_chat_message(
+        self, folder: str, question: str, request_key: str
+    ) -> dict[str, Any] | None:
+        """Interpret only the owner's request, then reuse scoped inbox delivery."""
+        service = FolderMessages(self.history)
+        snapshot = service.recipients(folder)
+        identity, messages = self.history.folder_chats.snapshot(folder)
+        for message in messages:
+            dispatch = message.get("dispatch", {})
+            if dispatch.get("request_key") == request_key:
+                if dispatch.get("owner_question") != question:
+                    raise APIError(409, "request_key already used for different content")
+                return message
+        if not snapshot["sessions"]:
+            return None
+        result = await asyncio.to_thread(
+            summarize, routing_prompt(folder, question, snapshot), tier="fast"
+        )
+        intent = parse_intent(result.text)
+        # Inference yields to folder moves, enrollment changes and new sessions.
+        # Never deliver to a recipient set the model did not see.
+        current = service.recipients(folder)
+        if recipient_scope(current) != recipient_scope(snapshot):
+            raise APIError(409, "Folder recipients changed while interpreting. Please send again.")
+        if intent["action"] == "answer":
+            return None
+        if intent["action"] == "clarify":
+            return self.history.folder_chats.append(
+                folder,
+                identity,
+                question,
+                "Who should receive the message, and what should it say? Name one session or "
+                "subfolder, or say everyone in this folder and its subfolders. Nothing was sent.",
+                int(time.time() * 1000),
+            )
+        target = intent["target"]
+        candidates = snapshot["sessions"]
+        if target["kind"] == "session":
+            candidates = [r for r in candidates if r["session_id"] == target["id"]]
+        elif target["id"] != folder:
+            candidates = next(
+                (r["recipients"] for r in snapshot["folders"] if r["path"] == target["id"]), []
+            )
+        if not candidates:
+            raise APIError(409, "No matching recipient in this folder. Nothing was sent.")
+        # A plain-language 'everyone' must not silently omit unenrolled agents.
+        if any(not r["eligible"] for r in candidates):
+            raise APIError(
+                409, "Some recipients have no inbox. Use @ to review recipients. Nothing was sent."
+            )
+        return service.send(
+            folder,
+            {
+                "identity": identity,
+                "target": target,
+                "text": intent["text"],
+                "request_key": request_key,
+                "recipients": [r["session_id"] for r in candidates],
+            },
+            owner_question=question,
+        )
+
     async def _fleet_ask(self, writer: asyncio.StreamWriter, body: bytes) -> None:
-        """Answer a question about the currently running sessions: build a
-        digest of each, ask the configured summarizer backend once."""
+        """Route explicit folder messages; answer other questions from session digests."""
         try:
             req: Any = json.loads(body or b"{}")
         except json.JSONDecodeError:
@@ -3841,6 +3903,33 @@ class Server:
         if not question:
             await _write_json(writer, 400, {"error": "question required"})
             return
+        if folder is not None and "request_key" in req:
+            key = req["request_key"]
+            if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,59}", key):
+                await _write_json(writer, 400, {"error": "Invalid request_key"})
+                return
+            try:
+                exchange = await self._folder_chat_message(folder, question, "chat:" + key)
+            except APIError as exc:
+                await _write_json(writer, exc.status, {"error": str(exc)})
+                return
+            except ValueError as exc:
+                await _write_json(writer, 409, {"error": str(exc)})
+                return
+            if exchange is not None:
+                await _write_json(
+                    writer,
+                    200,
+                    {
+                        "answer": exchange["a"],
+                        "exchange": exchange,
+                        "sessions": [
+                            r["session_id"]
+                            for r in exchange.get("dispatch", {}).get("recipients", [])
+                        ],
+                    },
+                )
+                return
         running = [
             r
             for r in self.history.sessions()
@@ -3890,6 +3979,12 @@ class Server:
             prior if folder is not None else oracle.load_chat(chat_path),
             folder,
         )
+        if folder is not None:
+            prompt = (
+                "The folder chat supports explicit requests to message a named session, a "
+                "subfolder, or everyone in this folder and its subfolders. Those requests "
+                "are handled by a separate delivery step; this turn is only an answer. "
+            ) + prompt
         prepared = fleet_questions.Prepared(
             prompt, tuple(str(row.get("session_key")) for row in running)
         )
