@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from duckterm import memory_assembly, memory_contract, memory_summary_input
+from duckterm.core import memory_folding
 from duckterm.core.session_api import APIError
 
 RECENT_BYTES = 16000
@@ -114,11 +115,12 @@ def assemble(
             else []
         ),
     }
+    newest = memory_folding.furthest(leaves)
     handoff: dict[str, Any] = {
         "method": "independent_spans",
         "summary_state": "partial" if missing else "current",
-        "summary_revision_id": leaves[-1]["id"] if leaves else None,
-        "summary_generated_at": leaves[-1].get("created_at") if leaves else None,
+        "summary_revision_id": newest["id"] if newest else None,
+        "summary_generated_at": newest.get("created_at") if newest else None,
         "available_records": len(rows),
         "eligible_records": eligible_count,
         "reference_only_records": len(rows) - eligible_count,

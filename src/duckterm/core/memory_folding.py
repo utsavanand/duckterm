@@ -53,6 +53,17 @@ def span_position(row: dict[str, Any]) -> int | None:
     return sum(ends) if ends else None
 
 
+def furthest(leaves: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The leaf furthest along the conversation; save order only breaks ties.
+
+    Spans written in parallel are saved in completion order, so the last saved
+    leaf can be an earlier span (it became the published summary, 2026-11-07).
+    """
+    if not leaves:
+        return None
+    return max(enumerate(leaves), key=lambda pair: (span_position(pair[1]) or 0, pair[0]))[1]
+
+
 def active(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Legacy cumulative rows never acquire inferred span boundaries.
 

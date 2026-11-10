@@ -512,3 +512,16 @@ def test_a_rejected_fold_skips_its_group_and_the_pass_folds_the_next(memory_rig,
         assert leaves == ids[:10] + ids[20:] and len(heads) == 51
 
     asyncio.run(run())
+
+
+def test_furthest_leaf_follows_conversation_order_not_save_order():
+    rows = [
+        {
+            "id": str(end),
+            "span": "incremental",
+            "span_input": {"next_boundary": {"sources": {"conversation": {"count": end}}}},
+        }
+        for end in (79, 102, 40)
+    ]
+    assert folding.furthest(rows)["id"] == "102"
+    assert folding.furthest([]) is None
