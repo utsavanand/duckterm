@@ -77,7 +77,9 @@ public struct PairStatus: Decodable {
     public let hostID: String
     public let capabilities: [String]?
     public let apiVersion: Int?
-    enum CodingKeys: String, CodingKey { case id, status, capabilities; case hostID = "host_id", apiVersion = "api_version" }
+    public let rePair: Bool?
+    public let authorizationRevision: Int?
+    enum CodingKeys: String, CodingKey { case id, status, capabilities; case hostID = "host_id", apiVersion = "api_version", rePair = "re_pair", authorizationRevision = "authorization_revision" }
 }
 public struct AgentStatus: Decodable, Identifiable, Equatable {
     public let id: String
@@ -121,14 +123,22 @@ public struct HostSnapshot: Decodable {
     public let notificationDelivery: String
     public let features: [String]?
     public let capabilities: [String]?
+    public let analysis: AnalysisAccess?
+    public let authorizationRevision: Int?
+    public var supportsAnalysis: Bool { version == 2 && features?.contains("analysis_jobs") == true }
+    public func allowsAnalysis(_ scope: AnalysisScope) -> Bool {
+        supportsAnalysis && capabilities?.contains(scope.capability) == true &&
+            (scope == .oracle ? analysis?.oracleQuestions == true : analysis?.folderQuestions == true)
+    }
     public var supportsConversations: Bool { version == 2 && features?.contains("conversations") == true }
     public func allows(_ capability: String) -> Bool { supportsConversations && capabilities?.contains(capability) == true }
     enum CodingKeys: String, CodingKey {
-        case version, sessions, folders, truncated, cursor, reset, notices, features, capabilities
-        case hostID = "host_id", generatedAt = "generated_at", readOnly = "read_only", notificationDelivery = "notification_delivery"
+        case version, sessions, folders, truncated, cursor, reset, notices, features, capabilities, analysis
+        case hostID = "host_id", generatedAt = "generated_at", readOnly = "read_only", notificationDelivery = "notification_delivery", authorizationRevision = "authorization_revision"
     }
     public func validate(hostID expected: String) throws {
         guard [1, 2].contains(version), hostID == expected, readOnly,
+              authorizationRevision.map({ $0 >= 0 }) ?? true,
               sessions.count <= 1000, folders.count <= 1000, notices.count <= 500,
               Set(sessions.map(\.id)).count == sessions.count,
               notices.allSatisfy({ ["attention", "turn_finished"].contains($0.kind) }) else { throw DuckyError.invalidResponse }

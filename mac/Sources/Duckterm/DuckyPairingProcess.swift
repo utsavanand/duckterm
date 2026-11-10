@@ -86,7 +86,7 @@ final class DuckyPairingProcess: DuckyPairingTransport {
         guard action == "cancel" || (["approve", "deny"].contains(action) && deviceID?.range(of: "^[a-f0-9]{32}\\z", options: .regularExpression) != nil) else { throw DuckyPairingEvent.Failure.invalid }
         if let capabilities {
             guard action == "approve", Set(capabilities).count == capabilities.count,
-                  Set(capabilities).isSubset(of: DuckyPairingModel.conversationCapabilities) else { throw DuckyPairingEvent.Failure.invalid }
+                  Set(capabilities).isSubset(of: DuckyPairingModel.knownCapabilities) else { throw DuckyPairingEvent.Failure.invalid }
             body["capabilities"] = capabilities
         }
         var data = try JSONSerialization.data(withJSONObject: body)

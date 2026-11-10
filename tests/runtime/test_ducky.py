@@ -25,6 +25,7 @@ def visible_session_fixture(server, monkeypatch, keys):
     visible = set(keys)
     history = server.history
     session, sessions, folders = history.session, history.sessions, history.folders
+    analysis_sessions = history.analysis_sessions
 
     def view(row):
         return {**row, "test": False} if row and row["session_key"] in visible else row
@@ -42,6 +43,11 @@ def visible_session_fixture(server, monkeypatch, keys):
 
     monkeypatch.setattr(history, "session", lambda key: view(session(key)))
     monkeypatch.setattr(history, "sessions", lambda: [view(row) for row in sessions()])
+
+    def analysis_view(*args, **kwargs):
+        return [view(row) for row in analysis_sessions(*args, **{**kwargs, "include_test": True})]
+
+    monkeypatch.setattr(history, "analysis_sessions", analysis_view)
     monkeypatch.setattr(history, "folders", folder_view)
     return visible
 

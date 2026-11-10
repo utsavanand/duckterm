@@ -5,18 +5,36 @@ struct DuckyPairingDevice: Decodable, Equatable {
     let name: String
     let expiresAt: Int?
     let capabilities: [String]?
-    init(id: String, name: String, expiresAt: Int?, capabilities: [String]? = nil) {
+    let rePair: Bool?
+    let authorizationRevision: Int?
+    init(id: String, name: String, expiresAt: Int?, capabilities: [String]? = nil,
+         rePair: Bool? = nil, authorizationRevision: Int? = nil) {
         self.id = id; self.name = name; self.expiresAt = expiresAt; self.capabilities = capabilities
+        self.rePair = rePair; self.authorizationRevision = authorizationRevision
     }
-    enum CodingKeys: String, CodingKey { case id, name, capabilities; case expiresAt = "expires_at" }
+    enum CodingKeys: String, CodingKey {
+        case id, name, capabilities; case expiresAt = "expires_at", rePair = "re_pair", authorizationRevision = "authorization_revision"
+    }
     var grantedCapabilities: Set<String> { Set(capabilities ?? ["status:read"]) }
     var valid: Bool {
         id.range(of: "^[a-f0-9]{32}\\z", options: .regularExpression) != nil &&
             !name.isEmpty && name.count <= 80 && name.unicodeScalars.allSatisfy {
                 ![.control, .format, .lineSeparator, .paragraphSeparator].contains($0.properties.generalCategory)
             } && (capabilities == nil || (Set(capabilities!).count == capabilities!.count &&
-                grantedCapabilities.isSubset(of: DuckyPairingModel.conversationCapabilities)))
+                grantedCapabilities.isSubset(of: DuckyPairingModel.knownCapabilities))) &&
+            (authorizationRevision == nil || (authorizationRevision! >= 0 && authorizationRevision! < Int.max)) &&
+            (rePair != true || (capabilities != nil && authorizationRevision != nil))
     }
+}
+
+struct DuckyPairingAvailability: Equatable {
+    let folder: Bool
+    let oracle: Bool
+    init(edition: DesktopEdition?) {
+        folder = ["code", "full"].contains(edition?.id ?? "") && edition?.includes("folder_chat") == true
+        oracle = edition?.id == "full" && edition?.includes("oracle") == true
+    }
+    var showsQuestions: Bool { folder || oracle }
 }
 
 struct DuckyPairingInvitation: Equatable {
@@ -109,18 +127,24 @@ extension DuckyPairingTransport {
 @MainActor
 final class DuckyPairingModel {
     nonisolated static let conversationCapabilities: Set<String> = ["status:read", "conversation:read", "session:send"]
+    nonisolated static let knownCapabilities = conversationCapabilities.union(["analysis:folder", "analysis:oracle"])
     enum State: Equatable {
         case opening, invitation(DuckyPairingInvitation), pending(DuckyPairingDevice)
         case approved(DuckyPairingDevice), denied, expired(pending: Bool), error(String), closed
     }
     private(set) var state: State = .opening
     private(set) var busy = false
-    private(set) var allowsConversations = false
+    private var selectedCapabilities: Set<String> = ["status:read"]
+    var allowsConversations: Bool { !selectedCapabilities.isDisjoint(with: ["conversation:read", "session:send"]) }
+    var allowsFolderQuestions: Bool { selectedCapabilities.contains("analysis:folder") }
+    var allowsOracleQuestions: Bool { selectedCapabilities.contains("analysis:oracle") }
+    var availability: DuckyPairingAvailability { .init(edition: verifiedEdition()) }
     var onChange: (() -> Void)?
     private let makeTransport: () -> DuckyPairingTransport
     private let authenticate: (String) async -> Bool
     private let cancelAuthentication: () -> Void
     private let now: () -> Date
+    private let verifiedEdition: () -> DesktopEdition?
     private var transport: DuckyPairingTransport?
     private var authentication: Task<Void, Never>?
     private var generation = 0
@@ -132,16 +156,18 @@ final class DuckyPairingModel {
 
     init(makeTransport: @escaping () -> DuckyPairingTransport,
          authenticate: @escaping (String) async -> Bool,
-         cancelAuthentication: @escaping () -> Void = {}, now: @escaping () -> Date = Date.init) {
+         cancelAuthentication: @escaping () -> Void = {}, now: @escaping () -> Date = Date.init,
+         verifiedEdition: @escaping () -> DesktopEdition? = { nil }) {
         self.makeTransport = makeTransport; self.authenticate = authenticate
         self.cancelAuthentication = cancelAuthentication; self.now = now
+        self.verifiedEdition = verifiedEdition
     }
 
     func start() {
         stopTransport()
         generation += 1
         let current = generation
-        state = .opening; busy = false; allowsConversations = false; decision = nil; decisionCapabilities = nil
+        state = .opening; busy = false; selectedCapabilities = ["status:read"]; decision = nil; decisionCapabilities = nil
         decisionSentAt = nil; invitationExpiry = nil; startedAt = now()
         let next = makeTransport()
         transport = next
@@ -167,12 +193,16 @@ final class DuckyPairingModel {
             invitationExpiry = invitation.expiresAt
             state = .invitation(invitation)
         case .pending(let device):
-            guard case .invitation = state, let expiry = device.expiresAt,
+            guard case .invitation = state, device.valid, let expiry = device.expiresAt,
                   let invitationExpiry, expiry <= invitationExpiry else { fail("pairing_failed"); return }
             state = .pending(device)
+            selectedCapabilities = device.rePair == true ? device.grantedCapabilities : ["status:read"]
+            if !availability.folder { selectedCapabilities.remove("analysis:folder") }
+            if !availability.oracle { selectedCapabilities.remove("analysis:oracle") }
         case .approved(let device):
             guard case .pending(let expected) = state, decision == "approve", expected.id == device.id,
-                  expected.name == device.name, device.grantedCapabilities == decisionCapabilities else { fail("approval_unavailable"); return }
+                  expected.name == device.name, device.valid, device.grantedCapabilities == decisionCapabilities,
+                  expected.authorizationRevision == nil || device.authorizationRevision == expected.authorizationRevision! + 1 else { fail("approval_unavailable"); return }
             state = .approved(device); busy = false; stopTransport()
         case .denied(let device):
             guard case .pending(let expected) = state, decision == "deny", expected.id == device.id else { fail("approval_unavailable"); return }
@@ -193,15 +223,21 @@ final class DuckyPairingModel {
         guard case .pending(let device) = state, !busy, valid(device) else { tick(); return }
         busy = true; onChange?()
         let current = generation
-        let scopes: Set<String> = allowsConversations ? Self.conversationCapabilities : ["status:read"]
-        let reason = allowsConversations ?
-            "allow \(device.name) to read conversations and send messages to your DuckTerm agents" :
-            "allow \(device.name) to view your DuckTerm agents"
+        let edition = verifiedEdition()
+        guard (!allowsFolderQuestions || availability.folder), (!allowsOracleQuestions || availability.oracle) else { fail("approval_unavailable"); return }
+        let scopes = selectedCapabilities.union(["status:read"])
+        var words = ["view status"]
+        if allowsConversations { words.append("use conversations") }
+        if allowsFolderQuestions { words.append("ask folder questions") }
+        if allowsOracleQuestions { words.append("ask Oracle questions") }
+        let description = words.count == 1 ? words[0] : words.dropLast().joined(separator: ", ") + " and " + words.last!
+        let reason = "allow \(device.name) to \(description)"
         authentication = Task { [weak self] in
             guard let self else { return }
             let accepted = await self.authenticate(reason)
             guard self.generation == current, self.state == .pending(device), self.decision == nil else { return }
             self.authentication = nil
+            guard self.verifiedEdition() == edition else { self.fail("approval_unavailable"); return }
             guard self.valid(device) else { self.tick(); return }
             guard accepted, !Task.isCancelled else { self.busy = false; self.onChange?(); return }
             self.decision = "approve"; self.decisionCapabilities = scopes; self.decisionSentAt = self.now()
@@ -215,7 +251,20 @@ final class DuckyPairingModel {
 
     func setAllowsConversations(_ allowed: Bool) {
         guard case .pending = state, !busy, decision == nil else { return }
-        allowsConversations = allowed
+        selectedCapabilities.subtract(["conversation:read", "session:send"])
+        if allowed { selectedCapabilities.formUnion(Self.conversationCapabilities) }
+        onChange?()
+    }
+
+    func setAllowsFolderQuestions(_ allowed: Bool) {
+        setAnalysis("analysis:folder", allowed: allowed, available: availability.folder)
+    }
+    func setAllowsOracleQuestions(_ allowed: Bool) {
+        setAnalysis("analysis:oracle", allowed: allowed, available: availability.oracle)
+    }
+    private func setAnalysis(_ scope: String, allowed: Bool, available: Bool) {
+        guard case .pending = state, !busy, decision == nil, !allowed || available else { return }
+        if allowed { selectedCapabilities.insert(scope) } else { selectedCapabilities.remove(scope) }
         onChange?()
     }
 

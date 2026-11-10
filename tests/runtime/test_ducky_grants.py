@@ -32,14 +32,23 @@ def test_legacy_and_default_approvals_keep_only_status_permission(phone):
     assert public["api_version"] == 2
     assert "token_hash" not in public and token not in json.dumps(public)
     assert grants.devices()[0]["capabilities"] == ["status:read"]
-    for scope in ("conversation:read", "session:send"):
+    for scope in ("conversation:read", "session:send", "analysis:folder", "analysis:oracle"):
         with pytest.raises(Denied):
             grants.authenticated_by_id(device["id"], scope)
     assert grants.authenticated_by_id(device["id"], "status:read")["id"] == device["id"]
 
 
 @pytest.mark.parametrize(
-    "scopes", [[], ["conversation:read"], ["session:send"], ["conversation:read", "session:send"]]
+    "scopes",
+    [
+        [],
+        ["conversation:read"],
+        ["session:send"],
+        ["conversation:read", "session:send"],
+        ["analysis:folder"],
+        ["analysis:oracle"],
+        ["analysis:folder", "analysis:oracle"],
+    ],
 )
 @pytest.mark.parametrize("by_invitation", [False, True])
 def test_only_explicit_independent_scopes_are_approved(phone, scopes, by_invitation):
@@ -50,7 +59,7 @@ def test_only_explicit_independent_scopes_are_approved(phone, scopes, by_invitat
         grants.approve(device["id"], capabilities=scopes)
     expected = sorted({"status:read", *scopes})
     assert grants.authenticate(token)["capabilities"] == expected
-    for scope in ("conversation:read", "session:send"):
+    for scope in ("conversation:read", "session:send", "analysis:folder", "analysis:oracle"):
         if scope in scopes:
             public = grants.authenticated_by_id(device["id"], scope, host_id=device["host_id"])
             assert public["capabilities"] == expected
@@ -181,3 +190,129 @@ def test_expired_or_unrelated_invitation_cannot_grant_capabilities(phone):
         )
     assert grants.path.read_bytes() == before
     assert grants.authenticate(token, pending=True)["capabilities"] == []
+
+
+@pytest.mark.parametrize("finish", ["cancel", "expire", "approve"])
+def test_repair_keeps_existing_authority_until_exact_approval(phone, finish):
+    grants, _, token, device = phone
+    grants.approve(device["id"], capabilities=["conversation:read"])
+    initial = json.loads(grants.path.read_text())["devices"][device["id"]]
+    invitation = grants.invite()
+    claim = grants.claim(invitation["invite"], token, "A different caller-provided name")
+    assert claim == {
+        "id": device["id"],
+        "host_id": device["host_id"],
+        "status": "pending",
+        "re_pair": True,
+        "authorization_revision": 1,
+    }
+    assert json.loads(grants.path.read_text())["devices"][device["id"]] == initial
+    pending = grants.pending_invitation(invitation["invite"])
+    assert pending["name"] == "Fixture phone"
+    assert pending["capabilities"] == ["conversation:read", "status:read"]
+    assert grants.authenticate(token, pending=True)["status"] == "pending"
+    assert grants.authenticate(token)["capabilities"] == ["conversation:read", "status:read"]
+    if finish == "approve":
+        grants.approve_invitation(
+            invitation["invite"],
+            device["id"],
+            capabilities=["conversation:read", "analysis:folder"],
+            expected=pending,
+        )
+        public = grants.authenticate(token, pending=True)
+        assert public["status"] == "active" and public["authorization_revision"] == 2
+        assert public["capabilities"] == ["analysis:folder", "conversation:read", "status:read"]
+        with pytest.raises(Denied):
+            grants.approve_invitation(
+                invitation["invite"], device["id"], capabilities=["analysis:oracle"]
+            )
+    else:
+        if finish == "cancel":
+            grants.cancel_invitation(invitation["invite"])
+        else:
+            assert (
+                grants.pending_invitation(invitation["invite"], now=invitation["expires_at"])
+                is None
+            )
+        public = grants.authenticate(token, pending=True, now=invitation["expires_at"])
+        assert public["status"] == "active" and public["authorization_revision"] == 1
+        assert public["capabilities"] == ["conversation:read", "status:read"]
+
+
+def test_repair_never_matches_names_and_never_permits_two_concurrent_ceremonies(phone):
+    grants, _, token, device = phone
+    grants.approve(device["id"], capabilities=["analysis:oracle"])
+    other_invite = grants.invite()
+    same_name = grants.claim(other_invite["invite"], secrets.token_urlsafe(32), "Fixture phone")
+    assert same_name["id"] != device["id"]
+    assert "re_pair" not in grants.pending_invitation(other_invite["invite"])
+    first, second = grants.invite(), grants.invite()
+    grants.claim(first["invite"], token, "Fixture phone")
+    before = grants.path.read_bytes()
+    with pytest.raises(Denied):
+        grants.claim(second["invite"], token, "Fixture phone")
+    assert grants.path.read_bytes() == before
+    # Retrying the same request is idempotent and still awaiting Mac approval.
+    assert grants.claim(first["invite"], token, "Fixture phone")["status"] == "pending"
+
+
+@pytest.mark.parametrize("change", ["revoke", "name", "capabilities", "revision", "credential"])
+def test_repair_cannot_approve_if_existing_identity_or_authority_changed(phone, change):
+    grants, _, token, device = phone
+    grants.approve(device["id"], capabilities=["conversation:read"])
+    invitation = grants.invite()
+    grants.claim(invitation["invite"], token, "Fixture phone")
+    offered = grants.pending_invitation(invitation["invite"])
+    if change == "revoke":
+        grants.revoke(device["id"])
+    else:
+        with grants.locked(write=True) as state:
+            row = state["devices"][device["id"]]
+            field, replacement = {
+                "name": ("name", "Replacement"),
+                "capabilities": ("capabilities", ["status:read"]),
+                "revision": ("authorization_revision", 2),
+                "credential": ("token_hash", "f" * 64),
+            }[change]
+            row[field] = replacement
+    before = grants.path.read_bytes()
+    with pytest.raises(Denied):
+        grants.approve_invitation(
+            invitation["invite"], device["id"], capabilities=["analysis:oracle"], expected=offered
+        )
+    assert grants.path.read_bytes() == before
+    grants.cancel_invitation(invitation["invite"])
+    assert (device["id"] in json.loads(grants.path.read_text())["devices"]) == (change != "revoke")
+
+
+def test_explicit_no_scope_repair_stays_status_only_and_revision_advances(phone):
+    grants, _, token, device = phone
+    grants.approve(device["id"], capabilities=["analysis:folder", "analysis:oracle"])
+    invitation = grants.invite()
+    grants.claim(invitation["invite"], token, "Fixture phone")
+    grants.approve_invitation(invitation["invite"], device["id"])
+    public = grants.authenticate(token)
+    assert public["authorization_revision"] == 2
+    assert public["capabilities"] == ["status:read"]
+
+
+def test_legacy_revision_zero_is_read_without_upgrade_and_guard_failure_is_atomic(phone):
+    grants, invitation, token, device = phone
+    before = grants.path.read_bytes()
+
+    def reject():
+        raise Denied("Edition changed")
+
+    with pytest.raises(Denied):
+        grants.approve_invitation(
+            invitation["invite"], device["id"], capabilities=["analysis:folder"], validate=reject
+        )
+    assert grants.path.read_bytes() == before
+    grants.approve(device["id"])
+    with grants.locked(write=True) as state:
+        state["devices"][device["id"]].pop("authorization_revision")
+    public = grants.authenticated_by_id(device["id"], "status:read")
+    assert public["authorization_revision"] == 0
+    assert (
+        "authorization_revision" not in json.loads(grants.path.read_text())["devices"][device["id"]]
+    )

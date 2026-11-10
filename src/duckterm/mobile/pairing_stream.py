@@ -13,13 +13,16 @@ import json
 import os
 import select
 import signal
+import stat
 import subprocess
 import sys
 import time
 from collections.abc import Iterator
+from functools import partial
 from pathlib import Path
 from typing import Any
 
+from duckterm.editions import PRESETS
 from duckterm.mobile.cli import invitation_link, invitation_payload
 from duckterm.mobile.grants import Denied, Grants, capabilities
 from duckterm.mobile.pairing import pairing_lock, prepare, wait_for_listener
@@ -31,6 +34,32 @@ class CeremonyError(ValueError):
 
 def emit(state: str, **fields: Any) -> None:
     print(json.dumps({"version": 1, "state": state, **fields}), flush=True)
+
+
+def validate_analysis_scopes(directory: Path, approved: list[str]) -> None:
+    """Only this listener's persisted edition can authorize analysis; no Full fallback."""
+    analysis = set(approved) & {"analysis:folder", "analysis:oracle"}
+    if not analysis:
+        return
+    try:
+        fd = os.open(directory / "edition.json", os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd) as stream:
+            info = os.fstat(stream.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_size > 4096:
+                raise ValueError("Invalid edition file")
+            raw = stream.read(4097)
+            if len(raw) > 4096:
+                raise ValueError("Invalid edition file")
+            value = json.loads(raw)
+        name = value.get("id") if isinstance(value, dict) else None
+        edition = PRESETS.get(name) if isinstance(name, str) else None
+        if edition is None or any(
+            not edition.includes("folder_chat" if scope == "analysis:folder" else "oracle")
+            for scope in analysis
+        ):
+            raise ValueError("Unsupported analysis permission")
+    except (OSError, ValueError, TypeError, RecursionError) as exc:
+        raise Denied("Analysis permission is unavailable for this edition") from exc
 
 
 class Commands:
@@ -120,7 +149,11 @@ def ceremony(directory: Path, incoming: Commands) -> int:
                 emit("expired", phase="pending" if offered else "invitation")
                 return 1
             pending = grants.pending_invitation(payload["invite"])
-            if offered and (not pending or pending["id"] != offered["id"]):
+            if offered and (
+                not pending
+                or offered
+                != {**pending, "expires_at": min(pending["expires_at"], payload["expires_at"])}
+            ):
                 raise CeremonyError("approval_unavailable")
             if pending and not offered:
                 offered = {
@@ -142,13 +175,20 @@ def ceremony(directory: Path, incoming: Commands) -> int:
             # Re-read after input: a device may have been revoked while the Mac
             # authenticated its owner. Approval also rechecks under the store lock.
             current = grants.pending_invitation(payload["invite"])
-            if not current or current["id"] != offered["id"]:
+            if not current or offered != {
+                **current,
+                "expires_at": min(current["expires_at"], payload["expires_at"]),
+            }:
                 raise CeremonyError("approval_unavailable")
             if command["action"] == "approve":
                 try:
                     approved = capabilities(command.get("capabilities"), strict=True)
                     grants.approve_invitation(
-                        payload["invite"], offered["id"], capabilities=approved
+                        payload["invite"],
+                        offered["id"],
+                        capabilities=approved,
+                        expected=current,
+                        validate=partial(validate_analysis_scopes, directory, approved),
                     )
                 except Denied as exc:
                     raise CeremonyError("approval_unavailable") from exc
@@ -158,6 +198,7 @@ def ceremony(directory: Path, incoming: Commands) -> int:
                         "id": offered["id"],
                         "name": offered["name"],
                         "capabilities": approved,
+                        "authorization_revision": current.get("authorization_revision", 0) + 1,
                     },
                 )
             else:
