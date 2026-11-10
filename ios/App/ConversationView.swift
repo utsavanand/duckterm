@@ -59,9 +59,7 @@ struct ConversationView: View {
     private var contentRevision: [String] {
         var revision: [String] = [model.selectedSessionID ?? "", model.conversation == nil ? "loading" : "loaded"]
         for message in model.conversation?.messages ?? [] { revision.append(contentsOf: [message.id, message.text]) }
-        for receipt in model.conversation?.receipts ?? [] { revision.append(contentsOf: [receipt.id, receipt.status]) }
-        if case .acknowledged(let receipt) = model.sendState,
-           model.conversation?.receipts.contains(where: { $0.id == receipt.id }) != true {
+        for receipt in model.conversationReceipts {
             revision.append(contentsOf: [receipt.id, receipt.status, model.messageText(for: receipt) ?? ""])
         }
         return revision
@@ -170,7 +168,7 @@ struct ConversationView: View {
                     Text("·")
                     Text(model.agentActivityLabel)
                         .accessibilityIdentifier("conversation-agent-activity")
-                        .foregroundStyle(live ? ChatColor.accent : ChatColor.warning)
+                        .foregroundStyle(live && model.selectedSession?.state != "waiting" ? ChatColor.accent : ChatColor.warning)
                 }.font(.caption2).foregroundStyle(ChatColor.muted)
             }
             Spacer(minLength: 4)
@@ -257,18 +255,18 @@ struct ConversationView: View {
                 ForEach(conversation.messages) { message in
                     messageView(message).id(message.id).background(frameReader(message.id))
                 }
-                ForEach(conversation.receipts) { receipt in receiptView(receipt) }
-                if conversation.messages.isEmpty && conversation.receipts.isEmpty { note("No messages yet") }
+                if conversation.messages.isEmpty && model.conversationReceipts.isEmpty { note("No messages yet") }
+            } else if !live || model.conversationError != nil {
+                note("Conversation unavailable.")
+                    .accessibilityIdentifier("conversation-unavailable")
             } else if model.selectedSession?.canRead != true {
                 note(["codex", "claude-code"].contains(model.selectedSession?.runtime ?? "") ?
                      "No conversation yet" : "Conversation unavailable for this session.")
-            } else if model.conversationError == nil {
+            } else if model.conversationIsLoading {
                 ProgressView("Loading conversation…").tint(ChatColor.accent)
+                    .accessibilityIdentifier("conversation-loading")
             }
-            if case .acknowledged(let receipt) = model.sendState,
-               model.conversation?.receipts.contains(where: { $0.id == receipt.id }) != true {
-                receiptView(receipt)
-            }
+            ForEach(model.conversationReceipts) { receipt in receiptView(receipt) }
             if let session = model.selectedSession, !session.isActive {
                 note("Resume this session on your Mac to send a message.")
             }
@@ -310,7 +308,9 @@ struct ConversationView: View {
 
     private func receiptView(_ receipt: MessageReceipt) -> some View {
         VStack(alignment: .trailing, spacing: 7) {
-            if let text = model.messageText(for: receipt), receipt.status != "delivered" { outgoing(text) }
+            if let text = model.messageText(for: receipt) {
+                outgoing(text).accessibilityIdentifier("conversation-receipt-message:" + receipt.id)
+            }
             Text(model.receiptLabel(receipt)).font(.caption2)
                 .accessibilityIdentifier("conversation-receipt:" + receipt.id)
                 .foregroundStyle(receipt.status == "unknown" ? ChatColor.warning : ChatColor.muted)

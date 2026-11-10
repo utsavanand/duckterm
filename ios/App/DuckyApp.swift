@@ -68,11 +68,33 @@ private enum StatusUIFixture {
             makeTransport: { _ in client }, pause: { try await Task.sleep(nanoseconds: 60_000_000_000) },
             conversationPause: { try await Task.sleep(nanoseconds: 60_000_000_000) },
             expansionStore: FolderExpansionStore(defaults: defaults))
+        client.afterFirstSnapshot = { [weak model] in
+            guard client.mode.hasPrefix("no-cache-offline") else { return }
+            Task { @MainActor in
+                // Scene startup can cancel an early read. Inject the outage only
+                // after a successful snapshot has actually reached the model.
+                for _ in 0..<1000 {
+                    guard let model else { return }
+                    if model.snapshot != nil { break }
+                    try? await Task.sleep(nanoseconds: 10_000_000)
+                }
+                guard let model, model.snapshot != nil else { return }
+                client.failSnapshots = true
+                // The snapshot can be visible while its refresh is still
+                // finishing. Wait through that coalesced read, then request
+                // the failing read rather than leaving the fixture live.
+                for _ in 0..<100 {
+                    await model.refresh()
+                    if model.phase == .stale { return }
+                    try? await Task.sleep(nanoseconds: 10_000_000)
+                }
+            }
+        }
         client.afterFirstRead = { [weak model] in
             Task { @MainActor in
                 try? await Task.sleep(nanoseconds: 300_000_000)
                 if client.mode == "reading" { await model?.refreshConversation() }
-                else if ["failed", "reconnecting"].contains(client.mode) {
+                else if ["failed", "reconnecting", "orphan-delivered"].contains(client.mode) {
                     await model?.refresh()
                     if client.mode == "reconnecting" { await model?.retryConnection() }
                 }
@@ -84,7 +106,9 @@ private enum StatusUIFixture {
 private final class StatusUIFixtureTransport: DuckyTransport {
     let mode = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--ducky-status-mode=") })?.components(separatedBy: "=").last ?? "waiting"
     var afterFirstRead: (() -> Void)?
-    private var reads = 0, failedReads = 0
+    var afterFirstSnapshot: (() -> Void)?
+    var failSnapshots = false
+    private var reads = 0, failedReads = 0, snapshots = 0
     private let created = Int64(Date().timeIntervalSince1970 * 1000) - 120_000
     private var newReceipts: [MessageReceipt] = []
     func claim(_ invitation: Invitation, name: String) async throws -> PairStatus { throw DuckyError.unavailable(403) }
@@ -92,25 +116,35 @@ private final class StatusUIFixtureTransport: DuckyTransport {
         try ChatUIFixture.decode(["id": "status-fixture-device", "status": "active", "host_id": StatusUIFixture.hostID])
     }
     func snapshot(cursor: String?) async throws -> HostSnapshot {
-        if reads > 0 && ["failed", "reconnecting"].contains(mode) {
+        snapshots += 1
+        if failSnapshots { throw URLError(.timedOut) }
+        if reads > 0 && ["failed", "reconnecting", "orphan-delivered"].contains(mode) {
             failedReads += 1
             if mode == "reconnecting" && failedReads > 1 { try await Task.sleep(nanoseconds: 8_000_000_000) }
             throw URLError(.timedOut)
         }
+        if snapshots == 1 { afterFirstSnapshot?() }
         return try ChatUIFixture.decode(["version": 2, "host_id": StatusUIFixture.hostID, "read_only": true,
             "generated_at": 1, "truncated": false, "reset": false, "notices": [], "notification_delivery": "foreground_refresh",
             "folders": ["Status fixture"], "features": ["conversations"], "capabilities": ["status:read", "conversation:read", "session:send"],
             "sessions": [["id": StatusUIFixture.sessionID, "name": "Status review agent", "folder": "Status fixture", "runtime": "codex",
                 "state": mode == "delivered" ? "idle" : "busy", "observed_at": 1, "test": true,
-                "approval_visibility": "terminal_only", "can_read": true, "can_send": true, "send_context": "status-context"]]])
+                "approval_visibility": "terminal_only", "can_read": mode != "no-cache-offline-unreadable", "can_send": true, "send_context": "status-context"]]])
     }
     func conversation(sessionID: String) async throws -> ConversationSnapshot {
         reads += 1
-        if reads > 1 && mode == "reading" { throw URLError(.timedOut) }
-        let status = ["delivered", "expired"].contains(mode) ? mode : "queued"
+        if mode == "no-cache-read-failure" || (reads > 1 && mode == "reading") { throw URLError(.timedOut) }
+        let status = mode == "orphan-delivered" ? "delivered" : (["delivered", "expired"].contains(mode) ? mode : "queued")
         var receipts: [[String: Any]] = [["request_id": StatusUIFixture.requestID, "session_id": sessionID, "status": status,
             "created_at": created, "updated_at": created + 60_000, "expires_at": created + 900_000,
             "wait_reason": status == "queued" ? "agent_busy" : NSNull(), "text": "Can you share the current release status?"]]
+        if mode == "orphan-delivered" {
+            for (id, text) in [("44444444-4444-4444-8444-444444444444", NSNull() as Any),
+                               ("55555555-5555-4555-8555-555555555555", "" as Any)] {
+                receipts.append(["request_id": id, "session_id": sessionID, "status": "delivered",
+                    "created_at": created, "updated_at": created + 60_000, "text": text])
+            }
+        }
         receipts += newReceipts.map { ["request_id": $0.requestID, "session_id": $0.sessionID, "status": $0.status,
             "created_at": $0.createdAt, "updated_at": $0.updatedAt, "wait_reason": "agent_busy", "text": $0.text ?? ""] }
         let value: ConversationSnapshot = try ChatUIFixture.decode(["version": 1, "host_id": StatusUIFixture.hostID,

@@ -397,8 +397,22 @@ while True: time.sleep(1)
     )
     incoming, outgoing = os.pipe()
     cancelled = threading.Event()
+    clock_started = threading.Event()
+    expired = threading.Event()
     if mode == "timeout":
         monkeypatch.setattr(setup, "INTERACTIVE_TIMEOUT", 0.2)
+
+        def monotonic():
+            value = 1.0 if expired.is_set() else 0.0
+            clock_started.set()
+            return value
+
+        # Start the timeout only after both fixture processes are ready. A
+        # real 200ms deadline can kill the Python PTY wrapper before it execs
+        # this fixture, which tests startup speed instead of group cleanup.
+        monkeypatch.setattr(
+            setup_process, "time", SimpleNamespace(monotonic=monotonic, sleep=time.sleep)
+        )
     errors = []
 
     def work():
@@ -423,6 +437,10 @@ while True: time.sleep(1)
         elif mode == "eof":
             os.close(outgoing)
             outgoing = None
+        elif mode == "timeout":
+            assert clock_started.wait(timeout=3)
+            assert worker.is_alive() and not any(dead(pid) for pid in pids)
+            expired.set()
         worker.join(timeout=4)
         assert not worker.is_alive()
         if mode == "leader_exit":
