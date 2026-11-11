@@ -249,7 +249,8 @@ test("a destination opens the handed-off source revision and evidence, with expl
     await page.getByRole("button", { name: "Open source memory ↗" }).click();
     const memory = page.getByRole("dialog", { name: "Source memory", exact: true });
     await expect(memory.getByText("The exact summary handed over.")).toBeVisible();
-    await memory.getByText("Original decision · conversation").click();
+    await memory.getByText("Evidence: 1 message", { exact: true }).click();
+    await memory.getByText("user · #turn-1", { exact: true }).click();
     await expect(memory.getByText("Original decision: preserve the memory link after closing.")).toBeVisible();
     await expect(memory.getByRole("button", { name: "Checkpoint", exact: true })).toHaveCount(0);
     await page.screenshot({ path: "/tmp/duckterm-linked-memory-evidence.png" });
