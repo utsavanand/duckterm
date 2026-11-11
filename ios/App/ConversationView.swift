@@ -41,7 +41,7 @@ struct ConversationView: View {
     @State private var visibleAnchorY: CGFloat = 0
     @State private var savedOnBack = false
     @State private var measuredViewport = CGSize.zero
-    @StateObject private var dictation = Dictation()
+    @StateObject private var dictation = DictationLifecycle()
     private let bottomID = "conversation-bottom"
 
     init(model: SessionModel, position: Binding<ConversationReadingPosition>,

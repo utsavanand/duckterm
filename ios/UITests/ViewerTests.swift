@@ -581,7 +581,14 @@ final class ConstellationUITests: XCTestCase {
     @MainActor private func tapNode(_ name: String) {
         let item = node(name)
         XCTAssertTrue(item.waitForExistence(timeout: 5), "Missing node: \(name)")
-        expectation(for: NSPredicate(format: "hittable == true"), evaluatedWith: item)
+        var previous = CGRect.null
+        var stableSince = Date()
+        expectation(for: NSPredicate { _, _ in
+            guard item.exists, item.isHittable else { return false }
+            let frame = item.frame
+            if frame != previous { previous = frame; stableSince = Date(); return false }
+            return Date().timeIntervalSince(stableSince) > 0.4
+        }, evaluatedWith: nil)
         waitForExpectations(timeout: 5)
         item.tap()
     }
@@ -594,6 +601,17 @@ final class ConstellationUITests: XCTestCase {
         XCTAssertTrue(element("conversation-composer").waitForExistence(timeout: 5))
         XCTAssertTrue(app.buttons["conversation-close"].isHittable)
         XCTAssertFalse(app.buttons["conversation-back"].exists, "Embedded chat must not replace the map with list navigation")
+    }
+
+    @MainActor
+    func testQAPinchEntersFolderAndReturnsToParent() {
+        openMap()
+        node("DuckTerm").pinch(withScale: 2.0, velocity: 1.0)
+        XCTAssertTrue(node("Features").waitForExistence(timeout: 5))
+        capture("qa-pinch-enter-folder")
+        node("Features").pinch(withScale: 0.5, velocity: -1.0)
+        XCTAssertTrue(node("Research").waitForExistence(timeout: 5))
+        capture("qa-pinch-parent")
     }
 
     @MainActor
@@ -794,7 +812,7 @@ final class AnalysisUITests: XCTestCase {
         XCTAssertTrue(element("analysis-facts").exists)
         XCTAssertGreaterThanOrEqual(element("analysis-scroll").frame.minY, element("analysis-header").frame.maxY - 1)
         capture("analysis-folder-answer-keyboard")
-        element("constellation-back").tap()
+        element("analysis-scroll").swipeDown()
         expectation(for: NSPredicate(format: "exists == false"), evaluatedWith: app.keyboards.firstMatch)
         waitForExpectations(timeout: 5)
         capture("analysis-folder-answer")

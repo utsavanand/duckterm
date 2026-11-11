@@ -446,6 +446,7 @@ def test_tls_pairing_snapshot_and_disable_on_real_socket(app):
             assert (await request("GET", "/v1/snapshot", auth=token))[0] == 403
             await request("GET", "/v2/messages?request_id=secret-id", auth=token)
             await request("GET", "/private-session-name", auth=token)
+            await request("\x1b]0;title\x07", "/v2/snapshot", auth=token)
             log = root / "ducky-bridge.log"
             lines = log.read_text().splitlines()
             assert [line.split()[2:5] for line in lines[:3]] == [
@@ -453,10 +454,12 @@ def test_tls_pairing_snapshot_and_disable_on_real_socket(app):
                 ["GET", "/v1/snapshot", "403"],
                 ["GET", "/v1/snapshot", "200"],
             ]
-            assert lines[-2].split()[1:4] == ["127.0.0.1", "GET", "/v2/messages"]
-            assert lines[-1].split()[2:4] == ["GET", "other"]
+            assert lines[-3].split()[1:4] == ["127.0.0.1", "GET", "/v2/messages"]
+            assert lines[-2].split()[2:4] == ["GET", "unknown"]
+            assert lines[-1].split()[2:4] == ["?", "/v2/snapshot"]
             text = log.read_text()
             assert token not in text and "secret-id" not in text and "private-session" not in text
+            assert "\x1b" not in text and "title" not in text
             assert log.stat().st_mode & 0o777 == 0o600
         finally:
             await bridge.close()

@@ -21,7 +21,7 @@ struct AnalysisConversationView: View {
     @State private var following = true
     @State private var visibleID: String?
     @State private var anchorY: CGFloat = 0
-    @StateObject private var dictation = Dictation()
+    @StateObject private var dictation = DictationLifecycle()
     private let bottom = "analysis-bottom"
     private var title: String { scope == .oracle ? "Oracle" : "Ask \(scope.title)" }
     private var placeholder: String { scope == .oracle ? "Ask Oracle…" : "Ask about \(scope.title)…" }

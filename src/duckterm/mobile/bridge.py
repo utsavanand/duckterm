@@ -35,7 +35,8 @@ if TYPE_CHECKING:
 
 
 LOG_LIMIT = 256 * 1024
-# Only these names reach the log; any other path or method a client sends is recorded as "other".
+# Request lines are unauthenticated text: only these fixed labels reach the log,
+# anything else is "unknown" (path) or "?" (method).
 LOGGED_ROUTES = frozenset(
     {
         "/v1/pair",
@@ -293,8 +294,8 @@ class Bridge:
             async with asyncio.timeout(5):
                 method, target = parse_request_line(await reader.readline())
                 path = urlsplit(target).path
-                logged_path = path if path in LOGGED_ROUTES else "other"
-                logged_method = method if method in {"GET", "POST"} else "other"
+                logged_path = path if path in LOGGED_ROUTES else "unknown"
+                logged_method = method if method in {"GET", "POST"} else "?"
                 if not target.startswith("/") or len(target) > 2048:
                     raise ValueError("Invalid target")
                 headers = await read_headers(reader)
