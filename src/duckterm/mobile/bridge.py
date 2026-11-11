@@ -56,11 +56,15 @@ def _open_log(path: Path) -> int | None:
     # regular single-link file this user owns, and owner-only permissions.
     flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK
     fd = os.open(path, flags, 0o600)
-    info = os.fstat(fd)
-    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_nlink != 1:
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_nlink != 1:
+            os.close(fd)
+            return None
+        os.fchmod(fd, 0o600)
+    except BaseException:
         os.close(fd)
-        return None
-    os.fchmod(fd, 0o600)
+        raise
     return fd
 
 

@@ -599,3 +599,34 @@ def test_bridge_log_is_private_bounded_and_never_follows_other_files(tmp_path):
     writer.start()
     writer.join(2)
     assert not writer.is_alive(), "a FIFO at the log path must not block the bridge"
+
+
+def test_bridge_log_closes_its_descriptor_when_securing_it_fails(tmp_path, monkeypatch):
+    import os
+
+    from duckterm.mobile import bridge
+
+    real_open = os.open
+    opened = []
+
+    def capture(*args, **kwargs):
+        fd = real_open(*args, **kwargs)
+        opened.append(fd)
+        return fd
+
+    def refuse(fd, mode):
+        raise OSError("synthetic chmod failure")
+
+    monkeypatch.setattr(bridge.os, "open", capture)
+    monkeypatch.setattr(bridge.os, "fchmod", refuse)
+    bridge.record(tmp_path, "test")
+    monkeypatch.undo()
+    leaked = []
+    for fd in opened:
+        try:
+            os.fstat(fd)
+        except OSError:
+            continue
+        leaked.append(fd)
+        os.close(fd)
+    assert opened and not leaked, "a suppressed setup error must not leak the open descriptor"
