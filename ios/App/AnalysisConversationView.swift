@@ -21,6 +21,7 @@ struct AnalysisConversationView: View {
     @State private var following = true
     @State private var visibleID: String?
     @State private var anchorY: CGFloat = 0
+    @StateObject private var dictation = Dictation()
     private let bottom = "analysis-bottom"
     private var title: String { scope == .oracle ? "Oracle" : "Ask \(scope.title)" }
     private var placeholder: String { scope == .oracle ? "Ask Oracle…" : "Ask about \(scope.title)…" }
@@ -82,7 +83,7 @@ struct AnalysisConversationView: View {
         .task(id: scope) { await model.select(scope) }
         .onChange(of: focused) { composing = $0 }
         .onChange(of: composing) { focused = $0 }
-        .onDisappear { if !savedOnClose { save() }; composing = false }
+        .onDisappear { dictation.stop(); if !savedOnClose { save() }; composing = false }
         .accessibilityElement(children: .contain).accessibilityIdentifier("analysis-panel")
     }
     private var feed: some View {
@@ -200,12 +201,17 @@ struct AnalysisConversationView: View {
                     .font(.callout).lineLimit(1...4).padding(.leading, 12).padding(.vertical, 12)
                     .focused($focused).disabled(!model.live || !current || !model.allowed)
                     .accessibilityIdentifier("analysis-composer")
-                Button { Task { await model.ask() } } label: {
+                if model.live && current && model.allowed {
+                    DictationButton(dictation: dictation, draft: model.draft) { model.setDraft($0) }
+                }
+                Button { dictation.stop(); Task { await model.ask() } } label: {
                     Image(systemName: "arrow.up").font(.system(size: 20)).frame(width: 44, height: 44).contentShape(Rectangle())
                 }.buttonStyle(.plain).disabled(!current || !model.canAsk)
                     .accessibilityLabel("Ask").accessibilityIdentifier("analysis-send")
             }.background(ChatColor.input)
-            if !model.live { Text("Mac unavailable · reconnect to ask.").font(.caption2).foregroundStyle(ChatColor.warning) }
+            if dictation.listening { Text("Listening… tap stop when you’re done.").font(.caption2).foregroundStyle(ChatColor.muted) }
+            else if dictation.denied { Text("To dictate, allow Microphone and Speech Recognition for Ducky in Settings.").font(.caption2).foregroundStyle(ChatColor.warning) }
+            else if !model.live { Text("Mac unavailable · reconnect to ask.").font(.caption2).foregroundStyle(ChatColor.warning) }
             else if model.draft.utf8.count > 4096 { Text("Question is too long (maximum 4,096 bytes).").font(.caption2).foregroundStyle(ChatColor.warning) }
         }.padding(.horizontal, 12).padding(.bottom, 10).padding(.top, 6).background(ChatColor.background)
     }

@@ -368,6 +368,8 @@ private final class MapUIFixtureTransport: DuckyTransport {
     private let failure: Int?
     private var firstSnapshotAt: Date?
     private let analysisEnabled = ProcessInfo.processInfo.arguments.contains("--ducky-analysis-ui-fixture")
+    // A pairing from before Oracle questions existed: the Mac offers them, this iPhone was never granted them.
+    private let oracleUngranted = ProcessInfo.processInfo.arguments.contains("--ducky-analysis-oracle-ungranted")
     private var analysisJobs: [String: (AnalysisSubmission, AnalysisScope, Date)] = [:]
     private var receipts: [MessageReceipt] = []
     init(failure: Int?) { self.failure = failure }
@@ -389,9 +391,9 @@ private final class MapUIFixtureTransport: DuckyTransport {
             "generated_at": Int(Date().timeIntervalSince1970), "truncated": false, "reset": false,
             "notices": [], "notification_delivery": "foreground_refresh", "folders": MapUIFixture.folders,
             "features": analysisEnabled ? ["conversations", "analysis_jobs"] : ["conversations"],
-            "capabilities": ["status:read", "conversation:read", "session:send"] + (analysisEnabled ? ["analysis:folder", "analysis:oracle"] : []),
+            "capabilities": ["status:read", "conversation:read", "session:send"] + (analysisEnabled ? ["analysis:folder"] + (oracleUngranted ? [] : ["analysis:oracle"]) : []),
             "analysis": ["folder_questions": analysisEnabled && !ProcessInfo.processInfo.arguments.contains("--ducky-analysis-lite"),
-                         "oracle_questions": analysisEnabled && !ProcessInfo.processInfo.arguments.contains("--ducky-analysis-lite") && !ProcessInfo.processInfo.arguments.contains("--ducky-analysis-code")],
+                         "oracle_questions": analysisEnabled && !oracleUngranted && !ProcessInfo.processInfo.arguments.contains("--ducky-analysis-lite") && !ProcessInfo.processInfo.arguments.contains("--ducky-analysis-code")],
             "sessions": sessions
         ])
         try result.validate(hostID: MapUIFixture.hostID)
