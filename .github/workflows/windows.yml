@@ -1,0 +1,77 @@
+name: Windows package
+
+on:
+  pull_request:
+    paths: ['packages/windows/**', '.github/workflows/windows.yml', 'src/**', 'web/**', 'pyproject.toml']
+  push:
+    branches: [main]
+    paths: ['packages/windows/**', '.github/workflows/windows.yml', 'src/**', 'web/**', 'pyproject.toml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  linux-backend:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - run: sudo apt-get update && sudo apt-get install -y tmux jq curl git lsof
+      - run: python -m pip install build
+      - run: npm ci && npm run build
+        working-directory: web
+      - name: Build unchanged backend with dashboard
+        run: |
+          mkdir -p src/duckterm/dashboard
+          cp -R web/dist/. src/duckterm/dashboard/
+          python -m build --wheel
+      - name: Exercise real backend lifecycle and isolation
+        run: |
+          export DUCKTERM_WINDOWS_TEST_WHEEL="$(realpath dist/duckterm-*-py3-none-any.whl)"
+          python -m unittest discover -s packages/windows/python_tests -v
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-backend-wheel
+          path: dist/*.whl
+          retention-days: 7
+
+  windows-build:
+    needs: linux-backend
+    runs-on: windows-2025
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-backend-wheel
+          path: dist
+      - name: Windows launcher contracts
+        run: dotnet run --project packages/windows/Tests/DuckTerm.Windows.Tests.csproj
+      - name: Publish self-contained Windows x64 package
+        run: |
+          dotnet publish packages/windows/Cli/DuckTerm.Windows.Cli.csproj -c Release -r win-x64 --self-contained true -o packages/windows/out
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $wheel = (Get-ChildItem dist/duckterm-*-py3-none-any.whl).FullName
+          python packages/windows/package.py --wheel $wheel --output packages/windows/out
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & packages/windows/out/DuckTerm.Windows.Cli.exe --help
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          Compress-Archive -Path packages/windows/out/* -DestinationPath packages/windows/DuckTerm-Lite-windows-x64-preview.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DuckTerm-Lite-windows-x64-preview
+          path: packages/windows/DuckTerm-Lite-windows-x64-preview.zip
+          retention-days: 14
