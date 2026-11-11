@@ -66,6 +66,8 @@ struct ConstellationView<AgentConversation: View, AssistantConversation: View>: 
     @State private var settled = true
     @State private var pressed = false
     @State private var lastMap = CGRect.zero
+    @State private var pinch: CGFloat = 1
+    @State private var touch = CGPoint.zero
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.scenePhase) private var scenePhase
 
@@ -82,9 +84,10 @@ struct ConstellationView<AgentConversation: View, AssistantConversation: View>: 
                 portraitGuide
             } else {
                 VStack(spacing: 0) {
-                    bar
+                    // Behind a landscape keyboard every row counts; the bar returns with the map.
+                    if !(composing && geo.size.height < 300) { bar }
                     GeometryReader { stage in
-                        stageView(ConstellationFrame(stage: stage.size, panelsOpen: panelsOpen, composing: composing, chat: chatOpen))
+                        stageView(ConstellationFrame(stage: stage.size, panelsOpen: panelsOpen, composing: composing, chat: chatOpen), size: stage.size)
                     }
                 }
             }
@@ -197,13 +200,13 @@ struct ConstellationView<AgentConversation: View, AssistantConversation: View>: 
 
     // MARK: Stage
 
-    private func stageView(_ frame: ConstellationFrame) -> some View {
+    private func stageView(_ frame: ConstellationFrame, size: CGSize) -> some View {
         ZStack(alignment: .topLeading) {
             if frame.showsMap {
                 if (showList || tree.requiresListFallback) && nav.mode == .map {
                     memberList.frame(width: frame.map.width + 16, height: frame.map.height + 6).offset(x: frame.map.minX - 8)
                 } else {
-                    mapLayer
+                    mapLayer(size)
                 }
             }
             if panelsOpen {
@@ -300,7 +303,7 @@ struct ConstellationView<AgentConversation: View, AssistantConversation: View>: 
         !reduceMotion && scenePhase == .active && !composing && !pressed && !to.placements.isEmpty
     }
 
-    private var mapLayer: some View {
+    private func mapLayer(_ size: CGSize) -> some View {
         ZStack(alignment: .topLeading) {
             TimelineView(.animation(minimumInterval: 1 / 30, paused: !ambient && settled)) { context in
                 let layout = from.blended(toward: to, progress: progress(at: context.date))
@@ -314,7 +317,26 @@ struct ConstellationView<AgentConversation: View, AssistantConversation: View>: 
         .contentShape(Rectangle())
         .onTapGesture { if nav.mode == .map && (selectedAgent != nil || nav.asking || !nav.path.isEmpty) { back() } }
         .simultaneousGesture(DragGesture(minimumDistance: 0).onChanged { _ in pressed = true }.onEnded { _ in pressed = false })
+        .modifier(Pinch(changed: { scale, at in
+            guard nav.mode == .map else { return }
+            pinch = scale
+            touch = at ?? CGPoint(x: lastMap.midX, y: lastMap.midY)
+        }, ended: endPinch))
+        .scaleEffect(min(max(pinch, 0.85), 1.25),
+                     anchor: size.width > 0 && size.height > 0 ? UnitPoint(x: touch.x / size.width, y: touch.y / size.height) : .center)
         .opacity(stale ? 0.7 : 1)
+    }
+
+    /// Pinching moves through folder levels: out into the bubble under the fingers, in to the parent.
+    private func endPinch(_ scale: CGFloat, at: CGPoint?) {
+        if let at { touch = at }
+        withAnimation(reduceMotion ? nil : .easeOut(duration: 0.2)) { pinch = 1 }
+        guard nav.mode == .map, !nav.asking else { return }
+        if scale > 1.2, let id = to.folder(at: touch, tree: tree), let node = tree.nodes[id] {
+            tap(node)
+        } else if scale < 0.85, selectedAgent == nil, !nav.path.isEmpty {
+            nav.path.removeLast()
+        }
     }
 
     // MARK: Drawing
@@ -519,6 +541,12 @@ struct ConstellationView<AgentConversation: View, AssistantConversation: View>: 
                 fact("Busy", "\(roots.reduce(0) { $0 + $1.busy })")
                 fact("Ended", "\(roots.reduce(0) { $0 + $1.ended })")
                 fact("Empty folders", "\(tree.emptyFolderCount)")
+                if !oracleQuestionsAvailable, model.snapshot?.analysisNotGranted(.oracle) == true {
+                    Text("Oracle questions are off for this iPhone. Turn them on from your Mac: DuckTerm → Pair iPhone… → Allow Oracle questions.")
+                        .font(.caption).foregroundStyle(Sky.muted).fixedSize(horizontal: false, vertical: true)
+                        .padding(.top, 12)
+                        .accessibilityIdentifier("constellation-oracle-permission")
+                }
             } else if nav.asking, let folder = focusedFolder {
                 let subs = tree.order.filter { tree.ancestors(of: $0).contains(folder.id) && tree.nodes[$0]?.isFolder == true }
                 title(folder.name, sub: "Question scope", color: Sky.muted)
@@ -690,5 +718,23 @@ struct ConstellationView<AgentConversation: View, AssistantConversation: View>: 
         let t = tree
         let keep = nav.reconcile(with: t, selectedSession: model.selectedSessionID)
         if model.selectedSessionID != nil, keep == nil { model.selectSession(nil) }
+    }
+}
+
+/// iOS 17 reports where a pinch began; on iOS 16 the caller falls back to the middle of the map.
+private struct Pinch: ViewModifier {
+    let changed: (CGFloat, CGPoint?) -> Void
+    let ended: (CGFloat, CGPoint?) -> Void
+
+    func body(content: Content) -> some View {
+        if #available(iOS 17, *) {
+            content.simultaneousGesture(MagnifyGesture()
+                .onChanged { changed($0.magnification, $0.startLocation) }
+                .onEnded { ended($0.magnification, $0.startLocation) })
+        } else {
+            content.simultaneousGesture(MagnificationGesture()
+                .onChanged { changed($0, nil) }
+                .onEnded { ended($0, nil) })
+        }
     }
 }

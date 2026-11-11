@@ -130,6 +130,10 @@ public struct HostSnapshot: Decodable {
         supportsAnalysis && capabilities?.contains(scope.capability) == true &&
             (scope == .oracle ? analysis?.oracleQuestions == true : analysis?.folderQuestions == true)
     }
+    /// The Mac supports questions but this iPhone was paired without the permission; re-pairing can add it.
+    public func analysisNotGranted(_ scope: AnalysisScope) -> Bool {
+        supportsAnalysis && capabilities?.contains(scope.capability) != true
+    }
     public var supportsConversations: Bool { version == 2 && features?.contains("conversations") == true }
     public func allows(_ capability: String) -> Bool { supportsConversations && capabilities?.contains(capability) == true }
     enum CodingKeys: String, CodingKey {

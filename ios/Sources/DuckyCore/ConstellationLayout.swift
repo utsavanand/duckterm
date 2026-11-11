@@ -212,8 +212,9 @@ public struct ConstellationFrame: Equatable {
         var l: CGFloat = w < 700 ? 0 : w < 860 ? 162 : 170
         var r: CGFloat = w < 700 ? 280 : w < 860 ? 292 : 320
         if composing { l = 0; r = (w * (w < 700 ? 0.6 : 0.55)).rounded() }
-        // A landscape keyboard can leave too little height for a map; the chat takes everything.
-        if composing && h < 170 { r = w }
+        // A phone keyboard in landscape leaves a strip too short for both; a narrow chat column
+        // there wraps every line, so the chat takes the width until the keyboard closes.
+        if composing && h < 260 { r = w }
         if !chat { l = max(l, 136); r = 0 }
         if !panelsOpen { l = 0; r = 0 }
         left = l; right = r
@@ -279,6 +280,18 @@ public struct ConstellationLayout: Equatable {
     /// The focused folder's title sits inside the top of its rim. Ancestors have no map title: their
     /// crescent is too thin to hold one cleanly and the breadcrumb already names them as buttons.
     /// Other names go below their node, or above or beside it when that would touch another node.
+    /// The folder a pinch at `point` means: the smallest drawn bubble under it, else the nearest
+    /// within `slop` of its rim. The focused folder and its ancestors are where the reader already is.
+    public func folder(at point: CGPoint, tree: ConstellationTree, slop: Double = 44) -> String? {
+        let candidates = placements.compactMap { id, p -> (String, Double, Double)? in
+            guard tree.nodes[id]?.isFolder == true, p.alpha > 0.5,
+                  [.top, .peripheral, .child].contains(p.role) else { return nil }
+            return (id, hypot(Double(point.x) - p.x, Double(point.y) - p.y) - p.r, p.r)
+        }
+        if let inside = candidates.filter({ $0.1 <= 0 }).min(by: { $0.2 < $1.2 }) { return inside.0 }
+        return candidates.filter { $0.1 < slop }.min(by: { $0.1 < $1.1 })?.0
+    }
+
     public func labelFrame(_ id: String, name: String, tree: ConstellationTree, nav: ConstellationNav,
                            measure: (String) -> Double = ConstellationLayout.approxLabelWidth) -> CGRect? {
         guard let p = placements[id], p.alpha > 0.05 else { return nil }
