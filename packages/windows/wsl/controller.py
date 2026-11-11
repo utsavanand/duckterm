@@ -136,6 +136,7 @@ class Controller:
             DUCKTERM_URL=self.url,
             DUCKTERM_TMUX_SOCKET="duckterm-" + INSTANCE,
             DUCKTERM_EDITION="lite",
+            DUCKTERM_NO_BROWSER="1",
             PATH=os.pathsep.join(
                 [str(binary), str(self.home / ".local/bin"), environment.get("PATH", os.defpath)]
             ),

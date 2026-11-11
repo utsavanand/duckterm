@@ -112,6 +112,7 @@ class LifecycleTests(unittest.TestCase):
     def test_install_launch_reconnect_restart_and_conflict(self):
         import signal
         import subprocess
+        import threading
         import time
 
         with tempfile.TemporaryDirectory() as directory:
@@ -172,6 +173,9 @@ class LifecycleTests(unittest.TestCase):
                 )
                 self.assertIsNotNone(launched)
                 previous = running["pid"]
+                # The production adapter exits after each request; WSL init then
+                # reaps its detached server. Here this test remains the parent.
+                threading.Thread(target=os.waitpid, args=(previous, 0), daemon=True).start()
                 running = client.dispatch({"protocol": 1, "action": "restart"})
                 self.assertNotEqual(previous, running["pid"])
                 target = "rd_" + agent_key
@@ -189,6 +193,8 @@ class LifecycleTests(unittest.TestCase):
                 if running:
                     with controller.contextlib.suppress(ProcessLookupError):
                         os.kill(running["pid"], signal.SIGTERM)
+                    with controller.contextlib.suppress(ChildProcessError):
+                        os.waitpid(running["pid"], 0)
                     time.sleep(1)
 
 
