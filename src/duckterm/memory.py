@@ -805,6 +805,16 @@ class Memory:
                     self.server, key, self._number(query, "limit", 20, 1, 100), cursor
                 )
             else:
+                # New own-session endpoints do not inherit linked-source access
+                # merely by being added to operate(). Keep their query contract.
+                if "session" in query and action not in {
+                    "view",
+                    "sources",
+                    "search",
+                    "read",
+                    "related",
+                }:
+                    raise APIError(400, "This memory operation does not accept a source session")
                 selected = query.pop("session", [key])
                 if len(selected) != 1 or not selected[0] or len(selected[0]) > 128:
                     raise APIError(400, "Invalid source session")

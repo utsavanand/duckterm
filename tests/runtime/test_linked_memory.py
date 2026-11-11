@@ -140,6 +140,17 @@ def test_unrelated_peer_and_child_cannot_read_parent_or_write(memory_rig):
     assert call(server, parent_headers, "sources", session="invented")[0] == 403
 
 
+@pytest.mark.parametrize("action", ["items", "revisions"])
+def test_own_session_endpoints_keep_their_query_contract(memory_rig, action):
+    server, _, parent_headers, _ = memory_rig
+    assert call(server, parent_headers, action)[0] == 200
+    assert call(server, parent_headers, action, session="agent")[0] == 400
+    child_of(server)
+    # A valid relationship must not broaden endpoints added after linked reads.
+    assert call(server, parent_headers, action, session="agent")[0] == 400
+    assert call(server, parent_headers, "sources", session="agent")[0] == 200
+
+
 def test_link_revoked_during_read_does_not_return_content(memory_rig, monkeypatch):
     server, _, parent_headers, tmp = memory_rig
     child_of(server)
