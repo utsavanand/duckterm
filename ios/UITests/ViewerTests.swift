@@ -135,7 +135,7 @@ final class ConnectionStatusUITests: XCTestCase {
         open("failed")
         XCTAssertTrue(app.staticTexts["Last seen working"].waitForExistence(timeout: 5))
         let detail = element("conversation-refresh-error")
-        XCTAssertEqual(detail.label, "Connection timed out."); XCTAssertTrue(detail.isHittable)
+        XCTAssertEqual(detail.label, "Can’t reach your Mac. It may be asleep or on a different Wi-Fi."); XCTAssertTrue(detail.isHittable)
         XCTAssertTrue(element("conversation-connection").label.contains("updated"))
         XCTAssertTrue(element("conversation-receipt:33333333-3333-4333-8333-333333333333").label.hasPrefix("Last confirmed:"))
         XCTAssertFalse(element("conversation-composer").isEnabled)

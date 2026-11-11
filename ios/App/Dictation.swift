@@ -13,6 +13,12 @@ final class Dictation: ObservableObject {
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
     private var fixture = false
+    // Cleanup follows what was acquired, not `listening`: a start can fail halfway.
+    private var tapped = false
+    private var sessionActive = false
+    // Stop, leaving the chat or another tap while permission is pending makes that start inert.
+    private var attempt = 0
+    private var starting = false
 
     init() {
         #if DEBUG
@@ -27,21 +33,32 @@ final class Dictation: ObservableObject {
     var available: Bool { fixture || recognizer?.supportsOnDeviceRecognition == true }
 
     func toggle(draft: String, update: @escaping (String) -> Void) {
-        if listening { stop(); return }
+        if listening || starting { stop(); return }
+        attempt += 1
+        let mine = attempt
+        starting = true
         Task {
-            guard await authorize() else { denied = true; return }
+            let allowed = await authorize()
+            guard mine == attempt else { return }
+            starting = false
+            guard allowed else { denied = true; return }
             denied = false
             do { try start(after: draft, update: update) } catch { stop() }
         }
     }
 
     func stop() {
-        guard listening else { return }
+        attempt += 1
+        starting = false
         listening = false
-        if engine.isRunning { engine.stop(); engine.inputNode.removeTap(onBus: 0) }
+        if engine.isRunning { engine.stop() }
+        if tapped { engine.inputNode.removeTap(onBus: 0); tapped = false }
         request?.endAudio(); task?.finish()
         request = nil; task = nil
-        try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        if sessionActive {
+            sessionActive = false
+            try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+        }
     }
 
     private func authorize() async -> Bool {
@@ -59,11 +76,13 @@ final class Dictation: ObservableObject {
         let session = AVAudioSession.sharedInstance()
         try session.setCategory(.record, mode: .measurement, options: .duckOthers)
         try session.setActive(true, options: .notifyOthersOnDeactivation)
+        sessionActive = true
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.requiresOnDeviceRecognition = true
         request.shouldReportPartialResults = true
         let input = engine.inputNode
         input.installTap(onBus: 0, bufferSize: 1024, format: input.outputFormat(forBus: 0)) { buffer, _ in request.append(buffer) }
+        tapped = true
         engine.prepare()
         try engine.start()
         self.request = request

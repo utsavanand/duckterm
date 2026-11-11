@@ -8,6 +8,7 @@ import json
 import os
 import secrets
 import ssl
+import stat
 import time
 from collections import deque
 from pathlib import Path
@@ -34,18 +35,62 @@ if TYPE_CHECKING:
 
 
 LOG_LIMIT = 256 * 1024
+# Only these names reach the log; any other path or method a client sends is recorded as "other".
+LOGGED_ROUTES = frozenset(
+    {
+        "/v1/pair",
+        "/v1/pair/status",
+        "/v1/snapshot",
+        "/v2/snapshot",
+        "/v2/conversation",
+        "/v2/messages",
+        "/v2/analysis/context",
+        "/v2/analysis/questions",
+    }
+)
+
+
+def _open_log(path: Path) -> int | None:
+    # Same stance as private_read: no symlinks, never block on a FIFO, only a
+    # regular single-link file this user owns, and owner-only permissions.
+    flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW | os.O_NONBLOCK
+    fd = os.open(path, flags, 0o600)
+    info = os.fstat(fd)
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.getuid() or info.st_nlink != 1:
+        os.close(fd)
+        return None
+    os.fchmod(fd, 0o600)
+    return fd
 
 
 def record(directory: Path, line: str) -> None:
-    """Append one request line to a private, size-capped log for diagnosing phone disconnects."""
+    """Append one request line to a private log of at most LOG_LIMIT bytes.
+
+    The log exists to diagnose phone disconnects.
+    """
+    data = (line + "\n").encode()
     path = directory / "ducky-bridge.log"
     with contextlib.suppress(OSError):
-        if path.stat().st_size > LOG_LIMIT:
-            os.replace(path, directory / "ducky-bridge.log.1")
-    with contextlib.suppress(OSError):
-        fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
-        with os.fdopen(fd, "a") as stream:
-            stream.write(line + "\n")
+        fd = _open_log(path)
+        if fd is None:
+            return
+        try:
+            info = os.fstat(fd)
+            if info.st_size + len(data) > LOG_LIMIT:
+                # Rotate only the file just validated, never something swapped in at that name.
+                current = os.lstat(path)
+                if (current.st_dev, current.st_ino) != (info.st_dev, info.st_ino):
+                    return
+                os.replace(path, directory / "ducky-bridge.log.1")
+                os.close(fd)
+                fd = None
+                fd = _open_log(path)
+                if fd is None:
+                    return
+            os.write(fd, data)
+        finally:
+            if fd is not None:
+                os.close(fd)
 
 
 class Bridge:
@@ -242,12 +287,14 @@ class Bridge:
             return
         self.connections.add(writer)
         started = time.monotonic()
-        # Paths only: queries carry session and request ids.
-        method, path, outcome = "-", "-", "closed"
+        # Route names only: queries carry session and request ids.
+        logged_method, logged_path, outcome = "-", "-", "closed"
         try:
             async with asyncio.timeout(5):
                 method, target = parse_request_line(await reader.readline())
-                path = urlsplit(target).path[:64]
+                path = urlsplit(target).path
+                logged_path = path if path in LOGGED_ROUTES else "other"
+                logged_method = method if method in {"GET", "POST"} else "other"
                 if not target.startswith("/") or len(target) > 2048:
                     raise ValueError("Invalid target")
                 headers = await read_headers(reader)
@@ -302,8 +349,9 @@ class Bridge:
             peer = writer.get_extra_info("peername")
             record(
                 self.directory,
-                f"{time.strftime('%Y-%m-%dT%H:%M:%S')} {peer[0] if peer else '-'} {method} {path} "
-                f"{outcome} {round((time.monotonic() - started) * 1000)}ms",
+                f"{time.strftime('%Y-%m-%dT%H:%M:%S')} {peer[0] if peer else '-'} "
+                f"{logged_method} {logged_path} {outcome} "
+                f"{round((time.monotonic() - started) * 1000)}ms",
             )
             writer.close()
             with contextlib.suppress(ConnectionError, OSError):

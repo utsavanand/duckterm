@@ -445,6 +445,7 @@ def test_tls_pairing_snapshot_and_disable_on_real_socket(app):
             bridge.grants.revoke(pending["id"])
             assert (await request("GET", "/v1/snapshot", auth=token))[0] == 403
             await request("GET", "/v2/messages?request_id=secret-id", auth=token)
+            await request("GET", "/private-session-name", auth=token)
             log = root / "ducky-bridge.log"
             lines = log.read_text().splitlines()
             assert [line.split()[2:5] for line in lines[:3]] == [
@@ -452,8 +453,10 @@ def test_tls_pairing_snapshot_and_disable_on_real_socket(app):
                 ["GET", "/v1/snapshot", "403"],
                 ["GET", "/v1/snapshot", "200"],
             ]
-            assert lines[-1].split()[1:4] == ["127.0.0.1", "GET", "/v2/messages"]
-            assert token not in log.read_text() and "secret-id" not in log.read_text()
+            assert lines[-2].split()[1:4] == ["127.0.0.1", "GET", "/v2/messages"]
+            assert lines[-1].split()[2:4] == ["GET", "other"]
+            text = log.read_text()
+            assert token not in text and "secret-id" not in text and "private-session" not in text
             assert log.stat().st_mode & 0o777 == 0o600
         finally:
             await bridge.close()
@@ -559,11 +562,37 @@ def test_failed_certificate_generation_preserves_existing_access(tmp_path, monke
     assert grants.authenticate(token)["status"] == "active"
 
 
-def test_bridge_log_rotates_instead_of_growing(tmp_path):
+def test_bridge_log_is_private_bounded_and_never_follows_other_files(tmp_path):
+    import os
+    import threading
+
     from duckterm.mobile import bridge
 
     log = tmp_path / "ducky-bridge.log"
-    log.write_text("x" * (bridge.LOG_LIMIT + 1))
+    bridge.record(tmp_path, "first")
+    assert log.read_text() == "first\n" and log.stat().st_mode & 0o777 == 0o600
+    log.chmod(0o644)
+    bridge.record(tmp_path, "second")
+    assert log.stat().st_mode & 0o777 == 0o600, "an older readable log is tightened"
+
+    log.write_text("x" * (bridge.LOG_LIMIT - 3))
     bridge.record(tmp_path, "next")
-    assert log.read_text() == "next\n"
-    assert (tmp_path / "ducky-bridge.log.1").stat().st_size == bridge.LOG_LIMIT + 1
+    assert log.read_text() == "next\n", "rotates before an entry would pass the cap"
+    assert (tmp_path / "ducky-bridge.log.1").stat().st_size == bridge.LOG_LIMIT - 3
+
+    secret = tmp_path / "secret"
+    secret.write_text("keep")
+    log.unlink()
+    log.symlink_to(secret)
+    bridge.record(tmp_path, "via symlink")
+    log.unlink()
+    os.link(secret, log)
+    bridge.record(tmp_path, "via hard link")
+    assert secret.read_text() == "keep"
+
+    log.unlink()
+    os.mkfifo(log)
+    writer = threading.Thread(target=bridge.record, args=(tmp_path, "fifo"), daemon=True)
+    writer.start()
+    writer.join(2)
+    assert not writer.is_alive(), "a FIFO at the log path must not block the bridge"

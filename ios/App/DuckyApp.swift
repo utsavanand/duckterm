@@ -67,6 +67,7 @@ private enum StatusUIFixture {
         let model = SessionModel(credentials: ChatUIFixtureStore(PairedHost(invitation: invitation, token: String(repeating: "t", count: 43))),
             makeTransport: { _ in client }, pause: { try await Task.sleep(nanoseconds: 60_000_000_000) },
             conversationPause: { try await Task.sleep(nanoseconds: 60_000_000_000) },
+            retryPause: { try await Task.sleep(nanoseconds: 60_000_000_000) }, onLocalNetwork: { true },
             expansionStore: FolderExpansionStore(defaults: defaults))
         client.afterFirstSnapshot = { [weak model] in
             guard client.mode.hasPrefix("no-cache-offline") else { return }
