@@ -51,7 +51,7 @@ struct ContentView: View {
         case .unpaired: return "Not paired yet"
         case .awaitingApproval: return "Waiting for approval"
         case .live: return "\(hostLabel) · Live"
-        case .stale: return "\(hostLabel) · Last known status"
+        case .stale: return model.reconnecting ? "\(hostLabel) · Reconnecting…" : "\(hostLabel) · Last known status"
         case .denied: return "Access unavailable"
         }
     }
@@ -264,7 +264,7 @@ struct ContentView: View {
 
     private var staleBanner: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text(model.snapshotAt == nil ? "Mac unavailable" : "Showing last known status").bold()
+            Text(model.reconnecting ? "Reconnecting to your Mac…" : model.snapshotAt == nil ? "Mac unavailable" : "Showing last known status").bold()
             if let date = model.snapshotAt {
                 Text("Last update \(date.formatted(date: .abbreviated, time: .shortened)). These statuses may have changed.")
             } else { Text("Pull to retry. No live status is available yet.") }

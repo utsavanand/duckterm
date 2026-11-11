@@ -9,6 +9,7 @@ public final class DuckyClient {
     private let lock = NSLock()
     private var sessions: [UUID: URLSession] = [:]
     private var closed = false
+    private var lastAddress: String?
     private struct AnalysisRejection: Decodable { let error: String }
 
     public convenience init(host: PairedHost) throws {
@@ -117,15 +118,25 @@ public final class DuckyClient {
     }
     private func request<T: Decodable>(path: String, body: Data? = nil, query: [URLQueryItem] = []) async throws -> T {
         try Task.checkCancellation()
-        let addresses = try await LocalEndpoint.addresses(for: host.url, resolver: resolver)
+        let addresses: [String]
+        do {
+            addresses = try await LocalEndpoint.addresses(for: host.url, resolver: resolver)
+        } catch let error as URLError where error.code == .cannotFindHost {
+            // Bonjour answers go missing on busy Wi-Fi. The name is still resolved first every
+            // time; only a miss falls back to the last address that passed the pin.
+            guard let last = lock.withLock({ lastAddress }) else { throw error }
+            addresses = [last]
+        }
         let deadline = ProcessInfo.processInfo.systemUptime + 10
         for (index, address) in addresses.enumerated() {
             try Task.checkCancellation()
             let remaining = deadline - ProcessInfo.processInfo.systemUptime
             guard remaining > 0 else { throw URLError(.timedOut) }
             do {
-                return try await attempt(path: path, body: body, query: query, address: address,
-                                         timeout: remaining)
+                let result: T = try await attempt(path: path, body: body, query: query, address: address,
+                                                  timeout: remaining)
+                lock.withLock { lastAddress = address }
+                return result
             } catch let error as URLError where index + 1 < addresses.count &&
                         [.cannotConnectToHost, .notConnectedToInternet].contains(error.code) {
                 // Only failures to establish a connection can try another private result.

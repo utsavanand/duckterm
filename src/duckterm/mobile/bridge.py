@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import os
 import secrets
 import ssl
 import time
@@ -30,6 +31,21 @@ from duckterm.transport.httpio import parse_request_line, read_body, read_header
 
 if TYPE_CHECKING:
     from duckterm.server import Server
+
+
+LOG_LIMIT = 256 * 1024
+
+
+def record(directory: Path, line: str) -> None:
+    """Append one request line to a private, size-capped log for diagnosing phone disconnects."""
+    path = directory / "ducky-bridge.log"
+    with contextlib.suppress(OSError):
+        if path.stat().st_size > LOG_LIMIT:
+            os.replace(path, directory / "ducky-bridge.log.1")
+    with contextlib.suppress(OSError):
+        fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+        with os.fdopen(fd, "a") as stream:
+            stream.write(line + "\n")
 
 
 class Bridge:
@@ -225,9 +241,13 @@ class Bridge:
             writer.close()
             return
         self.connections.add(writer)
+        started = time.monotonic()
+        # Paths only: queries carry session and request ids.
+        method, path, outcome = "-", "-", "closed"
         try:
             async with asyncio.timeout(5):
                 method, target = parse_request_line(await reader.readline())
+                path = urlsplit(target).path[:64]
                 if not target.startswith("/") or len(target) > 2048:
                     raise ValueError("Invalid target")
                 headers = await read_headers(reader)
@@ -238,6 +258,7 @@ class Bridge:
                     else 2048
                 )
                 if int(headers.get("content-length", "0")) > limit:
+                    outcome = "413"
                     await write_response(
                         writer,
                         413,
@@ -248,6 +269,7 @@ class Bridge:
                     return
                 body = await read_body(reader, headers, max_bytes=limit)
                 status, response = await self.dispatch(method, target, headers, body)
+                outcome = str(status)
                 await write_response(
                     writer,
                     status,
@@ -255,9 +277,16 @@ class Bridge:
                     {"Cache-Control": "no-store"},
                     "application/json",
                 )
-        except (TimeoutError, ValueError, asyncio.IncompleteReadError, ConnectionError, OSError):
-            pass
+        except (
+            TimeoutError,
+            ValueError,
+            asyncio.IncompleteReadError,
+            ConnectionError,
+            OSError,
+        ) as exc:
+            outcome = type(exc).__name__
         except Exception:
+            outcome = "500"
             # A damaged optional grant store must not expose traceback details or
             # terminate the desktop server's accept loop.
             with contextlib.suppress(ConnectionError, OSError):
@@ -270,6 +299,12 @@ class Bridge:
                 )
         finally:
             self.connections.discard(writer)
+            peer = writer.get_extra_info("peername")
+            record(
+                self.directory,
+                f"{time.strftime('%Y-%m-%dT%H:%M:%S')} {peer[0] if peer else '-'} {method} {path} "
+                f"{outcome} {round((time.monotonic() - started) * 1000)}ms",
+            )
             writer.close()
             with contextlib.suppress(ConnectionError, OSError):
                 await writer.wait_closed()

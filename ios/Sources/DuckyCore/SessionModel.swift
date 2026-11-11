@@ -58,6 +58,8 @@ public final class SessionModel: ObservableObject {
     @Published public private(set) var error: String?
     @Published public private(set) var statusRefreshing = false
     @Published public private(set) var retrying = false
+    /// The Mac just stopped answering and quick retries are still running: say "reconnecting", not "offline".
+    @Published public private(set) var reconnecting = false
 
     @Published public private(set) var selectedSessionID: String?
     @Published public private(set) var conversation: ConversationSnapshot?
@@ -94,6 +96,8 @@ public final class SessionModel: ObservableObject {
     private let makeTransport: (PairedHost) throws -> DuckyTransport
     private let now: () -> Date
     private let pause: () async throws -> Void
+    private let retryPause: () async throws -> Void
+    private let onLocalNetwork: () -> Bool
     private var transport: DuckyTransport?
     private var tracker = NoticeTracker()
     private var cursor: String?
@@ -112,12 +116,16 @@ public final class SessionModel: ObservableObject {
                 now: @escaping () -> Date = Date.init,
                 pause: @escaping () async throws -> Void = { try await Task.sleep(nanoseconds: 15_000_000_000) },
                 conversationPause: @escaping () async throws -> Void = { try await Task.sleep(nanoseconds: 4_000_000_000) },
+                retryPause: @escaping () async throws -> Void = { try await Task.sleep(nanoseconds: 2_000_000_000) },
+                onLocalNetwork: @escaping () -> Bool = { LocalNetworkPath.shared.available },
                 expansionStore: FolderExpansionStore = FolderExpansionStore()) {
         self.credentials = credentials
         self.makeTransport = makeTransport
         self.now = now
         self.pause = pause
         self.conversationPause = conversationPause
+        self.retryPause = retryPause
+        self.onLocalNetwork = onLocalNetwork
         self.expansionStore = expansionStore
     }
 
@@ -241,7 +249,7 @@ public final class SessionModel: ObservableObject {
             guard current() else { return }
             if phase != .awaitingApproval { phase = .stale }
             invalidateConversationRead()
-            self.error = Self.refreshError(error)
+            self.error = Self.unreachableError(error, onLocalNetwork: onLocalNetwork())
         }
     }
 
@@ -253,12 +261,29 @@ public final class SessionModel: ObservableObject {
         startConversationPolling()
         guard transport != nil else { return }
         poller = Task { [weak self] in
+            var misses = 0
             while !Task.isCancelled {
                 guard let self else { return }
                 await self.refresh()
-                do { try await self.pause() } catch { return }
+                guard !Task.isCancelled else { return }
+                misses = self.phase == .stale ? misses + 1 : 0
+                // One dropped poll on Wi-Fi is common; retry a few times before calling the Mac unreachable.
+                self.reconnecting = (1...Self.quickRetries).contains(misses)
+                do {
+                    if self.reconnecting { try await self.retryPause() }
+                    else if self.statusFollowsReplies { try await self.conversationPause() }
+                    else { try await self.pause() }
+                } catch { return }
             }
         }
+    }
+
+    static let quickRetries = 3
+
+    /// While an open chat's agent is working or a send is unresolved, status follows the reply pace.
+    private var statusFollowsReplies: Bool {
+        guard let id = selectedSessionID else { return false }
+        return selectedSession?.state == "busy" || pendingMessages[id] != nil
     }
 
     public func enterBackground() {
@@ -269,6 +294,16 @@ public final class SessionModel: ObservableObject {
     }
 
     public func clearNotices() { notices = [] }
+
+    /// Why the Mac didn't answer, in terms the owner can act on. The phone can't tell a sleeping
+    /// Mac from one on another network, so it names both.
+    public nonisolated static func unreachableError(_ error: Error, onLocalNetwork: Bool) -> String {
+        guard let error = error as? URLError,
+              [.timedOut, .cannotConnectToHost, .networkConnectionLost, .cannotFindHost, .dnsLookupFailed, .notConnectedToInternet].contains(error.code)
+        else { return refreshError(error) }
+        if !onLocalNetwork { return "Your iPhone isn’t on Wi-Fi. Join the same Wi-Fi as your Mac." }
+        return "Can’t reach your Mac. It may be asleep or on a different Wi-Fi."
+    }
 
     public nonisolated static func refreshError(_ error: Error) -> String {
         if let error = error as? DuckyError { return error.localizedDescription }
@@ -546,6 +581,7 @@ public final class SessionModel: ObservableObject {
     private func stop() {
         poller?.cancel()
         poller = nil
+        reconnecting = false
     }
 
     private func invalidateRefreshes() {

@@ -226,7 +226,7 @@ struct ConversationView: View {
     }
     private var connectionSummary: String {
         if !live {
-            let state = model.statusRefreshing || model.retrying ? "Reconnecting to Mac" : "Can’t reach your Mac"
+            let state = model.statusRefreshing || model.retrying || model.reconnecting ? "Reconnecting to Mac" : "Can’t reach your Mac"
             return state + (model.snapshotAt.map { " · updated " + $0.formatted(date: .omitted, time: .shortened) } ?? " · no successful refresh yet")
         }
         if model.retrying { return "Status is current. Refreshing replies…" }
