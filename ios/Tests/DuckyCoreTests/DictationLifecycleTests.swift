@@ -5,10 +5,10 @@ import XCTest
 private final class FakeAudio: DictationAudio {
     var calls: [String] = []
     var engineFailure: Error?
-    var permission: CheckedContinuation<Bool, Never>?
+    var permissions: [CheckedContinuation<Bool, Never>] = []
     var result: ((String?, Bool) -> Void)?
-    func authorize() async -> Bool { await withCheckedContinuation { permission = $0 } }
-    func grant(_ allowed: Bool = true) { permission?.resume(returning: allowed); permission = nil }
+    func authorize() async -> Bool { await withCheckedContinuation { permissions.append($0) } }
+    func grant(_ allowed: Bool = true) { if !permissions.isEmpty { permissions.removeFirst().resume(returning: allowed) } }
     func activateSession() throws { calls.append("activate") }
     func deactivateSession() { calls.append("deactivate") }
     func installTap() { calls.append("tap") }
@@ -93,5 +93,52 @@ final class DictationLifecycleTests: XCTestCase {
         off.toggle(draft: "", update: { _ in })
         await settle()
         XCTAssertFalse(off.listening)
+    }
+
+    // From main-qa's independent review of the lifecycle.
+    func testFailedStartCanBeRetriedAndStopIsIdempotent() async {
+        let audio = FakeAudio()
+        audio.engineFailure = NSError(domain: "audio", code: 1)
+        let dictation = DictationLifecycle(audio: audio, available: true)
+        dictation.toggle(draft: "", update: { _ in }); await settle()
+        audio.grant(); await settle()
+        audio.engineFailure = nil; audio.calls = []
+        dictation.toggle(draft: "", update: { _ in }); await settle()
+        audio.grant(); await settle()
+        XCTAssertTrue(dictation.listening)
+        dictation.stop(); dictation.stop()
+        XCTAssertEqual(audio.calls, ["activate", "tap", "start", "recognize", "stop", "untap", "end", "deactivate"])
+    }
+
+    func testAnOldDenialCannotOverrideANewerStart() async {
+        let audio = FakeAudio()
+        let dictation = DictationLifecycle(audio: audio, available: true)
+        dictation.toggle(draft: "", update: { _ in }); await settle()
+        dictation.stop()
+        dictation.toggle(draft: "", update: { _ in }); await settle()
+        audio.permissions.removeLast().resume(returning: true); await settle()
+        audio.grant(false); await settle()
+        XCTAssertTrue(dictation.listening)
+        XCTAssertFalse(dictation.denied)
+        dictation.stop()
+    }
+
+    func testAnOldTranscriptCannotChangeTheNextDraft() async {
+        let audio = FakeAudio()
+        var draft = "First"
+        let dictation = DictationLifecycle(audio: audio, available: true)
+        dictation.toggle(draft: draft, update: { draft = $0 }); await settle()
+        audio.grant(); await settle()
+        let late = audio.result
+        dictation.stop()
+        draft = "Second "
+        dictation.toggle(draft: draft, update: { draft = $0 }); await settle()
+        audio.grant(); await settle()
+        late?("old words", true)
+        XCTAssertTrue(dictation.listening)
+        XCTAssertEqual(draft, "Second ")
+        audio.result?("new words", true)
+        XCTAssertEqual(draft, "Second new words")
+        XCTAssertFalse(dictation.listening)
     }
 }
