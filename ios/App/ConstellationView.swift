@@ -114,7 +114,7 @@ struct ConstellationView<AgentConversation: View, AssistantConversation: View>: 
             crumbs
             Spacer(minLength: 6)
             if stale {
-                Text("Last known").font(.caption2).foregroundStyle(Sky.amber).padding(.trailing, 6)
+                Text(model.reconnecting ? "Reconnecting…" : "Last known").font(.caption2).foregroundStyle(Sky.amber).padding(.trailing, 6)
             }
             if let folder = focusedFolder, folderQuestionsAvailable, nav.mode == .map, !nav.asking, selectedAgent == nil {
                 Button("Ask \(folder.name)") { ask() }
