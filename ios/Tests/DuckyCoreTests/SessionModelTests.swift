@@ -87,13 +87,19 @@ final class SessionModelTests: XCTestCase {
     var firstSnapshots: [Result<HostSnapshot, Error>] = []
     var claimError: Error?
     let clock = Clock()
+    let retries = Clock()
+    let replies = Clock()
+    var onWiFi = true
 
     private func model() -> SessionModel {
         SessionModel(credentials: store, makeTransport: { [unowned self] host in
             let next = FakeTransport(host: host)
             next.snapshots = firstSnapshots; next.claimError = claimError
             transports.append(next); return next
-        }, pause: { [clock] in try await clock.pause() })
+        }, pause: { [clock] in try await clock.pause() },
+           conversationPause: { [replies] in try await replies.pause() },
+           retryPause: { [retries] in try await retries.pause() },
+           onLocalNetwork: { [unowned self] in onWiFi })
     }
 
     private func settle() async { for _ in 0..<20 { await Task.yield() } }
@@ -208,6 +214,49 @@ final class SessionModelTests: XCTestCase {
         XCTAssertEqual(transports[0].snapshotReads, 3)
     }
 
+    func testDroppedPollsRetryQuicklyAndSayReconnectingBeforeOffline() async {
+        store = FakeStore(paired(hostA))
+        let m = model()
+        await m.restore()
+        m.enterForeground(); await settle()
+        transports[0].snapshots = Array(repeating: .failure(URLError(.timedOut)), count: SessionModel.quickRetries + 1)
+        clock.tick(); await settle()
+        XCTAssertEqual(m.phase, .stale)
+        XCTAssertTrue(m.reconnecting)
+        XCTAssertEqual(retries.waiting.count, 1, "A dropped poll retries on the short pause")
+        for _ in 1..<SessionModel.quickRetries { retries.tick(); await settle(); XCTAssertTrue(m.reconnecting) }
+        retries.tick(); await settle()
+        XCTAssertFalse(m.reconnecting, "After the quick retries the Mac is reported unreachable")
+        XCTAssertEqual(m.error, "Can’t reach your Mac. It may be asleep or on a different Wi-Fi.")
+        XCTAssertEqual(clock.waiting.count, 1)
+        XCTAssertEqual(transports[0].snapshotReads, 3 + SessionModel.quickRetries)
+        clock.tick(); await settle()
+        XCTAssertEqual(m.phase, .live)
+        XCTAssertFalse(m.reconnecting)
+    }
+
+    func testUnreachableMacIsExplainedByTheIPhoneNetwork() async {
+        store = FakeStore(paired(hostA))
+        onWiFi = false
+        firstSnapshots = [.failure(URLError(.cannotConnectToHost))]
+        let m = model()
+        await m.restore()
+        XCTAssertEqual(m.error, "Your iPhone isn’t on Wi-Fi. Join the same Wi-Fi as your Mac.")
+        XCTAssertEqual(SessionModel.unreachableError(DuckyError.unavailable(503), onLocalNetwork: false),
+                       SessionModel.refreshError(DuckyError.unavailable(503)), "Mac answers keep their own reason")
+    }
+
+    func testOpenChatWithAWorkingAgentPollsStatusAtTheReplyPace() async {
+        store = FakeStore(paired(hostA))
+        let m = model()
+        await m.restore()
+        m.enterForeground(); await settle()
+        XCTAssertEqual(clock.waiting.count, 1, "Nothing open: the normal pace")
+        m.enterBackground(); m.selectSession("discounts"); m.enterForeground(); await settle()
+        XCTAssertEqual(clock.waiting.count, 1, "The new poll did not wait on the normal pace")
+        XCTAssertEqual(replies.waiting.count, 2, "Conversation poll and status poll both follow replies: the agent is busy")
+    }
+
     func testNoticesAreDeliveredOnceAcrossRefreshes() async {
         store = FakeStore(paired(hostA))
         let m = model()
@@ -309,7 +358,7 @@ final class SessionModelTests: XCTestCase {
         XCTAssertEqual(m.phase, .stale)
         await settle()
         XCTAssertEqual(m.phase, .stale)
-        clock.tick(); await settle()
+        retries.tick(); await settle()
         XCTAssertEqual(m.phase, .live)
     }
 

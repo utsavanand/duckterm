@@ -175,6 +175,31 @@ final class TLSIntegrationTests: XCTestCase {
         XCTAssertEqual(try fixture.counts().requests, 3)
     }
 
+    func testMissedLocalNameLookupReusesOnlyTheLastPinnedAddress() async throws {
+        let fixture = try TLSFixture(mode: "local")
+        defer { fixture.close() }
+        let invitation = fixture.invitation!
+        let lookup = AddressSequence(["127.0.0.1"])
+        let resolver: LocalEndpoint.Resolver = { name in
+            let found = await lookup.resolve(name)
+            if found.isEmpty { throw URLError(.cannotFindHost) }
+            return found
+        }
+        let fresh = try DuckyClient(host: PairedHost(invitation: invitation, token: try DuckyClient.newCredential()), resolver: { _ in throw URLError(.cannotFindHost) })
+        defer { fresh.close() }
+        do { _ = try await fresh.claim(invitation, name: "Test iPhone"); XCTFail("No address was ever known") }
+        catch { XCTAssertEqual((error as? URLError)?.code, .cannotFindHost) }
+        let client = try DuckyClient(host: PairedHost(invitation: invitation, token: try DuckyClient.newCredential()), resolver: resolver)
+        defer { client.close() }
+        let pending = try await client.claim(invitation, name: "Test iPhone")
+        XCTAssertEqual(try fixture.command("approve \(pending.id)"), "ok")
+        await lookup.update([])
+        let snapshot = try await client.snapshot(cursor: nil)
+        XCTAssertEqual(snapshot.sessions.first?.name, "Native protocol test")
+        let lookups = await lookup.lookups
+        XCTAssertEqual(lookups, 2, "The name is still looked up before the remembered address is used")
+    }
+
     func testPinAndOriginalNameFailuresNeverSendCredentialsOrTryAnotherAddress() async throws {
         let fixture = try TLSFixture(mode: "local")
         defer { fixture.close() }

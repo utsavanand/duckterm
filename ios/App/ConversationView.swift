@@ -41,6 +41,7 @@ struct ConversationView: View {
     @State private var visibleAnchorY: CGFloat = 0
     @State private var savedOnBack = false
     @State private var measuredViewport = CGSize.zero
+    @StateObject private var dictation = DictationLifecycle()
     private let bottomID = "conversation-bottom"
 
     init(model: SessionModel, position: Binding<ConversationReadingPosition>,
@@ -62,6 +63,7 @@ struct ConversationView: View {
         for receipt in model.conversationReceipts {
             revision.append(contentsOf: [receipt.id, receipt.status, model.messageText(for: receipt) ?? ""])
         }
+        if model.awaitingReply { revision.append("working") }
         return revision
     }
 
@@ -85,6 +87,7 @@ struct ConversationView: View {
         .onChange(of: composing) { sharedComposing = $0 }
         .onChange(of: sharedComposing) { composing = $0 }
         .onDisappear {
+            dictation.stop()
             if !savedOnBack { savePosition() }
             sharedComposing = false
         }
@@ -226,7 +229,7 @@ struct ConversationView: View {
     }
     private var connectionSummary: String {
         if !live {
-            let state = model.statusRefreshing || model.retrying ? "Reconnecting to Mac" : "Can’t reach your Mac"
+            let state = model.statusRefreshing || model.retrying || model.reconnecting ? "Reconnecting to Mac" : "Can’t reach your Mac"
             return state + (model.snapshotAt.map { " · updated " + $0.formatted(date: .omitted, time: .shortened) } ?? " · no successful refresh yet")
         }
         if model.retrying { return "Status is current. Refreshing replies…" }
@@ -267,6 +270,7 @@ struct ConversationView: View {
                     .accessibilityIdentifier("conversation-loading")
             }
             ForEach(model.conversationReceipts) { receipt in receiptView(receipt) }
+            if model.awaitingReply { WorkingRow() }
             if let session = model.selectedSession, !session.isActive {
                 note("Resume this session on your Mac to send a message.")
             }
@@ -326,7 +330,10 @@ struct ConversationView: View {
                     .disabled(!model.canEditDraft)
                     .padding(.leading, 13).padding(.vertical, 12)
                     .accessibilityLabel("Message agent").accessibilityIdentifier("conversation-composer")
-                Button { Task { await model.sendMessage() } } label: {
+                if model.canEditDraft {
+                    DictationButton(dictation: dictation, draft: model.draft) { model.setDraft($0) }
+                }
+                Button { dictation.stop(); Task { await model.sendMessage() } } label: {
                     Group {
                         if model.sendState == .sending { ProgressView().tint(ChatColor.accent) }
                         else { Image(systemName: "arrow.up").font(.system(size: 20, weight: .regular)) }
@@ -355,6 +362,8 @@ struct ConversationView: View {
     }
 
     private var composerStatus: String? {
+        if dictation.listening { return "Listening… tap stop when you’re done." }
+        if dictation.denied { return "To dictate, allow Microphone and Speech Recognition for Ducky in Settings." }
         if OutgoingMessage.startsWithLocalCommand(model.draft) { return DuckyError.localCommandUnavailable.localizedDescription }
         switch model.sendState {
         case .sending: return "Sending to your Mac…"
@@ -396,6 +405,27 @@ struct ConversationView: View {
                 proxy.scrollTo(bottomID, anchor: .bottom)
             }
         }
+    }
+}
+
+private struct WorkingRow: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        HStack(spacing: 8) {
+            TimelineView(.periodic(from: .now, by: 0.4)) { context in
+                let step = reduceMotion ? 2 : Int(context.date.timeIntervalSinceReferenceDate / 0.4) % 3
+                HStack(spacing: 4) {
+                    ForEach(0..<3) { i in
+                        Circle().fill(ChatColor.accent.opacity(i == step ? 0.9 : 0.3)).frame(width: 5, height: 5)
+                    }
+                }
+            }
+            Text("Working…").font(.footnote).foregroundStyle(ChatColor.muted)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Agent is working on a reply")
+        .accessibilityIdentifier("conversation-working")
     }
 }
 

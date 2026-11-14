@@ -354,13 +354,37 @@ final class ConstellationMotionTests: XCTestCase {
         }
     }
 
+    func testPinchFindsTheBubbleUnderTheFingersAndNeverWhereTheReaderAlreadyIs() {
+        let tree = ConstellationTree(sessions: sampleSessions(), folders: sampleFolders)
+        for (size, stage) in stages {
+            let top = layout(tree, scenarios(tree)[0], stage)
+            let duck = top.placements[f("DuckTerm")]!
+            XCTAssertEqual(top.folder(at: CGPoint(x: duck.x, y: duck.y), tree: tree), f("DuckTerm"), size)
+            XCTAssertEqual(top.folder(at: CGPoint(x: duck.x + duck.r + 10, y: duck.y), tree: tree), f("DuckTerm"),
+                           "\(size): a pinch just off the rim still means that bubble")
+            XCTAssertNil(top.folder(at: CGPoint(x: -500, y: -500), tree: tree), size)
+
+            let inside = layout(tree, scenarios(tree)[1], stage)
+            let focus = inside.placements[f("DuckTerm")]!
+            let core = inside.placements[f("DuckTerm/Core")]!
+            XCTAssertEqual(inside.folder(at: CGPoint(x: core.x, y: core.y), tree: tree), f("DuckTerm/Core"), size)
+            // The focused ring's rim, away from any child, is not a new place to go.
+            XCTAssertNotEqual(inside.folder(at: CGPoint(x: focus.x, y: focus.y - focus.r + 2), tree: tree, slop: 0), f("DuckTerm"), size)
+        }
+    }
+
     func testKeyboardGivesTheChatPriority() {
         let typing = ConstellationFrame(stage: CGSize(width: 734, height: 328), panelsOpen: true, composing: true)
         XCTAssertEqual(typing.left, 0)
         XCTAssertTrue(typing.showsMap)
-        let short = ConstellationFrame(stage: CGSize(width: 734, height: 150), panelsOpen: true, composing: true)
-        XCTAssertEqual(short.right, 734)
-        XCTAssertFalse(short.showsMap)
+        // Landscape keyboards leave 150–240pt depending on the phone and the suggestion bar.
+        for height in [150.0, 200, 240] {
+            let short = ConstellationFrame(stage: CGSize(width: 734, height: height), panelsOpen: true, composing: true)
+            XCTAssertEqual(short.right, 734, "\(height)")
+            XCTAssertFalse(short.showsMap, "\(height)")
+        }
+        let closed = ConstellationFrame(stage: CGSize(width: 734, height: 200), panelsOpen: true, composing: false)
+        XCTAssertTrue(closed.showsMap, "the map returns when the keyboard closes")
     }
 }
 
