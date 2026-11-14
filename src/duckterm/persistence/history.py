@@ -814,9 +814,10 @@ class HistoryStore:
 
     def push_commands(self, since_ms: int) -> list[tuple[str, int, str, str]]:
         """(session key, ts, command, directory) for recorded shell commands
-        that may push a branch or open a pull request, oldest first. Test
-        events and test sessions are left out, so a probe cannot take a real
-        branch. The scan reads every recent event, so it opens its own
+        that may push a branch, open a pull request or add a worktree (so a
+        push from a worktree removed since still maps to its repository),
+        oldest first. Test events and test sessions are left out, so a probe
+        cannot take a real branch. The scan reads every recent event, so it opens its own
         read-only connection: callers run it in a worker, off the loop that
         owns `_conn`."""
         with contextlib.closing(
@@ -831,7 +832,8 @@ class HistoryStore:
                 "WHERE e.event_type = 'PreToolUse' AND e.ts >= ? "
                 "AND NOT COALESCE(json_extract(e.payload_json, '$.test'), 0) "
                 "AND NOT COALESCE(s.test, 0) "
-                "AND (c LIKE '%push%' OR c LIKE '%pr create%') ORDER BY e.ts",
+                "AND (c LIKE '%push%' OR c LIKE '%pr create%' OR c LIKE '%worktree add%') "
+                "ORDER BY e.ts",
                 (since_ms,),
             ).fetchall()
         return [

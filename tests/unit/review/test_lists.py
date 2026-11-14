@@ -264,6 +264,83 @@ def test_the_same_branch_name_in_two_repositories_has_two_owners(
     }
 
 
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        # Every heredoc opened on a line is consumed before commands resume.
+        (
+            "cat <<FIRST <<SECOND\nfirst body\nFIRST\ngit push origin ghost\nSECOND\n"
+            "git push origin real",
+            ["real"],
+        ),
+        ("cat <<-EOF\n\tgit push origin ghost\n\tEOF\ngit push origin real", ["real"]),
+        (
+            "gh pr create --head real --body \"$(cat <<'EOF'\n"
+            "it doesn't\ngit push origin ghost\nEOF\n)\"",
+            ["real"],
+        ),
+        # A `<<` or `#` inside quotes or a comment opens nothing.
+        ("printf '%s' 'example <<EOF'\ngit push origin real", ["real"]),
+        ('echo "a <<EOF"\ngit push origin real', ["real"]),
+        ("# notes <<EOF\ngit push origin real", ["real"]),
+        ("git push origin real # not ghost", ["real"]),
+        # Unreadable or unfinished syntax claims nothing.
+        ("echo 'unclosed\ngit push origin ghost", []),
+        ("cat <<EOF\ngit push origin ghost", []),
+    ],
+)
+def test_heredocs_quotes_and_comments_are_read_as_the_shell_reads_them(
+    command: str, expected: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """main-qa's second pass on #367."""
+    monkeypatch.setattr(lists.git, "repo_root", lambda directory: "/repo")
+    owners = lists.branch_owners([("dev", 1, command, "/w")])
+    assert owners == {("/repo", branch): "dev" for branch in expected}
+
+
+@pytest.mark.parametrize(
+    ("command", "expected"),
+    [
+        ("git -C /other push origin topic", "/other"),
+        ("git -C /other -C sub push origin topic", "/other/sub"),
+        ("git -C sub push origin topic", "/recorded/sub"),
+        ("cd /other && git push origin topic", "/other"),
+        ("cd sub; cd ..; git -C x push origin topic", "/recorded/x"),
+        ("(cd /other && git status); git push origin topic", "/recorded"),
+        ("cd /other\ngit push origin topic", "/other"),
+        ('S=/tmp/x; W="$S/wt"; cd ${W} && git push origin topic', "/tmp/x/wt"),
+        # The directory cannot be known: nothing is claimed.
+        ("cd $UNSET && git push origin topic", None),
+        ("cd - && git push origin topic", None),
+        ("git --git-dir=/x/.git push origin topic", None),
+        ("gh pr create --repo owner/other --head topic", None),
+    ],
+)
+def test_each_push_is_owned_in_the_repository_it_ran_in(
+    command: str, expected: str | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(lists.git, "repo_root", lambda directory: directory)
+    owners = lists.branch_owners([("dev", 1, command, "/recorded")])
+    assert owners == ({(expected, "topic"): "dev"} if expected else {})
+
+
+def test_a_push_from_a_removed_worktree_maps_through_its_worktree_add(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def repo_root(directory: str) -> str:
+        if directory.startswith("/tmp/"):
+            raise lists.git.ReviewGitError("not a git repository")
+        return directory + "-root"
+
+    monkeypatch.setattr(lists.git, "repo_root", repo_root)
+    commands = [
+        ("rel", 1, "git worktree add -q -b topic /tmp/wt origin/main", "/repo"),
+        ("rel", 2, "cd /tmp/wt && git push origin topic", "/elsewhere"),
+        ("rel", 3, "cd /tmp/unknown && git push origin stray", "/repo"),
+    ]
+    assert lists.branch_owners(commands) == {("/repo-root", "topic"): "rel"}
+
+
 def test_pushed_branches_with_a_pr_join_the_session_beside_its_checkout(
     clone: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

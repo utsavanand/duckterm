@@ -16,6 +16,7 @@ costs one page of pulls plus one check-runs and one reviews call per open PR.
 
 from __future__ import annotations
 
+import os
 import re
 import shlex
 import threading
@@ -31,7 +32,8 @@ CACHE_SECONDS = 60
 PUSH_DAYS = 14
 
 _BRANCH = re.compile(r"[A-Za-z0-9._][A-Za-z0-9._/-]*")
-_HEREDOC = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=[^$`]*")
+_VARIABLE = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
 # git push options that take a separate value; the value is not a refspec.
 _PUSH_VALUE_OPTIONS = {"-o", "--push-option", "--repo", "--receive-pack", "--exec"}
 
@@ -52,9 +54,119 @@ def _iso_to_epoch(value: Any) -> int | None:
         return None
 
 
+def _without_data(command: str) -> str | None:
+    """`command` with heredoc bodies and comments removed: they are data (a PR
+    body, a notes file), not commands. Quotes, `$(...)` and backticks are
+    followed so a `<<` or `#` inside a quoted argument is left alone, and every
+    heredoc opened on a line is consumed, in order, after that line. None when
+    the syntax cannot be read with certainty (an unclosed quote or group, a
+    heredoc without a delimiter); a heredoc never closed runs to the end."""
+    out: list[str] = []
+    pending: list[tuple[str, bool]] = []
+    # Frames: "top" and "(" (and "`") are shell syntax; '"' is a double-quoted string.
+    stack = ["top"]
+    i, n = 0, len(command)
+    while i < n:
+        c = command[i]
+        syntax = stack[-1] != '"'
+        if c == "\\":
+            out.append(command[i : i + 2])
+            i += 2
+            continue
+        if c == "$" and command.startswith("$(", i):
+            stack.append("(")
+            out.append("$(")
+            i += 2
+            continue
+        if c == "`":
+            if stack[-1] == "`":
+                stack.pop()
+            else:
+                stack.append("`")
+        elif not syntax:
+            if c == '"':
+                stack.pop()
+        elif c == '"':
+            stack.append('"')
+        elif c == "'":
+            end = command.find("'", i + 1)
+            if end < 0:
+                return None
+            out.append(command[i : end + 1])
+            i = end + 1
+            continue
+        elif c == "(":
+            stack.append("(")
+        elif c == ")":
+            if stack[-1] != "(":
+                return None
+            stack.pop()
+        elif c == "#" and (i == 0 or command[i - 1] in " \t\n;&|()"):
+            end = command.find("\n", i)
+            i = n if end < 0 else end
+            continue
+        elif command.startswith("<<<", i):
+            out.append("<<<")
+            i += 3
+            continue
+        elif command.startswith("<<", i):
+            j = i + 2
+            strip = command.startswith("-", j)
+            j += strip
+            while j < n and command[j] in " \t":
+                j += 1
+            delimiter, j = _heredoc_word(command, j)
+            if not delimiter:
+                return None
+            pending.append((delimiter, strip))
+            out.append(command[i:j])
+            i = j
+            continue
+        elif c == "\n" and pending:
+            out.append("\n")
+            i += 1
+            for delimiter, strip in pending:
+                while True:
+                    if i >= n:
+                        return "".join(out)
+                    end = command.find("\n", i)
+                    end = n if end < 0 else end
+                    line = command[i:end]
+                    i = end + 1
+                    if (line.lstrip("\t") if strip else line) == delimiter:
+                        break
+            pending = []
+            continue
+        out.append(c)
+        i += 1
+    return "".join(out) if stack == ["top"] else None
+
+
+def _heredoc_word(command: str, i: int) -> tuple[str, int]:
+    """The delimiter of a heredoc whose word starts at `i`, quotes removed,
+    and the index after the word."""
+    word: list[str] = []
+    while i < len(command) and command[i] not in " \t\n;&|()<>":
+        c = command[i]
+        if c in "'\"":
+            end = command.find(c, i + 1)
+            if end < 0:
+                return "", i
+            word.append(command[i + 1 : end])
+            i = end + 1
+        elif c == "\\":
+            word.append(command[i + 1 : i + 2])
+            i += 2
+        else:
+            word.append(c)
+            i += 1
+    return "".join(word), i
+
+
 def _split(script: str) -> list[list[str]] | None:
-    """Shell words of each simple command in `script`, or None when shlex
-    cannot read it (an unbalanced quote)."""
+    """Shell words of each simple command in `script`, with `(` and `)`
+    as one-word entries where a group or substitution opens and closes, or
+    None when shlex cannot read it."""
     try:
         lexer = shlex.shlex(script, posix=True, punctuation_chars=True)
         lexer.whitespace_split = True
@@ -75,40 +187,32 @@ def _split(script: str) -> list[list[str]] | None:
         elif word and set(word) <= set(";&|()"):
             out.append(current)
             current = []
+            out.extend([ch] for ch in word if ch in "()")
         else:
             current.append(word)
     out.append(current)
     return [words for words in out if words]
 
 
-def _simple_commands(command: str) -> list[list[str]]:
-    """Shell words of each simple command in a recorded command. Heredoc
-    bodies are data (a PR body, a notes file), not commands, so they are
-    dropped first; the command after the closing delimiter is kept. The rest
-    is read as one script, so a quoted commit message spanning lines does not
-    hide the push after it. If shlex still cannot read it, each line that
-    mentions a push or a PR create is read on its own."""
-    kept: list[str] = []
-    heredoc: str | None = None
-    for line in command.splitlines():
-        if heredoc is not None:
-            if line.strip() == heredoc:
-                heredoc = None
-            continue
-        opened = _HEREDOC.search(line)
-        if opened:
-            heredoc = opened.group(2)
-        kept.append(line)
-    script = "\n".join(kept).replace("\\\n", " ")
-    whole = _split(script.replace("\n", " ;\n"))
-    if whole is not None:
-        return whole
-    return [
-        words
-        for line in kept
-        if "push" in line or "pr create" in line
-        for words in _split(line) or []
-    ]
+def _simple_commands(command: str) -> list[list[str]] | None:
+    """Shell words of each simple command in a recorded command, read as one
+    script so a quoted commit message spanning lines does not hide the push
+    after it. None when the command cannot be read with certainty: it then
+    claims nothing rather than a guessed branch."""
+    script = _without_data(command)
+    if script is None:
+        return None
+    return _split(script.replace("\\\n", " ").replace("\n", " ;\n"))
+
+
+def _join(directory: str | None, path: str) -> str | None:
+    """`path` taken from `directory`, or None when the shell would expand it
+    or the base is unknown."""
+    if not path or path[0] in "~-" or any(ch in path for ch in "$`*?["):
+        return None
+    if os.path.isabs(path):
+        return os.path.normpath(path)
+    return os.path.normpath(os.path.join(directory, path)) if directory else None
 
 
 def _branch_name(ref: str) -> str | None:
@@ -118,28 +222,36 @@ def _branch_name(ref: str) -> str | None:
     return ref
 
 
-def _pushed(words: list[str]) -> list[str]:
-    """Branches a `git push` or `gh pr create` names. A bare `git push` names
-    none: which branch it pushed depends on a directory the record lacks."""
+def _pushed(words: list[str], directory: str | None) -> tuple[str | None, list[str]]:
+    """The directory a `git push` or `gh pr create` runs in and the branches
+    it names. A bare `git push` names none: which branch it pushed depends on
+    a checkout the record lacks. The directory is None when it cannot be
+    known (`--git-dir`, `gh --repo`), so the branches go unclaimed."""
     if words[:3] == ["gh", "pr", "create"]:
+        if any(w in ("-R", "--repo") or w.startswith("--repo=") for w in words):
+            return None, []
         for i, word in enumerate(words):
             if word in ("--head", "-H") and i + 1 < len(words):
                 name = _branch_name(words[i + 1].rsplit(":", 1)[-1])
-                return [name] if name else []
+                return directory, [name] if name else []
             if word.startswith("--head="):
                 name = _branch_name(word.split("=", 1)[1].rsplit(":", 1)[-1])
-                return [name] if name else []
-        return []
+                return directory, [name] if name else []
+        return directory, []
     if not words or words[0] != "git":
-        return []
+        return directory, []
     i = 1
     while i < len(words) and words[i].startswith("-"):
+        if words[i] == "-C" and i + 1 < len(words):
+            directory = _join(directory, words[i + 1])
+        elif words[i].startswith(("--git-dir", "--work-tree")):
+            directory = None
         i += 2 if words[i] in ("-c", "-C") else 1
     if i >= len(words) or words[i] != "push":
-        return []
+        return directory, []
     args = words[i + 1 :]
     if any(a in ("-d", "--delete", "--tags", "--all", "--mirror", "-n", "--dry-run") for a in args):
-        return []
+        return directory, []
     positional: list[str] = []
     skip = False
     for arg in args:
@@ -155,33 +267,100 @@ def _pushed(words: list[str]) -> list[str]:
         for spec in positional[1:]
         if not spec.lstrip("+").startswith(":")
     ]
-    return [name for name in names if name]
+    return directory, [name for name in names if name]
+
+
+def _expand(word: str, values: dict[str, str]) -> str:
+    """`word` with the command's own plain assignments (`S=/tmp/x; cd $S/wt`)
+    substituted. Anything else stays unexpanded, and _join refuses it."""
+    return _VARIABLE.sub(lambda m: values.get(m.group(1) or m.group(2), m.group(0)), word)
+
+
+def _worktree_added(words: list[str], directory: str | None) -> str | None:
+    """The path a `git worktree add` creates, or None."""
+    if words[:3] != ["git", "worktree", "add"]:
+        return None
+    skip = False
+    for arg in words[3:]:
+        if skip:
+            skip = False
+        elif arg in ("-b", "-B", "--reason"):
+            skip = True
+        elif not arg.startswith("-"):
+            return _join(directory, arg)
+    return None
+
+
+def _pushes(command: str, directory: str) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+    """(directory, branch) for each branch a recorded command pushes or opens
+    a PR for, and (path, directory) for each worktree it adds. The directory
+    starts at the recorded one and follows `cd` and `git -C`; a `cd` inside
+    `( )` or `$( )` ends with the group. Once the directory is unknown
+    (`cd -`, `cd $UNSET`, `popd`) nothing more is claimed."""
+    commands = _simple_commands(command)
+    if commands is None:
+        return [], []
+    here: str | None = directory or None
+    groups: list[str | None] = []
+    values: dict[str, str] = {}
+    pushed: list[tuple[str, str]] = []
+    added: list[tuple[str, str]] = []
+    for words in commands:
+        words = [_expand(word, values) for word in words]
+        if words[0] == "export":
+            words = words[1:] or [""]
+        if words == ["("]:
+            groups.append(here)
+        elif words == [")"]:
+            here = groups.pop() if groups else None
+        elif all(_ASSIGNMENT.fullmatch(word) for word in words):
+            for word in words:
+                name, value = word.split("=", 1)
+                values[name] = value
+        elif words[0] in ("cd", "pushd"):
+            here = _join(here, words[1]) if len(words) == 2 else None
+        elif words[0] == "popd":
+            here = None
+        else:
+            where, branches = _pushed(words, here)
+            if where:
+                pushed.extend((where, branch) for branch in branches)
+            path = _worktree_added(words, here)
+            if path and here:
+                added.append((path, here))
+    return pushed, added
 
 
 def branch_owners(commands: list[tuple[str, int, str, str]]) -> dict[tuple[str, str], str]:
     """{(repository, branch): session key} from (session key, ts, command,
     directory) rows: the first session to push a branch, or open a PR for it,
-    in that repository owns it. Only rows inside the PUSH_DAYS window are
-    read, so a branch whose first push has aged out belongs to whoever pushed
-    it first within the window. Runs in a worker: it calls git to map each
-    directory to its repository."""
+    in that repository owns it. The repository is the one each push ran in:
+    the recorded directory, followed through `cd` and `git -C`. A worktree
+    removed since is mapped through the recorded `git worktree add` that made
+    it. Only rows inside the PUSH_DAYS window are read, so a branch whose
+    first push has aged out belongs to whoever pushed it first within the
+    window. Runs in a worker: it calls git to map each directory to its
+    repository."""
     roots: dict[str, str | None] = {}
+    worktrees: dict[str, str] = {}
 
     def root(directory: str) -> str | None:
         if directory not in roots:
             try:
-                roots[directory] = git.repo_root(directory) if directory else None
+                roots[directory] = git.repo_root(directory)
             except git.ReviewGitError:
-                roots[directory] = None
+                made = next((w for w in worktrees if within(directory, w)), None)
+                roots[directory] = root(worktrees[made]) if made else None
         return roots[directory]
 
     owners: dict[tuple[str, str], str] = {}
     for key, _, command, directory in sorted(commands, key=lambda row: row[1]):
-        if "push" not in command and "pr create" not in command:
+        if not any(word in command for word in ("push", "pr create", "worktree add")):
             continue
-        branches = [b for words in _simple_commands(command) for b in _pushed(words)]
-        repo = root(directory) if branches else None
-        for branch in branches:
+        pushed, added = _pushes(command, directory)
+        worktrees.update(added)
+        for where, branch in pushed:
+            repo = root(where)
             if repo:
                 owners.setdefault((repo, branch), key)
     return owners
