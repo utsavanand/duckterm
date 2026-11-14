@@ -458,7 +458,7 @@ class MemoryPreparation:
             usable = (
                 prior
                 if handoff.get("method") == "independent_spans"
-                else memory_handoff.usable_prior(sources, captured["required"], prior)
+                else memory_handoff.usable_prior(key, sources, captured["required"], prior)
             )
             rows = memory_handoff.records(sources)
             processed, _ = memory_handoff.coverage(rows, usable)
