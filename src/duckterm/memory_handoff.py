@@ -2,12 +2,11 @@
 
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from duckterm import prompts
 from duckterm.memory_budget import MAX_BRIEF_BYTES as MAX_BRIEF_BYTES
-from duckterm.persistence.saved_state import fingerprint
+from duckterm.persistence.saved_state import fingerprint, memory_scope
 
 MAX_REQUIRED_BYTES = 16000
 ORIGINAL_KINDS = {"conversation", "session", "task", "inbox", "event", "artifact"}
@@ -54,12 +53,12 @@ def coverage(
 
 
 def usable_prior(
-    sources: list[dict[str, Any]], required: str, prior: dict[str, Any] | None
+    key: str, sources: list[dict[str, Any]], required: str, prior: dict[str, Any] | None
 ) -> dict[str, Any] | None:
     """Do not deliver derived text from revoked scope or rewritten/deleted evidence."""
     if not prior:
         return None
-    if prior.get("source", {}).get("scope_hash") != fingerprint(json.loads(required)["scope"]):
+    if prior.get("source", {}).get("scope_hash") != memory_scope(key):
         return None
     continuity = prior.get("continuity")
     if continuity:
@@ -97,7 +96,7 @@ def assemble(
         )
     from duckterm import memory_budget, memory_summary
 
-    prior = usable_prior(sources, required, prior)
+    prior = usable_prior(key, sources, required, prior)
     rows = records(sources)
     _, count = coverage(rows, prior)
     continuity = (prior or {}).get("continuity", {})

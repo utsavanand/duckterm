@@ -8,7 +8,7 @@ from typing import Any
 
 from duckterm import memory_contract, memory_sources, memory_summary, memory_versions
 from duckterm.core.session_api import APIError
-from duckterm.persistence.saved_state import REVISION_BUCKET, fingerprint
+from duckterm.persistence.saved_state import REVISION_BUCKET, fingerprint, memory_scope
 
 LINK_BUCKET = "memory_link_v1"
 
@@ -23,7 +23,7 @@ def canonical(server: Any, key: str, grant: dict[str, Any]) -> dict[str, Any]:
     ):
         if row["bucket"] == REVISION_BUCKET:
             value = server.digests.revision(key, row["id"])
-            if value and value["source"].get("scope_hash") == fingerprint(grant):
+            if value and value["source"].get("scope_hash") == memory_scope(key):
                 revisions.append(value)
         else:
             try:
