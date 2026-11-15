@@ -286,6 +286,8 @@ def test_the_same_branch_name_in_two_repositories_has_two_owners(
         ("git push origin real # not ghost", ["real"]),
         # Unreadable or unfinished syntax claims nothing.
         ("echo 'unclosed\ngit push origin ghost", []),
+        ("cat <<E'OF'\ngit push origin ghost\nEOF\ngit push origin real", ["real"]),
+        ("printf '%s' ';' 'git push origin ghost'", []),
         ("cat <<EOF\ngit push origin ghost", []),
     ],
 )
@@ -307,10 +309,17 @@ def test_heredocs_quotes_and_comments_are_read_as_the_shell_reads_them(
         ("cd /other && git push origin topic", "/other"),
         ("cd sub; cd ..; git -C x push origin topic", "/recorded/x"),
         ("(cd /other && git status); git push origin topic", "/recorded"),
+        ("(cd /other; git push origin topic); git status", "/other"),
         ("cd /other\ngit push origin topic", "/other"),
-        ('S=/tmp/x; W="$S/wt"; cd ${W} && git push origin topic', "/tmp/x/wt"),
+        ("git -C/other push origin topic", "/other"),
+        ("git -C ../other -C child push origin topic", "/other/child"),
         # The directory cannot be known: nothing is claimed.
-        ("cd $UNSET && git push origin topic", None),
+        # Variables are never expanded, quoted or not, and an assignment in a
+        # subshell cannot leak out (main-qa's third pass).
+        ("S=/other; cd $S && git push origin topic", None),
+        ("S=/other; cd '$S'; git push origin topic", None),
+        ('S=/outer; (S=/inner); cd "$S"; git push origin topic', None),
+        ("git --namespace=x push origin topic", None),
         ("cd - && git push origin topic", None),
         ("git --git-dir=/x/.git push origin topic", None),
         ("gh pr create --repo owner/other --head topic", None),
@@ -337,6 +346,10 @@ def test_a_push_from_a_removed_worktree_maps_through_its_worktree_add(
         ("rel", 1, "git worktree add -q -b topic /tmp/wt origin/main", "/repo"),
         ("rel", 2, "cd /tmp/wt && git push origin topic", "/elsewhere"),
         ("rel", 3, "cd /tmp/unknown && git push origin stray", "/repo"),
+        # A first push that cannot be placed leaves the branch unowned; a
+        # later push from elsewhere does not take it.
+        ("dev", 4, "cd $W && git push origin unplaced", "/repo"),
+        ("rel", 5, "git push origin unplaced", "/repo"),
     ]
     assert lists.branch_owners(commands) == {("/repo-root", "topic"): "rel"}
 

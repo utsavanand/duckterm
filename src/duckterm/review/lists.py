@@ -32,8 +32,10 @@ CACHE_SECONDS = 60
 PUSH_DAYS = 14
 
 _BRANCH = re.compile(r"[A-Za-z0-9._][A-Za-z0-9._/-]*")
-_ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=[^$`]*")
-_VARIABLE = re.compile(r"\$(?:\{([A-Za-z_][A-Za-z0-9_]*)\}|([A-Za-z_][A-Za-z0-9_]*))")
+# git options before the subcommand that cannot change which repository it
+# runs in. -C is followed; any other option (--git-dir, --work-tree, ...)
+# leaves the repository unknown.
+_GIT_OPTIONS = {"--no-pager", "-P", "--paginate", "--no-optional-locks", "--literal-pathspecs"}
 # git push options that take a separate value; the value is not a refspec.
 _PUSH_VALUE_OPTIONS = {"-o", "--push-option", "--repo", "--receive-pack", "--exec"}
 
@@ -226,10 +228,11 @@ def _pushed(words: list[str], directory: str | None) -> tuple[str | None, list[s
     """The directory a `git push` or `gh pr create` runs in and the branches
     it names. A bare `git push` names none: which branch it pushed depends on
     a checkout the record lacks. The directory is None when it cannot be
-    known (`--git-dir`, `gh --repo`), so the branches go unclaimed."""
+    known (`--git-dir`, an unknown git option, `gh --repo`), so the branches
+    go unclaimed."""
     if words[:3] == ["gh", "pr", "create"]:
         if any(w in ("-R", "--repo") or w.startswith("--repo=") for w in words):
-            return None, []
+            directory = None
         for i, word in enumerate(words):
             if word in ("--head", "-H") and i + 1 < len(words):
                 name = _branch_name(words[i + 1].rsplit(":", 1)[-1])
@@ -242,11 +245,14 @@ def _pushed(words: list[str], directory: str | None) -> tuple[str | None, list[s
         return directory, []
     i = 1
     while i < len(words) and words[i].startswith("-"):
-        if words[i] == "-C" and i + 1 < len(words):
-            directory = _join(directory, words[i + 1])
-        elif words[i].startswith(("--git-dir", "--work-tree")):
+        option = words[i]
+        if option == "-C":
+            directory = _join(directory, words[i + 1]) if i + 1 < len(words) else None
+        elif option.startswith("-C"):
+            directory = _join(directory, option[2:])
+        elif option != "-c" and option not in _GIT_OPTIONS:
             directory = None
-        i += 2 if words[i] in ("-c", "-C") else 1
+        i += 2 if option in ("-c", "-C") else 1
     if i >= len(words) or words[i] != "push":
         return directory, []
     args = words[i + 1 :]
@@ -270,12 +276,6 @@ def _pushed(words: list[str], directory: str | None) -> tuple[str | None, list[s
     return directory, [name for name in names if name]
 
 
-def _expand(word: str, values: dict[str, str]) -> str:
-    """`word` with the command's own plain assignments (`S=/tmp/x; cd $S/wt`)
-    substituted. Anything else stays unexpanded, and _join refuses it."""
-    return _VARIABLE.sub(lambda m: values.get(m.group(1) or m.group(2), m.group(0)), word)
-
-
 def _worktree_added(words: list[str], directory: str | None) -> str | None:
     """The path a `git worktree add` creates, or None."""
     if words[:3] != ["git", "worktree", "add"]:
@@ -291,40 +291,36 @@ def _worktree_added(words: list[str], directory: str | None) -> str | None:
     return None
 
 
-def _pushes(command: str, directory: str) -> tuple[list[tuple[str, str]], list[tuple[str, str]]]:
+def _pushes(
+    command: str, directory: str
+) -> tuple[list[tuple[str | None, str]], list[tuple[str, str]]]:
     """(directory, branch) for each branch a recorded command pushes or opens
-    a PR for, and (path, directory) for each worktree it adds. The directory
-    starts at the recorded one and follows `cd` and `git -C`; a `cd` inside
-    `( )` or `$( )` ends with the group. Once the directory is unknown
-    (`cd -`, `cd $UNSET`, `popd`) nothing more is claimed."""
+    a PR for, the directory None where it cannot be known, and (path,
+    directory) for each worktree it adds. The directory
+    starts at the recorded one and follows literal `cd` and `git -C` paths; a
+    `cd` inside `( )` or `$( )` ends with the group. Variables are never
+    expanded: once a directory needs one (`cd $W`), or is otherwise unknown
+    (`cd -`, `popd`), nothing more is claimed. Omitting a PR from a session's
+    list beats crediting the wrong one."""
     commands = _simple_commands(command)
     if commands is None:
         return [], []
     here: str | None = directory or None
     groups: list[str | None] = []
-    values: dict[str, str] = {}
-    pushed: list[tuple[str, str]] = []
+    pushed: list[tuple[str | None, str]] = []
     added: list[tuple[str, str]] = []
     for words in commands:
-        words = [_expand(word, values) for word in words]
-        if words[0] == "export":
-            words = words[1:] or [""]
         if words == ["("]:
             groups.append(here)
         elif words == [")"]:
             here = groups.pop() if groups else None
-        elif all(_ASSIGNMENT.fullmatch(word) for word in words):
-            for word in words:
-                name, value = word.split("=", 1)
-                values[name] = value
         elif words[0] in ("cd", "pushd"):
             here = _join(here, words[1]) if len(words) == 2 else None
         elif words[0] == "popd":
             here = None
         else:
             where, branches = _pushed(words, here)
-            if where:
-                pushed.extend((where, branch) for branch in branches)
+            pushed.extend((where, branch) for branch in branches)
             path = _worktree_added(words, here)
             if path and here:
                 added.append((path, here))
@@ -354,15 +350,21 @@ def branch_owners(commands: list[tuple[str, int, str, str]]) -> dict[tuple[str, 
         return roots[directory]
 
     owners: dict[tuple[str, str], str] = {}
+    # Branches whose first push could not be placed in a repository. Its true
+    # owner is unknown, so a later push (often a release rebase) must not
+    # take it; a same-named branch elsewhere is the price of not guessing.
+    unplaced: set[str] = set()
     for key, _, command, directory in sorted(commands, key=lambda row: row[1]):
         if not any(word in command for word in ("push", "pr create", "worktree add")):
             continue
         pushed, added = _pushes(command, directory)
         worktrees.update(added)
         for where, branch in pushed:
-            repo = root(where)
-            if repo:
+            repo = root(where) if where else None
+            if repo and branch not in unplaced:
                 owners.setdefault((repo, branch), key)
+            elif not repo and not any(b == branch for _, b in owners):
+                unplaced.add(branch)
     return owners
 
 
