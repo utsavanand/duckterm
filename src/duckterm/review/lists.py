@@ -228,10 +228,10 @@ def _pushed(words: list[str], directory: str | None) -> tuple[str | None, list[s
     """The directory a `git push` or `gh pr create` runs in and the branches
     it names. A bare `git push` names none: which branch it pushed depends on
     a checkout the record lacks. The directory is None when it cannot be
-    known (`--git-dir`, an unknown git option, `gh --repo`), so the branches
-    go unclaimed."""
+    known (`--git-dir`, an unknown git option, `gh -R/--repo` in any form),
+    so the branches go unclaimed."""
     if words[:3] == ["gh", "pr", "create"]:
-        if any(w in ("-R", "--repo") or w.startswith("--repo=") for w in words):
+        if any(w.startswith(("-R", "--repo")) for w in words):
             directory = None
         for i, word in enumerate(words):
             if word in ("--head", "-H") and i + 1 < len(words):
@@ -244,6 +244,10 @@ def _pushed(words: list[str], directory: str | None) -> tuple[str | None, list[s
     if not words or words[0] != "git":
         return directory, []
     i = 1
+    # An absolute -C can place a command whose working directory is unknown,
+    # but nothing places it after an option that may select another
+    # repository (--git-dir, --work-tree, anything unrecognised).
+    overridden = False
     while i < len(words) and words[i].startswith("-"):
         option = words[i]
         if option == "-C":
@@ -251,8 +255,10 @@ def _pushed(words: list[str], directory: str | None) -> tuple[str | None, list[s
         elif option.startswith("-C"):
             directory = _join(directory, option[2:])
         elif option != "-c" and option not in _GIT_OPTIONS:
-            directory = None
+            overridden = True
         i += 2 if option in ("-c", "-C") else 1
+    if overridden:
+        directory = None
     if i >= len(words) or words[i] != "push":
         return directory, []
     args = words[i + 1 :]

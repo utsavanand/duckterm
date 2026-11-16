@@ -323,6 +323,12 @@ def test_heredocs_quotes_and_comments_are_read_as_the_shell_reads_them(
         ("cd - && git push origin topic", None),
         ("git --git-dir=/x/.git push origin topic", None),
         ("gh pr create --repo owner/other --head topic", None),
+        # A repository override stays in force past a later -C (main-qa's
+        # fourth pass), and -R counts attached too.
+        ("git --git-dir=/actual/.git -C /other push origin topic", None),
+        ("gh pr create -Rowner/other --head topic", None),
+        ("gh pr create --repo=owner/other --head topic", None),
+        ("cd $W && git -C /other push origin topic", "/other"),
     ],
 )
 def test_each_push_is_owned_in_the_repository_it_ran_in(
