@@ -23,6 +23,7 @@ from duckterm.persistence.saved_state import (
     current_revision,
     event_source,
     fingerprint,
+    memory_scope,
     transaction,
 )
 from duckterm.runtimes.native_history import MessageSource, NativeSnapshot
@@ -283,7 +284,7 @@ class ProgressCoordinator:
             "events": facts["events"],
             "required_hash": fingerprint(facts["required"]),
             "mail_hash": facts["mail_boundary"]["hash"],
-            "scope_hash": fingerprint(facts["required"]["scope"]),
+            "scope_hash": memory_scope(key),
             "transcript_hash": fingerprint(transcript),
             "transcript_chars": len(full),
             "transcript_used_chars": min(len(full), progress._MAX_TRANSCRIPT_CHARS),

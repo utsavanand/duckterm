@@ -491,3 +491,38 @@ def test_next_checkpoint_continues_after_the_furthest_span_when_saved_out_of_ord
         assert [r["text"] for r in data["records"]] == ["New owner message after the first summary"]
 
     asyncio.run(run())
+
+
+def test_memory_continues_after_the_agent_edits_its_purpose_and_moves_folder(
+    memory_rig, monkeypatch
+):
+    # Owner, 2026-11-11: memory belongs to the agent. Its own purpose edit used
+    # to start memory over, re-summarizing everything under a new key.
+    from test_session_api import dispatch, enroll
+
+    from duckterm.persistence.saved_state import memory_scope
+
+    server, headers, _, tmp = memory_rig
+    path = transcript(tmp, "agent-claude", "Owner instruction one")
+    calls = provider(monkeypatch)
+    refresh = server.progress_coordinator.refresh
+
+    first = asyncio.run(refresh("agent"))
+    purpose = json.dumps({"purpose": "A new purpose"}).encode()
+    assert dispatch(server, "PATCH", "/api/v1/session/self", headers, purpose)[0] == 200
+    append(path, "Owner instruction two")
+    seen = len(calls)
+    second = asyncio.run(refresh("agent"))
+    assert calls[seen:] and not any("Owner instruction one" in p for p in calls[seen:])
+
+    server.history.set_meta("agent", group="Elsewhere")
+    enroll(server.history, "agent", "Elsewhere")
+    append(path, "Owner instruction three")
+    seen = len(calls)
+    third = asyncio.run(refresh("agent"))
+    assert calls[seen:] and not any(
+        "instruction one" in p or "instruction two" in p for p in calls[seen:]
+    )
+
+    saved = {r["id"] for r in memory_folding.rows(server.digests, "agent", memory_scope("agent"))}
+    assert {first["id"], second["id"], third["id"]} <= saved

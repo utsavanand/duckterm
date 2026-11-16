@@ -83,6 +83,17 @@ def fingerprint(value: Any) -> str:
     ).hexdigest()
 
 
+def memory_scope(key: str) -> str:
+    """The partition every summary, fold and memory item is saved under: the agent.
+
+    Owner, 2026-11-11: memory belongs to the agent and moves with it. The card's
+    purpose (which the agent rewrites itself) and folder are not part of it;
+    sharing is checked when memory is read. Before, an agent's own purpose edit
+    started its memory over.
+    """
+    return fingerprint(["agent-memory", key])
+
+
 @contextmanager
 def transaction(conn: sqlite3.Connection) -> Iterator[None]:
     """Own the write lock before reading boundaries; never commit a caller's work."""

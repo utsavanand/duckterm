@@ -55,4 +55,6 @@ def test_items_auth_peer_scope_and_parameter_injection(memory_rig, monkeypatch):
     assert dispatch(server, "GET", route + "?session=agent", peer)[0] == 400
     server.history.set_meta("agent", group="Elsewhere")
     moved = enroll(server.history, "agent", "Elsewhere")
-    assert dispatch(server, "GET", route, moved) == (200, {"items": []})
+    # Owner, 2026-11-11: memory belongs to the agent and moves with it.
+    assert dispatch(server, "GET", route, moved) == own
+    assert dispatch(server, "GET", route, peer) == (200, {"items": []})
