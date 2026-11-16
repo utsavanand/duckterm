@@ -16,8 +16,10 @@ and the gated routes answer. Without the flag those routes return 403 with
 ignored, so a left-over file never blocks startup once a feature ships; a
 malformed file stops startup, like a bad `edition.json`.
 
-A flag is not a licence boundary and not a secret. Anyone who edits the file
-gets the feature. Flags keep unfinished work out of other people's way.
+A flag is a local opt-in, not a licence boundary and not a security boundary.
+Any process that can write the DuckTerm home, or the target of a symlink there,
+can turn a flag on. Flags keep unfinished work out of other people's way; they
+do not keep anyone out.
 
 ## In development
 
