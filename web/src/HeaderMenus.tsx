@@ -102,7 +102,7 @@ export function HeaderMenus({ theme, onTheme, density, onDensity, notifyOn, onNo
         <button className="rd-header-menu-item" onClick={() => action("agentsetup")}>Agent setup <span aria-hidden="true">›</span></button>
         <button className="rd-header-menu-item" onClick={() => action("bugreport")}>Report a bug <span aria-hidden="true">›</span></button>
         <button className="rd-header-menu-item" onClick={() => action("backup")}>Back up to remote <span aria-hidden="true">›</span></button>
-        <button className="rd-header-menu-item" title="Manage skill kits for your projects" onClick={() => action("harnesses")}>Harnesses <span aria-hidden="true">›</span></button>
+        {has("skill_kits") && <button className="rd-header-menu-item" title="See the skill kits you have added" onClick={() => action("harnesses")}>Skill kits <span aria-hidden="true">›</span></button>}
         <div className="rd-header-menu-divider" /><UpdateDuckTerm />
       </section>}
     </div>

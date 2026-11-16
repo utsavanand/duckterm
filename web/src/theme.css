@@ -926,18 +926,6 @@ code,
   color: var(--muted);
   margin-top: 2px;
 }
-.rd-harness-output {
-  margin: 8px 0 0;
-  padding: 8px 10px;
-  background: var(--bg-code);
-  color: #d1d5db;
-  border-radius: 6px;
-  font-size: 0.6875rem;
-  line-height: 1.5;
-  max-height: 160px;
-  overflow: auto;
-  white-space: pre-wrap;
-}
 /* xterm fills the pane and scrolls its OWN buffer (xterm-viewport), so a long
    session scrolls inside the terminal instead of growing the page. */
 .rd-terminal-pane .xterm,

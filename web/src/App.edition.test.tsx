@@ -3,6 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { SessionView, viewFromPersisted } from "./types";
 import { CODE, FULL, LITE } from "./test/editions";
+import { DEVELOPMENT } from "./test/editionFeatures";
 
 const probe = vi.hoisted(() => ({
   connected: true, sessions: [] as SessionView[], tree: {} as Record<string, unknown>, edition: null as unknown, requests: [] as string[],
@@ -199,4 +200,15 @@ it.each([["lite", LITE], ["code", CODE], ["full", FULL.filter(feature => feature
   await act(async () => { fireEvent.click(tab("Overview")!); });
   expect(screen.queryByRole("button", { name: "Oracle main chat" })).toBeNull();
   expect(probe.requests.filter(path => /^\/relay|^\/oracle|^\/fleet\/ask/.test(path))).toEqual([]);
+});
+
+
+it("Skill kits appears in Settings only when the instance has the development flag", async () => {
+  await mount(FULL);
+  fireEvent.click(screen.getByRole("button", { name: /^Settings/ }));
+  expect(screen.queryByRole("button", { name: /^Skill kits/ })).toBeNull();
+  cleanup();
+  await mount([...FULL, ...DEVELOPMENT]);
+  fireEvent.click(screen.getByRole("button", { name: /^Settings/ }));
+  expect(screen.getAllByRole("button", { name: /^Skill kits/ })).toHaveLength(1);
 });
