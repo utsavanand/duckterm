@@ -20,6 +20,42 @@ trusted window calculation, then tint every session duck from one shared compone
 Keep unknown windows, sleeping ducks and editions without context untinted. Test
 compaction clearing the tint as well as rising usage; preserve numeric warnings
 and accessible text alongside colour. The owner approved the dark/light preview.
+## 2026-10-30 — Seven controls per row, three of which did the same thing
+
+The connector panel grew one control per capability until a single row carried
+Disable/Connect, Close, Refresh credentials, Check now, Change connection,
+Forget stored credentials and Revoke — more vertical space for one connector
+than the redesign now uses for three. Reading them side by side showed the
+duplication: "Refresh" and "Refresh credentials" called the identical function,
+and "Connect" and "Change connection" opened the identical form. A row now
+shows name, state and one Configure; everything else lives behind it.
+
+Two things that came out of doing it:
+
+- "Configured · not verified this session" was a non-answer the owner had to
+  click to resolve. Verification takes 0.42-1.23s per connector, so it runs on
+  panel open and the row reports a proved tool count. Measure before assuming a
+  check is too slow to be automatic.
+- Closing the settings panel on every successful change is wrong when one of
+  those changes is a toggle inside the panel. A test caught it: flipping
+  "Available to agents" dismissed the controls the owner was still using.
+
+## 2026-10-30 — A field that names a source is not a field that answers "is it stored"
+
+The connector panel gated "Forget stored credentials" and "Revoke" on
+`c.credential`, which holds the source name (`gh-cli`, `railway-cli`, `stored`).
+That string is always truthy, so both controls rendered for every connector —
+including GitHub and Railway, where Duckterm stores nothing and `forget()`
+would call `disable()` and kill a working connector to delete a secret that was
+never there. The fix is a field that answers the actual question
+(`stored_secret`), not a truthiness test on a value that means something else.
+Before gating UI on a field, read what it contains, not whether it is set.
+
+Also here: `.rd-connector-installed` wrapped two buttons, a link and a sentence
+with no `display: flex`, so every child stacked full-width and the panel read as
+a wall of controls. Its sibling `.rd-connector-proof` had the flex rule, which
+is what made the difference visible. Render the panel at real width before
+calling a layout done — the tests passed throughout.
 
 ## 2026-10-25 — Floating CI environments can break a validated release
 
