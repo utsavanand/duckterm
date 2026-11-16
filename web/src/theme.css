@@ -897,7 +897,7 @@ code,
   border-color: var(--brand-green);
 }
 
-/* Harnesses modal: one card per registered suite. */
+/* Skill kits modal: one card per registered kit. */
 .rd-harness-hint {
   font-size: 0.75rem;
   color: var(--text-soft);
