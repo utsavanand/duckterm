@@ -89,7 +89,7 @@ function handoff(value: unknown): MaintainedHandoff {
     h.coverage = { declared: bool(c.declared), unknown: bool(c.unknown),
       omitted: list(c.omitted, item => {
         const gap = obj(item);
-        return { reason: choice(gap.reason, ["oversized_record", "pending_update", "unclassified_source", "budget_exhausted", "unreadable_source"]),
+        return { reason: choice(gap.reason, ["oversized_record", "pending_update", "unclassified_source", "budget_exhausted", "unreadable_source", "automatic_checkpoints_off"]),
           count: num(gap.count), sample_refs: list(gap.sample_refs, ref => nonempty(ref)) };
       }) };
     if (!h.coverage.declared || h.eligible_records + h.reference_only_records !== h.available_records

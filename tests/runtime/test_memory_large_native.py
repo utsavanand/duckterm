@@ -146,3 +146,34 @@ def test_a_rewritten_transcript_keeps_both_whole_copies(tmp_path, monkeypatch):
     assert [r["text"] for r in memory_sources.read_native("probe", v1)["records"]] == [
         "original wording"
     ]
+
+
+@pytest.mark.parametrize(
+    ("runtime", "line"),
+    [
+        (
+            "codex",
+            {
+                "timestamp": "2026-11-15T10:00:00.250Z",
+                "type": "response_item",
+                "payload": {"type": "message", "role": "user", "content": "Ship it."},
+            },
+        ),
+        (
+            "claude-code",
+            {
+                "timestamp": "2026-11-15T10:00:00.250Z",
+                "type": "user",
+                "uuid": "u1",
+                "message": {"role": "user", "content": "Ship it."},
+            },
+        ),
+    ],
+)
+def test_records_keep_when_the_harness_wrote_them(tmp_path, runtime, line):
+    # Automatic checkpoints skip messages written while they were switched off.
+    path = tmp_path / "native.jsonl"
+    untimed = {k: v for k, v in line.items() if k != "timestamp"}
+    path.write_text(json.dumps(line) + "\n" + json.dumps({**untimed, "uuid": "u2"}) + "\n")
+    read = memory_sources.read_native("probe", {**source(path), "runtime": runtime})
+    assert [r["at"] for r in read["records"]] == [1794736800250, None]
