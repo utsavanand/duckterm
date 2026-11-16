@@ -14,7 +14,8 @@ export function checkpointSummaryMissing(cp: Partial<CheckpointRecord>) {
   return cp.summary_state === "unavailable" && !!cp.record?.summary_ref;
 }
 export function checkpointCanRetry(cp: Partial<CheckpointRecord>) {
-  return !checkpointHandoff(cp) && cp.saved !== false
+  // A gap stays unsummarized by design (owner, 2026-11-15).
+  return !cp.record?.gap && !checkpointHandoff(cp) && cp.saved !== false
     && (cp.summary_update?.state === "failed" || checkpointHasNoSummary(cp));
 }
 export function checkpointAttemptFailed(cp: Partial<CheckpointRecord>) {
@@ -26,7 +27,9 @@ export function checkpointStatus(cp: Partial<CheckpointRecord>) {
     && cp.coverage?.state === "retained" && cp.reason_codes?.length === 0 && !checkpointHandoff(cp)
     && cp.summary_update?.state !== "failed" && cp.summary_update?.state !== "partial";
   let label: string;
-  if (cp.format === "fork_merge") label = "Merge note";
+  const gap = cp.record?.gap;
+  if (gap) label = `${gap.records.toLocaleString()} ${gap.records === 1 ? "message" : "messages"} not summarized`;
+  else if (cp.format === "fork_merge") label = "Merge note";
   else if (cp.saved === false) label = "Not saved";
   else if (cp.coverage?.state === "missing" || cp.reason_codes?.includes("source_missing")) label = "Incomplete coverage";
   else if (cp.summary_update?.state === "failed") label = "Summary update failed";
