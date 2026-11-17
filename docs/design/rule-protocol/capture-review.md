@@ -1,6 +1,6 @@
 # Capture prompt review and proposed reconciliation contract
 
-Design draft, 2026-11-16. Reviewed against this checkout. No production prompt or live rule was changed.
+Preimplementation review, 2026-11-16. The findings below describe the original capture paths. The reconciliation prompt has since been implemented in this branch; see [runtime.md](runtime.md) for current behavior and limits. No live rule catalogue was migrated.
 
 ## Findings in the current code
 
