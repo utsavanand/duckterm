@@ -550,3 +550,11 @@ def test_a_span_of_many_short_ranges_does_not_outrank_a_later_span():
         }
     }
     assert folding.span_position(both) == 13
+
+
+def test_memory_saved_under_the_misordered_key_is_rebuilt_once():
+    # Owner, 2026-11-16: v1 memory was folded in the wrong order; v2 starts over.
+    from duckterm.persistence.saved_state import fingerprint, memory_scope
+
+    assert memory_scope("agent") != fingerprint(["agent-memory", "agent"])
+    assert memory_scope("agent") != memory_scope("other")

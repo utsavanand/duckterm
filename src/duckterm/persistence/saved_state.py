@@ -90,8 +90,12 @@ def memory_scope(key: str) -> str:
     purpose (which the agent rewrites itself) and folder are not part of it;
     sharing is checked when memory is read. Before, an agent's own purpose edit
     started its memory over.
+
+    v2 (owner, 2026-11-16): memory saved under v1 was folded and ordered by the
+    broken span_position, so every agent re-summarizes once in conversation
+    order. v1 rows stay in the database.
     """
-    return fingerprint(["agent-memory", key])
+    return fingerprint(["agent-memory-v2", key])
 
 
 @contextmanager
