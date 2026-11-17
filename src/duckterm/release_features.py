@@ -71,24 +71,21 @@ def apply(edition: EditionConfig, values: dict[str, bool] | None = None) -> Edit
 def inventory(
     edition: EditionConfig, values: dict[str, bool], error: str | None
 ) -> dict[str, object]:
-    return {
-        "restart_required": True,
-        "flags": [
+    rows = []
+    for key, name in FLAGS.items():
+        reason = "Local override" if key in values else "Release default"
+        if key == "byoc" and edition.name != "full":
+            reason = "Not included in this edition"
+        rows.append(
             {
                 "id": key,
                 "name": name,
                 "default": False,
                 "enabled": edition.includes(key),
-                "reason": error
-                or (
-                    "Not included in this edition"
-                    if key == "byoc" and edition.name != "full"
-                    else "Local override" if key in values else "Release default"
-                ),
+                "reason": error or reason,
             }
-            for key, name in FLAGS.items()
-        ],
-    }
+        )
+    return {"restart_required": True, "flags": rows}
 
 
 def require_backup(destination: str | None = None) -> None:
