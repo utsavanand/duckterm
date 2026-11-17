@@ -52,11 +52,11 @@ export function ControlTower({
   onAnalytics: (tab: AnalyticsTab) => void;
 }) {
   const { has } = useEdition();
-  const overview = has("overview"), oracle = overview && has("oracle"), remote = oracle && has("remote_workspaces"), inbox = has("inbox");
+  const overview = has("overview"), oracle = overview && has("oracle"), remote = oracle && has("remote_workspaces"), inbox = has("inbox"), backup = has("backup");
   const [source] = useState(() => new WidgetStreams());
   const analyticsRef = useRef(onAnalytics); analyticsRef.current = onAnalytics;
   const taskOpen = useRef(onOpenTerminal); taskOpen.current = onOpenTerminal;
-  const registry = useMemo(() => [...oracleWidgets(tab => analyticsRef.current(tab), { oracle, remote }), ...(inbox ? [tasksWidget(key => taskOpen.current(key))] : [])], [oracle, remote, inbox]);
+  const registry = useMemo(() => [...oracleWidgets(tab => analyticsRef.current(tab), { oracle, remote, backup }), ...(inbox ? [tasksWidget(key => taskOpen.current(key))] : [])], [oracle, remote, inbox, backup]);
   const [hover, setHover] = useState<{ key: string; el: HTMLElement } | null>(null);
   const [pinned, setPinned] = useState<{ key: string; el: HTMLElement } | null>(null);
 

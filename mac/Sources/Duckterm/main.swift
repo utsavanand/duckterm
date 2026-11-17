@@ -82,7 +82,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Keystrokes and cancellation must not wait on independent HTTP
             // probes, which could reorder input or prevent stopping setup.
             if !["input", "resize", "cancel"].contains(operation) {
-                try await self.requireFeature("terminal")
+                try await self.requireFeature("harness_management")
             }
             guard isCurrent() else { throw RuntimeSetupController.Failure.stale }
             return try await self.runtimeSetup.perform(operation: operation, params: params)
@@ -358,7 +358,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func flushCollaboration(source: URL? = nil) async {
-        guard (try? await refreshEdition())?.includes("inbox") == true else { return }
+        guard (try? await refreshEdition())?.includes("cross_computer_collaboration") == true else { return }
         guard let target = UserDefaults.standard.string(forKey: "collaborationCoordinatorTarget"),
               let host = hosts.first(where: { $0.target == target }) else { return }
         if launchConnections[target] == nil {
@@ -505,9 +505,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func applyEdition(_ current: DesktopEdition?) {
         guard edition != current else { return }
         edition = current
-        if current?.includes("terminal") != true { runtimeSetup.reset() }
-        window?.canSetUpAgents = current?.includes("terminal") == true
-        window?.agentSetupState = current == nil ? nil : runtimeSetup.state
+        if current?.includes("harness_management") != true { runtimeSetup.reset() }
+        window?.canSetUpAgents = current?.includes("harness_management") == true
+        window?.agentSetupState = current?.includes("harness_management") == true ? runtimeSetup.state : nil
         window?.desktopHosts = current?.includes("remote_workspaces") == true ? hosts : []
         if current?.includes("remote_workspaces") != true {
             sessionTransport.close()

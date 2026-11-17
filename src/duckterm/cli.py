@@ -784,6 +784,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "backup":
         import sqlite3
 
+        from duckterm.core.session_api import APIError
         from duckterm.persistence import backup, backup_sync
 
         try:
@@ -793,7 +794,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             else:
                 print(backup.create(args.to))
             return 0
-        except (OSError, ValueError, RuntimeError, sqlite3.Error) as exc:
+        except (OSError, ValueError, RuntimeError, sqlite3.Error, APIError) as exc:
             print(f"duckterm: {exc}", file=sys.stderr)
             return 1
     if args.command == "voice":

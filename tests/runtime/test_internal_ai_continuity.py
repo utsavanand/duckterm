@@ -21,6 +21,9 @@ __all__ = ["memory_rig"]
 
 @pytest.fixture(params=[LITE, CODE, FULL], ids=lambda edition: edition.name, autouse=True)
 def edition(request, monkeypatch, tmp_path):
+    from duckterm import release_features
+
+    monkeypatch.setattr(release_features, "overrides", lambda: ({"byok": True}, None))
     # Select before constructing the real server and its session authorization.
     monkeypatch.setenv("DUCKTERM_EDITION", request.param.name)
     monkeypatch.setenv("HOME", str(tmp_path))
@@ -41,7 +44,10 @@ def test_internal_api_checkpoint_preserves_agent_and_rejects_unfounded_draft(
     memory_rig, monkeypatch, edition
 ):
     server, agent_headers, _, tmp = memory_rig
-    assert server.edition is server.history.session_api.edition is edition
+    from duckterm import release_features
+
+    assert server.edition == release_features.apply(edition)
+    assert server.history.session_api.edition is server.edition
     for name in (
         "DUCKTERM_SUMMARIZER",
         "DUCKTERM_SUMMARIZER_CMD",

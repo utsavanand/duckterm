@@ -463,6 +463,7 @@ async function artifactRequest<T>(path: string, method = "GET"): Promise<T> {
 }
 
 export const api = {
+  featureFlags: () => get<{ restart_required: boolean; flags: { id: string; name: string; default: boolean; enabled: boolean; reason: string }[] }>("/feature-flags", undefined, { authed: true }),
   edition: () => get<EditionDescription>("/edition", undefined, { authed: true }),
   folderStats: (folder: string) => artifactRequest<FolderStats>(`/folders/${encodeURIComponent(folder)}/stats`),
   sessionPrs: (key: string, refresh = false) => get<PrListResult>(`/sessions/${encodeURIComponent(key)}/prs${refresh ? "?refresh=1" : ""}`, undefined, { authed: true }),

@@ -17,6 +17,8 @@ def source(tmp_path, monkeypatch):
     root.mkdir(parents=True)
     monkeypatch.setenv("HOME", str(home))
     monkeypatch.setenv("DUCKTERM_HOME", str(root))
+    (root / "feature-flags.json").parent.mkdir(parents=True, exist_ok=True)
+    (root / "feature-flags.json").write_text(json.dumps({"flags": {"backup": True, "byoc": True}}))
     monkeypatch.setenv("CODEX_HOME", str(home / ".codex"))
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(home / ".claude"))
     connection = sqlite3.connect(root / "db.sqlite")

@@ -186,7 +186,7 @@ def _path_feature(method: str, path: str, body: bytes) -> str | None:
             return "context"
         return "inbox"
     if path.startswith(("/api/v1/collaboration/", "/collaboration/")):
-        return "inbox"
+        return "cross_computer_collaboration"
     if path == "/review" or path.startswith("/review/"):
         return "pr_review"
     if re.fullmatch(r"/(sessions|folders)/.+/prs", path):
@@ -207,6 +207,9 @@ def _path_feature(method: str, path: str, body: bytes) -> str | None:
     ):
         return "terminal"
     for prefix, capability in (
+        ("/harnesses", "skill_kits"),
+        ("/backup", "backup"),
+        ("/ai-settings/key", "byok"),
         ("/connectors", "connectors"),
         ("/transfers", "remote_workspaces"),
         ("/oracle", "oracle"),

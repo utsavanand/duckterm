@@ -30,6 +30,7 @@ import { FloatingSessionShortcuts } from "./FloatingSessionShortcuts";
 import { orderShortcuts, useShortcutPreferences } from "./shortcutPreferences";
 import { CheckpointSettingsModal } from "./CheckpointSettingsModal";
 import { AiModelsModal } from "./AiModelsModal";
+import { FeatureFlagsModal } from "./FeatureFlagsModal";
 import { RuntimeSetupWizard } from "./RuntimeSetupWizard";
 import { CheckpointDialogHost } from "./CheckpointDialog";
 import { BackupModal } from "./BackupModal";
@@ -115,11 +116,11 @@ function Dashboard() {
   const { density, setDensity } = useSidebarDensity();
 
   const [modal, setModal] = useState<
-    "launch" | "agentsmd" | "folder" | "harnesses" | "backup" | "bugreport" | "collaboration" | "checkpointing" | "aimodels" | "appearance" | "agentsetup" | null
+    "launch" | "agentsmd" | "folder" | "harnesses" | "backup" | "bugreport" | "collaboration" | "checkpointing" | "aimodels" | "appearance" | "agentsetup" | "featureflags" | null
   >(desktop()?.draft ? "launch" : null);
   const setupState = useRef<Promise<RuntimeSetupState> | null>(null);
   useEffect(() => {
-    if (!canSetUpAgents()) return;
+    if (!has("harness_management") || !canSetUpAgents()) return;
     let active = true;
     setupState.current ??= runtimeSetupRequest("state", {});
     void setupState.current.then(state => {
@@ -128,7 +129,7 @@ function Dashboard() {
       if (state.show_on_launch) setModal(current => current === null ? "agentsetup" : current);
     }).catch(() => undefined);
     return () => { active = false; };
-  }, []);
+  }, [has]);
   const [bugSession, setBugSession] = useState<string | null>(null);
   const [towerChosen, setTowerOpen] = useState(false);
   const towerOpen = towerChosen && has("overview");
@@ -658,14 +659,15 @@ function Dashboard() {
         <AgentsMdModal sessionKey={selected?.key} dir={agentsMdDir} onClose={() => setModal(null)} />
       )}
       {modal === "bugreport" && <BugReport session={bugSession} onClose={() => setModal(null)} />}
-      {modal === "collaboration" && has("inbox") && <CollaborationPanel onClose={() => setModal(null)} />}
-      {modal === "backup" && <BackupModal onClose={() => setModal(null)} />}
+      {modal === "collaboration" && has("cross_computer_collaboration") && <CollaborationPanel onClose={() => setModal(null)} />}
+      {modal === "backup" && has("backup") && <BackupModal onClose={() => setModal(null)} />}
       {modal === "appearance" && <AppearanceSettings {...appearance} onClose={() => setModal(null)} />}
       {modal === "checkpointing" && has("checkpoints") && <CheckpointSettingsModal onClose={() => setModal(null)}
         onOpenAgent={key => { setModal(null); setSelectedKey(key); setView("history"); }} />}
-      {modal === "agentsetup" && <RuntimeSetupWizard onClose={() => setModal(null)} />}
+      {modal === "agentsetup" && has("harness_management") && <RuntimeSetupWizard onClose={() => setModal(null)} />}
+      {modal === "featureflags" && <FeatureFlagsModal onClose={() => setModal(null)} />}
       {modal === "aimodels" && <AiModelsModal onClose={() => setModal(null)} />}
-      {modal === "harnesses" && (
+      {modal === "harnesses" && has("skill_kits") && (
         <HarnessesModal
           sessionKey={selected?.key}
           onClose={() => setModal(null)}

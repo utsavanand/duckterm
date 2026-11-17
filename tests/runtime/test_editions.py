@@ -87,7 +87,8 @@ def test_edition_route_is_owner_read_only_and_preserves_data(memory_rig):
     assert status(server, "GET", {**owner, "origin": "https://evil.test"}) == 403
     before_changes = server.history._conn.total_changes
     before_schema = server.history._conn.execute("PRAGMA user_version").fetchone()[0]
-    expected = {**FULL.description(), "instance": instance.description()}
+    expected = {**server.edition.description(), "instance": instance.description()}
+    assert "remote_workspaces" not in expected["features"]
     assert dispatch(server, "GET", "/edition", owner) == (200, expected)
     assert status(server, "POST", owner, json.dumps({"id": "lite"}).encode()) == 404
     assert dispatch(server, "GET", "/edition", owner) == (200, expected)

@@ -82,6 +82,18 @@ ssl, which on this Mac are different implementations (LibreSSL 3.3.6 vs OpenSSL
 3.6.3); a fix has to be run under both CLIs, because CI's is neither of the ones
 you assume. Related: [[green-tests-no-working-feature]].
 
+## 2026-11-17 — Release flags must gate execution as well as menus
+
+Edition membership alone left experimental cloud, collaboration, installer,
+API-key and backup controls available in distributed apps. A local, default-off
+registry now determines the server capabilities, native admission checks and
+visible controls. Personal opt-ins live in the instance home, outside builds.
+
+Test both states explicitly: old integration fixtures must opt in to the
+features they exercise, and a separate default-off run must prove that local
+sessions and checkpointing remain available. Never treat hiding a button as
+backend enforcement, and never delete stored work when disabling a feature.
+
 ## 2026-11-07 — Folder chat had a message broker its answer path could never reach
 
 The @ picker could send messages, but a plain-language request went to a prompt

@@ -437,7 +437,11 @@ class Server:
         *,
         edition: editions.EditionConfig | None = None,
     ) -> None:
-        self.edition = edition or editions.configured()
+        from duckterm import release_features
+
+        flag_values, flag_error = release_features.overrides()
+        self.edition = release_features.apply(edition or editions.configured(), flag_values)
+        self.feature_flags = release_features.inventory(self.edition, flag_values, flag_error)
         instance.validate_desktop_context(self.edition.name)
         self._lifecycle_locks: dict[str, asyncio.Lock] = {}
         self._transfer_sources: set[str] = set()
@@ -500,7 +504,7 @@ class Server:
         from duckterm.collaboration.service import Service as CollaborationService
 
         self.collaboration = CollaborationService(
-            self.history, enabled=self.edition.includes("inbox")
+            self.history, enabled=self.edition.includes("cross_computer_collaboration")
         )
         self._context_cache: dict[str, tuple[float, dict[str, Any]]] = {}
         from duckterm.restarts import Restarts
@@ -630,7 +634,7 @@ class Server:
             from duckterm.collaboration.api import body_json
 
             try:
-                self.require_feature("inbox")
+                self.require_feature("cross_computer_collaboration")
                 if method != "POST" or not self.collaboration.store:
                     raise APIError(404, "Collaboration coordinator unavailable")
                 authorization = headers.get("authorization", "")
@@ -723,6 +727,10 @@ class Server:
                     },
                 )
                 return
+
+        if method == "GET" and urllib.parse.urlsplit(path).path == "/feature-flags":
+            await _write_json(writer, 200, self.feature_flags)
+            return
 
         if urllib.parse.urlsplit(path).path.startswith("/collaboration/"):
             from duckterm.collaboration.api import owner as collaboration_owner
@@ -4654,7 +4662,11 @@ class Server:
         async with self._tokens_lock:
             tokens = await asyncio.to_thread(self._tokens.totals, 7, now)
         day_ago = int((now - 86400) * 1000)
-        backup = self._backup_jobs.snapshot() if self._backup_jobs else None
+        backup = (
+            (self._backup_jobs.snapshot() if self._backup_jobs else None)
+            if self.edition.includes("backup")
+            else {}
+        )
         if backup is None:
             raw = private_read(paths.home() / "backup-state.json")
             backup = json.loads(raw) if raw else {"destination": None, "job": None}
@@ -4991,6 +5003,7 @@ class Server:
             await _write_json(writer, 401, {"error": "owner credential required"})
             return
         try:
+            self.require_feature("backup")
             if self._backup_jobs is None:
                 self._backup_jobs = BackupJobs(paths.home() / "backup-state.json")
             jobs = self._backup_jobs
@@ -5010,12 +5023,17 @@ class Server:
                 )
                 return
             mode = req.get("mode", "archive")
+            destination = req.get("destination", jobs.state["destination"])
+            if isinstance(destination, str) and destination.startswith("gs://"):
+                self.require_feature("byoc")
             if method == "POST":
                 backup_sync.validate_mode(req.get("destination", jobs.state["destination"]), mode)
             if "destination" in req or method == "PUT":
                 jobs.configure(req.get("destination"))
             result = jobs.start(mode) if method == "POST" else jobs.snapshot()
             await _write_json(writer, 202 if method == "POST" else 200, result)
+        except APIError as exc:
+            await _write_json(writer, exc.status, {"error": str(exc)})
         except (ValueError, UnicodeError) as exc:
             await _write_json(writer, 400, {"error": str(exc)})
         except OSError as exc:
@@ -5677,7 +5695,7 @@ class Server:
 
         def state(settings: dict[str, Any]) -> dict[str, Any]:
             keys = {}
-            for provider in ai_settings.PROVIDERS:
+            for provider in ai_settings.PROVIDERS if self.edition.includes("byok") else ():
                 base = ai_settings.base_url({**settings, "provider": provider})
                 secret, source = ai_settings.key(provider, base)
                 keys[provider] = {"saved": bool(secret), "source": source}
@@ -5696,6 +5714,8 @@ class Server:
                     payload = json.loads(body)
                 except ValueError as exc:
                     raise APIError(400, "Invalid AI settings JSON") from exc
+                if isinstance(payload, dict) and payload.get("backend") == "api":
+                    self.require_feature("byok")
                 result = await asyncio.to_thread(lambda: state(ai_settings.save(payload)))
             await _write_json(writer, 200, result)
         except APIError as exc:
@@ -5709,6 +5729,7 @@ class Server:
         from duckterm.llm import ai_settings, api
 
         try:
+            self.require_feature("byok")
             try:
                 payload = json.loads(body or b"")
             except ValueError as exc:
@@ -6535,7 +6556,7 @@ class Server:
             )
             collaboration_worker = (
                 asyncio.create_task(self.collaboration.run())
-                if self.edition.includes("inbox")
+                if self.edition.includes("cross_computer_collaboration")
                 else None
             )
             async with server:

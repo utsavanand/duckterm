@@ -122,6 +122,9 @@ def _tree(
 
 def create(destination: str | None = None) -> str:
     """Create locally first; retain the archive if an optional GCS upload fails."""
+    from duckterm.release_features import require_backup
+
+    require_backup(destination)
     root = paths.home()
     stamp = datetime.now(UTC).strftime("%Y%m%dT%H%M%SZ")
     filename = f"duckterm-backup-{stamp}-{uuid.uuid4().hex[:8]}.tar.gz"

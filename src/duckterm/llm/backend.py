@@ -20,7 +20,7 @@ import shutil
 from dataclasses import dataclass
 from typing import Any
 
-from duckterm import memory_provider
+from duckterm import memory_provider, release_features
 from duckterm.core.session_api import APIError
 from duckterm.llm import ai_settings, api
 
@@ -51,6 +51,8 @@ def ready() -> bool:
     if os.environ.get("DUCKTERM_SUMMARIZER") == "off":
         return False
     settings = ai_settings.load()
+    if settings["backend"] == "api" and not release_features.enabled("byok"):
+        return False
     if settings["backend"] == "api" and _api_key(settings) is not None:
         return True
     return harness(settings["harness"]) is not None
@@ -74,6 +76,7 @@ async def complete(
     settings = ai_settings.load()
     fallback = ""
     if settings["backend"] == "api":
+        release_features.require("byok")
         try:
             model = ai_settings.model(settings, tier)
             text = await asyncio.to_thread(_api, settings, model, effort, prompt, schema)
@@ -98,6 +101,7 @@ async def complete(
 
 
 def _api_key(settings: dict[str, Any]) -> str | None:
+    release_features.require("byok")
     secret, _source = ai_settings.key(settings["provider"], ai_settings.base_url(settings))
     # A local OpenAI-compatible server (Ollama, LM Studio) needs no key.
     return secret if secret or settings["provider"] != "custom" else ""
