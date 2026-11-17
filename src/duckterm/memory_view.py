@@ -237,7 +237,12 @@ def project(
     # Stop at the published revision: completed leaves of a failed later
     # checkpoint are not the published session memory.
     if requested is None and saved.get("span") == "incremental":
-        rows = catalog["canonical"]["revisions"]
+        # Assemble one key's history only: v1 history stays readable after the
+        # rebuild, but mixing it with v2 would double-count every span.
+        scope = saved.get("source", {}).get("scope_hash")
+        rows = [
+            r for r in catalog["canonical"]["revisions"] if r["source"].get("scope_hash") == scope
+        ]
         rows = rows[: next(i for i, row in enumerate(rows) if row["id"] == current) + 1]
         try:
             assembled = memory_assembly.assemble(

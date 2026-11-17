@@ -98,6 +98,15 @@ def memory_scope(key: str) -> str:
     return fingerprint(["agent-memory-v2", key])
 
 
+def readable_scopes(key: str) -> tuple[str, str]:
+    """Keys whose revisions stay readable as history: current (v2) first, then v1.
+
+    Only memory_scope is written, folded or handed off; v1 summaries remain
+    exact historical reads after the rebuild (main-qa, #407).
+    """
+    return memory_scope(key), fingerprint(["agent-memory", key])
+
+
 @contextmanager
 def transaction(conn: sqlite3.Connection) -> Iterator[None]:
     """Own the write lock before reading boundaries; never commit a caller's work."""
