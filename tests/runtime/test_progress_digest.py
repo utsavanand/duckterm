@@ -190,7 +190,7 @@ def test_digest_bridge_reconciles_original_sources_without_installing_rules(
         assert row is not None
         calls = []
 
-        def fake(prompt: str) -> Summary:
+        def fake(prompt: str, **_kw) -> Summary:
             calls.append(prompt)
             return Summary(
                 text=json.dumps(

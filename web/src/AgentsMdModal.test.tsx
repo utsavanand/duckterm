@@ -91,7 +91,7 @@ it.each([
     fireEvent.click(screen.getByRole("button", { name: "Keep new rule" }));
     expect(screen.getByText("Keep examples concise.")).toBeVisible();
     expect(sessionFetch).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
   } else {
     expect(screen.getByRole("button", { name: "Compare with existing rules" })).toBeEnabled();
   }
