@@ -1,88 +1,98 @@
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
-import { AgentsMdModal } from "./AgentsMdModal";
+import { AgentsMdModal, type Rule } from "./AgentsMdModal";
 import { sessionFetch } from "./hostTransport";
 import { edition, CODE, FULL, LITE } from "./test/editions";
 
-const toast = vi.hoisted(() => vi.fn());
 vi.mock("./hostTransport", () => ({ sessionFetch: vi.fn() }));
-vi.mock("./ui", async (original) => ({
-  ...await original<typeof import("./ui")>(),
-  useToast: () => toast,
-}));
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
+const rule: Rule = { id: "gate", text: "Do not pipe the gate.", scope: "all", status: "active", source: "manual", evidence: 1, added: "", heading: "Testing", note: "", title: "Preserve exit status", explanation: "Failures can be hidden.", when: "Running tests", examples: [], exceptions: [], revision: 1, source_refs: [] };
+const catalog = { rules: [rule], proposals: [], version: "version-one", drift: false, text: "# AGENTS.md", rendered_text: "# AGENTS.md", managed: true };
+const proposal = { id: "proposal", status: "pending", claim: "head also hides failures", memory_kind: "procedural", source_refs: ["event:1"], action: "add_example", reason: "Same principle", target: { rule_id: "gate", base_revision: 1 }, changes: { example: { situation: "Read the log", do: "Read it after the gate exits.", avoid: "gate | head" } }, context: null };
 
-function deferred() {
-  let resolve!: (response: Response) => void;
-  const promise = new Promise<Response>((done) => { resolve = done; });
-  return { promise, resolve };
-}
-const loaded = () => Response.json({ rules: [], managed: true });
+it("disables mutations until the initial read completes", async () => {
+  let resolve!: (r: Response) => void;
+  vi.mocked(sessionFetch).mockReturnValue(new Promise(r => { resolve = r; }));
+  render(<AgentsMdModal dir="/project" onClose={vi.fn()} />);
+  expect(screen.getByRole("button", { name: /Add rule/ })).toBeDisabled();
+  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  await act(async () => resolve(Response.json(catalog)));
+  expect(screen.getByRole("button", { name: /Add rule/ })).toBeEnabled();
+  expect(screen.getByText("Do not pipe the gate.")).toBeVisible();
+});
+
+it.each(["http", "network"])("keeps save disabled after %s load failure", async kind => {
+  if (kind === "http") vi.mocked(sessionFetch).mockResolvedValue(Response.json({ error: "Denied" }, { status: 403 }));
+  else vi.mocked(sessionFetch).mockRejectedValue(new Error("Offline"));
+  await act(async () => { render(<AgentsMdModal dir="/project" onClose={vi.fn()} />); });
+  expect(screen.getByRole("alert")).toBeVisible();
+  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  expect(screen.getByRole("button", { name: /Add rule/ })).toBeDisabled();
+});
+
+it("submits accepted example proposals without duplicating the existing rule", async () => {
+  vi.mocked(sessionFetch).mockResolvedValueOnce(Response.json({ ...catalog, proposals: [proposal] })).mockResolvedValueOnce(Response.json({ ...catalog, version: "version-two", rules: [{ ...rule, examples: [proposal.changes.example], revision: 2 }], proposals: [{ ...proposal, status: "accepted" }] }));
+  await act(async () => { render(<AgentsMdModal dir="/project" onClose={vi.fn()} />); });
+  fireEvent.click(screen.getByRole("button", { name: "Suggestions 1" }));
+  fireEvent.click(screen.getByRole("button", { name: "Accept change" }));
+  await act(async () => fireEvent.click(screen.getByRole("button", { name: "Save" })));
+  const body = JSON.parse(vi.mocked(sessionFetch).mock.calls[1][2]!.body as string);
+  expect(body.rules).toEqual([rule]);
+  expect(body.proposals[0].status).toBe("accepted");
+  expect(body.version).toBe("version-one");
+  fireEvent.click(screen.getByRole("button", { name: "Rules 1" }));
+  expect(screen.getByText("Read it after the gate exits.", { exact: false })).toBeVisible();
+});
+
+it("episodic observations cannot be accepted as rules", async () => {
+  const episode = { ...proposal, action: "retain_context", memory_kind: "episodic", target: null, changes: null, context: { destination: "summary", text: "The gate failed today." } };
+  vi.mocked(sessionFetch).mockResolvedValue(Response.json({ ...catalog, proposals: [episode] }));
+  await act(async () => { render(<AgentsMdModal dir="/project" onClose={vi.fn()} />); });
+  fireEvent.click(screen.getByRole("button", { name: "Suggestions 1" }));
+  expect(screen.queryByRole("button", { name: "Accept change" })).toBeNull();
+  expect(screen.getByText("The gate failed today.")).toBeVisible();
+});
+
+it("stale folder responses cannot replace the newly selected directory", async () => {
+  let finish!: (r: Response) => void;
+  vi.mocked(sessionFetch).mockReturnValueOnce(new Promise(r => { finish = r; })).mockResolvedValueOnce(Response.json(catalog));
+  const view = render(<AgentsMdModal dir="/old" onClose={vi.fn()} />);
+  await act(async () => view.rerender(<AgentsMdModal dir="/new" onClose={vi.fn()} />));
+  await act(async () => finish(Response.json({ ...catalog, rules: [{ ...rule, text: "Stale content" }] })));
+  expect(screen.queryByText("Stale content")).toBeNull();
+  expect(screen.getByText("/new/AGENTS.md")).toBeVisible();
+});
+
+it("requires explicit comparison before overwriting a diverged AGENTS.md", async () => {
+  vi.mocked(sessionFetch).mockResolvedValue(Response.json({ ...catalog, drift: true, proposals: [proposal] }));
+  await act(async () => { render(<AgentsMdModal dir="/project" onClose={vi.fn()} />); });
+  fireEvent.click(screen.getByRole("button", { name: "Suggestions 1" }));
+  fireEvent.click(screen.getByRole("button", { name: "Accept change" }));
+  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
+  fireEvent.click(screen.getByRole("button", { name: "Compare files" }));
+  fireEvent.click(screen.getByRole("checkbox"));
+  expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+});
+
 
 it.each([
   ["Lite", LITE, false], ["Code", CODE, true], ["Full", FULL, true],
   ["Code without context", CODE.filter(feature => feature !== "context"), true],
   ["Full without suggestions", FULL.filter(feature => feature !== "rule_suggestions"), false],
-] as const)("%s gates generated suggestions separately from manual editing and context", async (_name, features, enabled) => {
-  vi.mocked(sessionFetch).mockResolvedValueOnce(loaded()).mockResolvedValue(Response.json({ suggestions: [], corrections_seen: 0 }));
+] as const)("%s keeps manual editing available while gating model requests", async (_name, features, enabled) => {
+  vi.mocked(sessionFetch).mockResolvedValue(Response.json(catalog));
   await act(async () => { render(<AgentsMdModal dir="/project" onClose={vi.fn()} />, { wrapper: edition(features) }); });
-  expect(screen.getByPlaceholderText(/New rule/)).toBeEnabled();
-  expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
-  const suggest = screen.queryByRole("button", { name: "Suggest from corrections" });
-  if (enabled) {
-    expect(suggest).toBeEnabled();
-    await act(async () => { fireEvent.click(suggest!); });
-    expect(sessionFetch).toHaveBeenCalledWith("", "/agents-md/suggest", expect.objectContaining({ method: "POST", body: JSON.stringify({ dir: "/project" }) }));
+  expect(screen.getByRole("button", { name: /Add rule/ })).toBeEnabled();
+  expect(!!screen.queryByRole("button", { name: "Suggest from corrections" })).toBe(enabled);
+  fireEvent.click(screen.getByRole("button", { name: /Add rule/ }));
+  fireEvent.change(screen.getByLabelText("Title"), { target: { value: "New behavior" } });
+  fireEvent.change(screen.getByLabelText("Instruction"), { target: { value: "Keep examples concise." } });
+  if (!enabled) {
+    fireEvent.click(screen.getByRole("button", { name: "Keep new rule" }));
+    expect(screen.getByText("Keep examples concise.")).toBeVisible();
+    expect(sessionFetch).toHaveBeenCalledTimes(1);
+    expect(screen.getByRole("button", { name: "Save", exact: true })).toBeEnabled();
   } else {
-    expect(suggest).toBeNull();
-    expect(sessionFetch).toHaveBeenCalledExactlyOnceWith("", "/agents-md?dir=%2Fproject");
+    expect(screen.getByRole("button", { name: "Compare with existing rules" })).toBeEnabled();
   }
-});
-
-it("waits for existing rules before adding by click or Enter, then saves the added rule", async () => {
-  const load = deferred();
-  vi.mocked(sessionFetch).mockReturnValueOnce(load.promise).mockResolvedValue(Response.json({ ok: true }));
-  const close = vi.fn();
-  render(<AgentsMdModal dir="/project" onClose={close} />);
-  const draft = screen.getByPlaceholderText(/New rule/);
-  // A fast user can type before the initial GET resolves.
-  fireEvent.change(draft, { target: { value: "Be brief." } });
-  expect(screen.getByRole("button", { name: "Add" })).toBeDisabled();
-  fireEvent.keyDown(draft, { key: "Enter" });
-  expect(document.querySelector("textarea.rd-rule-edit")).toBeNull();
-  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-  await act(async () => { load.resolve(loaded()); });
-  fireEvent.click(screen.getByRole("button", { name: "Add" }));
-  expect(screen.getByDisplayValue("Be brief.")).toBeVisible();
-  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Save" })); });
-  const posted = JSON.parse(vi.mocked(sessionFetch).mock.calls[1][2]!.body as string);
-  expect(posted.rules).toEqual([expect.objectContaining({ text: "Be brief.", status: "active" })]);
-  expect(close).toHaveBeenCalledOnce();
-});
-
-it.each(["http", "network"])("keeps saving disabled after a %s load failure", async (kind) => {
-  if (kind === "http") vi.mocked(sessionFetch).mockResolvedValue(Response.json({ error: "Denied" }, { status: 403 }));
-  else vi.mocked(sessionFetch).mockRejectedValue(new Error("Offline"));
-  await act(async () => { render(<AgentsMdModal dir="/project" onClose={vi.fn()} />); });
-  fireEvent.change(screen.getByPlaceholderText(/New rule/), { target: { value: "Be brief." } });
-  expect(screen.getByRole("button", { name: "Add" })).toBeDisabled();
-  expect(screen.getByRole("button", { name: "Save" })).toBeDisabled();
-  expect(toast).toHaveBeenCalledWith(expect.stringContaining("Load failed"), "err");
-  expect(sessionFetch).toHaveBeenCalledTimes(1);
-});
-
-it("ignores a stale response from the previous folder", async () => {
-  const first = deferred();
-  vi.mocked(sessionFetch).mockReturnValueOnce(first.promise).mockResolvedValueOnce(loaded()).mockResolvedValue(Response.json({ ok: true }));
-  const close = vi.fn();
-  const view = render(<AgentsMdModal dir="/old" onClose={close} />);
-  await act(async () => { view.rerender(<AgentsMdModal dir="/new" onClose={close} />); });
-  fireEvent.change(screen.getByPlaceholderText(/New rule/), { target: { value: "Keep this." } });
-  fireEvent.click(screen.getByRole("button", { name: "Add" }));
-  await act(async () => { first.resolve(loaded()); });
-  expect(screen.getByDisplayValue("Keep this.")).toBeVisible();
-  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Save" })); });
-  const posted = JSON.parse(vi.mocked(sessionFetch).mock.calls[2][2]!.body as string);
-  expect(posted.dir).toBe("/new");
-  expect(posted.rules).toEqual([expect.objectContaining({ text: "Keep this." })]);
 });

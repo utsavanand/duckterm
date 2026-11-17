@@ -155,84 +155,107 @@ def test_stop_and_exit_do_not_schedule_refresh(fake_summarizer: Path, monkeypatc
         server.history.close()
 
 
-def test_digest_bridge_files_recurring_learnings_as_candidates(
+def test_digest_bridge_reconciles_original_sources_without_installing_rules(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A user_learning archived in >=3 sessions of one folder becomes a
-    candidate rule in that folder's rule set — but only when the folder
-    already adopted the typed format (rules.json exists)."""
+    from tests.runtime.test_agents_md_suggest import _new
+
+    from duckterm.llm.summarizer import Summary
+
     monkeypatch.setenv("DUCKTERM_HOME", str(tmp_path / "home"))
     server = _server()
     workdir = tmp_path / "proj"
     workdir.mkdir()
-    now = 1
-    for i in range(3):
-        key = f"s{i}"
+    try:
         server.bus.publish(
-            {"event_type": "SessionStart", "session_key": key, "cwd": str(workdir), "_ts": now}
-        )
-        server.history.set_state(key, "idle")
-        server.digests.merge(
-            key,
-            [{"bucket": "user_learnings", "text": "Prefers merge over rebase."}],
-            [],
-            now,
-        )
-    row = server.history.session("s0")
-    assert row is not None
-
-    # No rules.json yet -> the bridge must not create files in the folder.
-    server._file_digest_candidates(row)
-    assert not (workdir / ".duckterm-rules.json").exists()
-    assert not (workdir / "AGENTS.md").exists()
-
-    # Folder opts in (empty rule set) -> the recurring learning is filed.
-    (workdir / ".duckterm-rules.json").write_text('{"rules": []}')
-    server._file_digest_candidates(row)
-    rules = json.loads((workdir / ".duckterm-rules.json").read_text())["rules"]
-    assert [(r["id"], r["status"], r["source"], r["evidence"]) for r in rules] == [
-        ("prefers-merge-over-rebase", "candidate", "digest", 3)
-    ]
-    # Candidates never render into AGENTS.md.
-    assert "Prefers merge" not in (workdir / "AGENTS.md").read_text()
-
-    # Re-running with unchanged evidence must not rewrite or duplicate.
-    server._file_digest_candidates(row)
-    again = json.loads((workdir / ".duckterm-rules.json").read_text())["rules"]
-    assert len(again) == 1
-
-
-def test_digest_bridge_respects_rejected_tombstone(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("DUCKTERM_HOME", str(tmp_path / "home"))
-    server = _server()
-    workdir = tmp_path / "proj"
-    workdir.mkdir()
-    (workdir / ".duckterm-rules.json").write_text(
-        json.dumps(
             {
-                "rules": [
-                    {
-                        "id": "prefers-merge-over-rebase",
-                        "text": "Prefers merge over rebase.",
-                        "status": "rejected",
-                    }
-                ]
+                "event_type": "SessionStart",
+                "session_key": "capture",
+                "test": True,
+                "cwd": str(workdir),
+                "_id": "start",
+                "_ts": 1,
             }
         )
-    )
-    for i in range(3):
-        key = f"s{i}"
         server.bus.publish(
-            {"event_type": "SessionStart", "session_key": key, "cwd": str(workdir), "_ts": 1}
+            {
+                "event_type": "UserPromptSubmit",
+                "session_key": "capture",
+                "prompt": "Always preserve test exit codes.",
+                "_id": "original",
+                "_ts": 2,
+            }
         )
-        server.digests.merge(
-            key, [{"bucket": "user_learnings", "text": "Prefers merge over rebase."}], [], 1
-        )
-    row = server.history.session("s0")
-    assert row is not None
-    server._file_digest_candidates(row)
-    rules = json.loads((workdir / ".duckterm-rules.json").read_text())["rules"]
-    assert len(rules) == 1
-    assert rules[0]["status"] == "rejected"  # not resurrected
+        row = server.history.session("capture")
+        assert row is not None
+        calls = []
+
+        def fake(prompt: str) -> Summary:
+            calls.append(prompt)
+            return Summary(
+                text=json.dumps(
+                    {
+                        "decisions": [
+                            _new(
+                                "Exit codes",
+                                "Preserve test exit codes.",
+                                server._corrections_for_dir(str(workdir))[0].ref,
+                            )
+                        ]
+                    }
+                ),
+                backend="test",
+            )
+
+        monkeypatch.setattr("duckterm.llm.suggest.summarize", fake)
+        server._file_digest_candidates(row)
+        assert not calls  # no typed-rule opt-in
+        (workdir / ".duckterm-rules.json").write_text('{"rules": []}')
+        server._file_digest_candidates(row)
+        state = json.loads((workdir / ".duckterm-rules.json").read_text())
+        assert state["rules"] == []
+        assert state["proposals"][0]["action"] == "create_rule"
+        assert state["proposals"][0]["status"] == "pending"
+        assert not (workdir / "AGENTS.md").exists()
+        server._file_digest_candidates(row)
+        assert len(calls) == 1  # same source cannot count again
+    finally:
+        server.history.purge_test_sessions()
+        server.history.close()
+
+
+def test_repeated_digest_strings_are_not_original_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DUCKTERM_HOME", str(tmp_path / "home"))
+    server = _server()
+    workdir = tmp_path / "proj"
+    workdir.mkdir()
+    (workdir / ".duckterm-rules.json").write_text('{"rules": []}')
+
+    def unexpected(_prompt: str):
+        raise AssertionError("A copied summary must not become original evidence")
+
+    monkeypatch.setattr("duckterm.llm.suggest.summarize", unexpected)
+    try:
+        for i in range(3):
+            key = f"copy-{i}"
+            server.bus.publish(
+                {
+                    "event_type": "SessionStart",
+                    "session_key": key,
+                    "test": True,
+                    "cwd": str(workdir),
+                    "_ts": 1,
+                }
+            )
+            server.digests.merge(
+                key, [{"bucket": "user_learnings", "text": "Prefers merge."}], [], 1
+            )
+        row = server.history.session("copy-0")
+        assert row is not None
+        server._file_digest_candidates(row)
+        assert json.loads((workdir / ".duckterm-rules.json").read_text()) == {"rules": []}
+    finally:
+        server.history.purge_test_sessions()
+        server.history.close()

@@ -1,3 +1,16 @@
+## 2026-11-16 — Reconcile behavioral guidance against its original evidence
+
+Repeated checkpoint summaries are not independent corrections. Counting them as
+new evidence turns one episode into an apparently well-supported permanent rule.
+Capture now compares original event and annotation references with the existing
+rule catalogue, and proposes a revision, example, or evidence link before adding
+a rule. Episodic observations remain separate from instructions.
+
+A generated-file banner is not evidence that its source and export still agree.
+Compare both before saving, reject stale revisions, and preserve a backup when
+the owner explicitly reconciles external edits. Tests cover both Markdown and
+JSON drift as well as review-before-activation.
+
 ## 2026-11-07 — Folder chat had a message broker its answer path could never reach
 
 The @ picker could send messages, but a plain-language request went to a prompt

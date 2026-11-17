@@ -3672,80 +3672,55 @@ class Server:
             revision = await self.progress_coordinator.refresh(session_key)
             row = self.history.session(session_key)
             if revision and row:
-                self._file_digest_candidates(row)
+                await asyncio.to_thread(self._file_digest_candidates, row)
         except Exception as exc:  # provider/background boundary; retain last good progress
             print(f"[duckterm] progress refresh failed: {type(exc).__name__}", file=sys.stderr)
 
-    # A collaboration pattern seen in this many distinct sessions of one folder
-    # graduates from digest observation to a proposed AGENTS.md rule.
-    _DIGEST_RULE_MIN_SESSIONS = 3
-
     def _file_digest_candidates(self, row: dict[str, Any]) -> None:
-        """The digest→AGENTS.md bridge: user_learnings that recur across
-        sessions in this folder become candidate rules in its rule set. Only
-        for folders that already adopted the typed format (rules.json exists) —
-        the bridge must not start creating files in every watched folder. A
-        human still promotes: candidates never render into AGENTS.md."""
-        from duckterm.core import agents_rules
-        from duckterm.core.agents_rules import RuleBlock, infer_scope, rule_id
-        from duckterm.persistence.digests import _normalize
+        """Reconcile original observations after a checkpoint, never repeated summaries."""
+        import hashlib
+        from dataclasses import asdict
 
+        from duckterm.core import agents_rules
+        from duckterm.core.rule_proposals import merge_proposals
+
+        if not self.edition.includes("rule_suggestions"):
+            return
         directory = row.get("worktree_path") or row.get("cwd")
         if not directory:
             return
         base = Path(str(directory)).expanduser()
         if not (base / agents_rules.RULES_FILENAME).is_file():
             return
-        root = str(Path(str(directory)))
-        # normalized learning -> (representative text, session keys, runtimes, models)
-        seen: dict[str, tuple[str, set[str], set[str], set[str]]] = {}
-        for s in self.history.sessions():
-            in_dir = any(
-                str(s.get(field) or "").startswith(root)
-                for field in ("cwd", "worktree_path", "repo_path")
-            )
-            if not in_dir:
-                continue
-            key = str(s["session_key"])
-            for item in self.digests.items(key):
-                if item["bucket"] != "user_learnings":
-                    continue
-                norm = _normalize(str(item["text"]))
-                text, keys, runtimes, models = seen.setdefault(
-                    norm, (str(item["text"]), set(), set(), set())
-                )
-                keys.add(key)
-                if s.get("runtime"):
-                    runtimes.add(str(s["runtime"]))
-                if s.get("model"):
-                    models.add(str(s["model"]))
-        proposals = [
-            RuleBlock(
-                id=rule_id(text),
-                text=text,
-                scope=infer_scope(runtimes, models) if runtimes else "all",
-                status="candidate",
-                source="digest",
-                evidence=len(keys),
-                added=time.strftime("%Y-%m-%d"),
-            )
-            for text, keys, runtimes, models in seen.values()
-            if len(keys) >= self._DIGEST_RULE_MIN_SESSIONS
-        ]
-        if not proposals:
-            return
-        # A hand-corrupted rules.json must not kill the digest loop — and must
-        # not be "repaired" by overwriting it with an empty rule set.
         try:
-            existing = agents_rules.load_rules(base)
-        except (json.JSONDecodeError, TypeError):
+            state = agents_rules.read_catalog(base)
+            if state["drift"]:
+                return
+            corrections = self._corrections_for_dir(str(base))
+            if not corrections:
+                return
+            fingerprint = hashlib.sha256(
+                json.dumps(
+                    {"observations": [asdict(c) for c in corrections], "rules": state["rules"]},
+                    sort_keys=True,
+                ).encode()
+            ).hexdigest()
+            if fingerprint == state["capture_fingerprint"]:
+                return
+            rules = agents_rules.load_rules(base)
+            proposed = suggest_rules(corrections, rules, state["proposals"])
+            merged = merge_proposals(state["proposals"], proposed)
+            agents_rules.save_rules(
+                base,
+                rules,
+                proposals=merged,
+                expected_version=state["version"],
+                capture_fingerprint=fingerprint,
+                render=False,
+            )
+        except (ValueError, TypeError, OSError):
+            # A failed capture does not affect the checkpoint or last approved rules.
             return
-        from dataclasses import asdict
-
-        before = [asdict(r) for r in existing]  # merge mutates evidence in place
-        merged = agents_rules.merge_candidates(existing, proposals)
-        if [asdict(r) for r in merged] != before:
-            agents_rules.save_rules(base, merged)
 
     async def _session_timeline(
         self, writer: asyncio.StreamWriter, headers: dict[str, str], key: str, query: str
@@ -5374,8 +5349,6 @@ class Server:
         AGENTS.md — rendered output when managed, the hand-written file when a
         folder predates the typed format (managed=false, so the editor can
         offer an import instead of clobbering it)."""
-        from dataclasses import asdict
-
         from duckterm.core import agents_rules
 
         query = urllib.parse.urlparse("/agents-md" + seg).query
@@ -5391,19 +5364,12 @@ class Server:
         if not self._agents_md_dir_allowed(str(path)):
             await _write_json(writer, 400, {"error": "file outside the allowed roots"})
             return
-        rules = agents_rules.load_rules(base)
-        text = path.read_text() if path.is_file() else ""
-        await _write_json(
-            writer,
-            200,
-            {
-                "dir": directory,
-                "rules": [asdict(r) for r in rules],
-                "text": text,
-                "exists": path.is_file(),
-                "managed": (base / agents_rules.RULES_FILENAME).is_file(),
-            },
-        )
+        try:
+            state = agents_rules.read_catalog(base)
+        except (ValueError, TypeError, OSError) as exc:
+            await _write_json(writer, 400, {"error": str(exc)})
+            return
+        await _write_json(writer, 200, {"dir": directory, **state})
 
     async def _suggest_agents_md(self, writer: asyncio.StreamWriter, body: bytes) -> None:
         """The observation loop: {dir} -> proposed AGENTS.md rules distilled
@@ -5415,6 +5381,9 @@ class Server:
         except json.JSONDecodeError:
             await _write_json(writer, 400, {"error": "invalid JSON"})
             return
+        if not isinstance(req, dict):
+            await _write_json(writer, 400, {"error": "request must be an object"})
+            return
         directory = req.get("dir")
         if not directory:
             await _write_json(writer, 400, {"error": "dir required"})
@@ -5423,62 +5392,90 @@ class Server:
         if not self._agents_md_dir_allowed(str(path)):
             await _write_json(writer, 400, {"error": "file outside the allowed roots"})
             return
-        from dataclasses import asdict
-
         from duckterm.core import agents_rules
+        from duckterm.core.rule_proposals import merge_proposals
 
-        corrections = self._corrections_for_dir(str(directory))
-        existing = agents_rules.load_rules(path.parent)
-        proposed = await asyncio.to_thread(suggest_rules, corrections, existing)
-        # Rejected tombstones and already-active rules block re-proposal.
-        taken = {r.id for r in existing}
-        fresh = [r for r in proposed if r.id not in taken]
+        try:
+            existing = agents_rules.load_rules(path.parent)
+            if "rules" in req:
+                if not isinstance(req["rules"], list):
+                    raise ValueError("rules must be an array")
+                existing = [agents_rules.parse_rule(r) for r in req["rules"]]
+            corrections = self._corrections_for_dir(str(path.parent))
+            if req.get("draft") is not None:
+                draft = req["draft"]
+                agents_rules.parse_rule({"id": "manual-draft", **draft})
+                corrections = [
+                    Correction(
+                        "manual",
+                        json.dumps(draft),
+                    )
+                ]
+            state = agents_rules.read_catalog(path.parent)
+            proposed = await asyncio.to_thread(
+                suggest_rules, corrections, existing, state["proposals"]
+            )
+            proposals = merge_proposals(state["proposals"], proposed)
+        except (ValueError, TypeError, OSError) as exc:
+            await _write_json(writer, 400, {"error": str(exc)})
+            return
         await _write_json(
-            writer,
-            200,
-            {"suggestions": [asdict(r) for r in fresh], "corrections_seen": len(corrections)},
+            writer, 200, {"proposals": proposals, "corrections_seen": len(corrections)}
         )
 
     def _corrections_for_dir(self, directory: str) -> "list[Correction]":
-        """Every correction signal from sessions that worked in `directory`:
-        annotation notes (span + pushback) and follow-up prompts (every
-        UserPromptSubmit after a session's first — the first is the task,
-        later ones are steering). Bounded so the LLM prompt stays small."""
-        root = str(Path(directory))
+        """Original owner observations with stable references; not every prompt is a correction."""
+        root = Path(directory).expanduser().resolve()
         out: list[Correction] = []
         for row in self.history.sessions():
-            in_dir = any(
-                str(row.get(field) or "").startswith(root)
+            if not any(
+                row.get(field) and Path(str(row[field])).expanduser().resolve().is_relative_to(root)
                 for field in ("cwd", "worktree_path", "repo_path")
-            )
-            if not in_dir:
+            ):
                 continue
             key = str(row["session_key"])
-            runtime = str(row.get("runtime") or "")
-            model = str(row.get("model") or "")
+            runtime, model = str(row.get("runtime") or ""), str(row.get("model") or "")
             for ann in self.history.annotations(key):
                 out.append(
-                    Correction("annotation", f"\"{ann['quote']}\" — {ann['note']}", runtime, model)
+                    Correction(
+                        "annotation",
+                        f"{ann['quote']} — {ann['note']}",
+                        runtime,
+                        model,
+                        f"annotation:{ann['id']}",
+                    )
                 )
-            prompts = [
-                str(e.get("prompt"))
-                for e in self.history.events_for(key)
-                if e.get("event_type") == events.USER_PROMPT_SUBMIT and e.get("prompt")
-            ]
-            out.extend(Correction("follow-up", p, runtime, model) for p in prompts[1:])
-        return out[-80:]  # newest-biased cap; enough signal, bounded prompt
+            for event in self.history.events_for(key):
+                if (
+                    event.get("event_type") == events.USER_PROMPT_SUBMIT
+                    and event.get("prompt")
+                    and event.get("_id")
+                ):
+                    out.append(
+                        Correction(
+                            "user-prompt",
+                            str(event["prompt"]),
+                            runtime,
+                            model,
+                            f"event:{event['_id']}",
+                        )
+                    )
+        # Event identity survives re-reading/forked records; summaries never add evidence.
+        unique = {c.ref: c for c in out}
+        return list(unique.values())[-80:]
 
     async def _write_agents_md(self, writer: asyncio.StreamWriter, body: bytes) -> None:
-        """Save a folder's rule set: {dir, rules: [...]} writes
-        .duckterm-rules.json AND renders AGENTS.md from it (the only writer, so
-        the two never drift). Legacy {dir, text} still writes a plain AGENTS.md
-        for folders that never adopted the typed format."""
+        """Save reviewed directory rules with version and export-drift checks.
+        Legacy {dir, text} writes plain AGENTS.md only for unmanaged directories."""
         from duckterm.core import agents_rules
 
         try:
             req: Any = json.loads(body or b"{}")
         except json.JSONDecodeError:
             await _write_json(writer, 400, {"error": "invalid JSON"})
+            return
+        if not isinstance(req, dict):
+            await _write_json(writer, 400, {"error": "request must be an object"})
             return
         directory = req.get("dir")
         text = req.get("text")
@@ -5497,23 +5494,57 @@ class Server:
         if not self._agents_md_dir_allowed(str(path)):
             await _write_json(writer, 400, {"error": "file outside the allowed roots"})
             return
-        if isinstance(rules_raw, list):
-            known = set(agents_rules.RuleBlock.__dataclass_fields__)
-            rules: list[agents_rules.RuleBlock] = []
-            for entry in rules_raw:
-                if not isinstance(entry, dict) or not entry.get("id") or not entry.get("text"):
-                    await _write_json(writer, 400, {"error": "each rule needs id and text"})
-                    return
-                if entry.get("status", "candidate") not in agents_rules.STATUSES:
-                    await _write_json(writer, 400, {"error": f"bad status on {entry['id']}"})
-                    return
-                rules.append(
-                    agents_rules.RuleBlock(**{k: v for k, v in entry.items() if k in known})
+        try:
+            state = agents_rules.read_catalog(base)
+            if (
+                state["managed"]
+                and "version" not in req
+                and json.loads((base / agents_rules.RULES_FILENAME).read_text()).get(
+                    "schema_version"
                 )
-            agents_rules.save_rules(base, rules)
-        else:
-            path.write_text(text)
-        await _write_json(writer, 200, {"dir": directory, "written": True})
+                == 2
+            ):
+                raise ValueError("A current rules version is required. Reload before saving.")
+            if isinstance(rules_raw, list):
+                from dataclasses import asdict
+
+                from duckterm.core.rule_proposals import review_proposals
+
+                rules = [agents_rules.parse_rule(entry) for entry in rules_raw]
+                prior = {r.id: r for r in agents_rules.load_rules(base)}
+                for rule in rules:
+                    old = prior.get(rule.id)
+                    if old:
+                        if rule.revision != old.revision:
+                            raise ValueError("A rule revision changed. Reload before saving.")
+                        if asdict(rule) != asdict(old):
+                            rule.revision += 1
+                proposals = req.get("proposals", state["proposals"])
+                if not isinstance(proposals, list):
+                    raise ValueError("proposals must be an array")
+                rules, proposals = review_proposals(rules, proposals, state["proposals"])
+                agents_rules.save_rules(
+                    base,
+                    rules,
+                    proposals=proposals,
+                    expected_version=req.get("version"),
+                    reconcile_drift=req.get("reconcile_drift") is True,
+                )
+            else:
+                if state["managed"]:
+                    raise ValueError("Managed rules must be edited as structured records")
+                assert isinstance(text, str)
+                agents_rules.atomic_text(path, text)
+        except (ValueError, TypeError, OSError) as exc:
+            await _write_json(
+                writer,
+                409 if "changed" in str(exc) or "differs" in str(exc) else 400,
+                {"error": str(exc)},
+            )
+            return
+        await _write_json(
+            writer, 200, {"dir": directory, "written": True, **agents_rules.read_catalog(base)}
+        )
 
     async def _branches(self, writer: asyncio.StreamWriter, seg: str) -> None:
         """Branches in the repo at ?path=, for the 'base off' picker. Fetches
