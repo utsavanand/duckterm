@@ -16,7 +16,7 @@ function git(cwd: string, ...args: string[]): string {
   return execFileSync("git", ["-c", "user.email=qa@duckterm.local", "-c", "user.name=QA", "-c", "commit.gpgsign=false", ...args], { cwd, encoding: "utf8" }).trim();
 }
 
-test("session PRs tab and folder Pull requests tab list a pushed branch without a PR", async ({ page }) => {
+test("session PRs tab lists a pushed branch without a PR; the folder tab leaves out test sessions", async ({ page }) => {
   // Lite refuses the pull request routes; Code and Full serve them.
   test.skip(SERVER_EDITION === "lite", "needs RD_TEST_EDITION=code or full");
   test.setTimeout(90_000);
@@ -62,13 +62,16 @@ test("session PRs tab and folder Pull requests tab list a pushed branch without 
     const header = page.locator(".rd-group-head").filter({ has: page.getByRole("button", { name: `View interactions in ${folder}`, exact: true }) });
     await header.locator(".rd-group-name").click();
     await page.getByRole("tab", { name: "Pull requests", exact: true }).click();
+    // A folder list leaves out test sessions (main-qa on #367), and every probe
+    // session is test:true, so this folder reads as empty.
     const folderList = page.getByRole("region", { name: `Folder ${folder}` }).getByRole("region", { name: "Pull requests" });
-    await expect(folderList.getByRole("columnheader", { name: "From" })).toBeVisible();
-    const folderRow = folderList.getByRole("row").filter({ hasText: "duckterm/e2e-review" });
-    await expect(folderRow.locator(".rd-pr-status")).toHaveText("Pushed, no PR", { timeout: 20_000 });
+    await expect(folderList.getByText("No pull requests from this folder's sessions yet.")).toBeVisible({ timeout: 20_000 });
     await page.screenshot({ path: "/tmp/duckterm-pr-list-folder.png" });
-    // Review opens the workspace: the diff against main, bucketed, with viewed state.
-    await folderRow.getByRole("button", { name: "Review" }).click();
+    // Review opens the workspace from the session's own list: the diff against
+    // main, bucketed, with viewed state.
+    await page.locator(".rd-row-name", { hasText: "pr-list-agent" }).click();
+    await page.getByRole("button", { name: "PRs", exact: true }).click();
+    await row.getByRole("button", { name: "Review" }).click();
     const workspace = page.getByRole("region", { name: "Review workspace" });
     await expect(workspace.getByRole("heading", { name: "duckterm/e2e-review" })).toBeVisible();
     const changed = workspace.getByRole("navigation", { name: "Changed files" });
@@ -87,9 +90,9 @@ test("session PRs tab and folder Pull requests tab list a pushed branch without 
     git(work, "commit", "-q", "-m", "reindent and add notes");
     git(work, "push", "-q", "origin", "duckterm/e2e-review");
     await workspace.getByRole("button", { name: "← Pull requests" }).click();
-    await folderList.getByRole("button", { name: "Refresh" }).click();
-    await expect(folderList.getByRole("row").filter({ hasText: "duckterm/e2e-review" }).locator(".rd-prs-size")).toContainText("2 files", { timeout: 20_000 });
-    await folderList.getByRole("row").filter({ hasText: "duckterm/e2e-review" }).getByRole("button", { name: "Review" }).click();
+    await list.getByRole("button", { name: "Refresh" }).click();
+    await expect(row.locator(".rd-prs-size")).toContainText("2 files", { timeout: 20_000 });
+    await row.getByRole("button", { name: "Review" }).click();
     await expect(changed.getByRole("heading", { level: 3 })).toHaveText(["Worth a read 1", "Safe to skim 1"]);
     await expect(changed.getByRole("checkbox", { name: "Viewed feature.py" })).toBeChecked();
     await expect(changed.getByRole("checkbox", { name: "Viewed NOTES.md" })).not.toBeChecked();
