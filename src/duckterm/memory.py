@@ -429,8 +429,7 @@ class Memory:
     def reconciled(self, key: str, catalog: dict[str, Any]) -> dict[str, Any] | None:
         from duckterm import memory_reconcile
 
-        rows = catalog["canonical"]["revisions"]
-        scope = rows[-1].get("source", {}).get("scope_hash") if rows else None
+        scope = memory_records.current_scope(key, catalog["canonical"]["revisions"])
         return memory_reconcile.latest(self.server.digests, key, scope) if scope else None
 
     async def _operate(self, key: str, action: str, query: dict[str, list[str]]) -> dict[str, Any]:

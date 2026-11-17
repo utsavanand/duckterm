@@ -8,9 +8,15 @@ from typing import Any
 
 from duckterm import memory_contract, memory_sources, memory_summary, memory_versions
 from duckterm.core.session_api import APIError
-from duckterm.persistence.saved_state import REVISION_BUCKET, fingerprint, memory_scope
+from duckterm.persistence.saved_state import REVISION_BUCKET, fingerprint, readable_scopes
 
 LINK_BUCKET = "memory_link_v1"
+
+
+def current_scope(key: str, revisions: list[dict[str, Any]]) -> str | None:
+    """The one key current memory is assembled from: v2 once rebuilt, else v1."""
+    present = {r.get("source", {}).get("scope_hash") for r in revisions}
+    return next((scope for scope in readable_scopes(key) if scope in present), None)
 
 
 def canonical(server: Any, key: str, grant: dict[str, Any]) -> dict[str, Any]:
@@ -23,7 +29,7 @@ def canonical(server: Any, key: str, grant: dict[str, Any]) -> dict[str, Any]:
     ):
         if row["bucket"] == REVISION_BUCKET:
             value = server.digests.revision(key, row["id"])
-            if value and value["source"].get("scope_hash") == memory_scope(key):
+            if value and value["source"].get("scope_hash") in readable_scopes(key):
                 revisions.append(value)
         else:
             try:
