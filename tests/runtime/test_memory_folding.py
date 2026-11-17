@@ -525,3 +525,28 @@ def test_furthest_leaf_follows_conversation_order_not_save_order():
     ]
     assert folding.furthest(rows)["id"] == "102"
     assert folding.furthest([]) is None
+
+
+def test_a_span_of_many_short_ranges_does_not_outrank_a_later_span():
+    # Selected spans list many short ranges. Summing every range end made a
+    # 0.4.193 span (53 ranges) outrank the 0.4.200 span (30 ranges) on live data.
+    def span(name, ends):
+        ranges = [{"source": "s", "first": end - 1, "end": end} for end in ends]
+        return {"id": name, "span": "incremental", "span_input": {"ranges": ranges}}
+
+    earlier = span("earlier", range(10390, 10771, 7))
+    later = span("later", range(11045, 11276, 8))
+    assert folding.span_position(earlier) < folding.span_position(later)
+    assert folding.furthest([later, earlier])["id"] == "later"
+    assert [n["id"] for n in folding.active([later, earlier])] == ["earlier", "later"]
+    # Two sources: how far the span reaches in each.
+    both = {
+        "span_input": {
+            "ranges": [
+                {"source": "a", "end": 5},
+                {"source": "a", "end": 9},
+                {"source": "b", "end": 4},
+            ]
+        }
+    }
+    assert folding.span_position(both) == 13

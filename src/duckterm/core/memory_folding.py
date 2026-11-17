@@ -45,12 +45,15 @@ def span_position(row: dict[str, Any]) -> int | None:
     sources = span.get("next_boundary", {}).get("sources")
     if isinstance(sources, dict) and sources:
         return sum(int(v.get("count", 0)) for v in sources.values() if isinstance(v, dict))
-    ends = [
-        r["end"]
-        for r in span.get("ranges") or []
-        if isinstance(r, dict) and type(r.get("end")) is int
-    ]
-    return sum(ends) if ends else None
+    # A selected span lists many short ranges in one source. How far it reaches
+    # is the furthest end per source; summing every range made a span of many
+    # short ranges outrank a later one (a 0.4.193 span outranked 0.4.200).
+    furthest: dict[str, int] = {}
+    for r in span.get("ranges") or []:
+        if isinstance(r, dict) and type(r.get("end")) is int:
+            source = str(r.get("source"))
+            furthest[source] = max(furthest.get(source, 0), r["end"])
+    return sum(furthest.values()) if furthest else None
 
 
 def furthest(leaves: list[dict[str, Any]]) -> dict[str, Any] | None:
