@@ -198,3 +198,58 @@ def test_tick_honours_the_switch_two_at_a_time_and_pending_restarts(memory_rig, 
 
     asyncio.run(run())
     assert started[:2] == [(k, memory_checkpoint.AUTOMATIC_LABEL) for k in "bc"]
+
+
+def test_health_puts_problems_first_and_counts_gaps(memory_rig):
+    from duckterm.core import checkpoint_health
+
+    server = memory_rig[0]
+    conn = server.history._conn
+    agents(server, "current", "behind", "failing", "none")
+
+    def checkpoint(key, at, state, label="manual", extra=None):
+        record = {
+            "summary_update": {"state": state, "reason": "source_unavailable"},
+            **(extra or {}),
+        }
+        conn.execute(
+            "INSERT INTO checkpoints "
+            "(id,session_key,label,summary,record_json,markdown_path,created_at) "
+            "VALUES (?,?,?,'',?,NULL,?)",
+            (f"{key}-{at}", key, label, json.dumps(record), at),
+        )
+
+    hour = 3_600_000
+    checkpoint("current", NOW - 5 * 60_000, "updated")
+    checkpoint("behind", NOW - 2 * hour, "updated")
+    checkpoint("behind", NOW - 3 * hour, None, memory_checkpoint.GAP_LABEL, {"gap": {"records": 4}})
+    checkpoint("failing", NOW - 2 * hour, "updated")
+    checkpoint("failing", NOW - hour, "failed")
+    messages(server, "behind", 4, NOW - 60_000)
+    messages(server, "none", 2, NOW - 60_000)
+    report = {a["key"]: a for a in checkpoint_health.report(conn, NOW)}
+    assert [a["key"] for a in checkpoint_health.report(conn, NOW)][:3] == [
+        "failing",
+        "none",
+        "behind",
+    ]
+    assert {k: report[k]["status"] for k in ("current", "behind", "failing", "none")} == {
+        "current": "current",
+        "behind": "behind",
+        "failing": "failing",
+        "none": "none",
+    }
+    assert report["behind"]["new_messages"] == 4 and report["behind"]["gaps"] == 1
+    assert report["failing"]["saved_at"] == NOW - 2 * hour
+    assert report["failing"]["last_attempt"]["reason"] == "source_unavailable"
+
+
+def test_health_is_owner_only(memory_rig):
+    from test_session_api import dispatch
+
+    server, headers, _, _ = memory_rig
+    assert dispatch(server, "GET", "/checkpoint-health", {})[0] == 401
+    assert dispatch(server, "GET", "/checkpoint-health", headers)[0] in {401, 403}
+    status, body = dispatch(server, "GET", "/checkpoint-health", {"x-duckterm-token": server.token})
+    # The rig's agents are test sessions, which the health view leaves out.
+    assert (status, body) == (200, {"automatic": False, "agents": []})

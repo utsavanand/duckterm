@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { api, type AiState, type CheckpointSettings } from "./api";
+import { CheckpointHealth } from "./CheckpointHealth";
 import { Button, inputStyle, Modal } from "./ui";
 import "./checkpointSettings.css";
 
@@ -16,7 +17,8 @@ function otherWriter(ai: AiState | null): string {
   return "";
 }
 
-export function CheckpointSettingsModal({ onClose }: { onClose: () => void }) {
+export function CheckpointSettingsModal({ onClose, onOpenAgent }: { onClose: () => void; onOpenAgent?: (key: string) => void }) {
+  const [tab, setTab] = useState<"settings" | "memory">("settings");
   const [settings, setSettings] = useState<CheckpointSettings | null>(null);
   const [lookback, setLookback] = useState("all");
   const [error, setError] = useState("");
@@ -51,8 +53,16 @@ export function CheckpointSettingsModal({ onClose }: { onClose: () => void }) {
     } catch (e) { setError(`Settings save was not confirmed: ${(e as Error).message}. Reload to check the saved values.`); }
     finally { sending.current = false; setSaving(false); }
   }
-  return <Modal title="Checkpointing" onClose={onClose} width={680}>
-    <div className="rd-checkpoint-settings">
+  return <Modal title="Checkpointing" onClose={onClose} width={tab === "memory" ? 860 : 680}>
+    <div className="rd-checkpoint-tabs" role="tablist" aria-label="Checkpointing views">
+      {(["settings", "memory"] as const).map(name => <button key={name} id={`checkpoint-tab-${name}`} role="tab"
+        aria-selected={tab === name} aria-controls={`checkpoint-view-${name}`} onClick={() => setTab(name)}>
+        {name === "settings" ? "Settings" : "Agent memory"}</button>)}
+    </div>
+    {tab === "memory" && <div id="checkpoint-view-memory" role="tabpanel" aria-labelledby="checkpoint-tab-memory">
+      <CheckpointHealth onOpenAgent={onOpenAgent} />
+    </div>}
+    <div className="rd-checkpoint-settings" id="checkpoint-view-settings" role="tabpanel" aria-labelledby="checkpoint-tab-settings" hidden={tab !== "settings"}>
       <p>Choose what a checkpoint summarizes by default.</p>
       {!settings && !error && <p role="status">Loading checkpoint settings…</p>}
       {settings && <form onSubmit={e => { e.preventDefault(); void save(); }}>
