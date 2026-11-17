@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api, type AiState, type CheckpointSettings } from "./api";
 import { CheckpointSettingsModal } from "./CheckpointSettingsModal";
 
-vi.mock("./api", () => ({ api: { checkpointSettings: vi.fn(), saveCheckpointSettings: vi.fn(), aiSettings: vi.fn() } }));
+vi.mock("./api", () => ({ api: { checkpointSettings: vi.fn(), saveCheckpointSettings: vi.fn(), aiSettings: vi.fn(), checkpointHealth: vi.fn() } }));
 function aiState(backend: AiState["settings"]["backend"], harness: AiState["harness"] = "claude-code"): AiState {
   return {
     settings: { backend, harness: "auto", provider: "anthropic", base_url: "", fast_model: "", deep_model: "", harness_fast_model: "haiku", harness_deep_model: "sonnet" },
@@ -102,4 +102,13 @@ it("turns automatic checkpoints on and saves it", async () => {
   fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
   expect(api.saveCheckpointSettings).toHaveBeenCalledExactlyOnceWith({ lookback_records: "all", writer_model: "sonnet", automatic: true });
   expect(await screen.findByText("Settings saved")).toBeVisible();
+});
+
+it("switches to the agent memory tab", async () => {
+  vi.mocked(api.checkpointSettings).mockResolvedValue(defaults);
+  vi.mocked(api.checkpointHealth).mockResolvedValue({ automatic: false, agents: [] });
+  render(<CheckpointSettingsModal onClose={() => {}} />);
+  fireEvent.click(await screen.findByRole("tab", { name: "Agent memory" }));
+  expect(await screen.findByText("No agents were active in the last 7 days.")).toBeVisible();
+  expect(screen.getByRole("checkbox", { name: "Automatic checkpoints", hidden: true })).not.toBeVisible();
 });
