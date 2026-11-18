@@ -99,7 +99,7 @@ export interface SessionView {
   contextTokens?: number; // current context size reported by the harness
   contextWindowTokens?: number; // reported capacity; do not infer from a token total
   model?: string; // model id from the transcript
-  metaHarnesses?: string[]; // installed suites this session runs under
+  skillKits?: string[]; // installed skill kits this session runs under
   group?: string; // folder label for organizing the left panel; undefined = ungrouped
   subagents?: SubAgent[]; // sub-agents spawned via the Task tool, for the tree
   progress?: ProgressDigest; // running digest (summary/deliverables/learnings/next)
@@ -237,7 +237,7 @@ export function viewFromPersisted(s: PersistedSession): SessionView {
     contextTokens: s.context_tokens ?? undefined,
     contextWindowTokens: s.context_window_tokens ?? undefined,
     model: s.model ?? undefined,
-    metaHarnesses: s.suites ?? undefined,
+    skillKits: s.suites ?? undefined,
   };
 }
 

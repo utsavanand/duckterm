@@ -66,6 +66,11 @@ FULL = EditionConfig("full", CODE.features | {"oracle", "remote_workspaces"})
 CURRENT_EDITION = FULL
 PRESETS: dict[str, EditionConfig] = {edition.name: edition for edition in (LITE, CODE, FULL)}
 
+# Features still being built. Off in every edition; an instance turns one on by
+# listing it in <home>/flags.json as {"enabled": ["skill_kits"]}. Each flag has
+# a row in docs/feature-flags.md (a test keeps the two in step).
+DEVELOPMENT = frozenset({"skill_kits"})
+
 # These operations also serve local repository clones. The handler validates
 # parameters and journal provenance before any restricted read or mutation.
 LOCAL_PROJECT_OPERATIONS = frozenset(
@@ -74,6 +79,31 @@ LOCAL_PROJECT_OPERATIONS = frozenset(
 
 
 def configured(*, prefer_saved: bool = False) -> EditionConfig:
+    """The edition preset plus this instance's development flags."""
+    return _with_flags(_preset(prefer_saved=prefer_saved))
+
+
+def _with_flags(edition: EditionConfig) -> EditionConfig:
+    """A missing flags.json means none. A name no longer under development is
+    ignored, so a left-over file never blocks startup once a feature ships;
+    anything else malformed fails like a bad edition.json."""
+    path = instance.home() / "flags.json"
+    try:
+        data = json.loads(path.read_text())
+    except FileNotFoundError:
+        return edition
+    except (OSError, ValueError) as exc:
+        raise ValueError(f"Cannot read feature flags at {path}") from exc
+    enabled = data.get("enabled") if isinstance(data, dict) else None
+    if not isinstance(enabled, list) or not all(isinstance(flag, str) for flag in enabled):
+        raise ValueError(f'Invalid feature flags at {path}: expected {{"enabled": [...]}}')
+    flags = DEVELOPMENT & frozenset(enabled)
+    if not flags:
+        return edition
+    return EditionConfig(edition.name, edition.features | flags)
+
+
+def _preset(*, prefer_saved: bool) -> EditionConfig:
     """Environment wins; otherwise use this instance's last successful startup.
 
     Restarts prefer the saved selection because long-lived terminals may carry
@@ -137,6 +167,8 @@ def request_features(method: str, url: str, body: bytes = b"") -> tuple[str, ...
     # Either interpretation may reach a handler. Require both when they differ;
     # an allowed folder chat prefix must not hide a raw artifacts/PR suffix.
     paths = [urlsplit(url).path, url]
+    if url == "/harnesses" or url.startswith("/harnesses/"):
+        return ("skill_kits",)
     if url.startswith("/sessions/"):
         # Prefix/suffix routes accept slashes inside the captured session key.
         # Check the final operation as well as nested routes such as /memory/*.

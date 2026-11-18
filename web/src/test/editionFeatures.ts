@@ -4,3 +4,6 @@ export const LITE = ["folders", "workstreams", "harnesses", "terminal", "shell",
   "inbox", "checkpoints", "summaries", "context", "handoff", "artifacts", "overview"];
 export const CODE = [...LITE, "explorer", "file_editing", "git_changes", "folder_chat", "connectors", "pr_review", "rule_suggestions"];
 export const FULL = [...CODE, "oracle", "remote_workspaces"];
+// Development flags (editions.DEVELOPMENT): off in every edition until an
+// instance's flags.json turns them on.
+export const DEVELOPMENT = ["skill_kits"];

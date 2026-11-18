@@ -7,7 +7,8 @@ import { allowCollaboration, allowRemoteWorkspaces } from "./desktop";
 export type Feature =
   | "explorer" | "file_editing" | "git_changes" | "inbox" | "folder_chat" | "checkpoints"
   | "summaries" | "context" | "handoff" | "connectors" | "oracle" | "remote_workspaces"
-  | "artifacts" | "pr_review" | "overview" | "rule_suggestions";
+  | "artifacts" | "pr_review" | "overview" | "rule_suggestions"
+  | "skill_kits"; // development flag, see docs/feature-flags.md
 
 export type EditionState =
   | { status: "loading" }

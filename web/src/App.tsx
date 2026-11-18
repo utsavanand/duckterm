@@ -666,7 +666,6 @@ function Dashboard() {
       {modal === "aimodels" && <AiModelsModal onClose={() => setModal(null)} />}
       {modal === "harnesses" && (
         <HarnessesModal
-          defaultDir={agentsMdDir}
           sessionKey={selected?.key}
           onClose={() => setModal(null)}
         />
