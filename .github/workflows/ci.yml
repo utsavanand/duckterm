@@ -34,8 +34,13 @@ jobs:
         with:
           node-version: "22"
       - run: npm ci
-      - name: Check dependency security advisories
-        run: npm audit --audit-level=high
+      # High advisories fail only for packages the app ships; a dev-only
+      # tool can carry an unfixed high advisory (picomatch ReDoS, Nov 2026)
+      # that would otherwise block every merge. Critical fails everywhere.
+      - name: Check shipped dependency advisories
+        run: npm audit --omit=dev --audit-level=high
+      - name: Check all dependency advisories
+        run: npm audit --audit-level=critical
       - run: npm run lint
       - run: npm run typecheck
       - run: npm test
