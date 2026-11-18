@@ -70,7 +70,8 @@ test("Lite runs continuity, saved artifacts and factual overviews without coding
     await page.keyboard.press("Escape");
     await page.getByRole("button", { name: "Settings" }).click();
     for (const name of ["Collaboration", "Checkpointing"]) await expect(page.getByRole("button", { name: new RegExp(`^${name}`) })).toBeVisible();
-    await expect(page.getByRole("button", { name: /^Harnesses/ })).toBeVisible();
+    // The e2e server runs with every development flag on, so Lite shows the flagged Skill kits item too.
+    await expect(page.getByRole("button", { name: /^Skill kits/ })).toBeVisible();
     await expect(page.getByText("Voice announcements")).toHaveCount(0);
     await page.keyboard.press("Escape");
 

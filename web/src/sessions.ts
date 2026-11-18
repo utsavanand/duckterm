@@ -162,7 +162,7 @@ export function applyEvent(
     contextTokens: prev?.contextTokens,
     contextWindowTokens: prev?.contextWindowTokens,
     model: prev?.model,
-    metaHarnesses: prev?.metaHarnesses,
+    skillKits: prev?.skillKits,
     conversationIdentity: prev?.conversationIdentity,
     startedAt: prev?.startedAt ?? e._ts,
     updatedAt: e._ts,

@@ -897,7 +897,7 @@ code,
   border-color: var(--brand-green);
 }
 
-/* Harnesses modal: one card per registered suite. */
+/* Skill kits modal: one card per registered kit. */
 .rd-harness-hint {
   font-size: 0.75rem;
   color: var(--text-soft);
@@ -925,18 +925,6 @@ code,
   font-family: ui-monospace, Menlo, monospace;
   color: var(--muted);
   margin-top: 2px;
-}
-.rd-harness-output {
-  margin: 8px 0 0;
-  padding: 8px 10px;
-  background: var(--bg-code);
-  color: #d1d5db;
-  border-radius: 6px;
-  font-size: 0.6875rem;
-  line-height: 1.5;
-  max-height: 160px;
-  overflow: auto;
-  white-space: pre-wrap;
 }
 /* xterm fills the pane and scrolls its OWN buffer (xterm-viewport), so a long
    session scrolls inside the terminal instead of growing the page. */
