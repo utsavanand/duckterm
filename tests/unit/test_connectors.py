@@ -380,3 +380,64 @@ def test_status_reports_which_agent_clis_exist_here(
     connectors.enable("github", source="gh-cli", home=tmp_path)
     present = connectors.status("github", home=tmp_path)["harnesses_present"]
     assert present == {"claude-code": True, "codex": False}
+
+
+def test_status_separates_a_cli_login_from_a_credential_duckterm_stores(
+    isolated_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Forget disables the connector and deletes a secret, so the panel must not
+    offer it for a provider CLI login where there is nothing to delete."""
+    _gh_ready(isolated_env, monkeypatch)
+    connectors.enable("github", source="gh-cli", home=tmp_path)
+    assert connectors.status("github", home=tmp_path)["stored_secret"] is False
+
+    connectors.save_secret("github", "ghp_pasted")
+    assert connectors.status("github", home=tmp_path)["stored_secret"] is True
+
+
+def test_stored_secret_reports_a_porkbun_pair_held_only_as_a_secret_key(
+    isolated_env: Path, tmp_path: Path
+) -> None:
+    assert connectors.stored_secret("porkbun") is False
+    connectors.save_secret("porkbun-secret", "sk")
+    assert connectors.stored_secret("porkbun") is True
+
+
+def test_verify_refreshes_the_identity_of_a_connector_configured_before_it_existed(
+    isolated_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`gh auth switch` repoints every agent without touching Duckterm, so a
+    stored identity can name the wrong account until something re-resolves it."""
+    _gh_ready(isolated_env, monkeypatch)
+    connectors.enable("github", source="gh-cli", home=tmp_path)
+    monkeypatch.setattr(connectors, "_policy_path", lambda name: tmp_path / f"{name}.json")
+    stale = {"enabled": True, "source": "gh-cli", "identity": None, "generation": "legacy"}
+    (tmp_path / "github.json").write_text(json.dumps(stale))
+
+    monkeypatch.setattr(connectors, "github_identity", lambda token: "switched-account")
+    connectors._refresh_identity("github")
+
+    saved = json.loads((tmp_path / "github.json").read_text())
+    assert saved["identity"] == "switched-account"
+    # A new generation would make every live supervisor kill its server.
+    assert saved["generation"] == "legacy"
+    assert saved["enabled"] is True
+
+
+def test_refresh_identity_keeps_the_stored_name_when_the_provider_is_unreachable(
+    isolated_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _gh_ready(isolated_env, monkeypatch)
+    connectors.enable("github", source="gh-cli", home=tmp_path)
+    monkeypatch.setattr(connectors, "_policy_path", lambda name: tmp_path / f"{name}.json")
+    (tmp_path / "github.json").write_text(
+        json.dumps({"enabled": True, "source": "gh-cli", "identity": "tester"})
+    )
+
+    def unreachable(token: str) -> str:
+        raise RuntimeError("Cannot verify GitHub identity")
+
+    monkeypatch.setattr(connectors, "github_identity", unreachable)
+    connectors._refresh_identity("github")
+
+    assert json.loads((tmp_path / "github.json").read_text())["identity"] == "tester"

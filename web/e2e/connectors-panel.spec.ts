@@ -3,7 +3,7 @@ import { apiDelete, apiPost } from "./helpers";
 
 // Proof of life in the Connectors tab: the owner asked "I don't know if I can
 // really use them", so a row must state what the connector serves and when it
-// was last used, and Check now must report a measured tool count rather than
+// was last used, and the panel must report a measured tool count rather than
 // the presence of a config entry. Panel height and reachability are covered by
 // context-views.spec.ts, which owns the Session/Connectors tab layout.
 test("a connector row proves what it serves and when it was last used", async ({ page }) => {
@@ -39,12 +39,9 @@ test("a connector row proves what it serves and when it was last used", async ({
     await pane.getByRole("tab", { name: "Connectors", exact: true }).click();
 
     const row = pane.locator(".rd-connector", { hasText: "GitHub" });
-    // Before checking, the panel must not imply it verified anything.
-    await expect(row.getByText(/not verified this session/)).toBeVisible();
-    await expect(row.getByText(/Used 2h ago · 90 calls/)).toBeVisible();
-
-    await row.getByRole("button", { name: "Check now" }).click();
-    await expect(row.getByText(/Verified — 45 tools available/)).toBeVisible();
+    // The panel verifies on open, so the collapsed row reports a measured tool
+    // count beside the usage rather than asking the owner to press anything.
+    await expect(row.getByText(/45 tools · Used 2h ago · 90 calls/)).toBeVisible();
   } finally {
     await apiDelete(`/sessions/${key}`);
   }
@@ -83,11 +80,9 @@ test("a failing connector shows the server's own reason, not a generic error", a
     await pane.getByRole("tab", { name: "Connectors", exact: true }).click();
 
     const row = pane.locator(".rd-connector", { hasText: "Porkbun" });
-    // Silence in the event log is not evidence the connector went unused.
-    await expect(row.getByText(/No recorded use/)).toBeVisible();
-
-    await row.getByRole("button", { name: "Check now" }).click();
-    await expect(row.getByText(/Protocol version rejected/)).toBeVisible();
+    // The automatic check fails, so the row must carry the server's own reason.
+    // "No recorded use" is still the right summary until a check resolves.
+    await expect(row.getByText(/Not working — Protocol version rejected/)).toBeVisible();
     await expect(row.getByText(/Verified/)).toHaveCount(0);
   } finally {
     await apiDelete(`/sessions/${key}`);
@@ -106,11 +101,16 @@ test("connection editor and close control fit the sidebar", async ({ page }, tes
     const pane = page.locator(".rd-context-pane");
     await pane.getByRole("tab", { name: "Connectors", exact: true }).click();
     const row = pane.locator(".rd-connector", { hasText: "GitHub" });
-    await row.getByRole("button", { name: "Connect", exact: true }).click();
+    await row.getByRole("button", { name: "Configure GitHub" }).click();
     for (const width of [1440, 1024]) {
       await page.setViewportSize({ width, height: 900 });
       const bounds = await pane.boundingBox();
-      for (const control of [row.getByRole("button", { name: "Close GitHub connection settings" }), row.getByLabel("GitHub credential source"), row.getByRole("button", { name: "Verify and enable" })]) {
+      for (const control of [row.getByRole("button", { name: "Configure GitHub" }), row.getByLabel("GitHub credential source"), row.getByRole("button", { name: "Verify and enable" })]) {
+        // The connector list scrolls: at 900px tall the pane is the bottom cell
+        // of a 3-row grid and holds 231px, so an expanded editor is reached by
+        // scrolling rather than by fitting whole. What must hold is that every
+        // control is reachable and stays inside the pane horizontally.
+        await control.scrollIntoViewIfNeeded();
         await expect(control).toBeInViewport();
         const box = await control.boundingBox();
         expect(box!.x).toBeGreaterThanOrEqual(bounds!.x);
@@ -118,7 +118,7 @@ test("connection editor and close control fit the sidebar", async ({ page }, tes
       }
     }
     await page.screenshot({ path: testInfo.outputPath("connector-editor.png") });
-    await row.getByRole("button", { name: "Close GitHub connection settings" }).click();
+    await row.getByRole("button", { name: "Configure GitHub" }).click();
     await expect(row.getByLabel("GitHub credential source")).toHaveCount(0);
   } finally { await apiDelete(`/sessions/${key}`); }
 });

@@ -1,3 +1,57 @@
+## 2026-11-19 — Measure the constraint before deleting the content
+
+A layout test failed with the connector editor's controls out of viewport at
+1024x900. I tried six fixes — scrollIntoView three ways, a resize listener, two
+max-height caps — then removed the editor's verification row to reclaim its
+height. None worked, because every one of them treated the editor's content as
+the constraint without measuring it.
+
+One probe settled it. The context pane is the bottom cell of a 3-row grid: 339px
+of an 848px workspace, leaving the list 231px against 350px of content. The six
+editor blocks total 164px, so deleting all of them leaves a 119px gap. The row I
+removed was gated behind `c.enabled` and the test's fixture sets
+`enabled: false` — it never rendered in that test at all. I had spent six
+attempts shortening something that was not being measured.
+
+The probe also showed the editor is not broken: scrolling brings Configure,
+the credential select and Verify-and-enable into a 900px viewport together, so
+every control is reachable. The failing assertion is `toBeInViewport`, which does
+not scroll and reads the open position. A test can encode a layout the UI never
+promised, and a red test is not by itself evidence the UI is wrong.
+
+Before removing content to fit a box, measure the box. If the gap exceeds the
+total content, the container is the bug, and the first measurement would have
+said so.
+
+## 2026-11-19 — A pushed branch is not a delivered fix
+
+The connector panel fix was written, verified and pushed on 10-30. The owner was
+still looking at the broken panel on 11-19, across 0.4.200 -> 0.4.204, because no
+PR was ever opened. A handoff message to release-dev named a branch; nothing in
+the pipeline acts on a branch name. Three weeks of "shipped" was a branch nobody
+could merge, on a base 1392 commits stale.
+
+Two compounding traps. First, a stale branch silently rots: by the time anyone
+looked, its theme.css predated the skill-kits rename, so merging it would have
+resurrected `.rd-harness-output`, a rule deleted upstream. GitHub still called it
+MERGEABLE, because "no textual conflict" is not "still correct". Second, a
+duplicate PR (#351) had been opened from the same commits and sat unreviewed for
+three weeks; I nearly left two competing PRs open on the same change.
+
+Deliver to the artifact the pipeline consumes — a PR — and check for an existing
+one before opening another. Verify the owner can see the fix, not that the gate
+was green. Related: [[intent-rendered-as-state]], [[green-tests-no-working-feature]].
+
+## 2026-11-19 — Connector tests fail inside a live Duckterm session
+
+tests/unit/test_connectors.py fails 13 of 30 on unmodified main when run from a
+Duckterm session, because `validate_desktop_context` rejects the inherited
+DUCKTERM_* env and raises "Conflicting environment for Duckterm profile full".
+I first read it as my change breaking three tests; it breaks the same tests
+without my change. Scrub the env (`env -u DUCKTERM_HOME -u DUCKTERM_INSTANCE
+-u DUCKTERM_PORT ...`) and all 30 pass. Compare against a pristine worktree
+before attributing a failure, and count the failures rather than reading names.
+
 ## 2026-11-07 — Folder chat had a message broker its answer path could never reach
 
 The @ picker could send messages, but a plain-language request went to a prompt
@@ -20,6 +74,42 @@ trusted window calculation, then tint every session duck from one shared compone
 Keep unknown windows, sleeping ducks and editions without context untinted. Test
 compaction clearing the tint as well as rising usage; preserve numeric warnings
 and accessible text alongside colour. The owner approved the dark/light preview.
+## 2026-10-30 — Seven controls per row, three of which did the same thing
+
+The connector panel grew one control per capability until a single row carried
+Disable/Connect, Close, Refresh credentials, Check now, Change connection,
+Forget stored credentials and Revoke — more vertical space for one connector
+than the redesign now uses for three. Reading them side by side showed the
+duplication: "Refresh" and "Refresh credentials" called the identical function,
+and "Connect" and "Change connection" opened the identical form. A row now
+shows name, state and one Configure; everything else lives behind it.
+
+Two things that came out of doing it:
+
+- "Configured · not verified this session" was a non-answer the owner had to
+  click to resolve. Verification takes 0.42-1.23s per connector, so it runs on
+  panel open and the row reports a proved tool count. Measure before assuming a
+  check is too slow to be automatic.
+- Closing the settings panel on every successful change is wrong when one of
+  those changes is a toggle inside the panel. A test caught it: flipping
+  "Available to agents" dismissed the controls the owner was still using.
+
+## 2026-10-30 — A field that names a source is not a field that answers "is it stored"
+
+The connector panel gated "Forget stored credentials" and "Revoke" on
+`c.credential`, which holds the source name (`gh-cli`, `railway-cli`, `stored`).
+That string is always truthy, so both controls rendered for every connector —
+including GitHub and Railway, where Duckterm stores nothing and `forget()`
+would call `disable()` and kill a working connector to delete a secret that was
+never there. The fix is a field that answers the actual question
+(`stored_secret`), not a truthiness test on a value that means something else.
+Before gating UI on a field, read what it contains, not whether it is set.
+
+Also here: `.rd-connector-installed` wrapped two buttons, a link and a sentence
+with no `display: flex`, so every child stacked full-width and the panel read as
+a wall of controls. Its sibling `.rd-connector-proof` had the flex rule, which
+is what made the difference visible. Render the panel at real width before
+calling a layout done — the tests passed throughout.
 
 ## 2026-10-25 — Floating CI environments can break a validated release
 

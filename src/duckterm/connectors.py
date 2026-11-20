@@ -79,6 +79,13 @@ def load_secret(name: str) -> str | None:
     return (private_read(_secret_file(name)) or "").strip() or None
 
 
+def stored_secret(name: str) -> bool:
+    """True when Duckterm holds this connector's credential itself."""
+    if load_secret(name) is not None:
+        return True
+    return name == "porkbun" and load_secret("porkbun-secret") is not None
+
+
 def delete_secret(name: str) -> None:
     from duckterm.helpers import keychain
 
@@ -475,6 +482,9 @@ def status(name: str, *, home: Path | None = None) -> dict[str, object]:
         "description": descriptions[name],
         "credential": source,
         "identity": current.get("identity"),
+        # "credential" names the source, so it is truthy even for a CLI
+        # login Duckterm never stored. Forget/Revoke need the real answer.
+        "stored_secret": stored_secret(name),
         "sources": available,
         "write_access": current.get("write_access", False),
         "installed": installed,
@@ -513,6 +523,8 @@ def list_status(*, home: Path | None = None) -> list[dict[str, object]]:
             "title": titles[name],
             "description": "Provided by your shared connector host",
             "credential": "shared-host" if remote.get(name, {}).get("enabled") else None,
+            # Provider credentials live on the broker, never on this machine.
+            "stored_secret": False,
             "installed": {
                 "claude-code": _claude_registered(name, home=home),
                 "codex": _codex_registered(name, home=home),
@@ -771,6 +783,7 @@ def verify(name: str, *, timeout: float = 30.0) -> dict[str, object]:
         # to call cannot support it — report that rather than a verified zero.
         if not tools:
             return {"ok": False, "detail": "The connector offers no tools", "tools": 0}
+        _refresh_identity(name)
         return {"ok": True, "detail": None, "tools": len(tools)}
     except OSError as exc:
         return {"ok": False, "detail": str(exc)[:200], "tools": 0}
@@ -784,6 +797,29 @@ def verify(name: str, *, timeout: float = 30.0) -> dict[str, object]:
         if proc.poll() is None:
             proc.kill()
             proc.wait()
+
+
+def _refresh_identity(name: str) -> None:
+    """Re-resolve which account a verified connector actually speaks as.
+
+    Only enable() ever wrote identity, so a connector configured before that
+    existed reports None forever. Worse, `gh auth switch` repoints every
+    agent without touching Duckterm, leaving a stored identity that names
+    the wrong account. Verify already proved the credential works, so this
+    costs one extra call on an explicit user action, never on a poll.
+    """
+    if name != "github":
+        return
+    current = policy(name)
+    credential = github_token(str(current.get("source")))
+    if credential is None:
+        return
+    try:
+        identity = github_identity(credential[0])
+    except RuntimeError:
+        return
+    if identity != current.get("identity"):
+        _save_policy(name, {**current, "identity": identity})
 
 
 def _rpc_failure(reply: dict[str, object], summary: str) -> dict[str, object]:
