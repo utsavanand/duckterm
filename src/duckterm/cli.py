@@ -161,6 +161,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     session_client.add_parser(sub)
     session_client.add_memory_parser(sub)
+    from duckterm.kits import cli as kits_cli
+
+    kits_cli.add_parser(sub)
     from duckterm.mobile.cli import add_parser as add_ducky_parser
 
     add_ducky_parser(sub)
@@ -748,6 +751,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "connector-service": "connectors",
         "connector-attach": "connectors",
         "connector-admin": "connectors",
+        "kit": "skill_kits",
     }
     if args.command in optional or args.command in {"serve", "restart"}:
         try:
@@ -769,6 +773,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         from duckterm import session_client
 
         return session_client.main(args)
+    if args.command == "kit":
+        from duckterm.kits import cli as kits_cli
+
+        return kits_cli.main(args)
     if args.command == "ducky":
         from duckterm.mobile.cli import run as run_ducky
 

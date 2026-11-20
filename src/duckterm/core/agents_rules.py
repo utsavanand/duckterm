@@ -20,7 +20,7 @@ GENERATED_BANNER = (
 )
 
 STATUSES = ("active", "candidate", "rejected")
-SOURCES = ("manual", "correction", "digest", "retro")
+SOURCES = ("manual", "correction", "digest", "retro", "kit")
 
 
 @dataclass
@@ -34,6 +34,8 @@ class RuleBlock:
     added: str = ""  # ISO date
     heading: str = ""  # optional markdown section the rule renders under
     note: str = ""  # reviewer note, e.g. why a rule was rejected
+    kit: str = ""  # set when a skill kit owns this block; the installer removes it by id
+    kit_version: str = ""
 
     def matches(self, runtime: str, model: str | None = None) -> bool:
         """Does this rule apply to a session on `runtime` (+ optional model)?
