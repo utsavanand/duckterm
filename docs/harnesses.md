@@ -115,6 +115,14 @@ owner's edits stay. A copied kit file edited since install is kept and listed.
 values are gone is *drifted*; the owner's own additions beside them are
 neither. Reinstalling repairs; it never duplicates a hook, rule or block.
 
+The record comes with the repository, so a clone controls it: every entry
+path is refused unless it is relative and still inside the project once
+symlinks are resolved, and a copied file is only removed while it hashes to
+what the record says. Component names are one path segment (`[a-z0-9_-]`),
+and a kit's own sources must be real files under the kit root; a symlink
+anywhere on the way fails `validate`. Uninstall prunes only the directories
+the install created.
+
 The dashboard's **Skill kits** dialog still only lists kits by folder path and
 shows their contents; the install wizard on top of `plan`/`install` is next.
 

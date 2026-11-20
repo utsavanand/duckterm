@@ -14,6 +14,8 @@ LEGACY_MANIFEST = "duckterm-harness.json"
 KINDS = ("knowledge", "tool", "skill", "agent", "hook", "permission", "flow", "settings")
 HARNESSES = ("claude-code", "codex", "copilot", "opencode")
 NAME_RE = re.compile(r"^[a-z0-9-]{1,64}$")
+# Component names become path parts (skills/<name>, agents/<name>.md): one segment, no dots.
+COMPONENT_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
 
 

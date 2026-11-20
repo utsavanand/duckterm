@@ -103,7 +103,7 @@ path = "flows/loop.json"
     assert any("pinned to a version" in m for m in messages)
     assert any("env TOKEN must be a named variable" in m for m in messages)
     assert any("event must be one of" in m for m in messages)
-    assert any("command must name a script inside the kit" in m for m in messages)
+    assert any("command 'hooks/missing.sh' does not exist" in m for m in messages)
     assert any("route back to 'a' needs `max_loops`" in m for m in messages)
 
 

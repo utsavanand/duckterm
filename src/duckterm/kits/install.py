@@ -21,7 +21,7 @@ from typing import Any
 from duckterm.core import agents_rules
 from duckterm.kits import adapters
 from duckterm.kits import manifest as m
-from duckterm.kits.plan import RECORD, Plan, _materialise, load_record, sha256
+from duckterm.kits.plan import RECORD, PathEscape, Plan, _materialise, inside, load_record, sha256
 
 TOML_BEGIN = "# skill-kit {kit} {cid} begin"
 TOML_END = "# skill-kit {kit} {cid} end"
@@ -29,6 +29,9 @@ TOML_END = "# skill-kit {kit} {cid} end"
 
 class InstallRefused(ValueError):
     pass
+
+
+HARD_CONFLICTS = ("conflicts-with", "name-clash", "other-kit", "escapes")
 
 
 @dataclass
@@ -48,7 +51,15 @@ class Report:
 # ── writing ─────────────────────────────────────────────────────────────────
 
 
-def _write_atomic(path: Path, data: bytes, *, executable: bool = False) -> None:
+def _write_atomic(
+    path: Path, data: bytes, *, executable: bool = False, created: set[Path] | None = None
+) -> None:
+    """`created` collects the directories this write had to make, so uninstall
+    prunes those and never a folder the owner had already."""
+    folder = path.parent
+    while created is not None and not folder.exists():
+        created.add(folder)
+        folder = folder.parent
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, temporary = tempfile.mkstemp(prefix=".skill-kit-", dir=path.parent)
     try:
@@ -87,10 +98,31 @@ def _edited(path: Path, before: str | None) -> dict[str, Any]:
     return {"before": before, "after_sha256": sha256(path.read_bytes())}
 
 
-def _restore(project: Path, path: Path, before: str | None) -> None:
+def _target(project: Path, rel: str) -> Path:
+    try:
+        return inside(project, rel)
+    except PathEscape as exc:
+        raise InstallRefused(str(exc)) from exc
+
+
+KNOWN_HOW = ("file", "json", "toml-block", "block", "import", "import-adopted", "rule")
+
+
+def _entry_path(project: Path, e: Any) -> Path:
+    """The record lives in the repository, so a clone controls it: every
+    entry is checked before it names a file to delete, rewrite or restore."""
+    if (
+        not isinstance(e, dict)
+        or e.get("how") not in KNOWN_HOW
+        or not isinstance(e.get("path"), str)
+    ):
+        raise InstallRefused(f"{RECORD}: malformed entry {e!r}")
+    return _target(project, e["path"])
+
+
+def _restore(path: Path, before: str | None) -> None:
     if before is None:
         path.unlink(missing_ok=True)
-        _prune(path.parent, stop=project)
     else:
         _write_atomic(path, before.encode("utf-8", "surrogateescape"))
 
@@ -101,7 +133,7 @@ def apply(plan: Plan, *, replace: bool = False) -> Report:
     conflicts_with still refuse)."""
     if plan.errors:
         raise InstallRefused("validation errors:\n" + "\n".join(str(f) for f in plan.errors))
-    hard = [c for c in plan.conflicts if c.kind in ("conflicts-with", "name-clash", "other-kit")]
+    hard = [c for c in plan.conflicts if c.kind in HARD_CONFLICTS]
     if hard:
         raise InstallRefused(
             "conflicts:\n" + "\n".join(f"{c.path or c.component}: {c.detail}" for c in hard)
@@ -117,28 +149,40 @@ def apply(plan: Plan, *, replace: bool = False) -> Report:
     record = load_record(project)
     previous = record["kits"].get(kit.name)
     if previous:
-        # Idempotent: an installed kit is verified and repaired, never duplicated.
-        _remove_entries(project, previous, Report(kit.name), force=True)
+        # Idempotent: an installed kit is taken out by its record and put back,
+        # never duplicated. A kit file edited since install is kept here and
+        # was already a file-exists conflict in the plan, so it is only
+        # overwritten under --replace.
+        _remove_entries(project, previous, Report(kit.name))
+        _prune_dirs(project, previous)
     entries: list[dict[str, Any]] = []
+    # Folders the earlier install made and that still stand (.duckterm holds
+    # the record) stay this kit's to prune.
+    created: set[Path] = {
+        project / str(d) for d in (previous or {}).get("dirs", []) if (project / str(d)).is_dir()
+    }
     for p in plan.placements:
         if p.op in ("write", "copy-tree"):
             for rel, data in _materialise(p):
-                _write_atomic(project / rel, data, executable=p.executable or _is_script(rel))
+                target = _target(project, rel)
+                _write_atomic(
+                    target, data, executable=p.executable or _is_script(rel), created=created
+                )
                 entries.append(
                     {"path": rel, "how": "file", "sha256": sha256(data), "component": p.component}
                 )
                 report.written.append(rel)
         elif p.op == "json-merge":
-            entries.append(_json_merge(project, p))
+            entries.append(_json_merge(project, p, created))
             report.written.append(p.path)
         elif p.op == "toml-block":
-            entries.append(_toml_block(project, kit, p))
+            entries.append(_toml_block(project, kit, p, created))
             report.written.append(p.path)
         elif p.op == "agents-block":
-            entries.append(_agents_block(project, kit, p))
+            entries.append(_agents_block(project, kit, p, created))
             report.written.append(p.path)
         elif p.op == "claude-import":
-            entry = _claude_import(project)
+            entry = _claude_import(project, created)
             if entry:
                 entries.append(entry)
                 report.written.append("CLAUDE.md")
@@ -153,7 +197,11 @@ def apply(plan: Plan, *, replace: bool = False) -> Report:
         "components": sorted({kit.component_id(c) for c in kit.components}),
         "entries": entries,
     }
-    _write_json(project / RECORD, record)
+    record_path = project / RECORD
+    if not record_path.parent.exists():
+        created.add(record_path.parent)
+    record["kits"][kit.name]["dirs"] = sorted(d.relative_to(project).as_posix() for d in created)
+    _write_json(record_path, record)
     report.written.append(RECORD)
     return report
 
@@ -162,15 +210,15 @@ def _is_script(rel: str) -> bool:
     return rel.endswith((".sh", ".py")) and "/hooks/" in rel
 
 
-def _json_merge(project: Path, p: adapters.Placement) -> dict[str, Any]:
+def _json_merge(project: Path, p: adapters.Placement, created: set[Path]) -> dict[str, Any]:
     """Add exactly the items in `p.data`; record what was added (and any
     value replaced) so uninstall can take out exactly that."""
-    path = project / p.path
+    path = _target(project, p.path)
     before = _snapshot(path)
     config = _read_json(path)
     added: dict[str, Any] = {"lists": [], "keys": [], "replaced": []}
     _merge_into(config, p.data or {}, [], added)
-    _write_json(path, config)
+    _write_atomic(path, (json.dumps(config, indent=2) + "\n").encode(), created=created)
     entry = {"path": p.path, "how": "json", "component": p.component}
     return {**entry, **added, **_edited(path, before)}
 
@@ -202,8 +250,10 @@ def _merge_into(
             target[key] = copy.deepcopy(value)
 
 
-def _toml_block(project: Path, kit: m.Kit, p: adapters.Placement) -> dict[str, Any]:
-    path = project / p.path
+def _toml_block(
+    project: Path, kit: m.Kit, p: adapters.Placement, created: set[Path]
+) -> dict[str, Any]:
+    path = _target(project, p.path)
     before = _snapshot(path)
     text = before or ""
     begin = TOML_BEGIN.format(kit=kit.name, cid=p.component)
@@ -211,7 +261,7 @@ def _toml_block(project: Path, kit: m.Kit, p: adapters.Placement) -> dict[str, A
     text = _strip_block(text, begin, end)
     block = f"{begin}\n{(p.data or {}).get('text', '').rstrip()}\n{end}\n"
     text = (text.rstrip("\n") + "\n\n" if text.strip() else "") + block
-    _write_atomic(path, text.encode())
+    _write_atomic(path, text.encode(), created=created)
     return {
         "path": p.path,
         "how": "toml-block",
@@ -228,7 +278,9 @@ def _strip_block(text: str, begin: str, end: str) -> str:
     return pattern.sub("", text)
 
 
-def _agents_block(project: Path, kit: m.Kit, p: adapters.Placement) -> dict[str, Any]:
+def _agents_block(
+    project: Path, kit: m.Kit, p: adapters.Placement, created: set[Path]
+) -> dict[str, Any]:
     """Knowledge into AGENTS.md. A folder that uses DuckTerm's typed rules
     (.duckterm-rules.json present) gets a rule block through the one writer;
     any other AGENTS.md gets an attributed block and keeps every other byte."""
@@ -263,7 +315,7 @@ def _agents_block(project: Path, kit: m.Kit, p: adapters.Placement) -> dict[str,
     current = _strip_attributed(before or "", kit.name, name)
     block = f"{open_tag}\n{text}\n{close_tag}\n"
     new = (current.rstrip("\n") + "\n\n" if current.strip() else "") + block
-    _write_atomic(path, new.encode())
+    _write_atomic(path, new.encode(), created=created)
     return {
         "path": "AGENTS.md",
         "how": "block",
@@ -286,7 +338,7 @@ def _strip_attributed(text: str, kit: str, name: str) -> str:
     return pattern.sub("", text)
 
 
-def _claude_import(project: Path) -> dict[str, Any] | None:
+def _claude_import(project: Path, created: set[Path]) -> dict[str, Any] | None:
     path = project / "CLAUDE.md"
     before = _snapshot(path)
     current = before or ""
@@ -294,7 +346,7 @@ def _claude_import(project: Path) -> dict[str, Any] | None:
         return {"path": "CLAUDE.md", "how": "import-adopted", "component": "import"}
     block = f"{adapters.IMPORT_OPEN}\n@AGENTS.md\n{adapters.IMPORT_CLOSE}\n"
     new = (current.rstrip("\n") + "\n\n" if current.strip() else "") + block
-    _write_atomic(path, new.encode())
+    _write_atomic(path, new.encode(), created=created)
     return {"path": "CLAUDE.md", "how": "import", "component": "import", **_edited(path, before)}
 
 
@@ -309,32 +361,31 @@ def uninstall(project: Path, kit_name: str) -> Report:
     if entry is None:
         report.notes.append(f"{kit_name} is not installed here")
         return report
-    _remove_entries(project, entry, report, force=False)
+    _remove_entries(project, entry, report)
     del record["kits"][kit_name]
     if record["kits"]:
         _write_json(project / RECORD, record)
     else:
         (project / RECORD).unlink(missing_ok=True)
-        _prune(project / ".duckterm")
+    _prune_dirs(project, entry)
     report.notes.append(
         "Keychain credentials, provider consent and CLI tools stay: a kit is not access"
     )
     return report
 
 
-def _remove_entries(project: Path, entry: dict[str, Any], report: Report, *, force: bool) -> None:
+def _remove_entries(project: Path, entry: dict[str, Any], report: Report) -> None:
     for e in reversed(entry.get("entries", [])):
-        path = project / e["path"]
+        path = _entry_path(project, e)
         how = e["how"]
         if how == "file":
             if not path.is_file():
                 continue
-            if not force and sha256(path.read_bytes()) != e["sha256"]:
+            if sha256(path.read_bytes()) != e["sha256"]:
                 report.kept.append(e["path"])
                 continue
             path.unlink()
             report.removed.append(e["path"])
-            _prune(path.parent, stop=project)
         elif how == "rule":
             rules = [r for r in agents_rules.load_rules(project) if r.id != e["rule_id"]]
             agents_rules.save_rules(project, rules)
@@ -343,9 +394,9 @@ def _remove_entries(project: Path, entry: dict[str, Any], report: Report, *, for
             if not path.is_file():
                 continue
             if sha256(path.read_bytes()) == e["after_sha256"]:
-                _restore(project, path, e["before"])
+                _restore(path, e["before"])
             else:
-                _remove_additions(project, path, e)
+                _remove_additions(path, e)
             report.removed.append(_label(e))
 
 
@@ -357,7 +408,7 @@ def _label(e: dict[str, Any]) -> str:
     return str(e["path"])
 
 
-def _remove_additions(project: Path, path: Path, e: dict[str, Any]) -> None:
+def _remove_additions(path: Path, e: dict[str, Any]) -> None:
     """The owner changed the file after the install: take out only what the
     record says this entry added and leave every other byte alone."""
     how = e["how"]
@@ -380,7 +431,7 @@ def _remove_additions(project: Path, path: Path, e: dict[str, Any]) -> None:
         if config or e["before"] is not None:
             _write_json(path, config)
         else:
-            _restore(project, path, None)
+            path.unlink()
         return
     text = path.read_text()
     if how == "toml-block":
@@ -393,7 +444,7 @@ def _remove_additions(project: Path, path: Path, e: dict[str, Any]) -> None:
     if text or e["before"] is not None:
         _write_atomic(path, text.encode())
     else:
-        _restore(project, path, None)
+        path.unlink()
 
 
 def _contains(actual: Any, expected: Any) -> bool:
@@ -433,10 +484,13 @@ def _descend(node: Any, trail: list[str]) -> Any:
     return node
 
 
-def _prune(directory: Path, stop: Path | None = None) -> None:
-    while directory.is_dir() and directory != stop and not any(directory.iterdir()):
-        directory.rmdir()
-        directory = directory.parent
+def _prune_dirs(project: Path, entry: dict[str, Any]) -> None:
+    """Only directories the install itself created, deepest first, and only
+    while empty: a pre-existing empty folder is the owner's."""
+    for rel in sorted(entry.get("dirs", []), key=len, reverse=True):
+        folder = _target(project, str(rel))
+        if folder.is_dir() and not any(folder.iterdir()):
+            folder.rmdir()
 
 
 def verify(project: Path) -> list[Report]:
@@ -448,7 +502,11 @@ def verify(project: Path) -> list[Report]:
     for name, entry in load_record(project)["kits"].items():
         report = Report(name)
         for e in entry.get("entries", []):
-            path = project / e["path"]
+            try:
+                path = _entry_path(project, e)
+            except InstallRefused as exc:
+                report.drifted.append(str(exc))
+                continue
             how = e["how"]
             if how == "rule":
                 rules = {r.id: r for r in agents_rules.load_rules(project)}

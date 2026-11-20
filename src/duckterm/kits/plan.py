@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -17,10 +18,26 @@ from duckterm.kits import validate as v
 RECORD = ".duckterm/installed.json"
 
 
+class PathEscape(ValueError):
+    pass
+
+
+def inside(project: Path, rel: str) -> Path:
+    """`project / rel`, refused unless it stays inside the project once every
+    symlink on the way is resolved. The install record and component names
+    come from the repository, so neither is trusted to name a path."""
+    if not rel or Path(rel).is_absolute() or ".." in Path(rel).parts:
+        raise PathEscape(f"{rel!r} must be a relative path inside the project")
+    target = project / rel
+    if not target.resolve().is_relative_to(project.resolve()):
+        raise PathEscape(f"{rel!r} resolves outside the project")
+    return target
+
+
 @dataclass
 class Conflict:
     path: str
-    kind: str  # file-exists | other-kit | conflicts-with | name-clash
+    kind: str  # file-exists | other-kit | conflicts-with | name-clash | escapes
     detail: str
     choices: tuple[str, ...]
     component: str = ""
@@ -221,7 +238,7 @@ def _conflicts(
     names: dict[tuple[str, str], str] = {}  # (kind, name) → kit
     for owner_kit, entry in installed.items():
         for e in entry.get("entries", []):
-            if e.get("sha256"):
+            if isinstance(e, dict) and e.get("sha256") and isinstance(e.get("path"), str):
                 owned[e["path"]] = (owner_kit, e["sha256"])
         for cid in entry.get("components", []):
             _, kind, cname = cid.split("/", 2)
@@ -229,7 +246,11 @@ def _conflicts(
     for p in placements:
         if p.op in ("write", "copy-tree"):
             for rel, data in _materialise(p):
-                target = project / rel
+                try:
+                    target = inside(project, rel)
+                except PathEscape as exc:
+                    out.append(Conflict(rel, "escapes", str(exc), ("refuse",), p.component))
+                    continue
                 if not target.exists():
                     continue
                 current = sha256(target.read_bytes()) if target.is_file() else ""
@@ -283,15 +304,20 @@ def _conflicts(
 
 
 def _materialise(p: adapters.Placement) -> list[tuple[str, bytes]]:
-    """(project-relative path, bytes) for every file a placement writes."""
+    """(project-relative path, bytes) for every file a placement writes.
+    Symlinks are never followed: validate refuses them, and a kit that slipped
+    one past it still cannot read outside its own tree here."""
     if p.op == "write":
         return [(p.path, p.content or b"")]
-    if p.op == "copy-tree" and p.source is not None:
+    if p.op == "copy-tree" and p.source is not None and not p.source.is_symlink():
         if p.source.is_file():
             return [(p.path, p.source.read_bytes())]
-        return [
-            (f"{p.path}/{f.relative_to(p.source).as_posix()}", f.read_bytes())
-            for f in sorted(p.source.rglob("*"))
-            if f.is_file() and not f.is_symlink()
-        ]
+        out = []
+        for folder, dirs, files in os.walk(p.source, followlinks=False):
+            dirs[:] = sorted(d for d in dirs if not Path(folder, d).is_symlink())
+            for name in sorted(files):
+                f = Path(folder, name)
+                if f.is_file() and not f.is_symlink():
+                    out.append((f"{p.path}/{f.relative_to(p.source).as_posix()}", f.read_bytes()))
+        return out
     return []

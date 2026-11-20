@@ -107,16 +107,21 @@ def validate(kit: m.Kit) -> list[Finding]:
                 err(cid, f"when.{opt}: no such option")
             elif choice not in (option.get("choices") or []):
                 err(cid, f"when.{opt}={choice!r} is not a choice of that option")
-        if c.fields.get("replaces") and only is None:
+        if not m.COMPONENT_RE.match(c.name):
+            err(cid, f"name {c.name!r} must match [a-z0-9_-], 1-64 chars; it becomes a path")
+            continue
+        replaces = c.fields.get("replaces")
+        if replaces is not None and not m.NAME_RE.match(str(replaces)):
+            err(cid, f"replaces {replaces!r} must be a skill name, [a-z0-9-]")
+            continue
+        if replaces and only is None:
             err(cid, "`replaces` needs `only` — a variant must say where it applies")
 
         path = c.path
         if path is not None:
-            if ".." in Path(path).parts or Path(path).is_absolute():
-                err(cid, f"path {path!r} must stay inside the kit")
-                continue
-            if not (kit.root / path).exists():
-                err(cid, f"path {path!r} does not exist")
+            problem = _outside(kit, path)
+            if problem:
+                err(cid, f"path {path!r} {problem}")
                 continue
 
         if c.kind == "knowledge":
@@ -149,6 +154,25 @@ def validate(kit: m.Kit) -> list[Finding]:
         _check_team(kit, team, err, skills)
     _check_trifecta(kit, warn)
     return out
+
+
+def _outside(kit: m.Kit, rel: str) -> str:
+    """Why `rel` may not be read as a kit source, or "" when it may: it has to
+    stay inside the kit with no symlink anywhere on the way (a symlinked
+    folder would let a kit ship files from outside its own tree)."""
+    if not rel or Path(rel).is_absolute() or ".." in Path(rel).parts:
+        return "must stay inside the kit"
+    walk = kit.root
+    for part in Path(rel).parts:
+        walk = walk / part
+        if walk.is_symlink():
+            where = walk.relative_to(kit.root).as_posix()
+            return f"is a symlink at {where!r}; kits ship real files"
+    if walk.exists() and not walk.resolve().is_relative_to(kit.root.resolve()):
+        return "resolves outside the kit"
+    if not walk.exists():
+        return "does not exist"
+    return ""
 
 
 def _check_knowledge(kit: m.Kit, c: m.Component, cid: str, err: Report) -> int:
@@ -200,8 +224,11 @@ def _check_tool(kit: m.Kit, c: m.Component, cid: str, err: Report, warn: Report)
         if not (cli.get("doctor") or cli.get("check")):
             warn(cid, "no `doctor`; add the command that proves login")
         wrapper = cli.get("wrapper")
-        if isinstance(wrapper, dict) and not (kit.root / str(wrapper.get("command", ""))).is_file():
-            err(cid, "wrapper.command does not exist in the kit")
+        if isinstance(wrapper, dict):
+            command = str(wrapper.get("command", ""))
+            problem = _outside(kit, command)
+            if problem or not (kit.root / command).is_file():
+                err(cid, f"wrapper.command {command!r} {problem or 'does not exist in the kit'}")
     elif cli is not None:
         err(cid, "cli must be a table")
 
@@ -275,9 +302,10 @@ def _check_hook(kit: m.Kit, c: m.Component, cid: str, err: Report) -> None:
     match = c.fields.get("match")
     if match is not None and match not in NEUTRAL_TOOLS:
         err(cid, f"match must be one of {NEUTRAL_TOOLS}")
-    command = c.fields.get("command")
-    if not command or not (kit.root / str(command)).is_file():
-        err(cid, "command must name a script inside the kit")
+    command = str(c.fields.get("command") or "")
+    problem = _outside(kit, command)
+    if problem or not (kit.root / command).is_file():
+        err(cid, f"command {command!r} {problem or 'must name a script inside the kit'}")
     timeout = c.fields.get("timeout", 5)
     if not isinstance(timeout, int) or not 1 <= timeout <= 600:
         err(cid, "timeout is seconds, 1-600")
@@ -386,8 +414,9 @@ def _refs(value: Any) -> list[str]:
 def _check_team(kit: m.Kit, team: str, err: Report, skills: dict[str, m.Component]) -> None:
     path = kit.root / team
     cid = f"{kit.name}/team/{Path(team).stem}"
-    if not path.is_file():
-        err(cid, f"team template {team!r} does not exist")
+    problem = _outside(kit, team)
+    if problem or not path.is_file():
+        err(cid, f"team template {team!r} {problem or 'does not exist'}")
         return
     try:
         data = tomllib.loads(path.read_text())
