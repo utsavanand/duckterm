@@ -1,3 +1,28 @@
+## 2026-11-19 — Measure the constraint before deleting the content
+
+A layout test failed with the connector editor's controls out of viewport at
+1024x900. I tried six fixes — scrollIntoView three ways, a resize listener, two
+max-height caps — then removed the editor's verification row to reclaim its
+height. None worked, because every one of them treated the editor's content as
+the constraint without measuring it.
+
+One probe settled it. The context pane is the bottom cell of a 3-row grid: 339px
+of an 848px workspace, leaving the list 231px against 350px of content. The six
+editor blocks total 164px, so deleting all of them leaves a 119px gap. The row I
+removed was gated behind `c.enabled` and the test's fixture sets
+`enabled: false` — it never rendered in that test at all. I had spent six
+attempts shortening something that was not being measured.
+
+The probe also showed the editor is not broken: scrolling brings Configure,
+the credential select and Verify-and-enable into a 900px viewport together, so
+every control is reachable. The failing assertion is `toBeInViewport`, which does
+not scroll and reads the open position. A test can encode a layout the UI never
+promised, and a red test is not by itself evidence the UI is wrong.
+
+Before removing content to fit a box, measure the box. If the gap exceeds the
+total content, the container is the bug, and the first measurement would have
+said so.
+
 ## 2026-11-19 — A pushed branch is not a delivered fix
 
 The connector panel fix was written, verified and pushed on 10-30. The owner was
