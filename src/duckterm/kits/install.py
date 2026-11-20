@@ -1,7 +1,10 @@
 """Apply a plan, write the record, uninstall from the record, verify (§5, §9,
 §III.4, §III.12). Every write is temp-file + rename. The record is the sole
 authority for uninstall: nothing DuckTerm did not write is ever removed, and
-an edited file is kept and listed."""
+an edited file is kept and listed. A file the installer edits (a JSON merge, a
+TOML or instruction block, the CLAUDE.md import) is snapshotted first: when it
+is still exactly what the install wrote, uninstall puts the original bytes
+back; when the owner changed it since, only the recorded additions come out."""
 
 from __future__ import annotations
 
@@ -69,6 +72,27 @@ def _read_json(path: Path) -> dict[str, Any]:
 
 def _write_json(path: Path, data: dict[str, Any]) -> None:
     _write_atomic(path, (json.dumps(data, indent=2) + "\n").encode())
+
+
+EDITED = ("json", "toml-block", "block", "import")
+
+
+def _snapshot(path: Path) -> str | None:
+    """The file as it was before this edit, or None when it did not exist.
+    surrogateescape keeps odd bytes round-trippable through the JSON record."""
+    return path.read_bytes().decode("utf-8", "surrogateescape") if path.is_file() else None
+
+
+def _edited(path: Path, before: str | None) -> dict[str, Any]:
+    return {"before": before, "after_sha256": sha256(path.read_bytes())}
+
+
+def _restore(project: Path, path: Path, before: str | None) -> None:
+    if before is None:
+        path.unlink(missing_ok=True)
+        _prune(path.parent, stop=project)
+    else:
+        _write_atomic(path, before.encode("utf-8", "surrogateescape"))
 
 
 def apply(plan: Plan, *, replace: bool = False) -> Report:
@@ -142,11 +166,13 @@ def _json_merge(project: Path, p: adapters.Placement) -> dict[str, Any]:
     """Add exactly the items in `p.data`; record what was added (and any
     value replaced) so uninstall can take out exactly that."""
     path = project / p.path
+    before = _snapshot(path)
     config = _read_json(path)
     added: dict[str, Any] = {"lists": [], "keys": [], "replaced": []}
     _merge_into(config, p.data or {}, [], added)
     _write_json(path, config)
-    return {"path": p.path, "how": "json", "component": p.component, **added}
+    entry = {"path": p.path, "how": "json", "component": p.component}
+    return {**entry, **added, **_edited(path, before)}
 
 
 def _merge_into(
@@ -155,29 +181,31 @@ def _merge_into(
     for key, value in additions.items():
         here = trail + [key]
         if isinstance(value, list):
+            created = key not in target
             current = target.setdefault(key, [])
             if not isinstance(current, list):
                 raise InstallRefused(f"{'.'.join(here)} is not a list; leaving the file unchanged")
             for item in value:
                 if item not in current:
                     current.append(copy.deepcopy(item))
-                    added["lists"].append({"at": here, "item": item})
+                    added["lists"].append({"at": here, "item": item, "created": created})
         elif isinstance(value, dict) and isinstance(target.get(key), dict):
             _merge_into(target[key], value, here, added)
         elif isinstance(value, dict) and key not in target:
             target[key] = copy.deepcopy(value)
-            added["keys"].append({"at": here})
+            added["keys"].append({"at": here, "value": value})
         else:
             if key in target and target[key] != value:
-                added["replaced"].append({"at": here, "was": target[key]})
+                added["replaced"].append({"at": here, "was": target[key], "value": value})
             elif key not in target:
-                added["keys"].append({"at": here})
+                added["keys"].append({"at": here, "value": value})
             target[key] = copy.deepcopy(value)
 
 
 def _toml_block(project: Path, kit: m.Kit, p: adapters.Placement) -> dict[str, Any]:
     path = project / p.path
-    text = path.read_text() if path.is_file() else ""
+    before = _snapshot(path)
+    text = before or ""
     begin = TOML_BEGIN.format(kit=kit.name, cid=p.component)
     end = TOML_END.format(kit=kit.name, cid=p.component)
     text = _strip_block(text, begin, end)
@@ -190,6 +218,8 @@ def _toml_block(project: Path, kit: m.Kit, p: adapters.Placement) -> dict[str, A
         "component": p.component,
         "begin": begin,
         "end": end,
+        "block": block,
+        **_edited(path, before),
     }
 
 
@@ -227,12 +257,11 @@ def _agents_block(project: Path, kit: m.Kit, p: adapters.Placement) -> dict[str,
             "rule_id": rule_id,
         }
     path = project / "AGENTS.md"
-    current = path.read_text() if path.is_file() else ""
+    before = _snapshot(path)
     open_tag = adapters.ATTR_OPEN.format(kit=kit.name, name=name, version=kit.version)
     close_tag = adapters.ATTR_CLOSE.format(kit=kit.name, name=name)
-    current = _strip_attributed(current, kit.name, name)
+    current = _strip_attributed(before or "", kit.name, name)
     block = f"{open_tag}\n{text}\n{close_tag}\n"
-    created = not path.is_file()
     new = (current.rstrip("\n") + "\n\n" if current.strip() else "") + block
     _write_atomic(path, new.encode())
     return {
@@ -241,7 +270,8 @@ def _agents_block(project: Path, kit: m.Kit, p: adapters.Placement) -> dict[str,
         "component": p.component,
         "kit": kit.name,
         "name": name,
-        "created": created,
+        "block": block,
+        **_edited(path, before),
     }
 
 
@@ -258,14 +288,14 @@ def _strip_attributed(text: str, kit: str, name: str) -> str:
 
 def _claude_import(project: Path) -> dict[str, Any] | None:
     path = project / "CLAUDE.md"
-    current = path.read_text() if path.is_file() else ""
+    before = _snapshot(path)
+    current = before or ""
     if "@AGENTS.md" in current:
         return {"path": "CLAUDE.md", "how": "import-adopted", "component": "import"}
-    created = not path.is_file()
     block = f"{adapters.IMPORT_OPEN}\n@AGENTS.md\n{adapters.IMPORT_CLOSE}\n"
     new = (current.rstrip("\n") + "\n\n" if current.strip() else "") + block
     _write_atomic(path, new.encode())
-    return {"path": "CLAUDE.md", "how": "import", "component": "import", "created": created}
+    return {"path": "CLAUDE.md", "how": "import", "component": "import", **_edited(path, before)}
 
 
 # ── uninstall / verify ──────────────────────────────────────────────────────
@@ -305,66 +335,94 @@ def _remove_entries(project: Path, entry: dict[str, Any], report: Report, *, for
             path.unlink()
             report.removed.append(e["path"])
             _prune(path.parent, stop=project)
-        elif how == "json":
-            if not path.is_file():
-                continue
-            config = _read_json(path)
-            for item in e.get("lists", []):
-                node = _descend(config, item["at"][:-1])
-                if isinstance(node, dict) and isinstance(node.get(item["at"][-1]), list):
-                    node[item["at"][-1]] = [x for x in node[item["at"][-1]] if x != item["item"]]
-                    if not node[item["at"][-1]]:
-                        del node[item["at"][-1]]
-            for item in e.get("keys", []):
-                node = _descend(config, item["at"][:-1])
-                if isinstance(node, dict):
-                    node.pop(item["at"][-1], None)
-            for item in e.get("replaced", []):
-                node = _descend(config, item["at"][:-1])
-                if isinstance(node, dict):
-                    node[item["at"][-1]] = item["was"]
-            _drop_empty(config)
-            if config:
-                _write_json(path, config)
-            else:
-                path.unlink()
-            report.removed.append(e["path"])
-        elif how == "toml-block":
-            if path.is_file():
-                text = _tidy(_strip_block(path.read_text(), e["begin"], e["end"]))
-                if text:
-                    _write_atomic(path, text.encode())
-                else:
-                    path.unlink()
-                report.removed.append(e["path"])
         elif how == "rule":
             rules = [r for r in agents_rules.load_rules(project) if r.id != e["rule_id"]]
             agents_rules.save_rules(project, rules)
             report.removed.append(f"rule {e['rule_id']}")
-        elif how == "block":
-            if path.is_file():
-                text = _tidy(_strip_attributed(path.read_text(), e["kit"], e["name"]))
-                if text.strip() or not e.get("created"):
-                    _write_atomic(path, text.encode())
-                else:
-                    path.unlink()
-                report.removed.append(f"AGENTS.md block {e['kit']}:{e['name']}")
-        elif how == "import":
-            if path.is_file():
-                text = _tidy(
-                    _strip_block(path.read_text(), adapters.IMPORT_OPEN, adapters.IMPORT_CLOSE)
-                )
-                if text.strip() or not e.get("created"):
-                    _write_atomic(path, text.encode())
-                else:
-                    path.unlink()
-                report.removed.append("CLAUDE.md import block")
+        elif how in EDITED:
+            if not path.is_file():
+                continue
+            if sha256(path.read_bytes()) == e["after_sha256"]:
+                _restore(project, path, e["before"])
+            else:
+                _remove_additions(project, path, e)
+            report.removed.append(_label(e))
 
 
-def _tidy(text: str) -> str:
-    """Removing a block must not leave its blank line behind: the owner's file
-    ends exactly as it did before the block was appended."""
-    return text.rstrip("\n") + "\n" if text.strip() else ""
+def _label(e: dict[str, Any]) -> str:
+    if e["how"] == "block":
+        return f"AGENTS.md block {e['kit']}:{e['name']}"
+    if e["how"] == "import":
+        return "CLAUDE.md import block"
+    return str(e["path"])
+
+
+def _remove_additions(project: Path, path: Path, e: dict[str, Any]) -> None:
+    """The owner changed the file after the install: take out only what the
+    record says this entry added and leave every other byte alone."""
+    how = e["how"]
+    if how == "json":
+        config = _read_json(path)
+        for item in e.get("lists", []):
+            node = _descend(config, item["at"][:-1])
+            if isinstance(node, dict) and isinstance(node.get(item["at"][-1]), list):
+                node[item["at"][-1]] = [x for x in node[item["at"][-1]] if x != item["item"]]
+                if not node[item["at"][-1]] and item.get("created"):
+                    del node[item["at"][-1]]
+        for item in e.get("keys", []):
+            node = _descend(config, item["at"][:-1])
+            if isinstance(node, dict):
+                _unmerge(node, {item["at"][-1]: item["value"]})
+        for item in e.get("replaced", []):
+            node = _descend(config, item["at"][:-1])
+            if isinstance(node, dict) and node.get(item["at"][-1]) == item["value"]:
+                node[item["at"][-1]] = item["was"]
+        if config or e["before"] is not None:
+            _write_json(path, config)
+        else:
+            _restore(project, path, None)
+        return
+    text = path.read_text()
+    if how == "toml-block":
+        text = _strip_block(text, e["begin"], e["end"])
+    elif how == "block":
+        text = _strip_attributed(text, e["kit"], e["name"])
+    else:
+        text = _strip_block(text, adapters.IMPORT_OPEN, adapters.IMPORT_CLOSE)
+    text = text.rstrip("\n") + "\n" if text.strip() else ""
+    if text or e["before"] is not None:
+        _write_atomic(path, text.encode())
+    else:
+        _restore(project, path, None)
+
+
+def _contains(actual: Any, expected: Any) -> bool:
+    """`expected` is still there, allowing for what other entries or the owner
+    added beside it."""
+    if isinstance(expected, dict):
+        return isinstance(actual, dict) and all(
+            _contains(actual.get(k), v) for k, v in expected.items()
+        )
+    if isinstance(expected, list):
+        return isinstance(actual, list) and all(item in actual for item in expected)
+    return bool(actual == expected)
+
+
+def _unmerge(target: dict[str, Any], value: dict[str, Any]) -> None:
+    """Take `value` back out of `target` item by item, so a key the kit created
+    and the owner later added to keeps the owner's part."""
+    for key, sub in value.items():
+        current = target.get(key)
+        if isinstance(sub, dict) and isinstance(current, dict):
+            _unmerge(current, sub)
+            if not current:
+                del target[key]
+        elif isinstance(sub, list) and isinstance(current, list):
+            target[key] = [x for x in current if x not in sub]
+            if not target[key]:
+                del target[key]
+        elif key in target and current == sub:
+            del target[key]
 
 
 def _descend(node: Any, trail: list[str]) -> Any:
@@ -375,17 +433,6 @@ def _descend(node: Any, trail: list[str]) -> Any:
     return node
 
 
-def _drop_empty(node: dict[str, Any]) -> None:
-    for key in list(node):
-        value = node[key]
-        if isinstance(value, dict):
-            _drop_empty(value)
-            if not value:
-                del node[key]
-    if set(node) == {"version"}:  # a Copilot hooks file with nothing left in it
-        node.clear()
-
-
 def _prune(directory: Path, stop: Path | None = None) -> None:
     while directory.is_dir() and directory != stop and not any(directory.iterdir()):
         directory.rmdir()
@@ -393,17 +440,55 @@ def _prune(directory: Path, stop: Path | None = None) -> None:
 
 
 def verify(project: Path) -> list[Report]:
+    """Every recorded entry, not only copied files: a merged config that was
+    deleted is missing, one whose kit values are gone is drifted. The owner's
+    own additions to a shared file are neither."""
     project = Path(project)
     out = []
     for name, entry in load_record(project)["kits"].items():
         report = Report(name)
         for e in entry.get("entries", []):
-            if e["how"] != "file":
-                continue
             path = project / e["path"]
+            how = e["how"]
+            if how == "rule":
+                rules = {r.id: r for r in agents_rules.load_rules(project)}
+                if e["rule_id"] not in rules:
+                    report.missing.append(f"rule {e['rule_id']}")
+                continue
             if not path.is_file():
                 report.missing.append(e["path"])
-            elif sha256(path.read_bytes()) != e["sha256"]:
-                report.drifted.append(e["path"])
+                continue
+            data = path.read_bytes()
+            if how == "file":
+                if sha256(data) != e["sha256"]:
+                    report.drifted.append(e["path"])
+            elif how in EDITED:
+                if sha256(data) != e["after_sha256"] and not _additions_present(data, e):
+                    report.drifted.append(_label(e))
+            elif how == "import-adopted" and "@AGENTS.md" not in data.decode(errors="replace"):
+                report.drifted.append("CLAUDE.md import")
         out.append(report)
     return out
+
+
+def _additions_present(data: bytes, e: dict[str, Any]) -> bool:
+    how = e["how"]
+    if how == "json":
+        try:
+            config = json.loads(data)
+        except ValueError:
+            return False
+        if not isinstance(config, dict):
+            return False
+        for item in e.get("lists", []):
+            node = _descend(config, item["at"])
+            if not isinstance(node, list) or item["item"] not in node:
+                return False
+        for item in e.get("keys", []) + e.get("replaced", []):
+            if not _contains(_descend(config, item["at"]), item["value"]):
+                return False
+        return True
+    text = data.decode(errors="replace")
+    if how == "import":
+        return "@AGENTS.md" in text
+    return e["block"] in text

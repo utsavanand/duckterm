@@ -105,9 +105,15 @@ what that harness honours (exit 2, or a JSON decision for Copilot stop events).
 Knowledge never replaces a hand-written `AGENTS.md` or `CLAUDE.md`: it is an
 attributed block, or a rule in `.duckterm-rules.json` where the folder uses
 typed rules. The record `.duckterm/installed.json` (committed) lists every
-path written with its hash and every config key added; uninstall reverses
-exactly that, keeps any file edited since, and leaves the owner's bytes as
-they were. Reinstalling repairs; it never duplicates a hook, rule or block.
+path written with its hash, and for every file the installer edited rather
+than wrote (a settings JSON, `.codex/config.toml`, `AGENTS.md`, `CLAUDE.md`)
+the bytes it found there and the hash of what it left. Uninstall puts the
+original bytes back when the file is still what the install wrote; when the
+owner changed it since, only the recorded kit additions come out and the
+owner's edits stay. A copied kit file edited since install is kept and listed.
+`verify` checks every entry: a deleted config is *missing*, one whose kit
+values are gone is *drifted*; the owner's own additions beside them are
+neither. Reinstalling repairs; it never duplicates a hook, rule or block.
 
 The dashboard's **Skill kits** dialog still only lists kits by folder path and
 shows their contents; the install wizard on top of `plan`/`install` is next.

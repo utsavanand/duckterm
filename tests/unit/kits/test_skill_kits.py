@@ -265,7 +265,7 @@ def test_install_keeps_owner_files_and_uninstall_restores_every_byte(project):
     assert after.keys() == before.keys(), sorted(set(after) ^ set(before))
     for name in ("AGENTS.md", "CLAUDE.md"):
         assert after[name] == before[name]
-    assert json.loads(after[".claude/settings.json"]) == json.loads(before[".claude/settings.json"])
+    assert after[".claude/settings.json"] == before[".claude/settings.json"]
     assert install.verify(project) == []
 
 
