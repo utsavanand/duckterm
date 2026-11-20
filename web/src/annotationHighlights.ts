@@ -1,4 +1,4 @@
-export interface Annotation { id: string; quote: string; note: string; created_at: number }
+export interface Annotation { id: string; quote: string; note: string; created_at: number; message_key?: string }
 
 // Browser selections may fold whitespace differently from the stored Markdown.
 // Keep offsets back to the original text so we never rewrite markup as strings.
