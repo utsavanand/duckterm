@@ -102,8 +102,6 @@ it("claims verification only after a check, and reports the tool count it proved
   render(<Connectors />);
   // No click: an unverified row would only be able to claim a file exists.
   expect(await screen.findByText(/25 tools/)).toBeVisible();
-  fireEvent.click(screen.getByLabelText(/^Configure /));
-  expect(screen.getByText(/✓ Verified — 25 tools available/)).toBeVisible();
 });
 
 it("shows the server's own error when verification fails", async () => {
@@ -198,7 +196,7 @@ it("collapses a row to one control until it is configured", async () => {
   render(<Connectors />);
   expect(await screen.findByLabelText(/^Configure /)).toBeVisible();
   // Everything that used to crowd the row now waits behind one control.
-  for (const hidden of ["Forget stored credentials", "Re-check", "Available to agents"]) {
+  for (const hidden of ["Forget stored credentials", "Available to agents"]) {
     expect(screen.queryByText(hidden)).toBeNull();
   }
   fireEvent.click(screen.getByLabelText(/^Configure /));

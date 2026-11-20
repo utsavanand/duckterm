@@ -84,26 +84,18 @@ export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
     pending.current = null;
   }, []);
 
-  const verifyOne = useCallback(async (c: Connector, announce: boolean) => {
+  const verifyOne = useCallback(async (c: Connector) => {
     const epoch = lifetime.current;
     const current = () => lifetime.current === epoch && currentHost.current === host;
-    if (announce) setBusy(c.name);
     try {
       const result = await api.verifyConnector(c.name, sessionKey);
       if (!current()) return;
       setChecks(prev => ({ ...prev, [c.name]: { ...result, at: Date.now() } }));
-    } catch (e) {
-      // An automatic check the owner did not request must not raise a toast;
-      // the row says what it found, and Re-check surfaces the message.
-      if (current() && announce) toast(`${c.title}: ${(e as Error).message}`, "err");
-    } finally {
-      if (current() && announce) setBusy(null);
+    } catch {
+      // Verification is never owner-requested now, so a failure must not raise
+      // a toast; the row's summary reports what the check found.
     }
-  }, [host, sessionKey, toast]);
-
-  function verify(c: Connector) {
-    void verifyOne(c, true);
-  }
+  }, [host, sessionKey]);
 
   const refresh = useCallback(() => {
     if (pending.current) return;
@@ -146,7 +138,7 @@ export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
     for (const c of rows) {
       if (!c.enabled || c.managed || attempted.current.has(c.name)) continue;
       attempted.current.add(c.name);
-      void verifyOne(c, false);
+      void verifyOne(c);
     }
   }, [rows, verifyOne]);
 
@@ -226,15 +218,6 @@ export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
         </div>
 
         {open && <div className="rd-connector-config">
-          {c.enabled && <div className="rd-connector-proof">
-            <span>{check
-              ? (check.ok ? `✓ Verified — ${check.tools} tools available` : `✗ ${check.detail ?? "Verification failed"}`)
-              : "Checking…"}</span>
-            <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy !== null} onClick={() => verify(c)}>
-              {busy === c.name ? "Checking…" : "Re-check"}
-            </button>
-          </div>}
-
           <div className="rd-connector-desc">{c.description}</div>
           {c.identity && <div className="rd-connector-desc">Connected as {c.identity}</div>}
 

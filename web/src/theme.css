@@ -931,15 +931,6 @@ code,
   color: var(--muted);
   margin: 4px 0 0 15px;
 }
-.rd-connector-proof {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-wrap: wrap;
-}
-.rd-connector-proof button {
-  margin-left: auto;
-}
 .rd-connector-harnesses {
   display: flex;
   flex-wrap: wrap;

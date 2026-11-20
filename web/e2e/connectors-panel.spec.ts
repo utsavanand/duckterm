@@ -42,9 +42,6 @@ test("a connector row proves what it serves and when it was last used", async ({
     // The panel verifies on open, so the collapsed row reports a measured tool
     // count beside the usage rather than asking the owner to press anything.
     await expect(row.getByText(/45 tools · Used 2h ago · 90 calls/)).toBeVisible();
-
-    await row.getByRole("button", { name: "Configure GitHub" }).click();
-    await expect(row.getByText(/Verified — 45 tools available/)).toBeVisible();
   } finally {
     await apiDelete(`/sessions/${key}`);
   }
