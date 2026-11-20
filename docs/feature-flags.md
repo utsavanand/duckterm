@@ -21,6 +21,15 @@ Any process that can write the DuckTerm home, or the target of a symlink there,
 can turn a flag on. Flags keep unfinished work out of other people's way; they
 do not keep anyone out.
 
+## Release switches
+
+The six release switches are listed in [Release feature flags](release/feature-flags.html).
+`feature-flags.json`, when present, is authoritative for those switches, including
+`skill_kits`. A missing release-switch file preserves the older `flags.json`
+skill-kit opt-in; it does not enable any other release switch. An explicit false
+or an omitted switch in `feature-flags.json` disables it. No configuration is
+rewritten during this compatibility read.
+
 ## In development
 
 | Flag | What it gates | Since | Ships when |

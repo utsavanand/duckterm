@@ -29,7 +29,15 @@ def overrides() -> tuple[dict[str, bool], str | None]:
     try:
         data = json.loads((instance.home() / "feature-flags.json").read_text())
     except FileNotFoundError:
-        return {}, None
+        # Reuse the shipped development-flag parser for existing installations.
+        # Once present, feature-flags.json is authoritative, including false.
+        from duckterm import editions
+
+        try:
+            legacy = editions._with_flags(editions.LITE)
+        except ValueError:
+            return {}, "Invalid local flag configuration"
+        return ({"skill_kits": True} if legacy.includes("skill_kits") else {}), None
     except (OSError, ValueError):
         return {}, "Invalid local flag configuration"
     if (

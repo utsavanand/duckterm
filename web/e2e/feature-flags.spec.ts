@@ -4,7 +4,7 @@ test("Settings reflects server feature flags and preserves core controls", async
   const optedIn = process.env.RD_TEST_FEATURE_FLAGS !== "";
   await page.goto("/");
   await page.getByRole("button", { name: "Settings", exact: true }).click();
-  for (const name of ["Collaboration", "Harnesses", "Agent setup", "Back up to remote"]) {
+  for (const name of ["Collaboration", "Skill kits", "Agent setup", "Back up to remote"]) {
     const control = page.getByRole("button", { name, exact: true });
     if (optedIn) await expect(control).toBeVisible();
     else await expect(control).toHaveCount(0);

@@ -15,12 +15,12 @@ function menu(features: string[]) {
 }
 it("keeps core settings but removes gated actions from distributed apps", () => {
   menu(core);
-  for (const name of [/Collaboration/, /Harnesses/, /Agent setup/, /Back up to remote/]) expect(screen.queryByRole("button", { name })).toBeNull();
+  for (const name of [/Collaboration/, /Skill kits/, /Agent setup/, /Back up to remote/]) expect(screen.queryByRole("button", { name })).toBeNull();
   for (const name of [/Checkpointing/, /AI models/, /Feature flags/]) expect(screen.getByRole("button", { name })).toBeVisible();
 });
 it("shows the gated settings on an opted-in personal installation", () => {
   menu([...core, ...flags]);
-  for (const name of [/Collaboration/, /Harnesses/, /Agent setup/, /Back up to remote/]) expect(screen.getByRole("button", { name })).toBeVisible();
+  for (const name of [/Collaboration/, /Skill kits/, /Agent setup/, /Back up to remote/]) expect(screen.getByRole("button", { name })).toBeVisible();
 });
 it("shows the server's effective flags without editable switches", async () => {
   vi.mocked(api.featureFlags).mockResolvedValue({ restart_required: true, flags: [{id:"backup", name:"Backup", default:false, enabled:true, reason:"Local override"}] });

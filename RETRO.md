@@ -31,6 +31,14 @@ every edition and retain the custom-build override. Test the actual plist-writin
 steps with the variable absent, empty, and overridden. Report creation still opens
 only a draft in the user's mail app; the user must review it and press Send.
 
+## 2026-11-20 — Rebased release flags must preserve existing opt-ins
+
+The release-switch branch predated the shipped skill-kit development flag.
+Keep the current Skill kits label and default-off coverage, reuse the existing
+parser for legacy opt-ins only when the new configuration is absent, and let
+explicit release settings win. Rebase checks must exercise both old and new
+configuration paths; resolving textual conflicts alone is insufficient.
+
 ## 2026-11-19 — Tests kept an unreachable harness-switch path alive
 
 The switch endpoint has required a prepared hand-over since the preparation
@@ -581,15 +589,15 @@ Folded claims contain revision pointers, not inline text/refs. Retrieval must re
 
 # Retro — lessons from real breakage
 
+## 2026-10-12 — Size saved summaries for useful content
+
+The inherited 400-character overview cap rejected otherwise useful checkpoint summaries after silent clipping was removed. Allow 2,000 characters, with a 100–200 word prompt target when needed; keep writer, correction prompt and parser limits aligned. Test that 100+ words survive unchanged and over-limit text is rejected rather than sliced. This change does not resolve incomplete input coverage.
+
 ## 2026-10-11 — Independent summaries need independent boundaries and compatible readers
 
 A cumulative revision cannot become a span by changing its label or subtracting an earlier summary. Capture explicit original-record boundaries, verify their prefix hashes, and write only the new range. Bound complete provider prompts in UTF-8 bytes as well as record count; leave an oversized record pending instead of skipping it. A failed later range must not erase or repeat a successful earlier range. Appending to a source changes its version but does not make previously committed positions new work: reject overlapping leaf ranges both before provider calls and inside the write transaction.
 
 A span writer must not replace the current cumulative summary before the handoff reader assembles prior spans. Stage typed leaves through the existing generation, review and persistence path without changing the current-summary pointer. Keep original evidence readable, reject source rewrites, preserve the existing single-writer and cancellation protections, and distinguish a verified individual leaf from completion of the whole requested span. Test source advancement, retry reuse, retained reads and concurrent callers before activation.
-
-## 2026-10-12 — Size saved summaries for useful content
-
-The inherited 400-character overview cap rejected otherwise useful checkpoint summaries after silent clipping was removed. Allow 2,000 characters, with a 100–200 word prompt target when needed; keep writer, correction prompt and parser limits aligned. Test that 100+ words survive unchanged and over-limit text is rejected rather than sliced. This change does not resolve incomplete input coverage.
 
 ## 2026-10-11 — Recover a checkpoint by its request, not the newest row
 
@@ -740,17 +748,35 @@ Two individually valid summary contexts can create a supersession cycle when com
 
 QA caught this in the isolated compactor foundation before runtime integration. The regression starts with ten valid children, creates a cycle across two of them, and verifies rejection without provider calls or input mutation. A generated parent must obey the same reader contract as its inputs.
 
-## 2026-10-09 — Interactive panes must not inherit automation's no-color flag
-
-The terminal palettes were intact, but the agent and the persistent tmux server had inherited `NO_COLOR=1`; captured output contained only bold/dim styling. A theme cannot recolor ANSI foreground values that the process never emits. Unset inherited `NO_COLOR` in each interactive pane's launch command, while preserving an explicitly supplied launch override. Sanitizing the current server process alone cannot repair environment already retained by tmux. Existing running agents retain their environment until restarted; do not interrupt live work merely to restore color.
-
-The isolated tmux regression failed before the fix on both direct and piped launches. It checks the child environment, actual green ANSI output, explicit opt-out preservation, and that the shared tmux environment is left untouched. Test panes are removed in cleanup.
-
 ## 2026-10-11 — Rename a badge selector with its rendered class
 
 Terminology changes can affect styling when a retired term is also a CSS
 selector. Change JSX className and both base/pseudo-element selectors together;
 preserve wire fields and verify the style declarations remain identical.
+
+## 2026-10-11 — Prompt pointers are not a checkpoint retention boundary
+
+Bounding the inbox pointers in required context accidentally shortened the checkpoint's mail ID list and changed its hash input from canonical messages to metadata. The checkpoint resolver still hashes full messages; this would report false source changes and leave omitted messages outside the retention boundary. Capture complete authorized IDs and the canonical hash separately from prompt context. Persist only those IDs and the hash, never another copy of message bodies. Changes beyond the pointer limit must still change the source fence.
+
+Test more than eight messages through checkpoint creation, resolution and the retention predicate. Verify omitted pointers remain retained and an edit to an omitted message invalidates the saved hash. Model-input tests alone cannot establish checkpoint retention correctness.
+
+## 2026-10-11 — Query tasks and mail instead of copying their bodies into memory
+
+Folder tasks and the inbox already have canonical stores and read commands. Do not send notes, questions or answers through the session summarizer merely because they are assigned to that session. Keep them reference-only, and onboard with a bounded selection of IDs, short title previews, counts and read commands. Distinguish folder-wide work from assigned work, disclose omitted pointers and preserve current sharing checks. A title is discovery metadata, not the instruction or evidence of authorization.
+
+Exercise long notes, escaped mail, many open assignments, scope changes and original retrieval. Successful pointer delivery does not certify that the task or message bodies were read. Conversation statements about the work still remain eligible narrative; current canonical records must be read before action. This does not remove the separate bounds on conversation updates, session notes or final launch context.
+
+## 2026-10-11 — Project summary inputs without rewriting original evidence
+
+Successful tool output and command arguments can dominate memory input through both hook events and native transcripts. Filter both at the summarization boundary; retain conversation text, current work and explicit failures. Keep native text, roles, locators and original hashes unchanged so search and reads still recover evidence. Treat mixed messages per block, preserving narrative and failed results while excluding successful bodies. Version the summary policy so older coverage is not reused under changed input semantics.
+
+Report eligible versus reference-only input separately from original-history counts. A reference is not proof a body was summarized, and fixture byte reduction is not measured token savings or semantic completeness. A new reference-only event still changes the source boundary: refresh that boundary instead of returning a stale ready revision. Tests must exercise this through checkpoint persistence and prove excluded originals remain readable.
+
+## 2026-10-11 — Do not reject summary inputs for a duplicate copy of current work
+
+Maintained memory already supplies citable session, task and inbox originals within its 48,000-byte record budget. Copying the same text into a separate 12,000-character required-context field made checkpoints fail before generation as open tasks and mail accumulated. Send originals once, accompanied by explicit coverage counts. If whole required records span multiple updates, process unseen records first and retain skipped identities as pending; never certify incomplete current work as complete or repeatedly fill the budget with already processed tasks. An indivisible oversized original stays readable and reports its size and budget as a gap. Keep the independent harness-launch limit intact.
+
+Exercise checkpoint persistence with 45 open tasks, a 13,000-character incoming message, their combination across bounded updates, multibyte notes, and provider failure preserving the last good revision. A deterministic provider verifies plumbing and coverage, not semantic summary quality or success on the installed runtime.
 
 ## 2026-10-10 — Returning to the same destination is a new support check
 
@@ -784,48 +810,6 @@ Native fixture review also identified the prompt route's valid empty HTTP 204:
 accept that acknowledgment without trying to parse JSON, while retaining
 uncertain-write handling for a missing response or malformed expected JSON.
 An acknowledgment alone still does not prove delivery to the intended session.
-
-## 2026-10-09 — Native selection success must come from the terminal
-
-A native API can accept conversation selection while the terminal stays on its
-previous route. In the OpenCode native probe, a macOS `/var` versus `/private/var`
-project alias also separated API and TUI instance identity. Canonicalize the
-project directory before launch and require a fresh TUI observation bound to
-version, process, generation and exact conversation. Never substitute HTTP 200,
-matching cwd or session existence for that proof. File-drop ownership likewise
-needs both saved content hash and safe directory traversal, not a marker alone.
-
-Validation: the pinned native observer selected two synthetic conversations in
-one isolated project; focused tests cover stale/foreign identity, unsupported
-history, uncertain native writes and unowned/modified/symlinked plugin files.
-The full gate also exposed a pre-existing Codex relay test that assumed two
-executor calls completed within 50 ms; wait for its actual confirmation event
-before asserting stale-answer rejection. This is foundation evidence, not
-complete harness acceptance.
-
-## 2026-10-11 — Prompt pointers are not a checkpoint retention boundary
-
-Bounding the inbox pointers in required context accidentally shortened the checkpoint's mail ID list and changed its hash input from canonical messages to metadata. The checkpoint resolver still hashes full messages; this would report false source changes and leave omitted messages outside the retention boundary. Capture complete authorized IDs and the canonical hash separately from prompt context. Persist only those IDs and the hash, never another copy of message bodies. Changes beyond the pointer limit must still change the source fence.
-
-Test more than eight messages through checkpoint creation, resolution and the retention predicate. Verify omitted pointers remain retained and an edit to an omitted message invalidates the saved hash. Model-input tests alone cannot establish checkpoint retention correctness.
-
-## 2026-10-11 — Query tasks and mail instead of copying their bodies into memory
-
-Folder tasks and the inbox already have canonical stores and read commands. Do not send notes, questions or answers through the session summarizer merely because they are assigned to that session. Keep them reference-only, and onboard with a bounded selection of IDs, short title previews, counts and read commands. Distinguish folder-wide work from assigned work, disclose omitted pointers and preserve current sharing checks. A title is discovery metadata, not the instruction or evidence of authorization.
-
-Exercise long notes, escaped mail, many open assignments, scope changes and original retrieval. Successful pointer delivery does not certify that the task or message bodies were read. Conversation statements about the work still remain eligible narrative; current canonical records must be read before action. This does not remove the separate bounds on conversation updates, session notes or final launch context.
-
-## 2026-10-11 — Project summary inputs without rewriting original evidence
-
-Successful tool output and command arguments can dominate memory input through both hook events and native transcripts. Filter both at the summarization boundary; retain conversation text, current work and explicit failures. Keep native text, roles, locators and original hashes unchanged so search and reads still recover evidence. Treat mixed messages per block, preserving narrative and failed results while excluding successful bodies. Version the summary policy so older coverage is not reused under changed input semantics.
-
-Report eligible versus reference-only input separately from original-history counts. A reference is not proof a body was summarized, and fixture byte reduction is not measured token savings or semantic completeness. A new reference-only event still changes the source boundary: refresh that boundary instead of returning a stale ready revision. Tests must exercise this through checkpoint persistence and prove excluded originals remain readable.
-
-## 2026-10-11 — Do not reject summary inputs for a duplicate copy of current work
-
-Maintained memory already supplies citable session, task and inbox originals within its 48,000-byte record budget. Copying the same text into a separate 12,000-character required-context field made checkpoints fail before generation as open tasks and mail accumulated. Send originals once, accompanied by explicit coverage counts. If whole required records span multiple updates, process unseen records first and retain skipped identities as pending; never certify incomplete current work as complete or repeatedly fill the budget with already processed tasks. An indivisible oversized original stays readable and reports its size and budget as a gap. Keep the independent harness-launch limit intact.
-
-Exercise checkpoint persistence with 45 open tasks, a 13,000-character incoming message, their combination across bounded updates, multibyte notes, and provider failure preserving the last good revision. A deterministic provider verifies plumbing and coverage, not semantic summary quality or success on the installed runtime.
 
 ## 2026-10-10 — A version number does not identify the installed build
 
@@ -872,6 +856,30 @@ Product's next manual checkpoint failed with invalid_context after the timeout/c
 Allow one correction against the same captured evidence for malformed digest/context output. Recheck the complete source and policy before the correction, then require the unchanged strict parser and normal independent review before the sole canonical writer can persist. Keep timeout/quota/login/disabled failures and negative/unavailable reviews as failures; do not blindly retry them or switch providers. Bound the rejected draft in the correction prompt and never append corrections cumulatively. This path permits at most two generation calls plus one review, with the existing per-call deadline; it is not an indefinite retry loop.
 
 Persist only a fixed diagnostic code (such as unknown_reference or context_too_large), never rejected model text, alongside the existing failed checkpoint outcome. Failed attempts preserve the previous revision and coverage. Regression fixtures must exercise bad-first/good-second responses, exhausted corrections, changed evidence, reviewer rejection, and actual checkpoint persistence, not only a successful generation sample. Real-data acceptance uses a disposable test instance, never the owner's live session.
+
+## 2026-10-09 — Interactive panes must not inherit automation's no-color flag
+
+The terminal palettes were intact, but the agent and the persistent tmux server had inherited `NO_COLOR=1`; captured output contained only bold/dim styling. A theme cannot recolor ANSI foreground values that the process never emits. Unset inherited `NO_COLOR` in each interactive pane's launch command, while preserving an explicitly supplied launch override. Sanitizing the current server process alone cannot repair environment already retained by tmux. Existing running agents retain their environment until restarted; do not interrupt live work merely to restore color.
+
+The isolated tmux regression failed before the fix on both direct and piped launches. It checks the child environment, actual green ANSI output, explicit opt-out preservation, and that the shared tmux environment is left untouched. Test panes are removed in cleanup.
+
+## 2026-10-09 — Native selection success must come from the terminal
+
+A native API can accept conversation selection while the terminal stays on its
+previous route. In the OpenCode native probe, a macOS `/var` versus `/private/var`
+project alias also separated API and TUI instance identity. Canonicalize the
+project directory before launch and require a fresh TUI observation bound to
+version, process, generation and exact conversation. Never substitute HTTP 200,
+matching cwd or session existence for that proof. File-drop ownership likewise
+needs both saved content hash and safe directory traversal, not a marker alone.
+
+Validation: the pinned native observer selected two synthetic conversations in
+one isolated project; focused tests cover stale/foreign identity, unsupported
+history, uncertain native writes and unowned/modified/symlinked plugin files.
+The full gate also exposed a pre-existing Codex relay test that assumed two
+executor calls completed within 50 ms; wait for its actual confirmation event
+before asserting stale-answer rejection. This is foundation evidence, not
+complete harness acceptance.
 
 ## 2026-10-09 — Finding the server executable does not equip its subprocesses
 
@@ -1219,16 +1227,6 @@ records and serialized responses when the bytes match; hash the partial final
 record as well as complete lines. Cover equal-stamp rewrites during the window
 and the first poll after it, for Claude and Codex, and verify real Linux behavior.
 
-## 2026-10-05 — Two terminals in one session need separate paste targets
-
-A companion shell shares an agent's session identity but not its input stream.
-Keying an asynchronous image paste only by session allowed a focus change to
-send the completed path to the sibling terminal. Give each shell viewer a
-separate paste target, retain the owning session for uploads, and reject a late
-result after focus changes. Verify collapse/reopen against a real shell: close
-the viewer without ending its process, and bind destructive confirmation to the
-backend's observed process token rather than a cached busy label.
-
 ## 2026-10-06 — A stale sync response cannot confirm a newer owner change
 
 Review reproduced an exchange that captured the old folder tree, then returned
@@ -1269,22 +1267,6 @@ destination parents by stable identity so an offline action cannot recreate a
 parent that moved elsewhere. Native failure-injection and coordinator rollback
 tests cover these boundaries.
 
-## 2026-10-05 — Cleanup must distinguish absent groups from denied signals
-
-Shell browser checks passed but the runner failed probing the departed process
-group with EPERM. Do not blanket-ignore permission errors: independently list
-process groups and accept absence only after a successful, nonempty listing.
-Keep denial for a live group or failed inspection visible, and avoid sending a
-final signal after confirming absence. Preserve the browser runner exit status.
-
-## 2026-10-05 — Wait for card readiness before testing a pointer action
-The archive Undo browser flake was a missed second Archive click, not a missing
-Undo response. Undo remounts the session card; its asynchronous restart reason
-adds a grid row and can move Archive between mouse-down and mouse-up. Holding
-and releasing the real response reproduced the missed click with no second POST.
-Wait for the fixture's restart reason before clicking, preserving the existing
-Undo/reload/expiry assertions instead of extending their timeouts.
-
 ## 2026-10-06 — New npm advisories blocked every PR's web job
 CI's `npm audit --audit-level=high` began failing on unrelated PRs when
 source-map-js (high, build-time denial of service) and DOMPurify (low, XSS in
@@ -1301,6 +1283,40 @@ missing timestamps. Never substitute a related record timestamp for the event
 the UI claims to measure. Regression checks cover old sessions with recent
 summaries, missing timestamps, and clocks ahead of the reader.
 
+## 2026-10-06 — Linux shell launchers can outlive their command
+A tmux shell command without explicit exec left a /bin/sh launcher on Linux.
+The pane PID belonged to that parent while the interactive owner shell held a
+different foreground process group, so idle shells always required confirmation.
+Exec the helper into the pane process; the helper already execs the owner shell.
+Verify pane PID equals interactive $$ with real tmux on Linux and macOS, and
+retain busy-job checks rather than increasing idle-wait timeouts.
+
+## 2026-10-05 — Two terminals in one session need separate paste targets
+
+A companion shell shares an agent's session identity but not its input stream.
+Keying an asynchronous image paste only by session allowed a focus change to
+send the completed path to the sibling terminal. Give each shell viewer a
+separate paste target, retain the owning session for uploads, and reject a late
+result after focus changes. Verify collapse/reopen against a real shell: close
+the viewer without ending its process, and bind destructive confirmation to the
+backend's observed process token rather than a cached busy label.
+
+## 2026-10-05 — Cleanup must distinguish absent groups from denied signals
+
+Shell browser checks passed but the runner failed probing the departed process
+group with EPERM. Do not blanket-ignore permission errors: independently list
+process groups and accept absence only after a successful, nonempty listing.
+Keep denial for a live group or failed inspection visible, and avoid sending a
+final signal after confirming absence. Preserve the browser runner exit status.
+
+## 2026-10-05 — Wait for card readiness before testing a pointer action
+The archive Undo browser flake was a missed second Archive click, not a missing
+Undo response. Undo remounts the session card; its asynchronous restart reason
+adds a grid row and can move Archive between mouse-down and mouse-up. Holding
+and releasing the real response reproduced the missed click with no second POST.
+Wait for the fixture's restart reason before clicking, preserving the existing
+Undo/reload/expiry assertions instead of extending their timeouts.
+
 ## 2026-10-05 — The gate's temp log name broke on macOS
 `mktemp /tmp/duckterm-gate.XXXXXX.log` only works where mktemp replaces X's
 that aren't at the end. macOS's BSD mktemp replaces trailing X's only, so it
@@ -1309,14 +1325,6 @@ GATE_LOG then failed immediately with "File exists". Readers of the old shared
 log were also seeing another session's results. Keep the X's at the end of a
 mktemp template, and test temp-file names on macOS, not only in CI's Linux.
 Found by oracle-main-dev.
-
-## 2026-10-06 — Linux shell launchers can outlive their command
-A tmux shell command without explicit exec left a /bin/sh launcher on Linux.
-The pane PID belonged to that parent while the interactive owner shell held a
-different foreground process group, so idle shells always required confirmation.
-Exec the helper into the pane process; the helper already execs the owner shell.
-Verify pane PID equals interactive $$ with real tmux on Linux and macOS, and
-retain busy-job checks rather than increasing idle-wait timeouts.
 
 ## 2026-10-05 — Derived names cannot grant cleanup ownership
 
@@ -1337,6 +1345,19 @@ has different syntax for an exact session (`=name`), a pane in that session
 agent exit while the sibling survives. On macOS, tcgetpgrp on another controlling
 tty fails with ENOTTY; query process groups through ps and require confirmation
 when inspection fails.
+
+## 2026-10-05 — Folder synchronization must survive interrupted prefix moves
+
+Independent acknowledgments for a renamed parent and child can skip the child,
+recreate its old identity, or get stuck when another rename arrives before the
+acknowledgment. Freeze each delivered plan until it is acknowledged as a unit.
+Preflight all local destinations before changing any folders, and journal exact
+membership before and after each move so restart can distinguish a committed
+move from an unrelated folder. Keep narrower sharing grants intact immediately
+at the coordinator, including the interval before the next computer sync. Test
+nested edits, lost responses, interruption after commit, and local collisions.
+Order moves by the final tree: a former child may now contain its former parent;
+ordering by the original tree can manufacture a destination collision.
 
 ## 2026-10-04 — A remote Codex couldn't save October's conversations
 On duckterm-dev, Codex (running as the service user) got Permission denied
@@ -1374,19 +1395,6 @@ escalation, confirm the private tmux server is gone, and await writer EOF marker
 before removing state. Retried removal is a backstop, not the synchronization.
 A real child that writes for 500 ms after SIGTERM fails the original teardown
 and passes the corrected ordering. Count gate exit status, not passing specs.
-
-## 2026-10-05 — Folder synchronization must survive interrupted prefix moves
-
-Independent acknowledgments for a renamed parent and child can skip the child,
-recreate its old identity, or get stuck when another rename arrives before the
-acknowledgment. Freeze each delivered plan until it is acknowledged as a unit.
-Preflight all local destinations before changing any folders, and journal exact
-membership before and after each move so restart can distinguish a committed
-move from an unrelated folder. Keep narrower sharing grants intact immediately
-at the coordinator, including the interval before the next computer sync. Test
-nested edits, lost responses, interruption after commit, and local collisions.
-Order moves by the final tree: a former child may now contain its former parent;
-ordering by the original tree can manufacture a destination collision.
 
 ## 2026-10-04 — A unified sidebar is not a shared session directory
 
@@ -1582,6 +1590,13 @@ selection, exclude archived rows at the filter boundary, and read preferences
 back after saving. Brand text belongs in one flex child so icon spacing does
 not split the wordmark; regenerate normal and Test icons together.
 
+## 2026-10-02 — Schema numbers do not prove feature presence
+Folder Tasks shipped schema v10 without the unreleased v9 fork-merge tables.
+Integrate both lifecycles, create missing merge tables and columns by existence,
+and advance to v11 so older code refuses to reopen merged children. Test both
+v10 without merge tables and v9 with a delivered, final child; preserve Tasks
+and checkpoints across migration and repeated startup.
+
 ## 2026-10-01 — A shared .venv gates the wrong worktree
 **Broke:** a gate in a fresh worktree failed three tests whose fix was
 present in that worktree's source. An earlier gate of a specific SHA reported
@@ -1596,13 +1611,6 @@ install — never a symlink to another checkout's. When reporting a gate result
 for a named SHA, confirm the interpreter resolves the package inside that
 worktree before trusting the verdict; a green gate on the wrong source is
 worse than a red one, because it is reported as evidence.
-
-## 2026-10-02 — Schema numbers do not prove feature presence
-Folder Tasks shipped schema v10 without the unreleased v9 fork-merge tables.
-Integrate both lifecycles, create missing merge tables and columns by existence,
-and advance to v11 so older code refuses to reopen merged children. Test both
-v10 without merge tables and v9 with a delivered, final child; preserve Tasks
-and checkpoints across migration and repeated startup.
 
 ## 2026-10-01 — Saving a merge is not delivering it
 A reviewed fork summary must survive retries without duplicating the parent's note.
@@ -1644,68 +1652,10 @@ transaction, bind the assignment choice into retry identity, and retain the same
 task ID through handoffs. Archive retired Work rows to a private, durable JSON file
 before dropping their tables; a failed archive must leave the old tables intact.
 
-## 2026-09-30 — A remote report bundle is bytes, not UTF-8 text
-**Broke:** The generic Mac request bridge rejected report routes, limited JSON
-bodies to 1 MiB, and decoded every response as UTF-8. That would reject valid
-attachments and corrupt ZIP downloads from a remote server.
-**Fix:** Report-specific method/path checks and bounded body/envelope limits;
-base64 binary replies for report bundles, decoded into bytes on the client.
-**Check:** Native tests exercise the full attachment budget, unchanged unrelated
-limits, invalid operations, and binary response equality. Browser tests keep the
-reviewed report and selected files unchanged through draft preparation/download.
-
-## 2026-09-30 — A mail draft is not a delivered bug report
-
-Keep the preview's UTF-8 bytes unchanged through report Markdown, mailto and MIME export. Preparing a draft is not sending mail; attachments cannot travel in mailto, and long URL bodies need a complete file fallback rather than truncation. Remote users need an authenticated bundle download, not only a server path. Collect canonical event metadata without reading hook payloads or terminal content, and test attachment limits and private-file reads.
-
-## 2026-09-30 — Artifact protection belongs in the store
-
-Keep must reject removal on the server, survive re-registration, and preserve the owner’s category. Removing an unkept saved copy should retain metadata in a separate table, not leave an empty downloadable file. Folder counts must use exact subtree membership and the same durable mail and transcript accounting as Analytics; test both live and retired mail. Automatic retention remains a separate owner decision.
-
-## 2026-09-30 — Saved widgets must stop reading when removed
-
-A hidden tile still polling is not a removed widget. Give each built-in widget only its declared streams, detach its readers on unmount, and stop the shared insights timer after the last subscriber leaves. Missing data must say Unavailable instead of reporting zero. Persist layouts on the server with revision checks and recoverable folder rename/delete intents so reloads and crashes do not lose the owner’s arrangement.
-
 ## 2026-10-01 — Cached empty lists lost transcript availability
 **Broke:** The Messages snapshot retained only the message list, so unavailable reasons vanished on remount and status-only changes shared the same empty-list signature.
 **Fix:** Retain and compare transcript status and reason atomically with the list, including cache size accounting; cover unavailable, empty, recovered, hidden and remounted states.
 **Lesson:** Cache the full user-visible response contract, not only its main collection.
-
-## 2026-09-30 — The verifier repeated the bug it was built to catch
-**Broke:** main-qa returned PR #149. `verify` reported ok for a connector
-listing `{tools: []}` and for one listing `{tools: [{}]}` — an empty set and
-a nameless object both read as "Verified".
-**Cause:** the validation checked that a reply arrived and was shaped like a
-list of objects, which is the cheap question. The real question is whether an
-agent can call anything, and an agent calls a tool by name. This is the same
-defect the feature exists to fix, one layer up: the panel used to assert "a
-config entry exists" while appearing to assert "this works", and the verifier
-then asserted "a reply parsed" while appearing to assert the same thing.
-Writing the check does not exempt it from the standard it enforces.
-**Rule:** when adding a check, state the claim it licenses in the UI's own
-words and test the weakest input that should fail it — here, an empty list
-and `{}`. Prefer failing a whole listing over skipping bad entries: counting
-2 of 3 overstates what the agent can reach. And a judgement call made alone
-is worth re-examining when a reviewer disagrees — the earlier "an honestly
-empty server is not broken" was defensible in isolation and wrong against the
-sentence the panel actually prints.
-
-## 2026-09-30 — A written config entry is not a working integration
-**Broke:** the connectors panel reported `codex: ✓` on machines that had
-never had Codex installed, and `enable()` wrote both harness configs
-unconditionally with no way to choose.
-**Cause:** the checkmark reflected "we wrote a line into a file", which is
-the easiest thing to know and not the thing anyone wants to know. Nothing
-checked whether the agent CLI existed, and the credential (machine-wide) was
-welded to the registration (per harness) behind one switch.
-**Rule:** report the state the user cares about, not the state that is cheap
-to compute — name the agents a connector reaches and say which are missing,
-rather than printing a tick per config entry. When one action does two things
-at different scopes, let the user address them separately. A registration for
-an absent harness is still legitimate (it applies when that harness arrives),
-so label it rather than blocking it; the defect was the false claim, not the
-write. Deselecting must also withdraw the existing entry — otherwise the
-harness keeps serving a connector the panel no longer lists.
 
 ## 2026-10-01 — Codex's questions to the owner never reached Oracle
 **Broke:** the owner was told to approve ui-dev's work in Oracle, and nothing
@@ -1748,6 +1698,64 @@ and rollback contract is implemented. Read release information only when Setting
 opens or the owner explicitly checks again. A failed check clears the latest
 version, and a successful operation must not say Updated until the installed
 version matches the verified target.
+
+## 2026-09-30 — A remote report bundle is bytes, not UTF-8 text
+**Broke:** The generic Mac request bridge rejected report routes, limited JSON
+bodies to 1 MiB, and decoded every response as UTF-8. That would reject valid
+attachments and corrupt ZIP downloads from a remote server.
+**Fix:** Report-specific method/path checks and bounded body/envelope limits;
+base64 binary replies for report bundles, decoded into bytes on the client.
+**Check:** Native tests exercise the full attachment budget, unchanged unrelated
+limits, invalid operations, and binary response equality. Browser tests keep the
+reviewed report and selected files unchanged through draft preparation/download.
+
+## 2026-09-30 — A mail draft is not a delivered bug report
+
+Keep the preview's UTF-8 bytes unchanged through report Markdown, mailto and MIME export. Preparing a draft is not sending mail; attachments cannot travel in mailto, and long URL bodies need a complete file fallback rather than truncation. Remote users need an authenticated bundle download, not only a server path. Collect canonical event metadata without reading hook payloads or terminal content, and test attachment limits and private-file reads.
+
+## 2026-09-30 — Artifact protection belongs in the store
+
+Keep must reject removal on the server, survive re-registration, and preserve the owner’s category. Removing an unkept saved copy should retain metadata in a separate table, not leave an empty downloadable file. Folder counts must use exact subtree membership and the same durable mail and transcript accounting as Analytics; test both live and retired mail. Automatic retention remains a separate owner decision.
+
+## 2026-09-30 — Saved widgets must stop reading when removed
+
+A hidden tile still polling is not a removed widget. Give each built-in widget only its declared streams, detach its readers on unmount, and stop the shared insights timer after the last subscriber leaves. Missing data must say Unavailable instead of reporting zero. Persist layouts on the server with revision checks and recoverable folder rename/delete intents so reloads and crashes do not lose the owner’s arrangement.
+
+## 2026-09-30 — The verifier repeated the bug it was built to catch
+**Broke:** main-qa returned PR #149. `verify` reported ok for a connector
+listing `{tools: []}` and for one listing `{tools: [{}]}` — an empty set and
+a nameless object both read as "Verified".
+**Cause:** the validation checked that a reply arrived and was shaped like a
+list of objects, which is the cheap question. The real question is whether an
+agent can call anything, and an agent calls a tool by name. This is the same
+defect the feature exists to fix, one layer up: the panel used to assert "a
+config entry exists" while appearing to assert "this works", and the verifier
+then asserted "a reply parsed" while appearing to assert the same thing.
+Writing the check does not exempt it from the standard it enforces.
+**Rule:** when adding a check, state the claim it licenses in the UI's own
+words and test the weakest input that should fail it — here, an empty list
+and `{}`. Prefer failing a whole listing over skipping bad entries: counting
+2 of 3 overstates what the agent can reach. And a judgement call made alone
+is worth re-examining when a reviewer disagrees — the earlier "an honestly
+empty server is not broken" was defensible in isolation and wrong against the
+sentence the panel actually prints.
+
+## 2026-09-30 — A written config entry is not a working integration
+**Broke:** the connectors panel reported `codex: ✓` on machines that had
+never had Codex installed, and `enable()` wrote both harness configs
+unconditionally with no way to choose.
+**Cause:** the checkmark reflected "we wrote a line into a file", which is
+the easiest thing to know and not the thing anyone wants to know. Nothing
+checked whether the agent CLI existed, and the credential (machine-wide) was
+welded to the registration (per harness) behind one switch.
+**Rule:** report the state the user cares about, not the state that is cheap
+to compute — name the agents a connector reaches and say which are missing,
+rather than printing a tick per config entry. When one action does two things
+at different scopes, let the user address them separately. A registration for
+an absent harness is still legitimate (it applies when that harness arrives),
+so label it rather than blocking it; the defect was the false claim, not the
+write. Deselecting must also withdraw the existing entry — otherwise the
+harness keeps serving a connector the panel no longer lists.
 
 ## 2026-09-30 — Priority status said "delivered" before anything was
 **Broke:** in review of PR #173, a priority broadcast whose Oracle reminder
@@ -1950,6 +1958,14 @@ queued output chunk without adding a timed delay. Test a prebuffered burst
 larger than the queue with a ready consumer; retain separate real stalled-view
 cleanup tests and exact no-missing/no-duplicate output assertions.
 
+## 2026-09-29 — Live test agents must not expire during setup
+
+The fleet digest fixture exited after five seconds while readiness polling alone
+could use four. CI then correctly reported no live agents and failed the digest
+assertions. Keep fixture processes alive until explicit finally cleanup, mark
+them test:true, and send readiness output after pipe attachment. Verify with a
+request delayed beyond the old lifetime; increasing sleeps only moves the race.
+
 ## 2026-09-28 — Rebased lifecycle controls must preserve off-loop tmux checks
 
 Restart initially brought synchronous liveness properties back onto the server
@@ -2009,14 +2025,6 @@ reviewer approves nearly all of them, over a thousand in three days.
 **Rule:** for an auto-reviewing harness, only the prompt on screen means
 waiting. When a request is stuck on a screen Oracle can't read, show waiting
 and save the screen, so the missing prompt shapes come from real data.
-
-## 2026-09-29 — Live test agents must not expire during setup
-
-The fleet digest fixture exited after five seconds while readiness polling alone
-could use four. CI then correctly reported no live agents and failed the digest
-assertions. Keep fixture processes alive until explicit finally cleanup, mark
-them test:true, and send readiness output after pipe attachment. Verify with a
-request delayed beyond the old lifetime; increasing sleeps only moves the race.
 
 ## 2026-09-28 — A green gate on synthetic panes shipped a server hang (v0.4.83)
 **Broke:** v0.4.83's new ordered terminal replay (#130) raised `ValueError:
@@ -2153,6 +2161,30 @@ wanted only remote sessions decorated. Keep local ducks plain and cloud remote
 ducks. Removing the redundant badge preserves the approved compact layout,
 existing activity animations, and machine-name tooltips.
 
+## 2026-09-27 — Selection restoration must not reopen folders
+
+Restoring the saved session dispatched the same folder-reveal event as an
+explicit launch, undoing the collapsed-on-restart sidebar default. Restore the
+active session independently from folder expansion. Regression tests must select
+a nested session before reloading and verify both its restored selection and
+collapsed ancestors; merely opening folders leaves this dependent on timing.
+
+## 2026-09-27 — Hidden terminals still parse output
+
+Keeping every terminal mounted makes switching fast but gives every hidden
+agent a parser competing with foreground keystrokes. Bound the recent-view
+cache, leave server-owned PTYs running, and reconnect older views through the
+existing snapshot path. Measure at fleet scale and test an unfinished input
+line across eviction; a mount-count assertion alone cannot prove safety.
+
+## 2026-09-27 — Restoring rows does not restore selection
+Native acceptance restored remote rows and grouping but missed the selected
+row after quitting the app. Persist machine plus session ID at selection time.
+Local data arriving first must not overwrite an offline remote selection; only
+a successful snapshot from that host can establish that the saved row is gone.
+An explicit user choice cancels the pending restoration. Verify an actual app
+relaunch as well as reload, and make failed acceptance assertions fail the run.
+
 ## 2026-09-26 — Compact identity must still identify the machine
 
 Repeated host labels squeezed session names after local and remote sessions
@@ -2162,14 +2194,6 @@ visible disconnected mark and an accessible label; update outage acceptance
 checks when status moves from row text into an icon. Test equal session IDs on
 different hosts and recovery without duplicate rows.
 
-## 2026-09-27 — Selection restoration must not reopen folders
-
-Restoring the saved session dispatched the same folder-reveal event as an
-explicit launch, undoing the collapsed-on-restart sidebar default. Restore the
-active session independently from folder expansion. Regression tests must select
-a nested session before reloading and verify both its restored selection and
-collapsed ancestors; merely opening folders leaves this dependent on timing.
-
 ## 2026-09-26 — A visible button can still be outside the window
 
 Adding Pin to the Context header crowded the reopen arrow out of its 36px
@@ -2177,14 +2201,6 @@ collapsed rail. Hide every non-toggle header child when collapsed, including
 future actions. Browser visibility assertions missed this because an offscreen
 button still has a layout box. Assert viewport/rail bounds and hit-test the
 center before clicking, with both Pin and Pinned labels and narrow layouts.
-
-## 2026-09-27 — Hidden terminals still parse output
-
-Keeping every terminal mounted makes switching fast but gives every hidden
-agent a parser competing with foreground keystrokes. Bound the recent-view
-cache, leave server-owned PTYs running, and reconnect older views through the
-existing snapshot path. Measure at fleet scale and test an unfinished input
-line across eviction; a mount-count assertion alone cannot prove safety.
 
 ## 2026-09-26 — Re-read the inbox between merge and tag
 **Broke:** the owner deferred F12 work tracking ("keep this in the roadmap… I
@@ -2207,14 +2223,6 @@ through the same source/origin/nonce checks as selections. Moving Feedback into
 the viewer also makes its React key a sibling of the preview key: namespace them
 separately, or closing feedback can leave duplicate previews after revisions.
 Cover selection, revisions and keyboard return together in a real browser.
-
-## 2026-09-27 — Restoring rows does not restore selection
-Native acceptance restored remote rows and grouping but missed the selected
-row after quitting the app. Persist machine plus session ID at selection time.
-Local data arriving first must not overwrite an offline remote selection; only
-a successful snapshot from that host can establish that the saved row is gone.
-An explicit user choice cancels the pending restoration. Verify an actual app
-relaunch as well as reload, and make failed acceptance assertions fail the run.
 
 ## 2026-09-26 — Changing how a note is answered means changing every place that says how
 **Broke:** after menu notes moved to "answer in the terminal" (#69), the
@@ -2439,31 +2447,9 @@ Treat the path as provenance, never an instruction for the server to read a file
 Keep artifact content out of the app's HTML origin, and test source deletion,
 session isolation, replacement, cleanup and backup restore before shipping.
 
-## 2026-09-25 — Last-agent exit raced the next tmux launch
-
-Linux fork-chain CI intermittently returned HTTP 400 because tmux reported
-`server exited unexpectedly`, reproduced after 30 passing repetitions. Its
-last short-lived agent could exit while the next launch connected. Configure
-`exit-empty off` on DuckTerm's private server before launching the child in
-the same tmux command queue. Preserve HTTP error bodies in fork tests: a
-passing retry is not diagnosis. Test that the server PID survives an empty
-interval and the next launch, and stress the real Linux fork chain.
-
 ## 2026-09-26 — Re-adopting a terminal must repair stale interruption state
 
 All 21 live terminals survived while their database rows said interrupted, exposing Resume and disabling session messaging. Startup reattached panes but never cleared an existing interruption; normal hooks deliberately preserve at-rest states. Recover only confirmed-live interrupted sessions from their latest agent activity, clear ended_at, and restore enrollment without relaunching or inventing a new run. Keep deliberate Stop/Archive states intact. Failed tmux discovery is unknown liveness, not an empty fleet: never interrupt everything on a PATH/socket error. Verify stored state and process continuity after release, not only pane counts.
-
-## 2026-09-25 — Density is information structure, not just font size
-
-The first Compact/Standard/Relaxed preview only varied padding and type size, so the modes looked alike. The approved design changes one-line versus two-line rows, hover details, and persistent selected-session controls. Keep session names regular-weight in every mode, remember the choice, and test both geometry and access to hidden actions. Preserve the existing row-selection focus behavior: adding a focusable wrapper stole focus from the newly opened terminal, caught by the full browser suite.
-
-## 2026-09-25 — Opening Oracle must not resize a live terminal
-
-Oracle used to consume workspace width. A long active input line was permanently clipped after an open/close cycle, even though the original terminal dimensions returned. xterm excludes the cursor line from normal reflow; a resize-back is not a repair. Keep Oracle over the existing context column, hiding its covered controls, and preserve the terminal geometry. Browser regression covers long unsubmitted input, repeated toggles, and typing afterward. Completed-output-only resize tests missed this case.
-
-
-Append-only. One entry per issue we actually hit: what broke, the root cause,
-and the rule that prevents the recurrence. Newest first.
 
 ## 2026-09-26 — Oracle showed Codex's auto-approved commands as approval notes
 **Broke:** the chat filled with "Approval" notes for feature-remote-session
@@ -2547,6 +2533,28 @@ history in resumed sessions.
 **Rule:** count Claude usage once per (message id, request id) and bucket by
 each record's own timestamp. Check a derived total against one file counted
 by hand before putting it in front of the owner.
+
+## 2026-09-25 — Last-agent exit raced the next tmux launch
+
+Linux fork-chain CI intermittently returned HTTP 400 because tmux reported
+`server exited unexpectedly`, reproduced after 30 passing repetitions. Its
+last short-lived agent could exit while the next launch connected. Configure
+`exit-empty off` on DuckTerm's private server before launching the child in
+the same tmux command queue. Preserve HTTP error bodies in fork tests: a
+passing retry is not diagnosis. Test that the server PID survives an empty
+interval and the next launch, and stress the real Linux fork chain.
+
+## 2026-09-25 — Density is information structure, not just font size
+
+The first Compact/Standard/Relaxed preview only varied padding and type size, so the modes looked alike. The approved design changes one-line versus two-line rows, hover details, and persistent selected-session controls. Keep session names regular-weight in every mode, remember the choice, and test both geometry and access to hidden actions. Preserve the existing row-selection focus behavior: adding a focusable wrapper stole focus from the newly opened terminal, caught by the full browser suite.
+
+## 2026-09-25 — Opening Oracle must not resize a live terminal
+
+Oracle used to consume workspace width. A long active input line was permanently clipped after an open/close cycle, even though the original terminal dimensions returned. xterm excludes the cursor line from normal reflow; a resize-back is not a repair. Keep Oracle over the existing context column, hiding its covered controls, and preserve the terminal geometry. Browser regression covers long unsubmitted input, repeated toggles, and typing afterward. Completed-output-only resize tests missed this case.
+
+
+Append-only. One entry per issue we actually hit: what broke, the root cause,
+and the rule that prevents the recurrence. Newest first.
 
 ## 2026-09-25 — Ask Oracle reported prompt suggestions as the owner's instructions
 **Broke:** Oracle told the owner that qa and bugs-dev were both "told to

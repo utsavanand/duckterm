@@ -217,7 +217,9 @@ def test_harness_contents_lists_what_ships_with_descriptions(tmp_path: Path) -> 
     assert by_kind[("sub-agent", "reviewer")] == "Reviews diffs for correctness."
 
 
-def test_without_the_flag_every_kit_route_refuses_and_sessions_list_no_kits(tmp_path: Path, monkeypatch) -> None:
+def test_without_the_flag_every_kit_route_refuses_and_sessions_list_no_kits(
+    tmp_path: Path, monkeypatch
+) -> None:
     monkeypatch.setattr(release_features, "overrides", lambda: ({}, None))
     store = HistoryStore(tmp_path / "db.sqlite")
     store.record(
@@ -248,6 +250,7 @@ def test_without_the_flag_every_kit_route_refuses_and_sessions_list_no_kits(tmp_
     assert "development" in list_body["error"]
     assert store.harnesses() == []
     assert rows[0]["suites"] == []
+
 
 @pytest.fixture(autouse=True)
 def enabled_feature(monkeypatch):

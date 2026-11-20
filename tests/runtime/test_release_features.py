@@ -157,3 +157,20 @@ def test_flag_file_is_instance_local(isolated, monkeypatch, tmp_path):
     other.mkdir()
     monkeypatch.setenv("DUCKTERM_HOME", str(other))
     assert not release_features.enabled("backup")
+
+
+def test_existing_skill_kit_opt_in_survives_until_release_configuration_exists(isolated):
+    (isolated / "flags.json").write_text(json.dumps({"enabled": ["skill_kits"]}))
+    assert release_features.enabled("skill_kits")
+    assert release_features.apply(editions.FULL).includes("skill_kits")
+    assert not release_features.enabled("backup")
+    configure(isolated, skill_kits=False)
+    assert not release_features.enabled("skill_kits")
+    configure(isolated)
+    assert not release_features.enabled("skill_kits")
+
+
+def test_malformed_legacy_flag_file_does_not_enable_release_features(isolated):
+    (isolated / "flags.json").write_text("{broken")
+    assert release_features.overrides()[1]
+    assert not release_features.enabled("skill_kits")
