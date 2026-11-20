@@ -1452,9 +1452,10 @@ class Server:
             await _write_json(writer, 401, {"error": "owner credential required"})
             return
         surface = urllib.parse.unquote(surface)
+        store = self.history.home_layout if surface == "home" else self.history.layouts
         try:
             if method == "GET":
-                result = self.history.layouts.get(surface)
+                result = store.get(surface)
             else:
                 if len(body) > 16384:
                     await _write_json(writer, 413, {"error": "Layout is too large"})
@@ -1462,7 +1463,7 @@ class Server:
                 req = json.loads(body)
                 if not isinstance(req, dict) or set(req) != {"instances", "revision"}:
                     raise ValueError("Expected instances and revision")
-                result = self.history.layouts.put(surface, req["instances"], req["revision"])
+                result = store.put(surface, req["instances"], req["revision"])
         except FileExistsError as exc:
             await _write_json(writer, 409, {"error": str(exc)})
             return
