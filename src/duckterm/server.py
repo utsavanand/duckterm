@@ -3239,7 +3239,6 @@ class Server:
                     interrupt=request.get("interrupt", False),
                     memory=request.get("memory"),
                     request_key=request.get("request_key"),
-                    require_preparation=True,
                 )
             else:
                 raise APIError(405, "Unsupported restart operation")

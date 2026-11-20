@@ -1,3 +1,19 @@
+## 2026-11-19 — Tests kept an unreachable harness-switch path alive
+
+The switch endpoint has required a prepared hand-over since the preparation
+dialog shipped, but `Restarts.request` kept a flag defaulting to the older path:
+write a "Before harness switch" checkpoint and seed from its summary. Only tests
+called it that way, so about 50 tests exercised launch, interrupt and recovery
+guards through code the product could not reach, and the owner was told a thin
+brief could still occur on a switch. Removing the flag moved those tests onto
+real preparation, which surfaced two real behaviors: a queued "after this turn"
+switch fails as stale if the turn ends after preparation, and a prepared switch
+does not survive a DuckTerm restart.
+
+When an endpoint pins an internal flag, delete the other branch rather than
+keeping it for tests. A test helper that reaches an internal default is evidence
+for a path no user takes.
+
 ## 2026-11-07 — Folder chat had a message broker its answer path could never reach
 
 The @ picker could send messages, but a plain-language request went to a prompt
