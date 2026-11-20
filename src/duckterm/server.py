@@ -2340,8 +2340,24 @@ class Server:
         if not note:
             await _write_json(writer, 400, {"error": "note is required"})
             return
+        message_key = req.get("message_key")
+        if message_key is not None:
+            if not isinstance(message_key, str) or not re.fullmatch(r"[a-f0-9]{64}", message_key):
+                await _write_json(writer, 400, {"error": "invalid message_key"})
+                return
+            source = self._message_source(session_key)
+            messages = await asyncio.to_thread(self._read_messages, source)
+            if self._message_source(session_key) != source or not any(
+                m.get("message_key") == message_key for m in messages
+            ):
+                await _write_json(
+                    writer, 409, {"error": "message changed or is unavailable; refresh Messages"}
+                )
+                return
         ann_id = security.new_session_key("ann")
-        self.history.add_annotation(ann_id, session_key, quote, note, int(time.time() * 1000))
+        self.history.add_annotation(
+            ann_id, session_key, quote, note, int(time.time() * 1000), message_key=message_key
+        )
         # Compose the follow-up and write it to the agent's stdin (the same path
         # the terminal uses). Quote the span so the agent knows what it's about.
         supervisor = self.orchestrator.get(session_key)
