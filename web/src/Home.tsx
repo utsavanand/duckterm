@@ -1,27 +1,28 @@
 import { createContext, PointerEvent as ReactPointerEvent, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
-import { AnalyticsTab } from "./analyticsData";
+import { AnalyticsTab, fillDays, groupTokens, loadAnalytics, sumValues, TokenAnalytics, windowStart } from "./analyticsData";
 import { api, PrRow } from "./api";
 import { useEdition } from "./edition";
 import { adjust, appended, Box, boxOf, COLUMNS, homeDefaults, inReadingOrder } from "./homeGrid";
-import { OracleChat } from "./OracleChat";
+import { HomeChat } from "./HomeChat";
 import { oracleWidgets } from "./OracleWidgets";
 import { useRelay } from "./relay";
-import { TowerAgent, teams } from "./tower";
+import { ago, compact, TowerAgent, teams } from "./tower";
 import { Layout, requestLayout, WidgetContent, WidgetInstance, WidgetType } from "./Widgets";
 import { WidgetStreams } from "./widgetStreams";
 import "./oracleWidgets.css";
 import "./home.css";
 
 type Relay = ReturnType<typeof useRelay>;
-type Actions = { agents: TowerAgent[]; relay: Relay | null; onTeams: () => void; onOpenTerminal: (key: string) => void };
-const HomeActions = createContext<Actions>({ agents: [], relay: null, onTeams: () => undefined, onOpenTerminal: () => undefined });
+type Actions = { agents: TowerAgent[]; relay: Relay | null; now: number; onTeams: () => void; onOpenTerminal: (key: string) => void; onAnalytics: (tab: AnalyticsTab) => void };
+const HomeActions = createContext<Actions>({ agents: [], relay: null, now: 0, onTeams: () => undefined, onOpenTerminal: () => undefined, onAnalytics: () => undefined });
 // Widgets whose header carries no title: the tile itself names the destination.
 const NAV = new Set(["teams", "autopilot"]);
 // One request per top-level folder, each running git across its sessions: poll gently.
 const PR_POLL_MS = 5 * 60_000;
 
-// The page DuckTerm opens on (docs/feature-flags.md, `home`): Oracle chat,
-// the ways into Teams and Autopilot, and fleet widgets on a 12-column grid.
+// The page DuckTerm opens on (docs/feature-flags.md, `home`): one chat over
+// everything, the ways into Teams and Autopilot, and fleet widgets on a
+// 12-column grid. Oracle's chat and Needs you fold in here.
 export function Home({ agents, now, onTeams, onOpenTerminal, onAnalytics }: {
   agents: TowerAgent[]; now: number; onTeams: () => void; onOpenTerminal: (key: string) => void; onAnalytics: (tab: AnalyticsTab) => void;
 }) {
@@ -35,22 +36,27 @@ export function Home({ agents, now, onTeams, onOpenTerminal, onAnalytics }: {
   useEffect(() => {
     source.emit("needs-you", relay.loaded ? { status: "ready", value: { notes: relay.notes.filter(n => n.status === "open" && n.urgency !== "offer").sort((a, b) => a.created_at - b.created_at), now } } : { status: "loading" });
   }, [source, relay.notes, relay.loaded, now]);
-  const actions = useMemo(() => ({ agents, relay: oracle ? relay : null, onTeams, onOpenTerminal }), [agents, oracle, relay, onTeams, onOpenTerminal]);
+  const actions = useMemo(() => ({ agents, relay: oracle ? relay : null, now, onTeams, onOpenTerminal, onAnalytics: (tab: AnalyticsTab) => analytics.current(tab) }), [agents, oracle, relay, now, onTeams, onOpenTerminal]);
   return <HomeActions.Provider value={actions}>
     <div className="rd-home"><HomeGrid registry={registry} source={source} /></div>
   </HomeActions.Provider>;
 }
 
 function homeWidgets({ oracle, remote, prs, onAnalytics }: { oracle: boolean; remote: boolean; prs: boolean; onAnalytics: (tab: AnalyticsTab) => void }): WidgetType[] {
-  const fleet = oracleWidgets(onAnalytics, { oracle, remote }).map(widget => widget.type === "tokens"
-    ? { ...widget, type: "usage", title: "Usage · 7 days", slots: ["home" as const] }
-    : { ...widget, slots: ["home" as const] });
+  // Home's own Needs you and Usage replace the tower's tiles of the same name.
+  const fleet = oracleWidgets(onAnalytics, { oracle, remote })
+    .filter(widget => !["tokens", "folder-tasks", ...(oracle ? ["needs-you"] : [])].includes(widget.type))
+    .map(widget => ({ ...widget, slots: ["home" as const] }));
   return [
     { type: "teams", title: "Teams", slots: ["home"], streams: ["sessions"], render: ({ streams }) => <TeamsTile agents={streams.sessions.status === "ready" ? streams.sessions.value as TowerAgent[] : []} /> },
     { type: "autopilot", title: "Autopilot", slots: ["home"], streams: [], render: AutopilotTile },
-    ...(oracle ? [{ type: "chat", title: "Ask Oracle", slots: ["home" as const], streams: [], render: ChatWidget }] : []),
+    ...(oracle ? [
+      { type: "chat", title: "Ask DuckTerm", slots: ["home" as const], streams: [], render: HomeChat },
+      { type: "needs-you", title: "Needs you", slots: ["home" as const], streams: [], render: NeedsYouList },
+    ] : []),
     ...(prs ? [{ type: "prs", title: "Pull requests", slots: ["home" as const], streams: [], render: PrsWidget }] : []),
-    ...fleet.filter(widget => widget.type !== "folder-tasks"),
+    { type: "usage", title: "Usage · 7 days", slots: ["home"], streams: [], render: UsageWidget },
+    ...fleet,
   ];
 }
 
@@ -77,10 +83,52 @@ function AutopilotTile() {
   </div>;
 }
 
-function ChatWidget() {
-  const { relay, onOpenTerminal } = useContext(HomeActions);
-  if (!relay) return null;
-  return <div className="rd-home-chat"><OracleChat relay={relay} onRelayChange={relay.refresh} onOpenTerminal={onOpenTerminal} /></div>;
+// Agents' questions to the owner, oldest first; each opens its terminal.
+function NeedsYouList() {
+  const { relay, now, onOpenTerminal } = useContext(HomeActions);
+  if (!relay?.loaded) return <div className="rd-widget-unavailable" role="status">Loading…</div>;
+  const notes = relay.notes.filter(n => n.status === "open" && n.urgency !== "offer").sort((a, b) => a.created_at - b.created_at);
+  if (!notes.length) return <p className="rd-home-empty">Nothing needs you.</p>;
+  return <>
+    <p className="rd-home-count">{notes.length}</p>
+    <ul className="rd-home-rows">{notes.slice(0, 8).map(note => <li key={note.id}>
+      <span className="rd-home-dot wait" aria-hidden="true" />
+      <span className="rd-home-row-main">
+        <button className="rd-home-row-link" title={`Open ${note.name}'s terminal`} onClick={() => onOpenTerminal(note.session_key)}>{note.name}: {note.question ?? note.tool ?? note.kind}</button>
+        <small>{note.folder ? `${note.folder.split("/")[0]} · ` : ""}{ago(now - note.created_at)} ago</small>
+      </span>
+    </li>)}</ul>
+    {notes.length > 8 && <p className="rd-home-empty">and {notes.length - 8} more</p>}
+  </>;
+}
+
+const AGENT_NAMES: Record<string, string> = { "claude-code": "Claude Code", codex: "Codex" };
+const AGENT_COLORS = ["var(--brand-green)", "var(--busy)", "var(--wait)"];
+
+// Tokens, not dollars: subscriptions are not billed per token, and the
+// server records no prices.
+function UsageWidget() {
+  const { onAnalytics } = useContext(HomeActions);
+  const [data, setData] = useState<TokenAnalytics | null>(null), [error, setError] = useState("");
+  useEffect(() => {
+    const controller = new AbortController();
+    loadAnalytics<TokenAnalytics>("tokens", new URLSearchParams({ days: "7" }), controller.signal)
+      .then(setData, (e: Error) => { if (!controller.signal.aborted) setError(e.message); });
+    return () => controller.abort();
+  }, []);
+  if (error) return <div className="rd-widget-unavailable"><strong>Unavailable</strong><p>{error}</p></div>;
+  if (!data) return <div className="rd-widget-unavailable" role="status">Loading…</div>;
+  const days = fillDays(groupTokens(data.rows, "day"), windowStart("7", data.today, data.earliest_day ?? data.today), data.today, 4).map(sumValues);
+  const total = days.reduce((n, v) => n + v, 0), peak = Math.max(1, ...days);
+  const agents = groupTokens(data.rows, "agent").map(row => ({ name: AGENT_NAMES[row.label] ?? row.label, value: sumValues(row) }));
+  const points = days.map((v, i) => `${days.length > 1 ? (i / (days.length - 1)) * 140 : 70},${44 - (v / peak) * 40}`).join(" ");
+  return <button className="rd-home-usage" onClick={() => onAnalytics("tokens")} aria-label="Open token analytics">
+    <span className="rd-home-kpi">{compact(total)}<small>tokens</small></span>
+    <svg className="rd-home-spark" viewBox="0 0 140 46" preserveAspectRatio="none" aria-hidden="true"><polyline points={points} /></svg>
+    <span className="rd-home-split" aria-hidden="true">{agents.map((a, i) => <i key={a.name} style={{ width: `${(a.value / Math.max(1, total)) * 100}%`, background: AGENT_COLORS[i % AGENT_COLORS.length] }} />)}</span>
+    <span className="rd-home-legend">{agents.map((a, i) => <span key={a.name}><i style={{ background: AGENT_COLORS[i % AGENT_COLORS.length] }} />{a.name} <b>{compact(a.value)}</b></span>)}</span>
+    <span className="rd-home-legend">Today <b>{compact(days.at(-1) ?? 0)}</b></span>
+  </button>;
 }
 
 function prDot(row: PrRow): string {

@@ -7,7 +7,6 @@ import { TowerAgent } from "./tower";
 import { edition, CODE, FULL } from "./test/editions";
 import { WidgetInstance } from "./Widgets";
 vi.mock("./api", () => ({ authHeaders: () => ({}), api: { controlTower: vi.fn(), folderPrs: vi.fn(), oracleChat: vi.fn(), fleetAsk: vi.fn(), clearOracleChat: vi.fn(), relay: vi.fn() } }));
-vi.mock("./OracleChat", () => ({ OracleChat: () => <p>Oracle chat</p> }));
 
 const NOW = 10_000_000_000;
 const insights: TowerInsights = { tokens: { days: 7, by_agent: {} }, mail: { sent: 0, answered: 0, nudges: 0 }, backup: { destination: null, status: null, finished_at: null }, remote: { available: false, count: 0 } };
@@ -16,11 +15,15 @@ const agents = [agent({ key: "a", shownState: "waiting" }), agent({ key: "b", sh
 const pr = (number: number, p: Partial<PrRow> = {}) => ({ repo: "/r", repo_name: "r", github: "o/r", branch: `b${number}`, base: "main", session: null, author: null, status: "open", label: "CI passing", needs_you: false, checks: null,
   pr: { number, title: `PR ${number}`, url: `https://github.com/o/r/pull/${number}`, state: "open" }, updated_at: number, ...p } as unknown as PrRow);
 
+const row = (day: string, agent: string, output: number) => ({ day, agent, output, input: 0, cache_read: 0, cache_write: 0, model: null, session: "s", session_name: "s", folder: "", folder_name: "" });
+const tokens = { version: 1, timezone: "UTC", days: 7, today: "2026-11-20", earliest_day: "2026-11-01", options: { agents: [], folders: [], sessions: [] },
+  rows: [row("2026-11-14", "claude-code", 1000), row("2026-11-20", "claude-code", 2000), row("2026-11-20", "codex", 1000)] };
 let saved: { instances: WidgetInstance[]; revision: string };
 const puts: WidgetInstance[][] = [];
 beforeEach(() => {
   saved = { instances: homeDefaults(), revision: "default" }; puts.length = 0;
-  vi.stubGlobal("fetch", vi.fn(async (_path: string, init?: RequestInit) => {
+  vi.stubGlobal("fetch", vi.fn(async (path: string, init?: RequestInit) => {
+    if (path.startsWith("/analytics/tokens")) return new Response(JSON.stringify(tokens));
     if (init?.method === "PUT") { saved = { ...JSON.parse(init.body as string), revision: `r${puts.length}` }; puts.push(saved.instances); }
     return new Response(JSON.stringify(saved));
   }));
@@ -46,12 +49,12 @@ it("opens Teams from its tile and counts sessions by state across folders", asyn
   fireEvent.click(teams);
   expect(onTeams).toHaveBeenCalledOnce();
   expect(within(screen.getByRole("article", { name: "Autopilot" })).getByText("Not available yet")).toBeVisible();
-  expect(screen.getByText("Oracle chat")).toBeVisible();
+  expect(screen.getByRole("textbox", { name: "Ask DuckTerm" })).toBeVisible();
 });
 
 it("leaves out the chat and pull requests when the edition lacks Oracle and PR review", async () => {
   await show([...CODE.filter(f => f !== "pr_review"), "home"]);
-  expect(screen.queryByRole("article", { name: "Ask Oracle" })).toBeNull();
+  expect(screen.queryByRole("article", { name: "Ask DuckTerm" })).toBeNull();
   expect(screen.queryByRole("article", { name: "Pull requests" })).toBeNull();
   expect(screen.getByRole("article", { name: "Teams" })).toBeVisible();
 });
@@ -95,4 +98,30 @@ it("removes and adds widgets, and the layout request carries the latest revision
   const put = vi.mocked(fetch).mock.calls.filter(call => call[1]?.method === "PUT").at(-1)!;
   expect(JSON.parse(put[1]!.body as string).revision).toBe("r0");
   expect(saved.instances.find(item => item.type === "mail")!.params).toEqual({ x: 0, y: 8, w: 3, h: 2 });
+});
+
+it("answers in the Home chat from the shared fleet conversation, without the agents' notes", async () => {
+  vi.mocked(api.relay).mockResolvedValue({ notes: [{ id: "n1", session_key: "qa", name: "qa", folder: "Nourish/app", runtime: "claude-code", kind: "question", status: "open", created_at: NOW - 3_600_000, question: "Deploy now?" }], rules: [], open: 1 });
+  vi.mocked(api.fleetAsk).mockResolvedValue({ exchange: { q: "Who is stuck?", a: "Nobody is stuck.", at: 1 } } as never);
+  const onOpenTerminal = vi.fn();
+  await show(undefined, { onOpenTerminal });
+  const chat = screen.getByRole("article", { name: "Ask DuckTerm" });
+  expect(within(chat).queryByText(/Deploy now/)).toBeNull();
+  fireEvent.change(within(chat).getByRole("textbox", { name: "Ask DuckTerm" }), { target: { value: "Who is stuck?" } });
+  await act(async () => { fireEvent.click(within(chat).getByRole("button", { name: "Ask" })); });
+  expect(api.fleetAsk).toHaveBeenCalledWith("Who is stuck?");
+  expect(within(chat).getByText("Nobody is stuck.")).toBeVisible();
+  const needs = screen.getByRole("article", { name: "Needs you" });
+  expect(within(needs).getByText("Nourish · 1 h ago")).toBeVisible();
+  fireEvent.click(within(needs).getByRole("button", { name: "qa: Deploy now?" }));
+  expect(onOpenTerminal).toHaveBeenCalledWith("qa");
+});
+
+it("totals seven days of tokens and splits them by agent", async () => {
+  await show();
+  const usage = screen.getByRole("button", { name: "Open token analytics" });
+  expect(usage).toHaveTextContent("4ktokens");
+  expect(usage).toHaveTextContent("Claude Code 3k");
+  expect(usage).toHaveTextContent("Codex 1k");
+  expect(usage).toHaveTextContent("Today 3k");
 });
