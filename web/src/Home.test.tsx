@@ -42,10 +42,11 @@ async function show(features = [...FULL, "home"], props: Partial<Parameters<type
 it("opens Teams from its tile and counts sessions by state across folders", async () => {
   const onTeams = vi.fn();
   await show(undefined, { onTeams });
-  const teams = screen.getByRole("button", { name: /^Teams/ });
+  const teams = within(screen.getByRole("article", { name: "Teams" })).getByRole("button");
   expect(teams).toHaveTextContent("2 folders · 3 sessions");
   expect(teams).toHaveTextContent("1 need you");
   expect(teams).toHaveTextContent("1 working");
+  expect(teams).toHaveTextContent("1 idle");
   fireEvent.click(teams);
   expect(onTeams).toHaveBeenCalledOnce();
   expect(within(screen.getByRole("article", { name: "Autopilot" })).getByText("Not available yet")).toBeVisible();
@@ -91,10 +92,11 @@ it("moves a widget with the keyboard, pushes its neighbour down, and saves posit
 it("removes and adds widgets, and the layout request carries the latest revision", async () => {
   await show();
   fireEvent.click(screen.getByRole("button", { name: "Edit layout" }));
-  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Remove Usage · 7 days" })); });
-  expect(saved.instances.map(item => item.type)).not.toContain("usage");
-  fireEvent.click(screen.getByRole("button", { name: "Add widget" }));
-  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Agent mail · 24h" })); });
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Remove Spend" })); });
+  expect(saved.instances.map(item => item.type)).not.toContain("spend");
+  fireEvent.click(screen.getByRole("button", { name: "+ Add widget" }));
+  expect(screen.getByRole("button", { name: /^Ask DuckTerm · on page/ })).toBeDisabled();
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: /^Agent mail · 24h/ })); });
   const put = vi.mocked(fetch).mock.calls.filter(call => call[1]?.method === "PUT").at(-1)!;
   expect(JSON.parse(put[1]!.body as string).revision).toBe("r0");
   expect(saved.instances.find(item => item.type === "mail")!.params).toEqual({ x: 0, y: 8, w: 3, h: 2 });
@@ -118,10 +120,33 @@ it("answers in the Home chat from the shared fleet conversation, without the age
 });
 
 it("totals seven days of tokens and splits them by agent", async () => {
+  saved = { instances: [...homeDefaults(), { id: "usage", type: "usage", slot: "home", position: 6, params: { x: 0, y: 8, w: 3, h: 3 } as never }], revision: "default" };
   await show();
   const usage = screen.getByRole("button", { name: "Open token analytics" });
   expect(usage).toHaveTextContent("4ktokens");
   expect(usage).toHaveTextContent("Claude Code 3k");
   expect(usage).toHaveTextContent("Codex 1k");
   expect(usage).toHaveTextContent("Today 3k");
+});
+
+it("turns a session named in an answer into a chip that opens it", async () => {
+  vi.mocked(api.oracleChat).mockResolvedValue({ messages: [{ q: "Who is stuck?", a: "**b** is busy; **nobody** else.", at: 2 }] } as never);
+  const onOpenTerminal = vi.fn();
+  await show(undefined, { onOpenTerminal });
+  const chat = screen.getByRole("article", { name: "Ask DuckTerm" });
+  fireEvent.click(within(chat).getByRole("button", { name: "b" }));
+  expect(onOpenTerminal).toHaveBeenCalledWith("b");
+  expect(within(chat).queryByRole("button", { name: "nobody" })).toBeNull();
+});
+
+it("estimates spend at API list prices: today, the week, and each harness", async () => {
+  await show();
+  // Unnamed models are priced as the harness's usual model: Claude Code at
+  // Opus 5.5 ($20/M output), Codex at GPT-5 rates ($10/M output).
+  const spend = screen.getByRole("button", { name: "Open spend analytics" });
+  expect(spend).toHaveTextContent("$0.05today");
+  expect(spend).toHaveTextContent("Teams $0.07");
+  expect(spend).toHaveTextContent("Autopilot $0.00");
+  expect(spend).toHaveTextContent("Claude Code $0.06");
+  expect(spend).toHaveTextContent("Codex $0.01");
 });

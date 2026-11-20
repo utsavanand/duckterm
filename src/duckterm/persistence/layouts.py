@@ -18,6 +18,7 @@ TYPES = {
         "autopilot",
         "chat",
         "prs",
+        "spend",
         "usage",
         "needs-you",
         "agents",
@@ -34,7 +35,7 @@ HOME_DEFAULTS = (
     ("needs-you", 0, 4, 3, 4),
     ("chat", 3, 0, 6, 8),
     ("prs", 9, 0, 3, 5),
-    ("usage", 9, 5, 3, 3),
+    ("spend", 9, 5, 3, 3),
 )
 _LOCK = threading.RLock()
 

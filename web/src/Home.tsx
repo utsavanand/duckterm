@@ -4,6 +4,7 @@ import { api, PrRow } from "./api";
 import { useEdition } from "./edition";
 import { adjust, appended, Box, boxOf, COLUMNS, homeDefaults, inReadingOrder } from "./homeGrid";
 import { HomeChat } from "./HomeChat";
+import { dollars, money } from "./pricing";
 import { oracleWidgets } from "./OracleWidgets";
 import { useRelay } from "./relay";
 import { ago, compact, TowerAgent, teams } from "./tower";
@@ -15,6 +16,20 @@ import "./home.css";
 type Relay = ReturnType<typeof useRelay>;
 type Actions = { agents: TowerAgent[]; relay: Relay | null; now: number; onTeams: () => void; onOpenTerminal: (key: string) => void; onAnalytics: (tab: AnalyticsTab) => void };
 const HomeActions = createContext<Actions>({ agents: [], relay: null, now: 0, onTeams: () => undefined, onOpenTerminal: () => undefined, onAnalytics: () => undefined });
+const CATALOG_GROUPS = ["Navigate", "Core", "Pulse", "Teams"];
+const CATALOG: Record<string, { group: string; description: string }> = {
+  teams: { group: "Navigate", description: "Your sessions and folders. Opens the current dashboard." },
+  autopilot: { group: "Navigate", description: "Your software factory. Opens the factory view." },
+  chat: { group: "Core", description: "Ask about anything your teams or factory are doing." },
+  prs: { group: "Pulse", description: "Open pull requests across teams, with CI and review state." },
+  spend: { group: "Pulse", description: "Today, the last 7 days, and the split between Teams and Autopilot." },
+  "needs-you": { group: "Pulse", description: "Approvals and questions waiting on you." },
+  usage: { group: "Pulse", description: "Tokens over the last 7 days, by harness." },
+  agents: { group: "Teams", description: "Every session by state, across teams." },
+  mail: { group: "Teams", description: "Messages agents sent each other in the last day." },
+  backup: { group: "Teams", description: "When the last backup finished." },
+  remote: { group: "Teams", description: "Sessions running on the remote workspace." },
+};
 // Widgets whose header carries no title: the tile itself names the destination.
 const NAV = new Set(["teams", "autopilot"]);
 // One request per top-level folder, each running git across its sessions: poll gently.
@@ -51,10 +66,11 @@ function homeWidgets({ oracle, remote, prs, onAnalytics }: { oracle: boolean; re
     { type: "teams", title: "Teams", slots: ["home"], streams: ["sessions"], render: ({ streams }) => <TeamsTile agents={streams.sessions.status === "ready" ? streams.sessions.value as TowerAgent[] : []} /> },
     { type: "autopilot", title: "Autopilot", slots: ["home"], streams: [], render: AutopilotTile },
     ...(oracle ? [
-      { type: "chat", title: "Ask DuckTerm", slots: ["home" as const], streams: [], render: HomeChat },
+      { type: "chat", title: "Ask DuckTerm", slots: ["home" as const], streams: [], render: ChatWidget },
       { type: "needs-you", title: "Needs you", slots: ["home" as const], streams: [], render: NeedsYouList },
     ] : []),
     ...(prs ? [{ type: "prs", title: "Pull requests", slots: ["home" as const], streams: [], render: PrsWidget }] : []),
+    { type: "spend", title: "Spend", slots: ["home"], streams: [], render: SpendWidget },
     { type: "usage", title: "Usage · 7 days", slots: ["home"], streams: [], render: UsageWidget },
     ...fleet,
   ];
@@ -68,9 +84,9 @@ function TeamsTile({ agents }: { agents: TowerAgent[] }) {
     <span className="rd-home-nav-title">Teams <span aria-hidden="true">→</span></span>
     <span className="rd-home-nav-sub">{folders} {folders === 1 ? "folder" : "folders"} · {agents.length} {agents.length === 1 ? "session" : "sessions"}</span>
     <span className="rd-home-chips">
-      {count("waiting") > 0 && <span className="rd-home-chip wait">{count("waiting")} need you</span>}
-      {count("busy") > 0 && <span className="rd-home-chip busy">{count("busy")} working</span>}
-      {count("idle") > 0 && <span className="rd-home-chip">{count("idle")} idle</span>}
+      <span className={`rd-home-chip${count("waiting") ? " wait" : ""}`}>{count("waiting")} need you</span>
+      <span className="rd-home-chip busy">{count("busy")} working</span>
+      <span className="rd-home-chip">{count("idle")} idle</span>
     </span>
   </button>;
 }
@@ -81,6 +97,12 @@ function AutopilotTile() {
     <span className="rd-home-nav-sub">The software factory: skill-kit flows run unattended on remote workers.</span>
     <span className="rd-home-chips"><span className="rd-home-chip">Not available yet</span></span>
   </div>;
+}
+
+function ChatWidget() {
+  const { agents, onOpenTerminal } = useContext(HomeActions);
+  const sessions = useMemo(() => agents.map(a => ({ key: a.key, name: a.label })), [agents]);
+  return <HomeChat sessions={sessions} onOpenTerminal={onOpenTerminal} />;
 }
 
 // Agents' questions to the owner, oldest first; each opens its terminal.
@@ -105,10 +127,7 @@ function NeedsYouList() {
 const AGENT_NAMES: Record<string, string> = { "claude-code": "Claude Code", codex: "Codex" };
 const AGENT_COLORS = ["var(--brand-green)", "var(--busy)", "var(--wait)"];
 
-// Tokens, not dollars: subscriptions are not billed per token, and the
-// server records no prices.
-function UsageWidget() {
-  const { onAnalytics } = useContext(HomeActions);
+function useWeekOfTokens() {
   const [data, setData] = useState<TokenAnalytics | null>(null), [error, setError] = useState("");
   useEffect(() => {
     const controller = new AbortController();
@@ -116,18 +135,64 @@ function UsageWidget() {
       .then(setData, (e: Error) => { if (!controller.signal.aborted) setError(e.message); });
     return () => controller.abort();
   }, []);
+  return { data, error };
+}
+
+function weekDays(data: TokenAnalytics): string[] {
+  return fillDays([], windowStart("7", data.today, data.earliest_day ?? data.today), data.today, 0).map(row => row.label);
+}
+
+function Sparkline({ values }: { values: number[] }) {
+  const peak = Math.max(1e-9, ...values);
+  const points = values.map((v, i) => `${values.length > 1 ? (i / (values.length - 1)) * 140 : 70},${44 - (v / peak) * 40}`).join(" ");
+  return <svg className="rd-home-spark" viewBox="0 0 140 46" preserveAspectRatio="none" aria-hidden="true"><polyline points={points} /></svg>;
+}
+
+function Split({ parts, format }: { parts: { name: string; value: number }[]; format: (n: number) => string }) {
+  const total = parts.reduce((n, p) => n + p.value, 0);
+  return <>
+    <span className="rd-home-split" aria-hidden="true">{parts.map((p, i) => <i key={p.name} style={{ width: `${(p.value / Math.max(1e-9, total)) * 100}%`, background: AGENT_COLORS[i % AGENT_COLORS.length] }} />)}</span>
+    <span className="rd-home-legend">{parts.map((p, i) => <span key={p.name}><i style={{ background: AGENT_COLORS[i % AGENT_COLORS.length] }} />{p.name} <b>{format(p.value)}</b></span>)}</span>
+  </>;
+}
+
+function UsageWidget() {
+  const { onAnalytics } = useContext(HomeActions);
+  const { data, error } = useWeekOfTokens();
   if (error) return <div className="rd-widget-unavailable"><strong>Unavailable</strong><p>{error}</p></div>;
   if (!data) return <div className="rd-widget-unavailable" role="status">Loading…</div>;
-  const days = fillDays(groupTokens(data.rows, "day"), windowStart("7", data.today, data.earliest_day ?? data.today), data.today, 4).map(sumValues);
-  const total = days.reduce((n, v) => n + v, 0), peak = Math.max(1, ...days);
+  const byDay = new Map(groupTokens(data.rows, "day").map(row => [row.label, sumValues(row)]));
+  const days = weekDays(data).map(day => byDay.get(day) ?? 0);
   const agents = groupTokens(data.rows, "agent").map(row => ({ name: AGENT_NAMES[row.label] ?? row.label, value: sumValues(row) }));
-  const points = days.map((v, i) => `${days.length > 1 ? (i / (days.length - 1)) * 140 : 70},${44 - (v / peak) * 40}`).join(" ");
   return <button className="rd-home-usage" onClick={() => onAnalytics("tokens")} aria-label="Open token analytics">
-    <span className="rd-home-kpi">{compact(total)}<small>tokens</small></span>
-    <svg className="rd-home-spark" viewBox="0 0 140 46" preserveAspectRatio="none" aria-hidden="true"><polyline points={points} /></svg>
-    <span className="rd-home-split" aria-hidden="true">{agents.map((a, i) => <i key={a.name} style={{ width: `${(a.value / Math.max(1, total)) * 100}%`, background: AGENT_COLORS[i % AGENT_COLORS.length] }} />)}</span>
-    <span className="rd-home-legend">{agents.map((a, i) => <span key={a.name}><i style={{ background: AGENT_COLORS[i % AGENT_COLORS.length] }} />{a.name} <b>{compact(a.value)}</b></span>)}</span>
+    <span className="rd-home-kpi">{compact(days.reduce((n, v) => n + v, 0))}<small>tokens</small></span>
+    <Sparkline values={days} />
+    <Split parts={agents} format={compact} />
     <span className="rd-home-legend">Today <b>{compact(days.at(-1) ?? 0)}</b></span>
+  </button>;
+}
+
+// Dollars at API list prices (pricing.ts), split the way the work is run:
+// Teams today, Autopilot once the factory reports its own usage.
+function SpendWidget() {
+  const { onAnalytics } = useContext(HomeActions);
+  const { data, error } = useWeekOfTokens();
+  if (error) return <div className="rd-widget-unavailable"><strong>Unavailable</strong><p>{error}</p></div>;
+  if (!data) return <div className="rd-widget-unavailable" role="status">Loading…</div>;
+  const byDay = new Map<string, number>(), byAgent = new Map<string, number>();
+  for (const row of data.rows) {
+    const cost = dollars(row);
+    byDay.set(row.day, (byDay.get(row.day) ?? 0) + cost);
+    const agent = AGENT_NAMES[row.agent] ?? row.agent;
+    byAgent.set(agent, (byAgent.get(agent) ?? 0) + cost);
+  }
+  const days = weekDays(data).map(day => byDay.get(day) ?? 0), week = days.reduce((n, v) => n + v, 0);
+  return <button className="rd-home-usage" onClick={() => onAnalytics("tokens")} aria-label="Open spend analytics"
+    title="Estimated at API list prices per token, including for subscription use. Codex models use GPT-5 rates.">
+    <span className="rd-home-kpi">{money(days.at(-1) ?? 0)}<small>today</small></span>
+    <Sparkline values={days} />
+    <Split parts={[{ name: "Teams", value: week }, { name: "Autopilot", value: 0 }]} format={money} />
+    <span className="rd-home-legend">7 days <b>{money(week)}</b>{[...byAgent].map(([name, value]) => <span key={name}>{name} <b>{money(value)}</b></span>)}</span>
   </button>;
 }
 
@@ -180,7 +245,7 @@ function PrsWidget() {
     {row.pr && <span className="rd-home-num">#{row.pr.number}</span>}
     <span className="rd-home-row-main">
       {row.pr ? <a href={row.pr.url} target="_blank" rel="noreferrer">{row.pr.title}</a> : <span>{row.branch}</span>}
-      <small>{row.label}{row.session && <> · <button onClick={() => onOpenTerminal(row.session!.key)}>{row.session.name}</button></>}</small>
+      <small>{row.label} · Teams{row.session && <> · <button onClick={() => onOpenTerminal(row.session!.key)}>{row.session.name}</button></>}</small>
     </span>
   </li>)}</ul>;
 }
@@ -257,8 +322,17 @@ function HomeGrid({ registry, source }: { registry: WidgetType[]; source: Widget
       {editing && <>
         <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={loading} onClick={() => commit(defaults)}>Reset layout</button>
         <span className="rd-home-add">
-          <button className="rd-btn rd-btn-ghost rd-btn-sm" aria-expanded={adding} disabled={loading || !missing.length} onClick={() => setAdding(!adding)}>Add widget</button>
-          {adding && <span className="rd-widget-add" role="group" aria-label="Add a widget">{missing.map(type => <button key={type.type} onClick={() => { setAdding(false); commit(appended(layout.instances, type.type)); }}>{type.title}</button>)}</span>}
+          <button className="rd-btn rd-btn-ghost rd-btn-sm" aria-expanded={adding} disabled={loading} onClick={() => setAdding(!adding)}>+ Add widget</button>
+          {adding && <span className="rd-widget-add rd-home-catalog" role="group" aria-label="Add a widget">{CATALOG_GROUPS.map(group => {
+            const types = registry.filter(type => CATALOG[type.type]?.group === group);
+            return types.length > 0 && <span key={group} className="rd-home-catalog-group"><span className="rd-home-catalog-name">{group}</span>
+              {types.map(type => {
+                const placed = !missing.includes(type);
+                return <button key={type.type} disabled={placed} onClick={() => { setAdding(false); commit(appended(layout.instances, type.type)); }}>
+                  {type.title}{placed && " · on page"}<small>{CATALOG[type.type].description}</small>
+                </button>;
+              })}</span>;
+          })}</span>}
         </span>
       </>}
       <button className={`rd-btn rd-btn-ghost rd-btn-sm${editing ? " rd-btn-active" : ""}`} aria-pressed={editing} disabled={loading} onClick={() => { setEditing(!editing); setAdding(false); }}>{editing ? "Done" : "Edit layout"}</button>

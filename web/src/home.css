@@ -3,7 +3,11 @@
 .rd-home-bar { display:flex; align-items:center; gap:8px; margin-bottom:12px; position:relative }
 .rd-home-bar h1 { font-size:0.9375rem; font-weight:600; margin:0 }
 .rd-home-add { position:relative }
-.rd-home-add .rd-widget-add { top:30px; width:200px; display:flex; flex-direction:column }
+.rd-home-add .rd-widget-add { top:30px; width:290px; max-height:70vh; overflow:auto; display:flex; flex-direction:column }
+.rd-home-catalog-group { display:flex; flex-direction:column }
+.rd-home-catalog-name { font-size:0.625rem; text-transform:uppercase; letter-spacing:.08em; color:var(--muted); padding:6px 8px 2px }
+.rd-home-add .rd-widget-add button small { display:block; color:var(--text-soft); font-size:0.6875rem }
+.rd-home-add .rd-widget-add button:disabled { opacity:.45; cursor:default; background:none }
 .rd-home-add .rd-widget-add button { text-align:left; border:0; background:none; color:var(--text); font:inherit; font-size:0.75rem; padding:8px; border-radius:5px; cursor:pointer }
 .rd-home-add .rd-widget-add button:hover { background:var(--bg-soft) }
 
@@ -47,7 +51,8 @@ button.rd-home-nav { cursor:pointer }
 .rd-home-scope { display:flex; align-items:center; gap:6px; flex-wrap:wrap }
 .rd-home-scope-chip { font-size:0.72rem; padding:1px 10px; border-radius:99px; border:1px solid var(--border); color:var(--text-soft) }
 .rd-home-scope-chip.on { background:color-mix(in srgb, var(--brand-green) 10%, transparent); border-color:var(--brand-green); color:var(--brand-green-strong) }
-.rd-home-scope-chip.off { border-style:dashed; opacity:.75 }
+.rd-home-scope-chip { background:none; font:inherit; font-size:0.72rem; cursor:pointer }
+.rd-home-scope-chip.off { border-style:dashed; opacity:.6; cursor:default }
 .rd-home-clear { margin-left:auto; border:0; background:none; color:var(--text-soft); font:inherit; font-size:0.72rem; cursor:pointer }
 .rd-home-log { flex:1; min-height:0; overflow:auto; display:flex; flex-direction:column; gap:14px; padding:2px 2px 6px }
 .rd-home-chat-intro { color:var(--text-soft); font-size:0.84rem; margin:0 }
@@ -55,6 +60,9 @@ button.rd-home-nav { cursor:pointer }
 .rd-home-q { align-self:flex-end; max-width:85%; background:var(--bg-soft); padding:7px 12px; border-radius:12px 12px 2px 12px; font-size:0.84rem; white-space:pre-wrap }
 .rd-home-a { font-size:0.84rem }
 .rd-home-a > :first-child { margin-top:0 }
+.rd-home-cite { display:inline-flex; align-items:center; gap:4px; border:1px solid var(--border); border-radius:6px; background:none; padding:0 6px; margin:0 1px; font:inherit; font-size:0.78rem; color:var(--text); cursor:pointer; white-space:nowrap }
+.rd-home-cite::before { content:""; width:6px; height:6px; border-radius:50%; background:var(--wait) }
+.rd-home-cite:hover { border-color:var(--brand-green) }
 .rd-home-thinking { color:var(--text-soft); font-size:0.8rem; display:flex; gap:8px; align-items:center }
 .rd-home-suggest { display:flex; flex-wrap:wrap; gap:6px }
 .rd-home-suggest button { border:1px dashed var(--border-strong); background:none; border-radius:8px; font:inherit; font-size:0.75rem; padding:3px 10px; color:var(--text-soft); cursor:pointer }
