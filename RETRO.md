@@ -1,3 +1,21 @@
+## 2026-11-19 — CI passing is not the certificate being valid
+
+Four connector-broker tests failed on the owner's Mac while CI was green on the
+same commit. The test certificates were never valid: the CA had no Subject Key
+Identifier and the leaves had no Authority Key Identifier. Older OpenSSL simply
+did not check, so the gate that was supposed to catch this had quietly been
+accepting a malformed chain for as long as the test existed. OpenSSL 3.6 checks,
+and the owner's toolchain got there first.
+
+Two things worth keeping. The reported fix ("mark the CA as a CA") was already
+true in the code — basicConstraints CA:TRUE was there — so applying the
+diagnosis verbatim would have changed nothing and looked like a failed fix. Read
+the generated artifact (openssl x509 -text) rather than the suggestion. And the
+test builds certificates with the openssl CLI but verifies them through Python's
+ssl, which on this Mac are different implementations (LibreSSL 3.3.6 vs OpenSSL
+3.6.3); a fix has to be run under both CLIs, because CI's is neither of the ones
+you assume. Related: [[green-tests-no-working-feature]].
+
 ## 2026-11-07 — Folder chat had a message broker its answer path could never reach
 
 The @ picker could send messages, but a plain-language request went to a prompt
