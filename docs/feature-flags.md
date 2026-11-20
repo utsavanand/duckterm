@@ -25,7 +25,7 @@ do not keep anyone out.
 
 | Flag | What it gates | Since | Ships when |
 |------|---------------|-------|------------|
-| `skill_kits` | Settings → Skill kits (add a kit by folder, view its contents, remove it), the `/harnesses` routes, and the session panel's "Skill kit" row. Being built against the Skill Kit Specification (draft 8). | 2026-11-16 | The specification is approved and the install wizard is built. Owner's call. |
+| `skill_kits` | Settings → Skill kits (add a kit by folder, view its contents, remove it), the `/harnesses` routes, the session panel's "Skill kit" row, and the `duckterm kit` CLI (validate, plan, install, verify, uninstall). Being built against the Skill Kit Specification (draft 9). | 2026-11-16 | The install wizard is built on `plan`/`install` and the owner has run a kit end to end. Owner's call. |
 
 ## Graduated
 
