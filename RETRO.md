@@ -1,3 +1,32 @@
+## 2026-11-19 — A pushed branch is not a delivered fix
+
+The connector panel fix was written, verified and pushed on 10-30. The owner was
+still looking at the broken panel on 11-19, across 0.4.200 -> 0.4.204, because no
+PR was ever opened. A handoff message to release-dev named a branch; nothing in
+the pipeline acts on a branch name. Three weeks of "shipped" was a branch nobody
+could merge, on a base 1392 commits stale.
+
+Two compounding traps. First, a stale branch silently rots: by the time anyone
+looked, its theme.css predated the skill-kits rename, so merging it would have
+resurrected `.rd-harness-output`, a rule deleted upstream. GitHub still called it
+MERGEABLE, because "no textual conflict" is not "still correct". Second, a
+duplicate PR (#351) had been opened from the same commits and sat unreviewed for
+three weeks; I nearly left two competing PRs open on the same change.
+
+Deliver to the artifact the pipeline consumes — a PR — and check for an existing
+one before opening another. Verify the owner can see the fix, not that the gate
+was green. Related: [[intent-rendered-as-state]], [[green-tests-no-working-feature]].
+
+## 2026-11-19 — Connector tests fail inside a live Duckterm session
+
+tests/unit/test_connectors.py fails 13 of 30 on unmodified main when run from a
+Duckterm session, because `validate_desktop_context` rejects the inherited
+DUCKTERM_* env and raises "Conflicting environment for Duckterm profile full".
+I first read it as my change breaking three tests; it breaks the same tests
+without my change. Scrub the env (`env -u DUCKTERM_HOME -u DUCKTERM_INSTANCE
+-u DUCKTERM_PORT ...`) and all 30 pass. Compare against a pristine worktree
+before attributing a failure, and count the failures rather than reading names.
+
 ## 2026-11-07 — Folder chat had a message broker its answer path could never reach
 
 The @ picker could send messages, but a plain-language request went to a prompt
