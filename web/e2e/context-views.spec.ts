@@ -6,7 +6,7 @@ test("context tabs keep connectors reachable, preserve notes and follow the sele
   const key = await seedSession(`context-views-${Date.now()}`, { name: "Panel reviewer", runtime: "codex", test: true });
   await apiPatch(`/sessions/${key}`, { summary: "A populated session with enough detail to previously squeeze the connector list out of view. ".repeat(30) });
   try {
-    await page.route("**/connectors", route => route.fulfill({ json: { connectors: Array.from({ length: 6 }, (_, i) => ({ name: `local-${i}`, title: `Local connector ${i + 1}`, enabled: true, description: "Repository tools and account details. ".repeat(5), identity: "Local test account", managed: true })) } }));
+    await page.route("**/connectors", route => route.fulfill({ json: { connectors: Array.from({ length: 24 }, (_, i) => ({ name: `local-${i}`, title: `Local connector ${i + 1}`, enabled: true, description: "Repository tools and account details. ".repeat(5), identity: "Local test account", managed: true })) } }));
     await page.addInitScript(() => {
       window.__rubbertermDesktop = { currentTarget: "local", targets: [{ id: "local", name: "This Mac" }, { id: "build", name: "Remote — Build server" }] };
       window.webkit = { messageHandlers: { launchRequest: { postMessage: async (message: unknown) => {
@@ -32,6 +32,9 @@ test("context tabs keep connectors reachable, preserve notes and follow the sele
     for (const height of [900, 1000]) {
       await page.setViewportSize({ width: 1440, height });
       await expect(list.getByText("Local connector 1", { exact: true })).toBeVisible();
+      // Enough rows to overflow the pane: the collapsed row is ~90px, so the
+      // count has to clear the viewport for the scroll assertions to mean
+      // anything. This guards reachability of a long list, not the row height.
       const box = (await list.boundingBox())!;
       expect(box.height).toBeGreaterThan(600);
       expect(box.y + box.height).toBeLessThanOrEqual(height + 1);
