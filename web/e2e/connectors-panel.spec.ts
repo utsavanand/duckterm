@@ -106,6 +106,11 @@ test("connection editor and close control fit the sidebar", async ({ page }, tes
       await page.setViewportSize({ width, height: 900 });
       const bounds = await pane.boundingBox();
       for (const control of [row.getByRole("button", { name: "Configure GitHub" }), row.getByLabel("GitHub credential source"), row.getByRole("button", { name: "Verify and enable" })]) {
+        // The connector list scrolls: at 900px tall the pane is the bottom cell
+        // of a 3-row grid and holds 231px, so an expanded editor is reached by
+        // scrolling rather than by fitting whole. What must hold is that every
+        // control is reachable and stays inside the pane horizontally.
+        await control.scrollIntoViewIfNeeded();
         await expect(control).toBeInViewport();
         const box = await control.boundingBox();
         expect(box!.x).toBeGreaterThanOrEqual(bounds!.x);
