@@ -146,7 +146,8 @@ def test_home_layout_places_widgets_on_a_grid_in_its_own_file(app, tmp_path):
     status, saved = req(app, "PUT", "home", {"instances": moved, "revision": "default"})
     assert status == 200 and saved["instances"][0]["params"]["y"] == 9
     assert json.loads((tmp_path / "home-layout.json").read_text())["layouts"]["home"] == saved
-    assert not app.history.layouts.path.exists() or "home" not in app.history.layouts.path.read_text()
+    layouts = app.history.layouts.path
+    assert not layouts.exists() or "home" not in layouts.read_text()
     for params in [
         {"x": 10, "y": 0, "w": 3, "h": 2},
         {"x": 0, "y": 0, "w": 0, "h": 2},
@@ -155,5 +156,5 @@ def test_home_layout_places_widgets_on_a_grid_in_its_own_file(app, tmp_path):
         {"x": 0, "y": 0, "w": 3},
         {},
     ]:
-        bad = [dict(moved[0], params=params)]
-        assert req(app, "PUT", "home", {"instances": bad, "revision": saved["revision"]})[0] == 400, params
+        bad = {"instances": [dict(moved[0], params=params)], "revision": saved["revision"]}
+        assert req(app, "PUT", "home", bad)[0] == 400, params

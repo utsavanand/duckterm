@@ -14,7 +14,15 @@ TYPES = {
     "oracle": ("agents", "needs-you", "tokens", "mail", "backup", "remote", "folder-tasks"),
     "folder": ("folder-tasks", "folder-stats", "artifacts-by-kind"),
     "home": (
-        "teams", "autopilot", "chat", "prs", "usage", "needs-you", "agents", "mail", "backup",
+        "teams",
+        "autopilot",
+        "chat",
+        "prs",
+        "usage",
+        "needs-you",
+        "agents",
+        "mail",
+        "backup",
         "remote",
     ),
 }
@@ -93,13 +101,16 @@ def validate(surface: str, instances: Any) -> list[dict[str, Any]]:
 
 def _valid_params(slot: str, surface: str, params: Any) -> bool:
     if slot != "home":
-        return params == ({"folder": surface[7:]} if slot == "folder" else {})
+        return bool(params == ({"folder": surface[7:]} if slot == "folder" else {}))
     if not isinstance(params, dict) or set(params) != {"x", "y", "w", "h"}:
         return False
     if any(type(params[key]) is not int for key in params):
         return False
-    x, y, w, h = params["x"], params["y"], params["w"], params["h"]
-    return 0 <= x and 1 <= w and x + w <= HOME_COLUMNS and 0 <= y <= 200 and 1 <= h <= 24
+    x: int = params["x"]
+    y: int = params["y"]
+    w: int = params["w"]
+    h: int = params["h"]
+    return x >= 0 and w >= 1 and x + w <= HOME_COLUMNS and 0 <= y <= 200 and 1 <= h <= 24
 
 
 class Layouts:
