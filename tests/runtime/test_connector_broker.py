@@ -46,6 +46,12 @@ def certificates(path: Path) -> None:
         "basicConstraints=critical,CA:TRUE",
         "-addext",
         "keyUsage=critical,keyCertSign,cRLSign",
+        # OpenSSL 3.6 rejects a chain whose leaf has no Authority Key
+        # Identifier, and that extension is derived from the issuer's Subject
+        # Key Identifier, so the CA has to carry one for the leaves to be
+        # verifiable.
+        "-addext",
+        "subjectKeyIdentifier=hash",
     )
     for name in ("server", "workspace"):
         openssl(
@@ -60,7 +66,11 @@ def certificates(path: Path) -> None:
             "-subj",
             "/CN=" + name,
         )
-        (path / "ext").write_text(f"subjectAltName=DNS:{name}\n")
+        (path / "ext").write_text(
+            f"subjectAltName=DNS:{name}\n"
+            "subjectKeyIdentifier=hash\n"
+            "authorityKeyIdentifier=keyid:always\n"
+        )
         openssl(
             "x509",
             "-req",
