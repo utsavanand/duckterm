@@ -69,7 +69,7 @@ PRESETS: dict[str, EditionConfig] = {edition.name: edition for edition in (LITE,
 # Features still being built. Off in every edition; an instance turns one on by
 # listing it in <home>/flags.json as {"enabled": ["skill_kits"]}. Each flag has
 # a row in docs/feature-flags.md (a test keeps the two in step).
-DEVELOPMENT = frozenset({"skill_kits"})
+DEVELOPMENT = frozenset({"skill_kits", "home"})
 
 # These operations also serve local repository clones. The handler validates
 # parameters and journal provenance before any restricted read or mutation.
@@ -219,6 +219,7 @@ def _path_feature(method: str, path: str, body: bytes) -> str | None:
             return capability
     exact = {
         "/control-tower": "overview",
+        "/layouts/home": "home",
         "/checkpoint-settings": "checkpoints",
         "/agents-md/suggest": "rule_suggestions",
         "/session-inbox-counts": "inbox",

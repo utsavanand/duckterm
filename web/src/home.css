@@ -1,0 +1,74 @@
+.rd-home-layer { position:absolute; inset:0; z-index:6; overflow-y:auto; background:var(--bg-soft) }
+.rd-home { max-width:1280px; margin:0 auto; padding:14px 20px 40px }
+.rd-home-bar { display:flex; align-items:center; gap:8px; margin-bottom:12px; position:relative }
+.rd-home-bar h1 { font-size:0.9375rem; font-weight:600; margin:0 }
+.rd-home-add { position:relative }
+.rd-home-add .rd-widget-add { top:30px; width:200px; display:flex; flex-direction:column }
+.rd-home-add .rd-widget-add button { text-align:left; border:0; background:none; color:var(--text); font:inherit; font-size:0.75rem; padding:8px; border-radius:5px; cursor:pointer }
+.rd-home-add .rd-widget-add button:hover { background:var(--bg-soft) }
+
+.rd-home-grid { display:grid; grid-template-columns:repeat(12,minmax(0,1fr)); grid-auto-rows:58px; gap:12px; position:relative }
+/* Row lines while editing show the cells widgets snap to. */
+.rd-home-grid.editing { background-image:linear-gradient(var(--border) 1px, transparent 1px); background-size:100% 70px; touch-action:none }
+.rd-home-widget { background:var(--card); border:1px solid var(--border); border-radius:12px; display:flex; flex-direction:column; min-width:0; min-height:0; overflow:hidden; position:relative }
+.rd-home-widget > header { display:flex; align-items:center; gap:6px; padding:10px 12px 0; min-height:28px }
+.rd-home-widget h3 { font-size:0.6875rem; text-transform:uppercase; letter-spacing:.06em; color:var(--text-soft); font-weight:600; margin:0 }
+.rd-home-tools { margin-left:auto; display:flex; gap:2px }
+.rd-home-tools button { border:0; background:none; color:var(--text-soft); padding:2px 6px; border-radius:5px; font-size:0.8125rem; cursor:pointer }
+.rd-home-tools button:hover { background:var(--bg-soft); color:var(--text) }
+.rd-home-tools button:focus-visible, .rd-home-nav:focus-visible { outline:2px solid var(--brand-green); outline-offset:2px }
+.editing .rd-home-widget { outline:1px dashed var(--border-strong); outline-offset:-1px }
+.editing .rd-home-widget > header { cursor:grab }
+.rd-home-widget.dragging { z-index:3; box-shadow:0 14px 34px #0003; cursor:grabbing }
+.rd-home-body { flex:1; min-height:0; overflow:auto; padding:6px 12px 12px }
+.rd-home-resize { position:absolute; right:3px; bottom:3px; width:14px; height:14px; cursor:nwse-resize; border-right:2px solid var(--border-strong); border-bottom:2px solid var(--border-strong); border-radius:0 0 4px 0; touch-action:none }
+.rd-home-widget .rd-tower-tile { border:0; width:100%; text-align:left; background:transparent; padding:0 }
+.rd-home-widget .rd-tower-label { display:none }
+.rd-home-widget:has(.warn) { border-color:var(--amber-border); background:var(--amber-bg) }
+
+.rd-home-teams .rd-home-body, .rd-home-autopilot .rd-home-body { padding:0 }
+/* The tile names itself, so while editing its tools float over the top edge
+   instead of taking a row, and the tile stops navigating. */
+.rd-home-teams > header, .rd-home-autopilot > header { position:absolute; top:0; left:0; right:0; z-index:1 }
+.editing .rd-home-nav { pointer-events:none }
+.editing .rd-home-nav-title span { visibility:hidden }
+.rd-home-nav { display:flex; flex-direction:column; gap:2px; width:100%; height:100%; padding:12px 14px; border:0; background:none; color:var(--text); text-align:left; font:inherit }
+button.rd-home-nav { cursor:pointer }
+.rd-home-teams:hover { border-color:var(--brand-green) }
+.rd-home-nav-title { font-size:1.25rem; font-weight:600; display:flex; justify-content:space-between }
+.rd-home-nav-title span { color:var(--text-soft); font-size:0.875rem; font-weight:400 }
+.rd-home-nav-sub { color:var(--text-soft); font-size:0.78rem }
+.rd-home-chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:auto; padding-top:6px }
+.rd-home-chip { font-size:0.6875rem; padding:1px 8px; border-radius:99px; background:var(--bg-soft); color:var(--text-soft); white-space:nowrap }
+.rd-home-chip.wait { background:var(--amber-chip); color:var(--amber-text) }
+.rd-home-chip.busy { color:var(--busy) }
+
+.rd-home-chat .rd-oracle-head { display:none }
+.rd-home-chat { height:100% }
+.rd-home-chat .rd-oracle { height:100% }
+.rd-home-chat .rd-oracle-log { padding-left:4px; padding-right:4px }
+
+.rd-home-rows { list-style:none; margin:0; padding:0 }
+.rd-home-rows li { display:flex; align-items:baseline; gap:8px; padding:7px 0; border-top:1px solid var(--border); font-size:0.78rem }
+.rd-home-rows li:first-child { border-top:0 }
+.rd-home-num { font-family:ui-monospace,"SF Mono",Menlo,monospace; color:var(--text-soft); font-size:0.72rem }
+.rd-home-row-main { flex:1; min-width:0; display:flex; flex-direction:column }
+.rd-home-row-main > a, .rd-home-row-main > span { color:var(--text); text-decoration:none; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+.rd-home-row-main > a:hover { text-decoration:underline }
+.rd-home-row-main small { color:var(--text-soft); font-size:0.6875rem }
+.rd-home-row-main small button { border:0; background:none; padding:0; color:inherit; font:inherit; text-decoration:underline; cursor:pointer }
+.rd-home-dot { width:8px; height:8px; border-radius:50%; flex:none; background:var(--brand-green) }
+.rd-home-dot.wait { background:var(--wait) }
+.rd-home-dot.bad { background:var(--danger) }
+.rd-home-dot.busy { background:var(--busy) }
+.rd-home-dot.done { background:var(--border-strong) }
+.rd-home-empty { color:var(--text-soft); font-size:0.78rem; margin:4px 0 }
+
+@media (max-width:760px) {
+  .rd-home { padding:12px 16px 32px }
+  .rd-home-bar .rd-btn { display:none }
+  .rd-home-grid { grid-template-columns:1fr; grid-auto-rows:auto }
+  .rd-home-grid .rd-home-widget { grid-column:1 !important; grid-row:auto !important; min-height:120px }
+  .rd-home-grid .rd-home-chat { min-height:440px }
+  .rd-home-grid .rd-home-widget:has(.rd-home-chat) { min-height:460px }
+}
