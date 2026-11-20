@@ -281,3 +281,47 @@ def test_empty_or_unrelated_hooks_are_not_reported_as_installed(history, tmp_pat
         json.dumps({"hooks": hooks, "unrelated": str(resume_diagnostics.hook_script_path())})
     )
     assert resume_diagnostics.hook_status("claude-code", None) == "not configured"
+
+
+@pytest.mark.parametrize("state", ["idle", "busy", "waiting"])
+def test_selected_active_session_is_included_without_other_live_sessions(history, tmp_path, state):
+    seed(history, "PRIVATE-selected", tmp_path, state=state, runtime="codex")
+    seed(history, "PRIVATE-other", tmp_path, state="idle")
+    before = history._conn.total_changes
+    data = resume_diagnostics.snapshot(history, "PRIVATE-selected")
+    assert data["total"] == 0
+    assert len(data["sessions"]) == 1
+    text = resume_diagnostics.render(data)["text"]
+    assert "Interrupted/stopped sessions: 0 (showing 0)" in text
+    assert "Selected session also included below" in text
+    assert f"Session 1 (selected): codex; {state}" in text
+    assert "native conversation ID: missing" in text
+    assert "recorded turn-end event: no" in text
+    assert "PRIVATE" not in text
+    assert str(tmp_path) not in text
+    assert history._conn.total_changes == before
+
+
+def test_selected_active_session_keeps_report_bounded_and_records_stop(
+    history, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(resume_diagnostics, "LIMIT", 2)
+    for key in ("stopped-a", "stopped-b", "stopped-c"):
+        seed(history, key, tmp_path)
+    seed(history, "selected-live", tmp_path, state="idle")
+    history.record(
+        {
+            "_id": "stop-fixture",
+            "_ts": 2,
+            "session_key": "selected-live",
+            "event_type": "Stop",
+            "test": True,
+        }
+    )
+    data = resume_diagnostics.snapshot(history, "selected-live")
+    assert data["total"] == 3
+    assert len(data["sessions"]) == 2
+    assert data["sessions"][0]["selected"]
+    text = resume_diagnostics.render(data)["text"]
+    assert "Interrupted/stopped sessions: 3 (showing 1)" in text
+    assert "recorded turn-end event: yes" in text

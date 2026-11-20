@@ -16,6 +16,12 @@ struct BugReportDataTests {
             catch { print("PASS: \(label)") }
         }
 
+        assert(BugReportData.contextPath(selectionJSON: #"{"host":"local","sessionKey":"session.id-1"}"#) == "/bugreport/context?session_key=session.id-1")
+        for selection in [nil, "{broken", #"{"host":"remote","sessionKey":"session.id-1"}"#, #"{"host":"local","sessionKey":"a&other=secret"}"#, #"{"host":"local","sessionKey":""}"#] as [String?] {
+            assert(BugReportData.contextPath(selectionJSON: selection) == "/bugreport/context")
+        }
+        print("PASS: native diagnostics select only a valid local session")
+
         var report = BugReportData()
         let selected = try write("notes.txt", Data("original selected content".utf8))
         try report.add(selected)
