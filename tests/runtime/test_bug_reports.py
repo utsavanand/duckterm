@@ -21,6 +21,10 @@ from duckterm.transport.httpio import read_body
 
 @pytest.fixture
 def app(tmp_path, monkeypatch):
+    async def no_installed_runtimes():
+        return {"version": 1, "runtimes": []}
+
+    monkeypatch.setattr("duckterm.resume_diagnostics.discover", no_installed_runtimes)
     monkeypatch.setenv("DUCKTERM_SUPPORT_EMAIL", "bugs@example.test")
     history = HistoryStore(tmp_path / "db.sqlite")
     for key in ("selected", "other"):

@@ -1,3 +1,12 @@
+## 2026-11-19 — Bug reports omitted the harness version needed to diagnose compatibility
+
+Reports captured the app version and hook configuration but left out harness
+versions, forcing the owner to run a separate command on the affected computer.
+Reuse the bounded runtime-discovery probes when collecting report diagnostics.
+Keep sanitized versions and explicit probe failures in the same redacted item
+the Mac app exports, and test the native diagnostics.txt output. Label these as
+installed versions at report time, not proof of the version in an existing session.
+
 ## 2026-11-07 — Folder chat had a message broker its answer path could never reach
 
 The @ picker could send messages, but a plain-language request went to a prompt

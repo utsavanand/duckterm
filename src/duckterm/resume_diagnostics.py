@@ -1,5 +1,6 @@
 """Bounded, read-only resume checks for owner-reviewed bug reports."""
 
+import asyncio
 import hashlib
 import json
 import re
@@ -12,8 +13,35 @@ from duckterm.agents.hooks_install import hook_script_path
 from duckterm.harnesses import REGISTRY
 from duckterm.persistence.history import HistoryStore
 from duckterm.runtimes.claude_code import project_slug
+from duckterm.runtimes.discovery import discover
 
 LIMIT = 50
+
+
+async def collect(data: dict[str, Any]) -> dict[str, str]:
+    """Include bounded, sanitized CLI probes in the native app's exported item."""
+    result = await asyncio.to_thread(render, data)
+    lines = [
+        "",
+        "Installed harness versions (server PATH at report time):",
+        "Running sessions may use a different version. Authentication is not checked.",
+    ]
+    try:
+        discovery = await discover()
+    except (OSError, RuntimeError):
+        lines.append("Unavailable — version discovery failed.")
+    else:
+        for runtime in discovery["runtimes"]:
+            version = runtime["version"]
+            if runtime["probe"] == "ok" and version:
+                status = version
+            elif runtime["probe"] == "missing":
+                status = "not found on server PATH"
+            else:
+                status = f"version unavailable ({runtime['probe']})"
+            lines.append(f"{runtime['label']}: {status}")
+    result["text"] += "\n" + "\n".join(lines)
+    return result
 
 
 def snapshot(history: HistoryStore, selected: str | None) -> dict[str, Any]:

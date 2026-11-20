@@ -1,6 +1,8 @@
 """Resume reports expose readiness, never identities, transcript text or settings."""
 
+import asyncio
 import json
+import sys
 import threading
 
 import pytest
@@ -18,10 +20,73 @@ def history(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("DUCKTERM_HOME", str(tmp_path / "state"))
     monkeypatch.setenv("DUCKTERM_SUPPORT_EMAIL", "")
+
+    async def no_installed_runtimes():
+        return {"version": 1, "runtimes": []}
+
+    monkeypatch.setattr(resume_diagnostics, "discover", no_installed_runtimes)
     store = HistoryStore(tmp_path / "history.sqlite")
     yield store
     store.purge_test_sessions()
     store.close()
+
+
+def test_report_probes_versions_without_exporting_raw_cli_output(history, tmp_path, monkeypatch):
+    from duckterm.runtimes.discovery import discover
+
+    binary = tmp_path / "codex"
+    binary.write_text(
+        f"#!{sys.executable}\n"
+        "import os, sys\n"
+        "assert sys.argv[1:] == ['--version']\n"
+        "assert 'PRIVATE_PROBE_SECRET' not in os.environ\n"
+        "print('codex-cli 0.169.0')\n"
+        "print('PRIVATE-PATH /Users/private/person/token')\n"
+    )
+    binary.chmod(0o700)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    monkeypatch.setenv("PRIVATE_PROBE_SECRET", "private-value")
+    monkeypatch.setattr(resume_diagnostics, "discover", discover)
+    server = Server(history=history)
+    try:
+        status, context = dispatch(
+            server, "GET", "/bugreport/context", {"x-duckterm-token": server.token}
+        )
+        assert status == 200
+        text = next(i["text"] for i in context["items"] if i["id"] == "resume-readiness")
+        assert "Codex: 0.169.0" in text
+        assert "Claude Code: not found on server PATH" in text
+        assert "Running sessions may use a different version" in text
+        assert "PRIVATE" not in json.dumps(context)
+        assert "/Users/private" not in json.dumps(context)
+    finally:
+        server.digests.close()
+
+
+@pytest.mark.parametrize("probe", ["timeout", "failed", "unrecognized"])
+def test_version_probe_failure_preserves_other_diagnostics(history, monkeypatch, probe):
+    async def discovery():
+        return {"runtimes": [{"label": "Codex", "version": None, "probe": probe}]}
+
+    monkeypatch.setattr(resume_diagnostics, "discover", discovery)
+    text = asyncio.run(resume_diagnostics.collect(resume_diagnostics.snapshot(history, None)))[
+        "text"
+    ]
+    assert f"Codex: version unavailable ({probe})" in text
+    assert "Interrupted/stopped sessions: 0" in text
+
+
+def test_discovery_error_does_not_drop_report_or_export_exception(history, monkeypatch):
+    async def discovery():
+        raise OSError("PRIVATE-PATH /private/secret")
+
+    monkeypatch.setattr(resume_diagnostics, "discover", discovery)
+    text = asyncio.run(resume_diagnostics.collect(resume_diagnostics.snapshot(history, None)))[
+        "text"
+    ]
+    assert "version discovery failed" in text
+    assert "Interrupted/stopped sessions: 0" in text
+    assert "PRIVATE" not in text
 
 
 def seed(history, key, cwd, native_id=None, state="interrupted", runtime="claude-code"):
