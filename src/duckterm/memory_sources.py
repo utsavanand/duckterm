@@ -8,6 +8,7 @@ import json
 import os
 import re
 import tempfile
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -162,6 +163,16 @@ def _replace_with_pointer(
         with os.fdopen(fd, "w") as stream:
             json.dump(index, stream)
         os.replace(name, index_path)
+
+
+def _timestamp(value: Any) -> int | None:
+    """A native line's ISO-8601 timestamp in epoch ms; None when absent or unreadable."""
+    if not isinstance(value, str):
+        return None
+    try:
+        return int(datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp() * 1000)
+    except ValueError:
+        return None
 
 
 def read_native(key: str, source: dict[str, Any], *, retain: bool = False) -> dict[str, Any]:
@@ -333,6 +344,9 @@ def read_native(key: str, source: dict[str, Any], *, retain: bool = False) -> di
                                     else message["role"]
                                 ),
                                 "text": text,
+                                # When the harness wrote it, in ms; automatic
+                                # checkpoints skip messages written while off.
+                                "at": _timestamp(obj.get("timestamp")),
                                 "summary_text": flatten(
                                     {
                                         "blocks": [
