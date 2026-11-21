@@ -484,6 +484,9 @@ class Server:
 
         self.checkpoint_requests = CheckpointRequests(self)
         self.progress_coordinator = ProgressCoordinator(self)
+        from duckterm.core.auto_checkpoints import AutoCheckpoints
+
+        self.auto_checkpoints = AutoCheckpoints(self)
         self.memory = Memory(self)
         self.memory_preparation = MemoryPreparation(self)
         from duckterm.handoff_review import HandoffReview
@@ -5761,8 +5764,13 @@ class Server:
         try:
             if label != "Before harness switch" and selection is None:
                 captured = await memory_checkpoint.freeze(
-                    self, session_key, captured, checkpoint_settings.load()
+                    self,
+                    session_key,
+                    captured,
+                    checkpoint_settings.load(),
+                    automatic=label == memory_checkpoint.AUTOMATIC_LABEL,
                 )
+                memory_checkpoint.record_gap(self, session_key, captured)
             captured["trigger"] = trigger
             update = await self.progress_coordinator.refresh_result(
                 session_key, captured, on_progress=on_progress
@@ -6509,6 +6517,11 @@ class Server:
                 on_listening(host, port)
             self.archives.recover()
             sweeper = asyncio.create_task(self._sweep_dead_loop())
+            auto_checkpoints = (
+                asyncio.create_task(self.auto_checkpoints.loop())
+                if self.edition.includes("checkpoints")
+                else None
+            )
             collaboration_worker = (
                 asyncio.create_task(self.collaboration.run())
                 if self.edition.includes("inbox")
@@ -6531,6 +6544,9 @@ class Server:
                     with contextlib.suppress(asyncio.CancelledError):
                         await mobile_manager
                     sweeper.cancel()
+                    if auto_checkpoints is not None:
+                        auto_checkpoints.cancel()
+                        await self.auto_checkpoints.close()
                     if collaboration_worker is not None:
                         collaboration_worker.cancel()
                         with contextlib.suppress(asyncio.CancelledError):

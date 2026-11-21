@@ -32,6 +32,7 @@ def records(sources: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "position": position,
                     "role": row["role"],
                     "text": row["text"],
+                    "at": row.get("at"),
                     "hash": fingerprint([row["id"], row["role"], row["text"]]),
                 }
             )

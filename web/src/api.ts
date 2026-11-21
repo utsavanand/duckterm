@@ -46,6 +46,9 @@ export type LocalVoiceStatus =
 export interface CheckpointSettings {
   lookback_records: number | "all";
   writer_model: "haiku" | "sonnet" | "opus";
+  automatic: boolean;
+  // Server-written [off, on] times; on is null while still off.
+  automatic_off?: [number, number | null][];
 }
 
 export type AiProvider = "anthropic" | "openai" | "openrouter" | "custom";
@@ -914,6 +917,8 @@ export interface CheckpointRecord {
     memory_source?: unknown;
     memory_sources?: unknown[];
     memory_retention?: string;
+    // An "Automatic checkpoints off" entry: messages written then are not summarized.
+    gap?: { periods: [number, number][]; records: number; first_at: number; last_at: number };
     handoff?: { method?: string; packet_hash?: string; summary_revision_id?: string | null; eligible_records?: number; summarized_records?: number; reference_only_records?: number; included_records?: number; omitted_records?: number };
     intention?: string;
     prompts: string[];

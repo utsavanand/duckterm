@@ -1,3 +1,20 @@
+## 2026-11-19 — Long pastes vanished because tmux caps a command at 1000 arguments
+
+Terminal input reaches an agent pane through `tmux send-keys -H`, one hex
+argument per byte. tmux 3.7 added a server-side cap of 1000 arguments per
+command ("command too long"). 0.4.180 started bundling tmux 3.7c in place of the
+user's PATH tmux (3.6b here, no cap), so from then on a paste over ~996 bytes
+was dropped entirely while short typing kept working. The failure only showed up
+as a False return that the websocket path ignores. `send_raw` now sends 512-byte
+chunks.
+
+Bumping a bundled dependency changes behavior for every caller, so read its
+changelog for new limits. When a subprocess takes one argument per item, check
+its argument-count limit, not just the byte size. When probing tmux, use a
+private -L socket: the default socket may be served by a different tmux build
+than the client binary you ran. The regression test pastes 4.6 KB into a real
+pane and compares what arrived byte for byte.
+
 ## 2026-11-19 — Measure the constraint before deleting the content
 
 A layout test failed with the connector editor's controls out of viewport at

@@ -3,7 +3,7 @@ import { api, type AiState, type CheckpointSettings } from "./api";
 import { Button, inputStyle, Modal } from "./ui";
 import "./checkpointSettings.css";
 
-const defaults: CheckpointSettings = { lookback_records: "all", writer_model: "sonnet" };
+const defaults: CheckpointSettings = { lookback_records: "all", writer_model: "sonnet", automatic: false };
 
 // The writer model applies only when Claude Code serves the checkpoint;
 // other backends use their own fast model (backend.complete).
@@ -46,7 +46,7 @@ export function CheckpointSettingsModal({ onClose }: { onClose: () => void }) {
     if (!settings || !valid || sending.current) return;
     sending.current = true; setSaving(true); setSaved(false); setError("");
     try {
-      const value = await api.saveCheckpointSettings({ lookback_records: all ? "all" : count, writer_model: settings.writer_model });
+      const value = await api.saveCheckpointSettings({ lookback_records: all ? "all" : count, writer_model: settings.writer_model, automatic: settings.automatic });
       setSettings(value); setLookback(String(value.lookback_records)); setSaved(true);
     } catch (e) { setError(`Settings save was not confirmed: ${(e as Error).message}. Reload to check the saved values.`); }
     finally { sending.current = false; setSaving(false); }
@@ -57,6 +57,8 @@ export function CheckpointSettingsModal({ onClose }: { onClose: () => void }) {
       {!settings && !error && <p role="status">Loading checkpoint settings…</p>}
       {settings && <form onSubmit={e => { e.preventDefault(); void save(); }}>
         <fieldset disabled={saving}>
+          <label className="rd-checkpoint-automatic"><input type="checkbox" checked={settings.automatic} onChange={e => { setSettings({ ...settings, automatic: e.target.checked }); setSaved(false); }} /> Automatic checkpoints</label>
+          <small>Checkpoints each agent after about 50 new messages, or 15 minutes after it goes quiet; at most two at a time. While off, new messages aren't summarized automatically, and the gap is recorded in the agent's checkpoint history.</small>
           <label><input type="radio" name="checkpoint-lookback" checked={all} onChange={() => { setLookback("all"); setSaved(false); }} /> All unsummarized messages (default)</label>
           <label><input type="radio" name="checkpoint-lookback" checked={!all} onChange={() => { setLookback("100"); setSaved(false); }} /> Only the latest
             <input id="checkpoint-lookback" aria-label="Latest records per checkpoint" style={inputStyle} type="number" min="1" max="1000" step="1" disabled={all} value={all ? "" : lookback} onChange={e => { setLookback(e.target.value); setSaved(false); }} /></label>
