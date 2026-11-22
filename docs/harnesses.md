@@ -176,8 +176,13 @@ timeout)` runs the step's process (locally a subprocess in the project;
 autopilot wraps the same argv in `docker exec` with its proxy env),
 `after_step(run, attempt)` runs after a valid attempt and before its receipt
 is written (autopilot commits and pushes the run branch there, so a receipt
-always means the work is where the next attempt will find it), and `check`
-answers `wait` steps.
+always means the work is where the next attempt will find it), `check`
+answers `wait` steps, and `harness_ready(harness, project, hooks, limits)`
+says why a harness cannot run a step, or None: the host answers for a local
+run (binary on PATH, Claude Code workspace trust, `--codex-trusted`), a
+sandbox executor answers from inside the sandbox, where the harness and its
+trust record actually live. The runner itself checks only that the step's
+skill is installed in the project.
 
 The dashboard's **Skill kits** dialog still only lists kits by folder path and
 shows their contents; the install wizard on top of `plan`/`install` is next.

@@ -319,6 +319,49 @@ def test_missing_input_and_uninstalled_skill_are_refused_before_anything_runs(tm
     assert not (project / runner.RUNS / run.id / "lock").exists()
 
 
+def test_harness_readiness_is_the_executors_answer(tmp_path, monkeypatch):
+    project = _project(tmp_path, FEATURE, "feature")
+    skills_file = project / ".duckterm" / "flows" / "flowkit" / "skills.json"
+    data = json.loads(skills_file.read_text())
+    data["has_hooks"] = True
+    skills_file.write_text(json.dumps(data))
+    monkeypatch.setattr(runner, "_claude_trusts", lambda project: False)
+    # the default executor answers from the host: untrusted folder, hooks → refused
+    fake = Fake({"spec": [(0, {"status": "done", "_files": {"spec.md": "# s"}})]})
+    run = runner.start(
+        project, "flowkit/feature", harness="claude-code", inputs={"topic": "x"}, executor=fake
+    )
+    assert run.state["state"] == "failed"
+    assert "accept the trust dialog" in run.state["failure"]["reason"]
+    assert fake.calls == []
+
+    # an executor that owns the harness (a sandbox) answers for itself
+    class Sandboxed(Fake):
+        def harness_ready(self, harness, project, *, hooks, limits):
+            self.asked = (harness, hooks)
+            return None
+
+    sandboxed = Sandboxed({"spec": [(0, {"status": "done", "_files": {"spec.md": "# s"}})]})
+    run = runner.start(
+        project, "flowkit/feature", harness="claude-code", inputs={"topic": "x"}, executor=sandboxed
+    )
+    assert run.state["state"] == "waiting_gate"
+    assert sandboxed.asked == ("claude-code", True)
+
+    class Unready(Fake):
+        def harness_ready(self, harness, project, *, hooks, limits):
+            return "sandbox sb-1 has no claude binary"
+
+    run = runner.start(
+        project,
+        "flowkit/feature",
+        harness="claude-code",
+        inputs={"topic": "x"},
+        executor=Unready({}),
+    )
+    assert run.state["failure"]["reason"] == "sandbox sb-1 has no claude binary"
+
+
 # ── exec, parallel, wait, next ───────────────────────────────────────────────
 
 

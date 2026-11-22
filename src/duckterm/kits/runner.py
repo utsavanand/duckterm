@@ -123,6 +123,26 @@ class Executor:
     def sleep(self, seconds: float) -> None:
         time.sleep(seconds)
 
+    def harness_ready(
+        self, harness: str, project: Path, *, hooks: bool, limits: Limits
+    ) -> str | None:
+        """Why this harness cannot run a step here, or None when it can. The
+        host answers for a local run; autopilot answers from the sandbox,
+        where the harness and its trust record actually live."""
+        if not adapters.ADAPTERS[harness].installed_here():
+            return f"{harness} is not on PATH"
+        if harness == "codex" and hooks and not limits.codex_trusted:
+            return (
+                "this kit has hooks and Codex only runs project hooks the owner trusted; "
+                "pass --codex-trusted once that is done"
+            )
+        if harness == "claude-code" and hooks and not _claude_trusts(project):
+            return (
+                "this kit has hooks and Claude Code loads project hooks only in a workspace "
+                "the owner trusted: run `claude` once in this folder and accept the trust dialog"
+            )
+        return None
+
 
 def _gh(args: list[str], cwd: Path) -> dict[str, Any] | None:
     try:
@@ -735,7 +755,7 @@ def _harness(
     harness = attempt["harness"]
     skill_name = str(step[kind])
     skill = _skill(run, skill_name)
-    _precheck(run, harness, skill_name, skill, lim)
+    _precheck(run, harness, skill_name, skill, ex, lim)
     outdir = run.attempt_dir(step["id"], attempt["attempt"])
     schema = _schema(skill, kind)
     prompt = _prompt(run, step, skill_name, skill, attempt, outdir, last_error)
@@ -788,28 +808,26 @@ def _harness(
     return res.exit, {"_structured": final, "raw": res.stdout[-2000:]}, res.stderr
 
 
-def _precheck(run: Run, harness: str, skill_name: str, skill: dict[str, Any], lim: Limits) -> None:
+def _precheck(
+    run: Run, harness: str, skill_name: str, skill: dict[str, Any], ex: Executor, lim: Limits
+) -> None:
+    """The skill must be installed in the project (a file check the runner can
+    make anywhere, since the project is what the executor mounts); whether the
+    harness itself is present and trusts the folder is the executor's answer."""
     if harness not in RUNNER_HARNESSES:
         raise RunRefused(f"the runner does not drive {harness} yet (claude-code, codex)")
     a = adapters.ADAPTERS[harness]
-    if not a.installed_here():
-        raise RunRefused(f"{harness} is not on PATH")
     installed = str(skill.get("installed_as") or skill_name)
     if not any((run.project / root / installed / "SKILL.md").is_file() for root in a.skill_roots):
         raise RunRefused(
             f"skill {skill_name!r} is not installed for {harness} in this repository "
             f"(looked under {', '.join(a.skill_roots)})"
         )
-    if harness == "codex" and run.skills.get("has_hooks") and not lim.codex_trusted:
-        raise RunRefused(
-            "this kit has hooks and Codex only runs project hooks the owner trusted; "
-            "pass --codex-trusted once that is done"
-        )
-    if harness == "claude-code" and run.skills.get("has_hooks") and not _claude_trusts(run.project):
-        raise RunRefused(
-            "this kit has hooks and Claude Code loads project hooks only in a workspace the "
-            "owner trusted: run `claude` once in this folder and accept the trust dialog"
-        )
+    reason = ex.harness_ready(
+        harness, run.project, hooks=bool(run.skills.get("has_hooks")), limits=lim
+    )
+    if reason:
+        raise RunRefused(reason)
 
 
 def _claude_trusts(project: Path) -> bool:
