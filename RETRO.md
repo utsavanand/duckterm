@@ -18,6 +18,17 @@ What the test asserts instead: the floor on the product's own context object
 capped at exactly 1.2, so the floor is proved to be a floor and not a wall.
 Both mutations now fail - lowering the floor, which is the security
 regression, and raising it to 1.3, which is the availability one.
+## 2026-11-21 — Synchronize asynchronous tests on observable progress
+
+PR #409's foreground-refresh test assumed twenty task yields completed a failed
+refresh and armed its retry. On a loaded CI worker, the fake clock tick could
+arrive before the retry was waiting, so the test stayed stale. It now waits for
+the retry and polling clocks to report that they are suspended, with bounded
+expectations, before advancing or asserting the result.
+
+The browser job also exhausted its fifteen-minute budget after cold Playwright
+dependencies took six minutes. Account for installation and all edition runs in
+the job budget; a cancelled run is not passing evidence.
 
 ## 2026-11-21 — Check a format against real files before anchoring on it
 
@@ -118,6 +129,19 @@ test builds certificates with the openssl CLI but verifies them through Python's
 ssl, which on this Mac are different implementations (LibreSSL 3.3.6 vs OpenSSL
 3.6.3); a fix has to be run under both CLIs, because CI's is neither of the ones
 you assume. Related: [[green-tests-no-working-feature]].
+
+## 2026-11-16 — Reconcile behavioral guidance against its original evidence
+
+Repeated checkpoint summaries are not independent corrections. Counting them as
+new evidence turns one episode into an apparently well-supported permanent rule.
+Capture now compares original event and annotation references with the existing
+rule catalogue, and proposes a revision, example, or evidence link before adding
+a rule. Episodic observations remain separate from instructions.
+
+A generated-file banner is not evidence that its source and export still agree.
+Compare both before saving, reject stale revisions, and preserve a backup when
+the owner explicitly reconciles external edits. Tests cover both Markdown and
+JSON drift as well as review-before-activation.
 
 ## 2026-11-07 — Folder chat had a message broker its answer path could never reach
 

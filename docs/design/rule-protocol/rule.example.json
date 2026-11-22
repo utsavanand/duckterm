@@ -1,0 +1,41 @@
+{
+  "schema_version": 2,
+  "id": "73351cb0-7fb2-44bf-b3a1-2e8b2d9cb217",
+  "revision": 1,
+  "status": "candidate",
+  "title": "Preserve the test command’s exit status",
+  "instruction": "Run tests and scripts/gate.sh directly. Do not pipe their output through grep, head, or tail. Read the complete result and exit status before reporting a pass.",
+  "explanation": "A pipeline can report the final filter’s exit status and hide a test failure.",
+  "when": "When running tests or the release gate.",
+  "examples": [
+    {
+      "situation": "Run the release gate and inspect its result.",
+      "do": "Run scripts/gate.sh directly, check its exit status, then read /tmp/duckterm-gate.log.",
+      "avoid": "scripts/gate.sh | tail -20",
+      "explanation": "The filtered output can hide failures and the command status may come from tail."
+    }
+  ],
+  "exceptions": [],
+  "category": "Testing hygiene",
+  "scope": {
+    "location": {
+      "kind": "folder",
+      "folder_id": "example-folder-duckterm",
+      "include_descendants": false
+    },
+    "audience": {
+      "kind": "everyone"
+    }
+  },
+  "provenance": {
+    "kind": "import",
+    "references": [
+      {
+        "kind": "document",
+        "ref": "AGENTS.md#shipping"
+      }
+    ],
+    "legacy_id": "no-piped-gates"
+  },
+  "replaces": []
+}
