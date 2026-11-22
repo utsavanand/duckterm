@@ -1,3 +1,12 @@
+## 2026-11-22 — Test checkpoint capture across the actual thread boundary
+
+Background rule capture read HistoryStore from an asyncio worker, violating
+SQLite connection thread affinity. Helper-only tests missed the failure.
+Collect frozen observations on the event-loop thread, then pass that snapshot
+to the worker for model/file work. Keep optimistic save checks and report
+capture failures without logging private observations. Exercise the real
+checkpoint refresh with the flag enabled and verify local pending proposals.
+
 ## 2026-11-21 — Keep review memory separate from shared instructions
 
 A checkpoint must not turn a cloned rule catalogue into permission to generate

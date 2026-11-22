@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+from collections.abc import Sequence
 from dataclasses import asdict, dataclass
 from typing import Any
 
@@ -11,7 +12,7 @@ from duckterm.core.rule_proposals import parse_decision, proposal
 from duckterm.llm.summarizer import summarize
 
 
-@dataclass
+@dataclass(frozen=True)
 class Correction:
     kind: str
     text: str
@@ -29,7 +30,7 @@ def observation_ref(correction: Correction) -> str:
 
 
 def suggest_rules(
-    corrections: list[Correction],
+    corrections: Sequence[Correction],
     current_rules: list[RuleBlock],
     prior_proposals: list[dict[str, Any]] | None = None,
 ) -> list[dict[str, Any]]:

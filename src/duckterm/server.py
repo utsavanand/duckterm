@@ -3699,17 +3699,13 @@ class Server:
             revision = await self.progress_coordinator.refresh(session_key)
             row = self.history.session(session_key)
             if revision and row:
-                await asyncio.to_thread(self._file_digest_candidates, row)
+                await self._refresh_rule_candidates(row)
         except Exception as exc:  # provider/background boundary; retain last good progress
             print(f"[duckterm] progress refresh failed: {type(exc).__name__}", file=sys.stderr)
 
-    def _file_digest_candidates(self, row: dict[str, Any]) -> None:
-        """Reconcile original observations after a checkpoint, never repeated summaries."""
-        import hashlib
-        from dataclasses import asdict
-
+    async def _refresh_rule_candidates(self, row: dict[str, Any]) -> None:
+        """Snapshot SQLite-backed observations on the owning event-loop thread."""
         from duckterm.core import agents_rules
-        from duckterm.core.rule_proposals import merge_proposals
 
         if not (
             self.edition.includes("rule_suggestions")
@@ -3722,12 +3718,21 @@ class Server:
         base = Path(str(directory)).expanduser()
         if not (base / agents_rules.RULES_FILENAME).is_file():
             return
+        corrections = tuple(self._corrections_for_dir(str(base)))
+        if corrections:
+            await asyncio.to_thread(self._file_digest_candidates, base, corrections)
+
+    @staticmethod
+    def _file_digest_candidates(base: Path, corrections: tuple[Correction, ...]) -> None:
+        """Reconcile an immutable snapshot without accessing the history connection."""
+        from dataclasses import asdict
+
+        from duckterm.core import agents_rules
+        from duckterm.core.rule_proposals import merge_proposals
+
         try:
             state = agents_rules.read_catalog(base)
             if state["drift"]:
-                return
-            corrections = self._corrections_for_dir(str(base))
-            if not corrections:
                 return
             fingerprint = hashlib.sha256(
                 json.dumps(
@@ -3748,9 +3753,9 @@ class Server:
                 capture_fingerprint=fingerprint,
                 render=False,
             )
-        except (ValueError, TypeError, OSError):
-            # A failed capture does not affect the checkpoint or last approved rules.
-            return
+        except (ValueError, TypeError, OSError) as exc:
+            # Keep checkpoint/rules intact; log the category without private observations.
+            print(f"[duckterm] rule capture failed: {type(exc).__name__}", file=sys.stderr)
 
     async def _session_timeline(
         self, writer: asyncio.StreamWriter, headers: dict[str, str], key: str, query: str
