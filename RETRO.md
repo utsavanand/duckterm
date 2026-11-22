@@ -1,3 +1,37 @@
+## 2026-11-22 — I verified three suites and called a PR green with five
+
+Removing Railway and Porkbun from connectors.py broke two CI jobs I never ran.
+mypy failed on connector_broker.py calling the deleted porkbun_keys_valid, and
+Playwright failed on three connectors-panel tests written against the old
+panel. I had run pytest, the connector runtime tests and vitest, seen green,
+and reported the PR as ready pending a screenshot review.
+
+Two separate causes, both mine. I did not know web/e2e existed, because I
+searched for the panel's tests where I was already working (web/src) and found
+Connectors.test.tsx, which looked like the answer. And I skipped the broker on
+purpose to avoid conflicting with #432 -- but deleting a function and leaving
+its only caller is not avoiding a conflict, it is shipping a broken build.
+Once NAMES was ("github",) the porkbun and railway branches were unreachable
+by construction, so removing them was part of the same change, not a separate
+one.
+
+Three things to carry forward. Run scripts/gate.sh bare, which runs all five
+suites, rather than assembling my own subset and calling the result green --
+the subset is exactly where the blind spot lives. Pin tool versions before
+drawing conclusions from them: unpinned mypy 1.19.1 and ruff 0.17.6 invented
+six errors and fourteen reformats in files I had never touched, and I reported
+those as main's problem before noticing pyproject pins 1.13.0 and 0.8.4. And
+when deleting a symbol, grep the whole tree for its callers before deciding
+which files are in scope.
+
+One more, about reading evidence: a Playwright failure sent me after a layout
+bug that did not exist. The screenshot showed the submit button below the fold,
+so I changed the panel twice trying to fix it. Measuring the real boxes showed
+the list scrolls correctly and the button is reachable -- the test resized the
+viewport after opening the editor and then demanded the button be in view
+without scrolling, which no user does. I reverted both product changes and
+fixed the test. Reproduce before repairing; a failing assertion names a symptom,
+not a defect.
 ## 2026-11-22 — Test checkpoint capture across the actual thread boundary
 
 Background rule capture read HistoryStore from an asyncio worker, violating

@@ -159,6 +159,11 @@ test("the connect flow and its editor fit the sidebar", async ({ page }, testInf
         row.getByLabel("GitHub personal access token"),
         row.getByRole("button", { name: "Verify and share" }),
       ]) {
+        // Horizontal fit is the subject. In the stacked layout below 1100px the
+        // pane is a short grid row, so the editor is taller than it and the
+        // submit button sits below the fold until the list is scrolled -- which
+        // is the panel working, not a defect. Scroll first, then measure.
+        await control.scrollIntoViewIfNeeded();
         await expect(control).toBeInViewport();
         const box = await control.boundingBox();
         expect(box!.x).toBeGreaterThanOrEqual(bounds!.x);
