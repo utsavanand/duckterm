@@ -1,3 +1,19 @@
+## 2026-11-21 — Check a format against real files before anchoring on it
+
+#414 skipped an oversized Codex line when `"type":"compacted"` appeared anywhere
+in its first 512 bytes, so a nested `{"type":"compacted"}` inside a message
+would also be skipped. Security suggested matching the leading
+`{"timestamp":…,"type":…}` header exactly. Before writing that, I counted the
+headers in every Codex history on this Mac: 589 of the 1,046 compaction lines
+used `timestamp,type`, but 457 put an `ordinal` between the two. The exact
+anchor would have failed those 457 with 413 and made ui-dev's history unreadable
+again, the bug #414 fixed. The match now accepts any top-level scalar fields
+before `type`, which covers all 1,046 lines and still refuses a nested type.
+
+Lesson: when tightening a parser against a third-party format, measure the real
+population first. A reviewer's example of the format is one sample, not the
+spec.
+
 ## 2026-11-21 — A test that builds its own config tests the config, not the product
 
 The broker's mutual-TLS tests looked like proof that the server demands client
