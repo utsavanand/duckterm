@@ -209,13 +209,23 @@ class Broker:
                 await writer.wait_closed()
 
 
-async def serve(config: Path) -> None:
-    settings = read_config(config)
+def server_context(settings: dict[str, Any]) -> ssl.SSLContext:
+    """The TLS context the broker actually listens with.
+
+    Tests build their server from this rather than assembling an equivalent
+    one, so that weakening the real policy here fails them.
+    """
     tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     tls.minimum_version = ssl.TLSVersion.TLSv1_2
     tls.load_cert_chain(settings["certificate"], settings["private_key"])
     tls.load_verify_locations(settings["client_ca"])
     tls.verify_mode = ssl.CERT_REQUIRED
+    return tls
+
+
+async def serve(config: Path) -> None:
+    settings = read_config(config)
+    tls = server_context(settings)
     if settings.get("mode") == "local":
         from duckterm import connector_client
 

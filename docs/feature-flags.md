@@ -26,6 +26,7 @@ do not keep anyone out.
 | Flag | What it gates | Since | Ships when |
 |------|---------------|-------|------------|
 | `skill_kits` | Settings → Skill kits (add a kit by folder, view its contents, remove it), the `/harnesses` routes, the session panel's "Skill kit" row, and the `duckterm kit` CLI (validate, plan, install, verify, uninstall). Being built against the Skill Kit Specification (draft 9). | 2026-11-16 | The install wizard is built on `plan`/`install` and the owner has run a kit end to end. Owner's call. |
+| `background_rule_suggestions` | Reconcile original observations after checkpoints in Code/Full. Off by default; pending proposals and capture fingerprints stay in DuckTerm home under `rule-reviews/`, keyed by canonical directory path. The manual Suggest button is independent. | 2026-11-21 | Security and QA approve background capture. Owner’s call. |
 
 ## Graduated
 

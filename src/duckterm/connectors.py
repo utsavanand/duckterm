@@ -114,6 +114,40 @@ def _codex_registered(name: str, *, home: Path | None = None) -> bool:
     return mcp_install.managed_installed(name, "codex", home=home)
 
 
+def available_to_agents(name: str, *, home: Path | None = None) -> bool:
+    """Whether every harness the owner chose can currently reach this connector.
+
+    The policy flag is what Disable writes; the harness entries are what an
+    agent resolves the connector through. Both must hold for the panel to claim
+    the connector is available, because a missing entry means that agent cannot
+    reach it however the flag reads.
+
+    This is the panel's predicate, not run()'s. run() must not gate on the
+    harness entries, for a reason that does not depend on how it was invoked:
+    it cannot tell which harness is calling it, so requiring all chosen
+    harnesses would let one harness's missing entry refuse a different harness
+    that is correctly registered. The policy flag alone is the right gate there,
+    and disable() sets it.
+
+    Do not reach for "the entry must exist because the entry is what invokes
+    it": `connector-run <name>` is an ordinary CLI subcommand, so it also runs
+    from a hand-typed command or a stale entry a harness still has cached.
+
+    Fail-closed for display: a missing or unparseable harness config makes
+    managed_installed() return False, so a damaged file reads as unavailable
+    rather than raising inside status().
+    """
+    if not policy(name, home=home).get("enabled"):
+        return False
+    registered = {
+        "claude-code": _claude_registered(name, home=home),
+        "codex": _codex_registered(name, home=home),
+    }
+    # Only the chosen harnesses must carry an entry; a deselected one is meant
+    # to be absent, so requiring all of them would read as disabled.
+    return all(registered[h] for h in harness_choice(name, home=home))
+
+
 def policy(name: str, *, home: Path | None = None) -> dict[str, object]:
     path = _policy_path(name)
     if path.exists():
@@ -482,7 +516,7 @@ def status(name: str, *, home: Path | None = None) -> dict[str, object]:
         "harnesses_present": {h: harness_present(h) for h in HARNESSES},
         # Only the chosen harnesses must carry an entry; a deselected one is
         # meant to be absent, so requiring all of them would read as disabled.
-        "enabled": bool(current.get("enabled")) and all(installed[h] for h in chosen),
+        "enabled": available_to_agents(name, home=home),
         "ready": ready,
         "detail": detail,
         "managed": bool(os.environ.get("DUCKTERM_HOSTED")),

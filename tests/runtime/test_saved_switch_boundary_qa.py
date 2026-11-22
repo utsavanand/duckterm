@@ -3,13 +3,13 @@
 import asyncio
 
 import pytest
-from tests.runtime import test_restart_interrupt_switch as fixtures
+from tests.runtime import test_restart_harness_switch as fixtures
 from tests.runtime.test_restarts import drain
 
 from duckterm import harness_switch
 
 rig = fixtures.rig
-checkpoint = fixtures.checkpoint
+offline = fixtures.offline
 
 
 @pytest.mark.parametrize("changed", ["notes", "transcript", "policy"])
@@ -44,7 +44,7 @@ def test_change_during_final_prompt_probe_never_stops_source(rig, monkeypatch, c
     monkeypatch.setattr(server.restarts, "draft_free", draft_free)
 
     async def run():
-        await server.restarts.request("a", "", "claude-code", interrupt=True)
+        await fixtures.switch(server, "", "claude-code", interrupt=True)
         await drain(server)
         assert mutated
         assert not calls, "changed handoff must leave the source process intact"
@@ -95,7 +95,7 @@ def test_second_prompt_probe_is_fenced_without_another_await(rig, monkeypatch, c
     monkeypatch.setattr(server.restarts, "draft_free", draft_free)
 
     async def run():
-        await server.restarts.request("a", "", "claude-code", interrupt=True)
+        await fixtures.switch(server, "", "claude-code", interrupt=True)
         await drain(server)
         assert mutated and validations == 2
         assert not calls
@@ -119,7 +119,7 @@ def test_draft_changed_during_added_source_validation_is_preserved(rig, monkeypa
     monkeypatch.setattr(harness_switch, "validate", validate)
 
     async def run():
-        await server.restarts.request("a", "", "claude-code", interrupt=True)
+        await fixtures.switch(server, "", "claude-code", interrupt=True)
         await drain(server)
         assert validations == 2
         assert not calls

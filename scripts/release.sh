@@ -22,7 +22,7 @@ esac
 
 PY="${PYTHON:-.venv/bin/python}"
 RELEASE_COMMIT="$("$PY" scripts/release_preflight.py)"
-VERSION="$(PYTHONPATH=src "$PY" -c 'import duckterm; print(duckterm.__version__)')"
+VERSION="$(sed -n 's/^__version__ = "\(.*\)"/\1/p' src/duckterm/__init__.py)"
 
 # A PEP 440 pre-release has a/b/rc; a final release has none. Match to channel.
 if echo "$VERSION" | grep -Eq '(a|b|rc)[0-9]+$'; then IS_PRE=1; else IS_PRE=0; fi
@@ -41,6 +41,22 @@ if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
   exit 1
 fi
 
+# The latest release is also the stable native update endpoint. Never publish
+# a wheel-only latest release that drops all three edition feeds.
+MAC_ASSETS=()
+if [ "$CHANNEL" = prod ]; then
+  : "${DUCKTERM_MAC_RELEASE_DIR:?Supply the directory containing all three final signed/notarized Mac ZIPs}"
+  : "${DUCKTERM_SPARKLE_SIGN_TOOL:?Supply the absolute path to pinned Sparkle sign_update}"
+  MAC_RELEASE_DIR="$(cd "$DUCKTERM_MAC_RELEASE_DIR" && pwd)"
+  FEED_DIR="$(mktemp -d)/feeds"
+  "$PY" scripts/build_update_feeds.py --archives "$MAC_RELEASE_DIR" --version "$VERSION" \
+    --output "$FEED_DIR" --sign-tool "$DUCKTERM_SPARKLE_SIGN_TOOL" --account duckterm-updates
+  MAC_ASSETS=("$MAC_RELEASE_DIR/DuckTerm-Lite-$VERSION-macos-arm64.zip"
+              "$MAC_RELEASE_DIR/DuckTerm-Code-$VERSION-macos-arm64.zip"
+              "$MAC_RELEASE_DIR/DuckTerm-Full-$VERSION-macos-arm64.zip"
+              "$FEED_DIR/appcast-lite-arm64.xml" "$FEED_DIR/appcast-code-arm64.xml" "$FEED_DIR/appcast-full-arm64.xml")
+fi
+
 echo "==> building wheel for $VERSION ($CHANNEL)"
 scripts/build_package.sh
 
@@ -57,7 +73,7 @@ TITLE="RubberTerm $VERSION"
 [ "$CHANNEL" = beta ] && TITLE="$TITLE (beta)"
 
 echo "==> creating GitHub release $TAG"
-gh release create "$TAG" "$WHEEL" dist/duckterm-*.tar.gz \
+gh release create "$TAG" "$PWD/$WHEEL" "$PWD"/dist/duckterm-*.tar.gz "${MAC_ASSETS[@]}" \
   --title "$TITLE" \
   $PRERELEASE_FLAG \
   --notes "Install:

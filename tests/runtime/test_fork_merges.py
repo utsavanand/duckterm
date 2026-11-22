@@ -25,16 +25,27 @@ def rig(tmp_path, monkeypatch):
                 "event_type": "SessionStart",
                 "test": True,
                 "runtime": "claude-code",
+                "session_id": key + "-native",
                 "parent_session_key": "parent" if key == "child" else None,
             }
         )
         history.set_meta(key, name=key, group="work")
         enroll(history, key)
+        history.record(
+            {
+                "_id": key + "-stop",
+                "_ts": 2,
+                "session_key": key,
+                "session_id": key + "-native",
+                "event_type": "Stop",
+                "hook_event": True,
+            }
+        )
     history._conn.execute("UPDATE sessions SET launched = 1")
     history._conn.commit()
     server = Server(history=history)
     monkeypatch.setattr(server, "_maybe_refresh_progress", lambda key: None)
-    supervisor = SimpleNamespace(running=True)
+    supervisor = SimpleNamespace(running=True, last_owner_input_ms=0, visible_screen=lambda: "❯ ")
     monkeypatch.setattr(server.orchestrator, "get", lambda key: supervisor)
 
     async def stop(key):
@@ -69,7 +80,8 @@ def test_exact_text_idempotency_close_and_late_events(rig):
     note = h._conn.execute(
         "SELECT question FROM session_questions WHERE sender = 'owner'"
     ).fetchall()
-    assert len(note) == 1 and note[0][0] == record["summary"]
+    assert len(note) == 1 and note[0][0].startswith(record["summary"] + "\n\n")
+    assert "SOURCE MEMORY: child" in note[0][0]
     assert send(rig, keep=True)[0] == 409
     for event in ("SessionStart", "PostToolUse", "SessionEnd"):
         h.record({"_id": event, "_ts": 10, "session_key": "child", "event_type": event})
@@ -197,3 +209,73 @@ def test_stop_failure_retries_same_note_and_blocks_resume(rig, monkeypatch):
     monkeypatch.setattr(server.orchestrator, "stop", stop)
     assert send(rig)[0] == 200
     assert h.session("child")["state"] == "merged"
+
+
+def test_pointer_overhead_is_validated_before_saving_merge_intent(rig):
+    h, _, _ = rig
+    assert send(rig, summary="x" * 16384)[0] == 413
+    assert h._conn.execute("SELECT count(*) FROM fork_merges").fetchone()[0] == 0
+    assert h._conn.execute("SELECT count(*) FROM session_questions").fetchone()[0] == 0
+
+
+def test_fork_close_waits_for_a_real_turn_end(rig):
+    h, _, _ = rig
+    h.record(
+        {
+            "_id": "new-turn",
+            "_ts": 3,
+            "session_key": "child",
+            "session_id": "child-native",
+            "event_type": "UserPromptSubmit",
+            "hook_event": True,
+        }
+    )
+    code, result = send(rig)
+    assert code == 200 and result["closeState"] == "waiting_for_turn"
+    assert h.session("child")["state"] != "merged"
+
+
+def test_old_pending_message_recovers_without_rewriting_body(rig):
+    h, server, _ = rig
+    unique, summary = "legacy", "Original legacy handoff"
+    key = "merge:child:" + unique
+    h._conn.execute(
+        "INSERT INTO fork_merges (id,child,parent,summary,keep_open,created_at) "
+        "VALUES (?,'child','parent',?,1,1)",
+        (key, summary),
+    )
+    h._conn.commit()
+    mid = h.session_api.owner_message(
+        "parent", summary, request_key=key, priority=True, merged_from="child"
+    )
+    code, result = send(rig, unique=unique, summary=summary, keep=True)
+    assert code == 200 and result["id"] == key
+    assert (
+        h._conn.execute("SELECT question FROM session_questions WHERE id=?", (mid,)).fetchone()[0]
+        == summary
+    )
+    assert h._conn.execute("SELECT count(*) FROM session_questions").fetchone()[0] == 1
+
+
+def test_fork_revision_reference_is_bound_to_preview_not_latest_at_send(rig):
+    h, server, auth = rig
+    h.set_progress("child", json.dumps({"revision_id": "reviewed", "summary": "First summary"}), 3)
+    preview = dispatch(server, "GET", "/sessions/child/merge", auth)[1]
+    assert preview["memory"]["summaryRevision"] == "reviewed"
+    body = {
+        "summary": preview["summary"],
+        "summaryRevision": "reviewed",
+        "keepOpen": True,
+        "requestKey": "versioned",
+    }
+    h.set_progress("child", json.dumps({"revision_id": "newer", "summary": "Later summary"}), 4)
+    code, _ = dispatch(server, "POST", "/sessions/child/merge", auth, json.dumps(body).encode())
+    assert code == 409
+    assert h._conn.execute("SELECT count(*) FROM fork_merges").fetchone()[0] == 0
+    body["summaryRevision"] = "newer"
+    body["summary"] = "Reviewed later summary"
+    code, receipt = dispatch(
+        server, "POST", "/sessions/child/merge", auth, json.dumps(body).encode()
+    )
+    assert code == 200 and receipt["summaryRevision"] == "newer"
+    assert send(rig, unique="legacy-text", keep=True)[1]["summaryRevision"] is None

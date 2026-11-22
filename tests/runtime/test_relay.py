@@ -213,10 +213,10 @@ def test_swallowed_enter_is_pressed_again_until_the_agent_takes_the_prompt(
     slow = SlowTerminal(history, submits_on=2)
     original_submit = server._submit_prompt
 
-    async def submit(key, text):
+    async def submit(key, text, **kw):
         # Real hooks are ingested on the server loop, not the terminal writer.
         slow.loop = asyncio.get_running_loop()
-        return await original_submit(key, text)
+        return await original_submit(key, text, **kw)
 
     monkeypatch.setattr(server, "_submit_prompt", submit)
     monkeypatch.setattr(server.orchestrator, "get", lambda key: slow)
