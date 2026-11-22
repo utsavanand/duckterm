@@ -497,9 +497,9 @@ def test_forget_during_identity_refresh_is_not_undone(
     # Forget writes enabled and source before the refresh reads them again.
     # Only the identity is the refresh's own payload, so this is the assertion
     # that fails when the compare-and-set guard is removed.
-    assert after["identity"] is None, (
-        "identity refresh wrote an identity onto a forgotten connector"
-    )
+    # Short enough for one line, which keeps black and ruff format from
+    # disagreeing about how to wrap an assert with a message.
+    assert after["identity"] is None, "identity refresh wrote an identity"
     assert connectors.load_secret("github") is None
 
 
