@@ -124,7 +124,11 @@ it is and says so. Every path an install or uninstall touches, from the
 record or from the adapters, is refused unless it is a path the adapters write
 (never `.git/`), relative, with no symlink anywhere on the way (a committed
 `.claude -> .git` would otherwise carry an allowed name into `.git/`), and
-still inside the project. Component names are one path segment (`[a-z0-9_-]`),
+still inside the project. Links are refused, not followed, even when they
+resolve inside the project: a project whose agent folder is a link (say
+`.claude/skills -> ../shared`) cannot use skill kits until the link is replaced
+with a real folder (owner decision, 2026-11-21). Component names are one path
+segment (`[a-z0-9_-]`),
 and a kit's own sources must be real files under the kit root; a symlink
 anywhere on the way fails `validate`. Uninstall prunes only the directories
 the install created.
