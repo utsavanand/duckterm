@@ -112,7 +112,6 @@ function NeedsYouList() {
   const notes = relay.notes.filter(n => n.status === "open" && n.urgency !== "offer").sort((a, b) => a.created_at - b.created_at);
   if (!notes.length) return <p className="rd-home-empty">Nothing needs you.</p>;
   return <>
-    <p className="rd-home-count">{notes.length}</p>
     <ul className="rd-home-rows">{notes.slice(0, 8).map(note => <li key={note.id}>
       <span className="rd-home-dot wait" aria-hidden="true" />
       <span className="rd-home-row-main">
@@ -188,11 +187,11 @@ function SpendWidget() {
   }
   const days = weekDays(data).map(day => byDay.get(day) ?? 0), week = days.reduce((n, v) => n + v, 0);
   return <button className="rd-home-usage" onClick={() => onAnalytics("tokens")} aria-label="Open spend analytics"
-    title="Estimated at API list prices per token, including for subscription use. Codex models use GPT-5 rates.">
+    title={`${[...byAgent].map(([name, value]) => `${name} ${money(value)}`).join(" · ")} over 7 days. Estimated at API list prices per token, including for subscription use; Codex models use GPT-5 rates.`}>
     <span className="rd-home-kpi">{money(days.at(-1) ?? 0)}<small>today</small></span>
     <Sparkline values={days} />
     <Split parts={[{ name: "Teams", value: week }, { name: "Autopilot", value: 0 }]} format={money} />
-    <span className="rd-home-legend">7 days <b>{money(week)}</b>{[...byAgent].map(([name, value]) => <span key={name}>{name} <b>{money(value)}</b></span>)}</span>
+    <span className="rd-home-legend">7 days <b>{money(week)}</b></span>
   </button>;
 }
 

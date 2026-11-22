@@ -68,7 +68,7 @@ export function HomeChat({ sessions, onOpenTerminal }: { sessions: ChatSession[]
     <form className="rd-home-compose" onSubmit={event => { event.preventDefault(); void ask(q); }}>
       <textarea aria-label="Ask DuckTerm" rows={1} value={q} placeholder="Ask about your teams, the factory, PRs or spend…" onChange={event => setQ(event.target.value)}
         onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void ask(q); } }} />
-      <button className="rd-btn rd-btn-primary rd-btn-sm" disabled={pending !== null || !q.trim()}>Ask</button>
+      <button className="rd-btn rd-btn-primary rd-btn-sm" disabled={pending !== null}>Ask</button>
     </form>
   </div>;
 }

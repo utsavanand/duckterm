@@ -1,4 +1,7 @@
-.rd-home-layer { position:absolute; inset:0; z-index:6; overflow-y:auto; background:var(--bg-soft) }
+/* Home's own page and chip shades: in the app's dark theme --bg-soft equals
+   --card, which flattens cards into the page. These match the mockup. */
+.rd-home-layer { --home-page:var(--bg-soft); --home-chip:#f0f0f2; position:absolute; inset:0; z-index:6; overflow-y:auto; background:var(--home-page) }
+:root[data-theme="dark"] .rd-home-layer { --home-page:var(--bg); --home-chip:#1b1f27 }
 .rd-home { max-width:1280px; margin:0 auto; padding:14px 20px 40px }
 .rd-home-bar { display:flex; align-items:center; gap:8px; margin-bottom:12px; position:relative }
 .rd-home-bar h1 { font-size:0.9375rem; font-weight:600; margin:0 }
@@ -43,8 +46,8 @@ button.rd-home-nav { cursor:pointer }
 .rd-home-nav-title span { color:var(--text-soft); font-size:0.875rem; font-weight:400 }
 .rd-home-nav-sub { color:var(--text-soft); font-size:0.78rem }
 .rd-home-chips { display:flex; flex-wrap:wrap; gap:6px; margin-top:auto; padding-top:6px }
-.rd-home-chip { font-size:0.6875rem; padding:1px 8px; border-radius:99px; background:var(--bg-soft); color:var(--text-soft); white-space:nowrap }
-.rd-home-chip.wait { background:var(--amber-chip); color:var(--amber-text) }
+.rd-home-chip { font-size:0.6875rem; padding:1px 8px; border-radius:99px; border:1px solid transparent; background:var(--home-chip); color:var(--text-soft); white-space:nowrap }
+.rd-home-chip.wait { background:var(--amber-bg); border-color:var(--amber-border); color:var(--wait) }
 .rd-home-chip.busy { color:var(--busy) }
 
 .rd-home-chat { height:100%; display:flex; flex-direction:column; gap:10px; min-height:0 }
@@ -57,8 +60,8 @@ button.rd-home-nav { cursor:pointer }
 .rd-home-log { flex:1; min-height:0; overflow:auto; display:flex; flex-direction:column; gap:14px; padding:2px 2px 6px }
 .rd-home-chat-intro { color:var(--text-soft); font-size:0.84rem; margin:0 }
 .rd-home-exchange { display:flex; flex-direction:column; gap:8px }
-.rd-home-q { align-self:flex-end; max-width:85%; background:var(--bg-soft); padding:7px 12px; border-radius:12px 12px 2px 12px; font-size:0.84rem; white-space:pre-wrap }
-.rd-home-a { font-size:0.84rem }
+.rd-home-q { align-self:flex-end; max-width:85%; background:var(--home-chip); padding:7px 12px; border-radius:12px 12px 2px 12px; font-size:0.84rem; white-space:pre-wrap }
+.rd-home-a.rd-msg-text { font-size:0.84rem; line-height:1.55 }
 .rd-home-a > :first-child { margin-top:0 }
 .rd-home-cite { display:inline-flex; align-items:center; gap:4px; border:1px solid var(--border); border-radius:6px; background:none; padding:0 6px; margin:0 1px; font:inherit; font-size:0.78rem; color:var(--text); cursor:pointer; white-space:nowrap }
 .rd-home-cite::before { content:""; width:6px; height:6px; border-radius:50%; background:var(--wait) }
@@ -68,10 +71,10 @@ button.rd-home-nav { cursor:pointer }
 .rd-home-suggest button { border:1px dashed var(--border-strong); background:none; border-radius:8px; font:inherit; font-size:0.75rem; padding:3px 10px; color:var(--text-soft); cursor:pointer }
 .rd-home-suggest button:hover:not(:disabled) { color:var(--text); border-style:solid }
 .rd-home-compose { display:flex; gap:8px; align-items:flex-end; border:1px solid var(--border-strong); border-radius:12px; padding:7px 7px 7px 12px; background:var(--card) }
+.rd-home-compose .rd-btn-primary:disabled { opacity:.85 }
 .rd-home-compose textarea { flex:1; border:0; background:none; resize:none; outline:none; font:inherit; font-size:0.875rem; color:var(--text); min-height:22px; max-height:90px }
 .rd-home-compose:focus-within { border-color:var(--brand-green) }
 
-.rd-home-count { font-size:1.5rem; font-weight:500; color:var(--amber-text); margin:0 0 4px }
 .rd-home-row-link { border:0; background:none; padding:0; font:inherit; color:var(--text); text-align:left; cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
 .rd-home-row-link:hover { text-decoration:underline }
 
@@ -80,7 +83,7 @@ button.rd-home-nav { cursor:pointer }
 .rd-home-kpi small { font-size:0.75rem; color:var(--text-soft); font-weight:400; margin-left:6px }
 .rd-home-spark { width:100%; height:46px; display:block }
 .rd-home-spark polyline { fill:none; stroke:var(--brand-green); stroke-width:2; vector-effect:non-scaling-stroke }
-.rd-home-split { display:flex; height:8px; border-radius:4px; overflow:hidden; background:var(--bg-soft) }
+.rd-home-split { display:flex; height:8px; border-radius:4px; overflow:hidden; background:var(--home-chip) }
 .rd-home-split i { display:block }
 .rd-home-legend { display:flex; flex-wrap:wrap; gap:4px 14px; font-size:0.72rem; color:var(--text-soft) }
 .rd-home-legend b { color:var(--text); font-weight:500 }

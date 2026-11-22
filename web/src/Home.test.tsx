@@ -147,6 +147,6 @@ it("estimates spend at API list prices: today, the week, and each harness", asyn
   expect(spend).toHaveTextContent("$0.05today");
   expect(spend).toHaveTextContent("Teams $0.07");
   expect(spend).toHaveTextContent("Autopilot $0.00");
-  expect(spend).toHaveTextContent("Claude Code $0.06");
-  expect(spend).toHaveTextContent("Codex $0.01");
+  expect(spend).toHaveTextContent("7 days $0.07");
+  expect(spend).toHaveAttribute("title", expect.stringMatching(/^Claude Code \$0\.06 · Codex \$0\.01 over 7 days/));
 });
