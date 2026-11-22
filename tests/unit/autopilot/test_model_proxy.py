@@ -219,3 +219,49 @@ def test_unreachable_upstream_is_502_and_charges_nothing(tmp_path: Path) -> None
     finally:
         server.shutdown()
     assert proxy.run(token).used == 0
+
+
+def test_control_api_mints_reports_and_revokes_run_tokens(setup: Any) -> None:
+    proxy, port, seen = setup
+    control = proxy.control_server("127.0.0.1", 0, "s3cret")
+    serve(control)
+    cport = control.server_address[1]
+
+    def ctl(
+        method: str, path: str, body: dict[str, Any] | None = None, secret: str = "s3cret"
+    ) -> tuple[int, Any]:
+        conn = http.client.HTTPConnection("127.0.0.1", cport, timeout=10)
+        conn.request(
+            method,
+            path,
+            body=json.dumps(body) if body else None,
+            headers={"authorization": f"Bearer {secret}"},
+        )
+        resp = conn.getresponse()
+        raw = resp.read()
+        conn.close()
+        return resp.status, json.loads(raw) if raw else None
+
+    try:
+        assert (
+            ctl("POST", "/runs", {"run_id": "run-9", "budget": 100_000, "ttl": 60}, secret="guess")[
+                0
+            ]
+            == 401
+        )
+        status, minted = ctl("POST", "/runs", {"run_id": "run-9", "budget": 100_000, "ttl": 60})
+        assert status == 201
+        token = minted["token"]
+        assert call(port, "/v1/messages", {"x-api-key": token})[0] == 200
+        status, state = ctl("GET", f"/runs/{token}")
+        assert (status, state["run_id"], state["used"], state["refusal"]) == (
+            200,
+            "run-9",
+            3800,
+            None,
+        )
+        assert ctl("DELETE", f"/runs/{token}")[0] == 204
+        assert call(port, "/v1/messages", {"x-api-key": token})[0] == 403
+        assert ctl("GET", f"/runs/{token}")[0] == 404
+    finally:
+        control.shutdown()

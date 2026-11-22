@@ -10,8 +10,11 @@ with backoff, so a run refused with either hangs until its step timeout; on
 403 it makes one attempt and exits 1 (autopilot auth probe, 2026-11-19).
 """
 
+import argparse
+import hmac
 import http.client
 import json
+import os
 import secrets
 import threading
 import time
@@ -233,6 +236,20 @@ class ModelProxy:
         server.daemon_threads = True
         return server
 
+    def control_server(self, host: str, port: int, secret: str) -> ThreadingHTTPServer:
+        """Where the run host mints and revokes run tokens. Sandboxes share a
+        network with the proxy, so this is guarded by a secret they never see."""
+        proxy = self
+
+        class Handler(_ControlHandler):
+            pass
+
+        Handler.proxy = proxy
+        Handler.secret = secret
+        server = ThreadingHTTPServer((host, port), Handler)
+        server.daemon_threads = True
+        return server
+
 
 class _Handler(BaseHTTPRequestHandler):
     proxy: ModelProxy
@@ -321,6 +338,90 @@ class _Handler(BaseHTTPRequestHandler):
         pass
 
 
+class _ControlHandler(BaseHTTPRequestHandler):
+    proxy: ModelProxy
+    secret: str
+
+    def _reply(self, status: int, value: dict[str, Any] | None = None) -> None:
+        body = json.dumps(value).encode() if value is not None else b""
+        self.send_response(status)
+        self.send_header("content-type", "application/json")
+        self.send_header("content-length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _authorized(self) -> bool:
+        given = self.headers.get("authorization", "").removeprefix("Bearer ")
+        if hmac.compare_digest(given.encode(), self.secret.encode()):
+            return True
+        self._reply(401, {"error": "control secret required"})
+        return False
+
+    def do_POST(self) -> None:
+        if not self._authorized():
+            return
+        if self.path != "/runs":
+            return self._reply(404, {"error": "not found"})
+        try:
+            req = json.loads(self.rfile.read(int(self.headers.get("content-length") or 0)))
+            token = self.proxy.issue(
+                str(req["run_id"]), budget=int(req["budget"]), ttl=float(req["ttl"])
+            )
+        except (ValueError, KeyError, TypeError):
+            return self._reply(400, {"error": "need run_id, budget and ttl"})
+        self._reply(201, {"token": token})
+
+    def do_GET(self) -> None:
+        if not self._authorized():
+            return
+        run = self.proxy.run(self.path.removeprefix("/runs/"))
+        if run is None:
+            return self._reply(404, {"error": "no such run token"})
+        self._reply(
+            200,
+            {
+                "run_id": run.run_id,
+                "budget": run.budget,
+                "used": run.used,
+                "expires": run.expires,
+                "refusal": run.refusal,
+            },
+        )
+
+    def do_DELETE(self) -> None:
+        if not self._authorized():
+            return
+        self.proxy.revoke(self.path.removeprefix("/runs/"))
+        self._reply(204)
+
+    def log_message(self, *args: Any) -> None:
+        pass
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Autopilot model proxy")
+    parser.add_argument("--listen", default="0.0.0.0:8080")
+    parser.add_argument("--control", default="0.0.0.0:8081")
+    parser.add_argument("--log", default="/var/log/duckterm/model-calls.jsonl")
+    args = parser.parse_args()
+    proxy = ModelProxy(
+        anthropic_key=os.environ.get("ANTHROPIC_API_KEY"),
+        openai_key=os.environ.get("OPENAI_API_KEY"),
+        log_path=Path(args.log),
+        anthropic_url=os.environ.get("DUCKTERM_ANTHROPIC_URL", ANTHROPIC),
+        openai_url=os.environ.get("DUCKTERM_OPENAI_URL", OPENAI),
+    )
+    host, port = args.control.rsplit(":", 1)
+    control = proxy.control_server(host, int(port), os.environ["DUCKTERM_PROXY_CONTROL_SECRET"])
+    threading.Thread(target=control.serve_forever, daemon=True).start()
+    host, port = args.listen.rsplit(":", 1)
+    proxy.server(host, int(port)).serve_forever()
+
+
 def _chunks(resp: http.client.HTTPResponse) -> Iterator[bytes]:
     while chunk := resp.read1(65536):
         yield chunk
+
+
+if __name__ == "__main__":
+    main()
