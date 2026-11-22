@@ -112,6 +112,7 @@ class Gateway:
         anthropic_key: str | None,
         openai_key: str | None,
         upstreams: dict[str, str] | None = None,
+        anthropic_oauth_token: str | None = None,
     ) -> None:
         """Start the gateway unless it is running. `upstreams` overrides the
         model API base URLs (DUCKTERM_ANTHROPIC_URL / DUCKTERM_OPENAI_URL)."""
@@ -127,6 +128,8 @@ class Gateway:
             env["ANTHROPIC_API_KEY"] = anthropic_key
         if openai_key:
             env["OPENAI_API_KEY"] = openai_key
+        if anthropic_oauth_token:
+            env["CLAUDE_CODE_OAUTH_TOKEN"] = anthropic_oauth_token
         env.update(upstreams or {})
         args = ["run", "-d", "--name", self.name, "--restart", "unless-stopped",
                 "-p", f"127.0.0.1:{self.control_port}:8081",

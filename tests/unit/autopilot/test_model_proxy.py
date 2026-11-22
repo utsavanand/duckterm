@@ -265,3 +265,29 @@ def test_control_api_mints_reports_and_revokes_run_tokens(setup: Any) -> None:
         assert ctl("GET", f"/runs/{token}")[0] == 404
     finally:
         control.shutdown()
+
+
+def test_subscription_token_is_sent_as_oauth_bearer_with_the_beta_header(tmp_path: Path) -> None:
+    seen: list[dict[str, Any]] = []
+    upstream = ThreadingHTTPServer(("127.0.0.1", 0), type("H", (Upstream,), {"seen": seen}))
+    serve(upstream)
+    proxy = ModelProxy(
+        anthropic_key=None,
+        openai_key=None,
+        log_path=tmp_path / "calls.jsonl",
+        anthropic_url=f"http://127.0.0.1:{upstream.server_address[1]}",
+        anthropic_oauth_token="sk-ant-oat-SUBSCRIPTION",
+    )
+    server = proxy.server("127.0.0.1", 0)
+    serve(server)
+    token = proxy.issue("run-1", budget=100_000, ttl=60)
+    try:
+        headers = {"x-api-key": token, "anthropic-beta": "fine-grained-tool-streaming-2025-05-14"}
+        assert call(server.server_address[1], "/v1/messages", headers)[0] == 200
+    finally:
+        server.shutdown()
+        upstream.shutdown()
+    sent = seen[0]["headers"]
+    assert sent["authorization"] == "Bearer sk-ant-oat-SUBSCRIPTION"
+    assert "x-api-key" not in sent
+    assert sent["anthropic-beta"] == "fine-grained-tool-streaming-2025-05-14,oauth-2025-04-20"

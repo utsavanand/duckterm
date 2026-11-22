@@ -26,6 +26,9 @@ from typing import Any
 from urllib.parse import urlsplit
 
 ANTHROPIC = "https://api.anthropic.com"
+# Sent with a Claude subscription token (`claude setup-token`) in place of an
+# API key; the API refuses OAuth bearer tokens without it.
+OAUTH_BETA = "oauth-2025-04-20"
 OPENAI = "https://api.openai.com"
 UPSTREAM_TIMEOUT = 600
 # Cache reads cost a tenth of uncached input at both providers. Charging them
@@ -164,8 +167,13 @@ class ModelProxy:
         log_path: Path,
         anthropic_url: str = ANTHROPIC,
         openai_url: str = OPENAI,
+        anthropic_oauth_token: str | None = None,
     ) -> None:
+        """`anthropic_oauth_token` is a Claude subscription token from `claude
+        setup-token`, used when there is no API key. Like a key, it stays in
+        the proxy: the sandbox only ever holds its run token."""
         self._keys = {"anthropic": anthropic_key, "openai": openai_key}
+        self._oauth = anthropic_oauth_token
         self._upstreams = {"anthropic": urlsplit(anthropic_url), "openai": urlsplit(openai_url)}
         self._log_path = log_path
         self._runs: dict[str, Run] = {}
@@ -212,13 +220,17 @@ class ModelProxy:
             else "anthropic"
         )
         key = self._keys[provider]
-        if not key:
+        if provider == "openai" and key:
+            auth = {"authorization": f"Bearer {key}"}
+        elif provider == "anthropic" and key:
+            auth = {"x-api-key": key}
+        elif provider == "anthropic" and self._oauth:
+            auth = {"authorization": f"Bearer {self._oauth}", "anthropic-beta": OAUTH_BETA}
+        else:
             raise LookupError(f"no {provider} credential configured")
         url = self._upstreams[provider]
         cls = http.client.HTTPSConnection if url.scheme == "https" else http.client.HTTPConnection
-        conn = cls(url.netloc, timeout=UPSTREAM_TIMEOUT)
-        auth = {"authorization": f"Bearer {key}"} if provider == "openai" else {"x-api-key": key}
-        return provider, conn, auth
+        return provider, cls(url.netloc, timeout=UPSTREAM_TIMEOUT), auth
 
     def log(self, **fields: Any) -> None:
         line = json.dumps({"ts": round(time.time(), 3), **fields})
@@ -288,7 +300,9 @@ class _Handler(BaseHTTPRequestHandler):
             provider, conn, auth = self.proxy.upstream(self.path)
         except LookupError as exc:
             return self._refuse(str(exc), run)
-        headers = {k: v for k, v in self.headers.items() if k.lower() not in _DROP_REQUEST}
+        headers = {k.lower(): v for k, v in self.headers.items() if k.lower() not in _DROP_REQUEST}
+        if "anthropic-beta" in auth and headers.get("anthropic-beta"):
+            auth["anthropic-beta"] = headers["anthropic-beta"] + "," + auth["anthropic-beta"]
         headers.update(auth)
         reader = UsageReader(openai=provider == "openai")
         status = None
@@ -410,6 +424,7 @@ def main() -> None:
         log_path=Path(args.log),
         anthropic_url=os.environ.get("DUCKTERM_ANTHROPIC_URL", ANTHROPIC),
         openai_url=os.environ.get("DUCKTERM_OPENAI_URL", OPENAI),
+        anthropic_oauth_token=os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"),
     )
     host, port = args.control.rsplit(":", 1)
     control = proxy.control_server(host, int(port), os.environ["DUCKTERM_PROXY_CONTROL_SECRET"])
