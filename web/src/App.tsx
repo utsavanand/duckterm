@@ -661,7 +661,8 @@ function Dashboard() {
       {modal === "collaboration" && has("inbox") && <CollaborationPanel onClose={() => setModal(null)} />}
       {modal === "backup" && <BackupModal onClose={() => setModal(null)} />}
       {modal === "appearance" && <AppearanceSettings {...appearance} onClose={() => setModal(null)} />}
-      {modal === "checkpointing" && has("checkpoints") && <CheckpointSettingsModal onClose={() => setModal(null)} />}
+      {modal === "checkpointing" && has("checkpoints") && <CheckpointSettingsModal onClose={() => setModal(null)}
+        onOpenAgent={key => { setModal(null); setSelectedKey(key); setView("history"); }} />}
       {modal === "agentsetup" && <RuntimeSetupWizard onClose={() => setModal(null)} />}
       {modal === "aimodels" && <AiModelsModal onClose={() => setModal(null)} />}
       {modal === "harnesses" && (

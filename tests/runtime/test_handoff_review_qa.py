@@ -9,7 +9,6 @@ import pytest
 from tests.runtime.test_handoff_review import approval, approved
 from tests.runtime.test_saved_checkpoint import rig
 
-from duckterm import harness_switch
 from duckterm.core.session_api import APIError
 from duckterm.persistence.history import HistoryStore
 
@@ -68,8 +67,6 @@ def test_deleted_approved_event_cannot_be_hidden_by_cached_review(rig):
         historical = server.history.checkpoints("test-save")[0]
         assert not historical["handoff_eligible"]
         assert "source_missing" in historical["reason_codes"]
-        with pytest.raises(APIError, match="not ready"):
-            await harness_switch.prepare(server, "test-save", server.history.session("test-save"))
         assert server.digests.revision("test-save", saved["revision_id"]) is not None
 
     asyncio.run(run())
@@ -121,9 +118,3 @@ def test_review_evidence_is_bounded_and_survives_source_change_and_reopen(rig, t
         assert saved["checkpoint_id"] == result["checkpoint"]["id"]
     finally:
         reopened.close()
-
-    async def refuse():
-        with pytest.raises(APIError, match="not ready"):
-            await harness_switch.prepare(server, "test-save", server.history.session("test-save"))
-
-    asyncio.run(refuse())

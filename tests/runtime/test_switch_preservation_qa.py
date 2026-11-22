@@ -7,6 +7,7 @@ from tests.runtime import test_restart_harness_switch as fixtures
 from tests.runtime.test_restarts import drain, hook
 from tests.runtime.test_session_api import call, enroll
 
+from duckterm import harness_switch
 from duckterm.persistence.artifacts import registration
 from duckterm.persistence.history import HistoryStore
 
@@ -19,7 +20,8 @@ def test_immediate_switch_preserves_work_after_database_reopen(rig, monkeypatch,
     server, _, screen, calls = rig
     history = server.history
     source = "claude-code" if target == "codex" else "codex"
-    history.set_harness_identity("a", source, source, None)
+    if source == "claude-code":
+        fixtures.claude_source(server, screen)
     screen[0] = (
         "Usage limit reached\n────────────────\n"
         + ("❯ " if source == "claude-code" else "› ")
@@ -74,9 +76,6 @@ def test_immediate_switch_preserves_work_after_database_reopen(rig, monkeypatch,
     original = history.session("a")
     seeds = []
 
-    async def checkpoint(*args):
-        return await fixtures.ready_checkpoint(server, summary="Completed work")
-
     async def launch(**kwargs):
         seeds.append(kwargs["prompt"])
         assert kwargs["test"] is True and kwargs["session_key"] == "a"
@@ -88,12 +87,11 @@ def test_immediate_switch_preserves_work_after_database_reopen(rig, monkeypatch,
             launch_generation=kwargs["env"]["DUCKTERM_HARNESS_GENERATION"],
         )
 
-    monkeypatch.setattr(server, "_create_checkpoint", checkpoint)
     monkeypatch.setattr(server.orchestrator, "launch", launch)
 
     async def run():
         assert not server.restarts.turn_finished("a")
-        await server.restarts.request("a", "", target, interrupt=True)
+        await fixtures.switch(server, "", target, interrupt=True)
         await drain(server)
         assert server.restarts.read("a")["status"] == "completed"
 
@@ -115,23 +113,24 @@ def test_immediate_switch_preserves_work_after_database_reopen(rig, monkeypatch,
         history.purge_test_sessions()
 
 
-@pytest.mark.parametrize("blocker", ["checkpoint_failure", "archived", "transfer"])
-def test_checkpoint_boundary_failure_never_stops_source(rig, monkeypatch, blocker):
+@pytest.mark.parametrize("blocker", ["preparation_failure", "archived", "transfer"])
+def test_preparation_boundary_failure_never_stops_source(rig, monkeypatch, blocker):
     server, _, _, calls = rig
+    prepare = harness_switch.prepare
 
-    async def checkpoint(*args):
-        if blocker == "checkpoint_failure":
-            raise RuntimeError("synthetic checkpoint failure")
+    async def prepare_with_blocker(*args):
+        if blocker == "preparation_failure":
+            raise RuntimeError("synthetic preparation failure")
         if blocker == "archived":
             server.history.set_state("a", "archived", now=1)
         else:
             server._transfer_sources.add("a")
-        return await fixtures.ready_checkpoint(server, summary="Summary")
+        return await prepare(*args)
 
-    monkeypatch.setattr(server, "_create_checkpoint", checkpoint)
+    monkeypatch.setattr(harness_switch, "prepare", prepare_with_blocker)
 
     async def run():
-        await server.restarts.request("a", "", "claude-code", interrupt=True)
+        await fixtures.switch(server, "", "claude-code", interrupt=True)
         await drain(server)
         assert server.restarts.read("a")["status"] == "failed"
         assert not calls

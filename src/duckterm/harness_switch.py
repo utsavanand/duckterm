@@ -10,7 +10,6 @@ from typing import TYPE_CHECKING, Any
 from duckterm.core import events
 from duckterm.core.saved_progress import file_version, policy_key
 from duckterm.core.session_api import APIError
-from duckterm.handoff_review import handoff_brief
 from duckterm.harnesses import runtime_for
 from duckterm.persistence.saved_state import fingerprint
 
@@ -18,67 +17,11 @@ if TYPE_CHECKING:
     from duckterm.server import Server
 
 
-async def prepare(server: Server, key: str, row: dict[str, Any]) -> dict[str, Any]:
-    """Checkpoint before stop; callers must recheck turn/draft after this await."""
-    native_id = server.history.session_id_for(key)
+async def prepare(server: Server, key: str) -> dict[str, Any]:
+    """Load the owner-approved preparation; callers must recheck turn/draft after this await."""
     previous = server.history.restart_control(key)
-    if previous.get("memory"):
-        return await server.memory_preparation.prepared(
-            key, previous["memory"], previous["requested_harness"], previous["requested_model"]
-        )
-    checkpoint = await server._create_checkpoint(key, row, "Before harness switch")
-    if checkpoint.get("saved") is not True or checkpoint.get("handoff_eligible") is not True:
-        raise APIError(
-            409,
-            "Checkpoint saved, but its handoff summary is not ready. "
-            "The current agent was kept. Review checkpoint status before switching.",
-        )
-    captured = await server.progress_coordinator.capture(key)
-    marker = checkpoint.get("record") or {}
-    if captured is None or not _matches(marker, captured):
-        raise APIError(409, "Session context changed after the checkpoint. Retry the switch.")
-    current = server.history.session(key)
-    if current is None:
-        raise APIError(404, "Session no longer exists")
-    # No independent memory record. Required facts are reassembled under the
-    # current scope and never truncated to make a switch appear safe.
-    brief = handoff_brief(
-        str(checkpoint["summary"]),
-        captured["required"],
-        reviewed=checkpoint.get("summary_origin") == "owner-reviewed",
-    )
-    if len(brief.encode()) > 24000:
-        raise APIError(409, "Required handoff context is too large. The current agent was kept.")
-    recent = "\n".join(f"{r['role']}: {r['text']}" for r in captured["transcript"])
-    available = 32000 - len(brief.encode()) - 200
-    tail = recent.encode()[-min(available, 6000) :].decode(errors="ignore")
-    if tail:
-        brief += "\n\nRecent conversation (bounded excerpt; earlier text may be omitted):\n" + tail
-    row = current
-    return {
-        "runtime": row.get("runtime"),
-        "native_id": native_id,
-        "command": row.get("command"),
-        "model": row.get("model"),
-        "configured_model": previous.get("configured_model"),
-        "native_binding": previous.get("native_binding"),
-        "cwd": str(row.get("worktree_path") or row.get("cwd") or "."),
-        "test": bool(row.get("test")),
-        "checkpoint_id": checkpoint["id"],
-        "seed": brief,
-        "_captured": captured,
-    }
-
-
-def _matches(marker: dict[str, Any], captured: dict[str, Any]) -> bool:
-    source = captured["source"]
-    return (
-        marker.get("policy") == captured["policy"]
-        and marker.get("conversation") == captured["conversation"]
-        and marker.get("events") == source["events"]
-        and marker.get("required_hash") == source["required_hash"]
-        and marker.get("transcript")
-        == {k: v for k, v in source.items() if k.startswith("transcript_")}
+    return await server.memory_preparation.prepared(
+        key, previous.get("memory"), previous["requested_harness"], previous["requested_model"]
     )
 
 

@@ -106,6 +106,7 @@ cat > "$CONTENTS/Info.plist" <<PLIST
   <key>CFBundleName</key><string>${APP_NAME}</string>
   <key>CFBundleDisplayName</key><string>${APP_NAME}</string>
   <key>DucktermEdition</key><string>${EDITION}</string>
+  <key>DuckTermSupportEmail</key><string>getutsava@gmail.com</string>
   <key>CFBundleIdentifier</key><string>${BUNDLE_ID}</string>
   <key>CFBundleVersion</key><string>${VERSION}</string>
   <key>CFBundleShortVersionString</key><string>${VERSION}</string>
@@ -162,7 +163,8 @@ with (contents / 'Info.plist').open('wb') as f:
     plistlib.dump(info, f)
 PYBUILD
 
-# Optional support recipient is supplied at build time, never committed to source.
+# Official builds include the support recipient above, without machine-local setup.
+# Custom builds may override it. This only addresses a draft; it never sends mail.
 # Read the environment directly so the address is never logged or parsed as code.
 if [[ -n "${DUCKTERM_SUPPORT_EMAIL:-}" ]]; then
   python3 - "$CONTENTS/Info.plist" <<'PYCONFIG'

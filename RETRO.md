@@ -1,3 +1,115 @@
+## 2026-11-21 — Synchronize asynchronous tests on observable progress
+
+PR #409's foreground-refresh test assumed twenty task yields completed a failed
+refresh and armed its retry. On a loaded CI worker, the fake clock tick could
+arrive before the retry was waiting, so the test stayed stale. It now waits for
+the retry and polling clocks to report that they are suspended, with bounded
+expectations, before advancing or asserting the result.
+
+The browser job also exhausted its fifteen-minute budget after cold Playwright
+dependencies took six minutes. Account for installation and all edition runs in
+the job budget; a cancelled run is not passing evidence.
+
+## 2026-11-21 — Check a format against real files before anchoring on it
+
+#414 skipped an oversized Codex line when `"type":"compacted"` appeared anywhere
+in its first 512 bytes, so a nested `{"type":"compacted"}` inside a message
+would also be skipped. Security suggested matching the leading
+`{"timestamp":…,"type":…}` header exactly. Before writing that, I counted the
+headers in every Codex history on this Mac: 589 of the 1,046 compaction lines
+used `timestamp,type`, but 457 put an `ordinal` between the two. The exact
+anchor would have failed those 457 with 413 and made ui-dev's history unreadable
+again, the bug #414 fixed. The match now accepts any top-level scalar fields
+before `type`, which covers all 1,046 lines and still refuses a nested type.
+
+Lesson: when tightening a parser against a third-party format, measure the real
+population first. A reviewer's example of the format is one sample, not the
+spec.
+
+## 2026-11-21 — A test that builds its own config tests the config, not the product
+
+The broker's mutual-TLS tests looked like proof that the server demands client
+certificates. They were not. Each test built its own `ssl.SSLContext` with
+`CERT_REQUIRED` instead of using `serve()`'s, so they asserted the setting they
+had just written. Mutating the product to `ssl.CERT_NONE` left all 5 passing:
+the broker could have stopped checking client certificates entirely and the
+suite would have stayed green. Security caught this reviewing #416, where I had
+just fixed the certificates themselves and reported the tests as passing.
+
+Two lessons. A test that constructs its own copy of the thing under test has a
+duplicate, and a duplicate drifts silently — the fix is to export the real
+object (`server_context(settings)`) and have the test use it. And "the tests
+pass" is a claim about the tests; the question is whether they can fail. A
+mutation takes a minute: break the behaviour on purpose and watch for red.
+
+The negative case mattered too. The only rejection tested was "no certificate
+at all", which a server can pass while ignoring the issuer. The new case offers
+a well-formed certificate from a second CA and asserts no credential is read.
+Related: [[green-tests-no-working-feature]], [[intent-rendered-as-state]].
+
+Still unverified after this: mutating `minimum_version` from TLSv1_2 to TLSv1
+does not fail anything, because a modern client negotiates 1.3 regardless.
+
+## 2026-11-21 — Bug-report email depended on the release machine's environment
+
+The Mac build included a support recipient only when a release environment
+variable was set. Distributed apps therefore disabled Create email on machines
+without a local preference. Bundle the owner-approved public support address for
+every edition and retain the custom-build override. Test the actual plist-writing
+steps with the variable absent, empty, and overridden. Report creation still opens
+only a draft in the user's mail app; the user must review it and press Send.
+
+## 2026-11-19 — Tests kept an unreachable harness-switch path alive
+
+The switch endpoint has required a prepared hand-over since the preparation
+dialog shipped, but `Restarts.request` kept a flag defaulting to the older path:
+write a "Before harness switch" checkpoint and seed from its summary. Only tests
+called it that way, so about 50 tests exercised launch, interrupt and recovery
+guards through code the product could not reach, and the owner was told a thin
+brief could still occur on a switch. Removing the flag moved those tests onto
+real preparation, which surfaced two real behaviors: a queued "after this turn"
+switch fails as stale if the turn ends after preparation, and a prepared switch
+does not survive a DuckTerm restart.
+
+When an endpoint pins an internal flag, delete the other branch rather than
+keeping it for tests. A test helper that reaches an internal default is evidence
+for a path no user takes.
+
+## 2026-11-19 — Long pastes vanished because tmux caps a command at 1000 arguments
+
+Terminal input reaches an agent pane through `tmux send-keys -H`, one hex
+argument per byte. tmux 3.7 added a server-side cap of 1000 arguments per
+command ("command too long"). 0.4.180 started bundling tmux 3.7c in place of the
+user's PATH tmux (3.6b here, no cap), so from then on a paste over ~996 bytes
+was dropped entirely while short typing kept working. The failure only showed up
+as a False return that the websocket path ignores. `send_raw` now sends 512-byte
+chunks.
+
+Bumping a bundled dependency changes behavior for every caller, so read its
+changelog for new limits. When a subprocess takes one argument per item, check
+its argument-count limit, not just the byte size. When probing tmux, use a
+private -L socket: the default socket may be served by a different tmux build
+than the client binary you ran. The regression test pastes 4.6 KB into a real
+pane and compares what arrived byte for byte.
+
+## 2026-11-19 — CI passing is not the certificate being valid
+
+Four connector-broker tests failed on the owner's Mac while CI was green on the
+same commit. The test certificates were never valid: the CA had no Subject Key
+Identifier and the leaves had no Authority Key Identifier. Older OpenSSL simply
+did not check, so the gate that was supposed to catch this had quietly been
+accepting a malformed chain for as long as the test existed. OpenSSL 3.6 checks,
+and the owner's toolchain got there first.
+
+Two things worth keeping. The reported fix ("mark the CA as a CA") was already
+true in the code — basicConstraints CA:TRUE was there — so applying the
+diagnosis verbatim would have changed nothing and looked like a failed fix. Read
+the generated artifact (openssl x509 -text) rather than the suggestion. And the
+test builds certificates with the openssl CLI but verifies them through Python's
+ssl, which on this Mac are different implementations (LibreSSL 3.3.6 vs OpenSSL
+3.6.3); a fix has to be run under both CLIs, because CI's is neither of the ones
+you assume. Related: [[green-tests-no-working-feature]].
+
 ## 2026-11-16 — Reconcile behavioral guidance against its original evidence
 
 Repeated checkpoint summaries are not independent corrections. Counting them as
