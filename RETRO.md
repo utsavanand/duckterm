@@ -1,3 +1,20 @@
+## 2026-11-22 — Converting old memory copies needs every citation found first
+
+Converting raw conversation copies to extracted records means binding each
+database reference to its new records digest before the raw file can go. The
+references live in three places (checkpoint `memory_sources`, checkpoint
+`memory_source`, and summary revisions), and that list came from scanning the
+real database, not from reading the writers. While tracing them, a #436 bug
+surfaced: an idle agent's next checkpoint re-saved an old version as records,
+and the references made before that (which have no digest) were refused.
+
+The conversion reads each cited version the old way, writes records, reads them
+back through the new reference and compares, and only then updates the rows and
+moves the raw files to the Trash. Rehearsed on clones of the real data: 839
+citations read back identically, and the 4.4 GB of cited raw copies became 87 MB.
+Lesson: before a migration that removes the old form, scan the live data for
+every reference to it, and rehearse on a clone of that data.
+
 ## 2026-11-22 — The memory cache watched a different file than the reader read
 
 After an idle agent's version was saved again as records, an old reference

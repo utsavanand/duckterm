@@ -96,6 +96,13 @@ def build_parser() -> argparse.ArgumentParser:
     voice.add_argument("action", choices=["status", "install", "remove"])
     sub.add_parser("dashboard", help="build (if needed) and open the dashboard in a browser")
     sub.add_parser("purge-test", help="delete all test/seed sessions and their data (test=1)")
+    convert = sub.add_parser(
+        "convert-memory-copies",
+        help="replace raw conversation copies from older versions with extracted text",
+    )
+    convert.add_argument(
+        "--apply", action="store_true", help="convert and move the raw copies to the Trash"
+    )
     sub.add_parser("doctor", help="check deps, server, hooks, and trust; print what's missing")
 
     inst = sub.add_parser(
@@ -897,6 +904,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _doctor()
     if args.command == "purge-test":
         return _purge_test()
+    if args.command == "convert-memory-copies":
+        return _convert_memory_copies(args.apply)
     if args.command in (
         "connector-serve",
         "connector-service",
@@ -926,6 +935,49 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     print(f"command '{args.command}' is not implemented yet", file=sys.stderr)
     return 1
+
+
+def _convert_memory_copies(apply: bool) -> int:
+    import time
+
+    from duckterm import memory_convert
+    from duckterm.core.session_api import APIError
+    from duckterm.helpers import security
+    from duckterm.persistence.digests import DigestStore
+    from duckterm.persistence.history import HistoryStore
+
+    conn = HistoryStore()._conn
+    DigestStore(conn=conn)
+    print(json.dumps(memory_convert.plan(conn), indent=2))
+    if not apply:
+        print("Nothing changed. Run again with --apply to convert.")
+        return 0
+    # A server older than this command can't read records copies, so every
+    # converted citation would become unavailable until it was updated.
+    request = urllib.request.Request(
+        f"{_server_url()}/update/status",
+        headers={"X-Duckterm-Token": security.load_or_create_token()},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            running = json.loads(response.read()).get("installed_version")
+    except (OSError, ValueError) as exc:
+        print(f"Start DuckTerm {__version__} first; the server did not answer ({exc}).")
+        return 1
+    if running != __version__:
+        print(f"The running server is {running}; restart it on {__version__} first.")
+        return 1
+    trash = Path.home() / ".Trash" / time.strftime("DuckTerm memory copies %Y-%m-%d %H.%M.%S")
+    failed = 0
+    for key in sorted(memory_convert.pending(conn)):
+        try:
+            report = memory_convert.convert(conn, key, trash)
+        except (APIError, OSError) as exc:
+            failed += 1
+            report = {"session": key, "error": str(exc)}
+        print(json.dumps(report))
+    print(f"Raw copies moved to {trash}" if trash.exists() else "No raw copies were moved.")
+    return 1 if failed else 0
 
 
 def _purge_test() -> int:
