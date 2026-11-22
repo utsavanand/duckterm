@@ -247,7 +247,7 @@ def test_without_the_flag_every_kit_route_refuses_and_sessions_list_no_kits(
     (list_status, list_body), (reg_status, _), rows = asyncio.run(scenario())
     assert (list_status, reg_status) == (403, 403)
     assert list_body["code"] == "feature_unavailable"
-    assert "development" in list_body["error"]
+    assert "skill_kits is disabled by its feature flag" in list_body["error"]
     assert store.harnesses() == []
     assert rows[0]["suites"] == []
 
