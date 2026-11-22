@@ -231,7 +231,7 @@ def apply(plan: Plan, *, replace: bool = False) -> Report:
         "components": sorted({kit.component_id(c) for c in kit.components}),
         "entries": entries,
     }
-    record_path = project / RECORD
+    record_path = _target(project, RECORD)
     if not record_path.parent.exists():
         created.add(record_path.parent)
     record["kits"][kit.name]["dirs"] = sorted(d.relative_to(project).as_posix() for d in created)
@@ -324,7 +324,8 @@ def _agents_block(
     name = (p.data or {})["name"]
     text = (p.content or b"").decode().strip()
     rule_id = p.component
-    if (project / agents_rules.RULES_FILENAME).is_file():
+    path = _target(project, "AGENTS.md")
+    if _target(project, agents_rules.RULES_FILENAME).is_file():
         rules = [r for r in agents_rules.load_rules(project) if r.id != rule_id]
         rules.append(
             agents_rules.RuleBlock(
@@ -346,7 +347,6 @@ def _agents_block(
             "rule_id": rule_id,
             "rule": {"text": text, "status": "active", "scope": "all", "kit_version": kit.version},
         }
-    path = project / "AGENTS.md"
     before = _snapshot(path)
     open_tag = adapters.ATTR_OPEN.format(kit=kit.name, name=name, version=kit.version)
     close_tag = adapters.ATTR_CLOSE.format(kit=kit.name, name=name)
@@ -377,7 +377,7 @@ def _strip_attributed(text: str, kit: str, name: str) -> str:
 
 
 def _claude_import(project: Path, created: set[Path]) -> dict[str, Any] | None:
-    path = project / "CLAUDE.md"
+    path = _target(project, "CLAUDE.md")
     before = _snapshot(path)
     current = before or ""
     if "@AGENTS.md" in current:
@@ -409,10 +409,11 @@ def uninstall(project: Path, kit_name: str) -> Report:
         )
     _remove_entries(project, kit_name, entry, report, trusted)
     del record["kits"][kit_name]
+    record_path = _target(project, RECORD)
     if record["kits"]:
-        _write_json(project / RECORD, record)
+        _write_json(record_path, record)
     else:
-        (project / RECORD).unlink(missing_ok=True)
+        record_path.unlink(missing_ok=True)
     _prune_dirs(project, entry)
     home = _load_home(project)
     home.pop(kit_name, None)
@@ -439,6 +440,7 @@ def _remove_entries(
             report.removed.append(e["path"])
         elif how == "rule":
             rule_id = e["rule_id"]
+            _target(project, "AGENTS.md")  # save_rules renders it beside the rules file
             rules = agents_rules.load_rules(project)
             keep = [r for r in rules if not (r.id == rule_id and r.kit == kit_name)]
             if len(keep) != len(rules):

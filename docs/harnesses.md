@@ -120,9 +120,11 @@ kit's entry is kept under the DuckTerm home, keyed by project path, and the
 repository's entry is believed only when it matches that copy; otherwise
 uninstall strips the text a kit of that name would have written (attributed
 blocks, kit-owned rules, copied files that still hash), leaves config JSON as
-it is and says so. Every entry path is refused unless it is a path the
-adapters write (never `.git/`), relative, and still inside the project once
-symlinks are resolved. Component names are one path segment (`[a-z0-9_-]`),
+it is and says so. Every path an install or uninstall touches, from the
+record or from the adapters, is refused unless it is a path the adapters write
+(never `.git/`), relative, with no symlink anywhere on the way (a committed
+`.claude -> .git` would otherwise carry an allowed name into `.git/`), and
+still inside the project. Component names are one path segment (`[a-z0-9_-]`),
 and a kit's own sources must be real files under the kit root; a symlink
 anywhere on the way fails `validate`. Uninstall prunes only the directories
 the install created.

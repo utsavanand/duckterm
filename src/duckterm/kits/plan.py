@@ -44,16 +44,26 @@ def written_roots() -> frozenset[str]:
 
 
 def inside(project: Path, rel: str) -> Path:
-    """`project / rel`, refused unless it is a path the adapters write and it
-    stays inside the project once every symlink on the way is resolved. The
-    install record and component names come from the repository, so neither
-    is trusted to name a path."""
+    """`project / rel`, refused unless it is a path the adapters write, no
+    part of it is a symlink, and it stays inside the project. The install
+    record and component names come from the repository, so neither is
+    trusted to name a path; and a repository can commit a link such as
+    `.claude -> .git`, so an allowed name must not be followed into a refused
+    one. Symlinks are refused outright rather than resolved, as validate does
+    for kit sources."""
     parts = Path(rel).parts
     if not rel or Path(rel).is_absolute() or ".." in parts:
         raise PathEscape(f"{rel!r} must be a relative path inside the project")
     if ".git" in parts or parts[0] not in written_roots():
         raise PathEscape(f"{rel!r} is not a path skill kits write")
-    target = project / rel
+    target = project
+    for part in parts:
+        target = target / part
+        if target.is_symlink():
+            where = target.relative_to(project).as_posix()
+            raise PathEscape(
+                f"{rel!r} goes through a symlink at {where!r}; skill kits write real files"
+            )
     if not target.resolve().is_relative_to(project.resolve()):
         raise PathEscape(f"{rel!r} resolves outside the project")
     return target
@@ -270,6 +280,14 @@ def _conflicts(
             if len(parts) == 3:
                 names[(parts[1], parts[2])] = owner_kit
     for p in placements:
+        if not p.writes() or not p.path:
+            continue
+        try:
+            inside(project, p.path)
+        except PathEscape as exc:
+            if not any(c.kind == "escapes" and c.path == p.path for c in out):
+                out.append(Conflict(p.path, "escapes", str(exc), ("refuse",), p.component))
+            continue
         if p.op in ("write", "copy-tree"):
             for rel, data in _materialise(p):
                 try:

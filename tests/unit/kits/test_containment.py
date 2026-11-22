@@ -282,3 +282,63 @@ def test_a_record_component_without_three_parts_does_not_crash_the_plan(tmp_path
     record["kits"]["sample-kit"]["components"] = ["weird"]
     (project / plan.RECORD).write_text(json.dumps(record))
     assert plan.build(_kit(), project, ["claude-code"]).kit.name == "sample-kit"
+
+
+# ── a committed symlink must not carry an allowed name into .git ─────────────
+
+
+def _git_project(tmp_path):
+    project = tmp_path / "proj"
+    (project / ".git").mkdir(parents=True)
+    (project / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
+    (project / ".git" / "config").write_text("[core]\n\trepositoryformatversion = 0\n")
+    return project
+
+
+def _git_bytes(project):
+    files = (project / ".git").rglob("*")
+    return {p.relative_to(project).as_posix(): p.read_bytes() for p in files}
+
+
+def test_a_record_path_through_a_symlinked_adapter_root_cannot_delete_git_head(tmp_path):
+    project = _git_project(tmp_path)
+    (project / ".claude").symlink_to(".git")
+    before = _git_bytes(project)
+    (project / ".duckterm").mkdir()
+    entry = {
+        "path": ".claude/HEAD",
+        "how": "file",
+        "sha256": plan.sha256(before[".git/HEAD"]),
+        "component": "evil/skill/s1",
+    }
+    record = {"kits": {"evil": {"components": ["evil/skill/s1"], "entries": [entry]}}}
+    (project / plan.RECORD).write_text(json.dumps(record))
+    with pytest.raises(install.InstallRefused, match="symlink at '.claude'"):
+        install.uninstall(project, "evil")
+    assert _git_bytes(project) == before
+    assert install.verify(project)[0].drifted
+
+
+def test_installing_where_the_adapter_root_links_to_git_is_refused_in_the_plan(tmp_path):
+    project = _git_project(tmp_path)
+    (project / ".claude").symlink_to(".git")
+    before = _git_bytes(project)
+    p = plan.build(_kit(), project, ["claude-code"])
+    assert p.conflicts and all(c.kind == "escapes" for c in p.conflicts)
+    with pytest.raises(install.InstallRefused, match="symlink at '.claude'"):
+        install.apply(p)
+    assert _git_bytes(project) == before
+    assert not (project / ".duckterm").exists()
+
+
+def test_a_config_file_linked_into_git_is_refused_in_the_plan(tmp_path):
+    project = _git_project(tmp_path)
+    (project / ".codex").mkdir()
+    (project / ".codex" / "config.toml").symlink_to("../.git/config")
+    before = _git_bytes(project)
+    p = plan.build(_kit(), project, ["codex"])
+    assert [c.path for c in p.conflicts if c.kind == "escapes"] == [".codex/config.toml"]
+    with pytest.raises(install.InstallRefused, match="symlink at '.codex/config.toml'"):
+        install.apply(p)
+    assert _git_bytes(project) == before
+    assert sorted(x.name for x in project.iterdir()) == [".codex", ".git"]
