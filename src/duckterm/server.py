@@ -398,6 +398,9 @@ _ROUTES: list[Route] = [
     # ── skill kits: the engine behind `duckterm kit`, for the Skill kits page.
     # All POST with the project in the body: route handlers do not see the query.
     Route("POST", "/kits/overview", lambda s, r, w, h, b, seg: s._kits(w, "overview", b)),
+    Route("POST", "/kits/catalog", lambda s, r, w, h, b, seg: s._kits(w, "catalog", b)),
+    Route("POST", "/kits/register", lambda s, r, w, h, b, seg: s._kits(w, "register", b)),
+    Route("POST", "/kits/unregister", lambda s, r, w, h, b, seg: s._kits(w, "unregister", b)),
     Route("POST", "/kits/plan", lambda s, r, w, h, b, seg: s._kits(w, "plan", b)),
     Route("POST", "/kits/install", lambda s, r, w, h, b, seg: s._kits(w, "install", b)),
     Route("POST", "/kits/uninstall", lambda s, r, w, h, b, seg: s._kits(w, "uninstall", b)),
@@ -2712,8 +2715,20 @@ class Server:
             await _write_json(writer, 400, {"error": "body must be an object"})
             return
         tracker = _FlowStepTracker(self, asyncio.get_running_loop())
+        # The history store is bound to this thread, so everything it answers
+        # is gathered here; only the kit engine's file work runs in a thread.
+        registry = [dict(r) for r in self.history.harnesses()] if action == "catalog" else []
+        workspaces = self._kit_workspaces() if action == "catalog" else []
+        if action == "unregister":
+            try:
+                await _write_json(writer, 200, self._unregister_kit(payload))
+            except kits_api.KitApiError as exc:
+                await _write_json(writer, exc.status, {"error": str(exc)})
+            return
         calls = {
             "overview": lambda: kits_api.overview(payload.get("project")),
+            "catalog": lambda: kits_api.catalog(registry, workspaces),
+            "register": lambda: kits_api.register(payload),
             "runs": lambda: kits_api.runs(payload.get("project")),
             "run": lambda: kits_api.run_detail(
                 payload.get("project"), str(payload.get("run_id") or "")
@@ -2731,10 +2746,39 @@ class Server:
         }
         try:
             result = await asyncio.to_thread(calls[action])
+            if action == "register":
+                self.history.add_harness(
+                    str(result["name"]), str(result["path"]), int(time.time() * 1000)
+                )
         except kits_api.KitApiError as exc:
             await _write_json(writer, exc.status, {"error": str(exc)})
             return
         await _write_json(writer, 200, result)
+
+    def _kit_workspaces(self) -> list[dict[str, Any]]:
+        """Every workspace with the repositories its sessions run in (the
+        worktree when there is one, else the repository, else the cwd). A
+        kit installs into those; a workspace with none cannot take a kit yet."""
+        repos: dict[str, set[str]] = {name: set() for name in self.history.folders()}
+        for row in self.history.sessions():
+            root = row.get("worktree_path") or row.get("repo_path") or row.get("cwd")
+            if not root:
+                continue
+            repos.setdefault(str(row.get("grp") or ""), set()).add(str(root))
+        return [
+            {"name": name, "repositories": sorted(paths)}
+            for name, paths in sorted(repos.items(), key=lambda kv: (kv[0] == "", kv[0]))
+        ]
+
+    def _unregister_kit(self, payload: dict[str, Any]) -> dict[str, Any]:
+        from duckterm.kits import api as kits_api
+
+        name = str(payload.get("name") or "").strip()
+        if not name:
+            raise kits_api.KitApiError(400, "name is required")
+        if not self.history.remove_harness(name):
+            raise kits_api.KitApiError(404, f"no kit named {name!r} is added")
+        return {"removed": name}
 
     def _create_team_record(self, kits_api: Any, payload: dict[str, Any]) -> dict[str, Any]:
         """A team is a workspace with a procedure: the record first (it refuses

@@ -342,6 +342,97 @@ def overview(project_value: Any) -> dict[str, Any]:
     }
 
 
+def register(body: dict[str, Any]) -> dict[str, Any]:
+    """Add a kit to DuckTerm: read its manifest (folder or skill-kit.toml),
+    nothing else. The server stores name and path; installing into a
+    workspace is a later, separate step."""
+    kit = _kit(body.get("kit"))
+    text = str(body.get("kit") or "").strip()
+    path = Path(text).expanduser().resolve()
+    return {
+        "name": kit.name,
+        "path": str(path),
+        "version": kit.version,
+        "description": kit.description,
+    }
+
+
+def catalog(entries: list[dict[str, Any]], workspaces: list[dict[str, Any]]) -> dict[str, Any]:
+    """The Skill kits page: every kit added to DuckTerm, what it holds, and
+    the workspaces it is installed in. `entries` are the registry rows
+    (name, path); `workspaces` are {name, repositories: [path]} where the
+    repositories are where the workspace's sessions run."""
+    projects = sorted({str(r) for w in workspaces for r in w.get("repositories", [])})
+    records: dict[str, dict[str, Any]] = {}
+    reports: dict[str, dict[str, Any]] = {}
+    runs: dict[str, list[dict[str, Any]]] = {}
+    for project in projects:
+        path = Path(project)
+        if not path.is_dir():
+            continue
+        try:
+            records[project] = planning.load_record(path)
+        except (OSError, ValueError):
+            continue
+        if records[project]["kits"]:
+            reports[project] = {r.kit: r for r in install.verify(path)}
+            runs[project] = runner.list_runs(path)
+    kits = []
+    for row in entries:
+        entry: dict[str, Any] = {
+            "name": str(row["name"]),
+            "path": str(row["path"]),
+            "installed_in": [],
+        }
+        try:
+            kit = _kit(row["path"])
+        except KitApiError as exc:
+            entry["error"] = str(exc)
+            kits.append(entry)
+            continue
+        entry["name"] = kit.name
+        entry["version"] = kit.version
+        entry["description"] = kit.description
+        entry["inventory"] = inventory(kit)
+        entry["details"] = details(kit)
+        entry["procedures"] = procedures(kit)
+        entry["flows"] = [Path(str(c.path)).stem for c in kit.by_kind("flow")]
+        entry["runs"] = []
+        for w in workspaces:
+            for project in w.get("repositories", []):
+                installed = records.get(str(project), {"kits": {}})["kits"].get(kit.name)
+                if not installed:
+                    continue
+                report = reports.get(str(project), {}).get(kit.name)
+                entry["installed_in"].append(
+                    {
+                        "workspace": w.get("name", ""),
+                        "project": str(project),
+                        "version": installed.get("version"),
+                        "harnesses": installed.get("harnesses", []),
+                        "installed_at": installed.get("installed_at"),
+                        "trusted": install._trusted(Path(str(project)), kit.name, installed),
+                        "verify": {
+                            "ok": report.ok() if report else None,
+                            "missing": report.missing if report else [],
+                            "drifted": report.drifted if report else [],
+                        },
+                    }
+                )
+                entry["runs"] += [
+                    r
+                    for r in runs.get(str(project), [])
+                    if str(r.get("flow", "")).startswith(kit.name + "/")
+                ]
+        kits.append(entry)
+    return {
+        "kits": kits,
+        "workspaces": workspaces,
+        "harnesses": list(adapters.ADAPTERS),
+        "harnesses_present": harnesses_present(),
+    }
+
+
 def plan_for(body: dict[str, Any]) -> dict[str, Any]:
     kit = _kit(body.get("kit"))
     project = _project(body.get("project"))

@@ -192,9 +192,20 @@ rules); Add takes a kit folder, shows the inventory and options, then the
 review page is the plan: one row per component, one status per harness, the
 conflicts with keep or replace, the files. Install, verify and uninstall call
 the engine; Run starts a flow in a server thread and the page watches the run
-file. The server routes are `POST /kits/overview | plan | install | uninstall |
-verify | run | runs | run-detail | gate | teams | team`, all with the project
-path in the body (`duckterm.kits.api`). **Create team** (`POST /kits/team
+file. **The page starts from kits, not repositories.** Add skill kit takes a kit
+folder or a `skill-kit.toml` path, reads the manifest and adds the kit to
+DuckTerm (`POST /kits/register`; the record is the `harnesses` table, name
+and path). The list (`POST /kits/catalog`) shows every added kit with what it
+holds and the workspaces it is installed in. A workspace's repositories are
+where its sessions run (worktree, else repository, else cwd), so a workspace
+with no session yet cannot take a kit. Install into… picks workspaces, shows
+the dry run per repository, then writes. Every harness gets the kit; the
+review names, per harness, the components it does not support.
+
+The server routes are `POST /kits/catalog | register | unregister | overview
+| plan | install | uninstall | verify | run | runs | run-detail | gate | teams
+| team` (`duckterm.kits.api`); the ones that touch a repository take its
+path in the body. **Create team** (`POST /kits/team
 {project, kit, team, name?}`) makes a workspace carrying the kit's procedure:
 the record (roles and rules copied from the installed kit's template, with
 kit and version) is `<home>/teams/<name>.json`, the workspace is registered

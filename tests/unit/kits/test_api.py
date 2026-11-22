@@ -210,3 +210,55 @@ def test_a_tracked_run_announces_each_harness_step_as_a_child_of_the_session(tmp
     findings = project / ".duckterm" / "runs" / out["run_id"] / "verdict" / "1" / "findings.md"
     assert findings.read_text() == child
     assert run["executor_state"] == {"session": "parent-1"}
+
+
+# ── catalog: kits added to DuckTerm and where they are installed ─────────────
+
+
+def _registry_kit(tmp_path):
+    root = tmp_path / "regkit"
+    (root / "skills" / "judge").mkdir(parents=True)
+    (root / "skill-kit.toml").write_text(
+        'manifest_version = 1\nname = "regkit"\ndescription = "judges"\nversion = "2.0.0"\n\n'
+        '[[components]]\nkind = "skill"\npath = "skills/judge"\n'
+    )
+    (root / "skills" / "judge" / "SKILL.md").write_text(
+        "---\nname: judge\ndescription: Decides.\n---\nDecide.\n"
+    )
+    return root
+
+
+def test_register_reads_the_manifest_from_a_folder_or_a_toml_file(tmp_path):
+    root = _registry_kit(tmp_path)
+    assert api.register({"kit": str(root)})["name"] == "regkit"
+    by_file = api.register({"kit": str(root / "skill-kit.toml")})
+    assert by_file["version"] == "2.0.0" and by_file["path"].endswith("skill-kit.toml")
+    with pytest.raises(api.KitApiError) as refused:
+        api.register({"kit": str(tmp_path / "nowhere")})
+    assert refused.value.status == 400
+
+
+def test_catalog_lists_added_kits_with_the_workspaces_they_are_installed_in(tmp_path):
+    root = _registry_kit(tmp_path)
+    installed = tmp_path / "proj-a"
+    bare = tmp_path / "proj-b"
+    installed.mkdir()
+    bare.mkdir()
+    api.install_kit({"kit": str(root), "project": str(installed), "harnesses": ["claude-code"]})
+    workspaces = [
+        {"name": "payments", "repositories": [str(installed), str(bare)]},
+        {"name": "", "repositories": []},
+    ]
+    out = api.catalog(
+        [{"name": "regkit", "path": str(root)}, {"name": "gone", "path": str(tmp_path / "gone")}],
+        workspaces,
+    )
+    assert out["workspaces"] == workspaces
+    assert "claude-code" in out["harnesses"]
+    regkit, gone = out["kits"]
+    assert regkit["version"] == "2.0.0" and regkit["inventory"]["component_count"] == 1
+    assert [d["name"] for d in regkit["details"]["skill"]] == ["judge"]
+    assert [(i["workspace"], i["project"], i["verify"]["ok"]) for i in regkit["installed_in"]] == [
+        ("payments", str(installed), True)
+    ]
+    assert gone["installed_in"] == [] and "no such kit folder" in gone["error"]

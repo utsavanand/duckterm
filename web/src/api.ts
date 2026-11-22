@@ -497,6 +497,13 @@ export interface KitRun extends KitRunSummary {
 }
 export interface KitTeam { folder: string; team: string; description: string; kit: string; kit_version: string | null; project: string; roles: Record<string, { purpose: string; skills: string[] }>; rules: Record<string, unknown>[]; created_at: number }
 export interface KitsOverview { project: string; kits: KitInstalled[]; procedures: KitProcedure[]; harnesses_present: Record<string, boolean>; runs: KitRunSummary[] }
+export interface KitInstall { workspace: string; project: string; version: string | null; harnesses: string[]; installed_at: number | null; trusted: boolean; verify: { ok: boolean | null; missing: string[]; drifted: string[] } }
+export interface KitEntry {
+  name: string; path: string; installed_in: KitInstall[]; error?: string;
+  version?: string; description?: string; inventory?: KitInventory; details?: Record<string, KitDetail[]>; procedures?: KitProcedure[]; flows?: string[]; runs?: KitRunSummary[];
+}
+export interface KitWorkspace { name: string; repositories: string[] }
+export interface KitCatalog { kits: KitEntry[]; workspaces: KitWorkspace[]; harnesses: string[]; harnesses_present: Record<string, boolean> }
 
 export const api = {
   edition: () => get<EditionDescription>("/edition", undefined, { authed: true }),
@@ -742,6 +749,9 @@ export const api = {
   },
   // Skill kits: the engine behind `duckterm kit`, behind the skill_kits flag.
   // Every call is a POST with the project path in the body.
+  kitsCatalog: (context?: string) => post<KitCatalog>("/kits/catalog", {}, context),
+  kitsRegister: (kit: string, context?: string) => post<{ name: string; path: string; version: string; description: string }>("/kits/register", { kit }, context),
+  kitsUnregister: (name: string, context?: string) => post<{ removed: string }>("/kits/unregister", { name }, context),
   kitsOverview: (project: string, context?: string) =>
     post<KitsOverview>("/kits/overview", { project }, context),
   kitsPlan: (body: KitPlanRequest, context?: string) =>

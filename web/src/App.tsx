@@ -676,8 +676,6 @@ function Dashboard() {
       {modal === "aimodels" && <AiModelsModal onClose={() => setModal(null)} />}
       {modal === "harnesses" && (
         <SkillKitsPage
-          defaultDir={agentsMdDir}
-          knownDirs={Array.from(new Set(sessions.map(s => s.worktreePath ?? s.cwd).filter((d): d is string => !!d)))}
           sessionKey={selected?.key}
           onClose={() => setModal(null)}
           fallback={<HarnessesModal sessionKey={selected?.key} onClose={() => setModal(null)} />}

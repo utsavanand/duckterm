@@ -1,19 +1,20 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import { postEvent, seedSession } from "./helpers";
 
-// Skill kits end to end: add a kit by path on the Skill kits page, review
-// the dry run, install, and read what the skill does on the kit's page.
-// DuckTerm writes the kit's files itself and never runs a kit's own script,
-// so a stray install.sh in the kit is never executed.
+// Skill kits end to end: add a kit by path on the Skill kits page, install it
+// into a workspace from the dry run, and read what a skill does on the kit's
+// page. DuckTerm writes the kit's files itself and never runs a kit's own
+// script, so a stray install.sh in the kit is never executed.
 
-test("add a skill kit, review, install and read a skill; the kit's script never runs", async ({
+test("add a skill kit, install it into a workspace and read a skill; the kit's script never runs", async ({
   page,
 }) => {
   const kit = mkdtempSync(join(tmpdir(), "rd-e2e-kit-"));
-  const project = mkdtempSync(join(tmpdir(), "rd-e2e-kit-project-"));
+  const project = realpathSync(mkdtempSync(join(tmpdir(), "rd-e2e-kit-project-")));
+  const stamp = Date.now();
   mkdirSync(join(kit, "skills", "ship-it"), { recursive: true });
   writeFileSync(
     join(kit, "skills", "ship-it", "SKILL.md"),
@@ -23,7 +24,7 @@ test("add a skill kit, review, install and read a skill; the kit's script never 
     join(kit, "skill-kit.toml"),
     [
       "manifest_version = 1",
-      `name = "kit-${Date.now()}"`,
+      `name = "kit-${stamp}"`,
       'description = "skills and hooks for the e2e test"',
       'version = "0.1.0"',
       "",
@@ -36,23 +37,29 @@ test("add a skill kit, review, install and read a skill; the kit's script never 
   writeFileSync(join(kit, "install.sh"), "#!/bin/sh\ntouch installed.marker\n", {
     mode: 0o755,
   });
+  // A workspace is installable once a session has run in a repository.
+  const workspace = `kit-ws-${stamp}`;
+  await seedSession(`kit-session-${stamp}`, { name: "kit agent", group: workspace, cwd: project });
 
   await page.goto("/");
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Skill kits" }).click();
   await page.getByRole("button", { name: "Add skill kit…" }).click();
+  await page.getByLabel(/Kit folder or its skill-kit.toml/).fill(kit);
+  await page.getByRole("button", { name: "Add", exact: true }).click();
 
-  await page.getByLabel(/Kit folder/).fill(kit);
-  await page.getByLabel("Install into").fill(project);
-  const review = page.getByRole("button", { name: "Review what will change" });
-  await expect(review).toBeEnabled();
-  await review.click();
+  await expect(page.getByRole("heading", { name: `kit-${stamp}` })).toBeVisible();
+  await expect(page.getByText(/Not installed in any workspace yet/)).toBeVisible();
+  await page.getByRole("button", { name: "Install into…" }).click();
+  await page.getByLabel(`${workspace} ${project}`).check();
+  await page.getByRole("button", { name: "Review what will change" }).click();
 
   await expect(page.getByText(/a dry run; nothing is written until you press Install/)).toBeVisible();
   expect(existsSync(join(project, ".claude", "skills", "ship-it", "SKILL.md"))).toBe(false);
-  await page.getByRole("button", { name: /Install 1 component/ }).click();
+  await page.getByRole("button", { name: /Install into 1 repository/ }).click();
 
-  await expect(page.getByRole("heading", { name: /kit-\d+/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: `kit-${stamp}` })).toBeVisible();
+  await expect(page.locator(".rd-kits-row", { hasText: workspace })).toContainText("claude-code");
   await page.locator(".rd-kits-group > summary", { hasText: "Skills" }).click();
   await page.locator(".rd-kits-skill > summary", { hasText: "/ship-it" }).click();
   await expect(page.getByText("Reviews, tests, then ships.")).toBeVisible();
