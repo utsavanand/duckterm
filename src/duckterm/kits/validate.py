@@ -102,12 +102,14 @@ def validate(kit: m.Kit) -> list[Finding]:
             for h in only:
                 if h not in m.HARNESSES:
                     err(cid, f"only.harness names unknown harness {h!r}")
-        for opt, choice in c.when.items():
+        for opt, choices in c.when.items():
             option = kit.options.get(opt)
             if option is None:
                 err(cid, f"when.{opt}: no such option")
-            elif choice not in (option.get("choices") or []):
-                err(cid, f"when.{opt}={choice!r} is not a choice of that option")
+                continue
+            for choice in choices:
+                if choice not in (option.get("choices") or []):
+                    err(cid, f"when.{opt}={choice!r} is not a choice of that option")
         if not m.COMPONENT_RE.match(c.name):
             err(cid, f"name {c.name!r} must match [a-z0-9_-], 1-64 chars; it becomes a path")
             continue
@@ -357,9 +359,18 @@ def _check_flow(
         err(cid, "flow needs a non-empty `steps` list")
         return
     ids = [str(s.get("id")) for s in steps if isinstance(s, dict)]
-    if len(set(ids)) != len(ids):
+    members = [
+        (i, str(sub.get("id")))
+        for i, s in enumerate(steps)
+        if isinstance(s, dict) and isinstance(s.get("parallel"), list)
+        for sub in s["parallel"]
+        if isinstance(sub, dict)
+    ]
+    if len(set(ids) | {m for _, m in members}) != len(ids) + len(members):
         err(cid, "step ids must be unique")
+    # a parallel member sits at its group's position: a later step may read it
     order = {sid: i for i, sid in enumerate(ids)}
+    order.update({m: i for i, m in members})
     targets = set(ids) | {"end", "fail"}
     for s in steps:
         if not isinstance(s, dict):

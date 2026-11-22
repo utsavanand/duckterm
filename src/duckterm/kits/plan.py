@@ -237,7 +237,7 @@ def build(
 def _why_inactive(c: m.Component, chosen: list[str], opts: dict[str, str]) -> str:
     if c.only_harness and not set(c.only_harness) & set(chosen):
         return f"only for {', '.join(c.only_harness)}"
-    return "option " + ", ".join(f"{k}={v}" for k, v in c.when.items()) + " not chosen"
+    return "option " + ", ".join(f"{k}={'|'.join(v)}" for k, v in c.when.items()) + " not chosen"
 
 
 def _dedupe(placements: list[adapters.Placement]) -> list[adapters.Placement]:

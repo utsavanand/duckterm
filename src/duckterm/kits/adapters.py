@@ -404,7 +404,7 @@ def place_skill(
     name = c.fields.get("replaces") or source.name
     out: list[Placement] = []
     for root, served in roots.items():
-        variant_ok = [h for h in served if c.applies(h, {})] if c.only_harness else served
+        variant_ok = [h for h in served if h in c.only_harness] if c.only_harness else served
         if not variant_ok:
             continue
         out.append(
@@ -464,8 +464,6 @@ def place_agent(kit: m.Kit, c: m.Component, chosen: list[str]) -> list[Placement
     body = text.split("---", 2)[-1].lstrip("\n") if text.startswith("---") else text
     out: list[Placement] = []
     for h in chosen:
-        if not c.applies(h, {}):
-            continue
         a = ADAPTERS[h]
         if h == "copilot" and "claude-code" in chosen:
             out.append(
@@ -555,8 +553,6 @@ def place_hook(
     timeout = int(c.fields.get("timeout", 5))
     out: list[Placement] = []
     for h in chosen:
-        if not c.applies(h, {}):
-            continue
         a = ADAPTERS[h]
         if a.hook_format == "none":
             out.append(
@@ -673,8 +669,6 @@ def place_permission(kit: m.Kit, c: m.Component, chosen: list[str]) -> list[Plac
     rules = [r for r in c.fields.get("rules", []) if isinstance(r, dict)]
     out: list[Placement] = []
     for h in chosen:
-        if not c.applies(h, {}):
-            continue
         a = ADAPTERS[h]
         if a.permissions == "settings":
             perms: dict[str, list[str]] = {"allow": [], "ask": [], "deny": []}
@@ -799,8 +793,6 @@ def place_tool(kit: m.Kit, c: m.Component, chosen: list[str]) -> list[Placement]
     env = {str(k): str(v) for k, v in (mcp.get("env") or {}).items()}
     done_shared = False
     for h in chosen:
-        if not c.applies(h, {}):
-            continue
         a = ADAPTERS[h]
         if a.mcp_format == "mcp-json":
             if done_shared:
