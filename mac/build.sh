@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build DuckTerm.app — the desktop shell around the local dashboard.
 #
-# Compiles the Swift sources directly (not via SwiftPM) into a .app bundle and
+# Resolves pinned native dependencies and compiles Swift into a .app bundle;
 # ad-hoc signs it so it runs on this machine. Requires a working Swift toolchain
 # with the macOS SDK — full Xcode is recommended; the standalone CommandLineTools
 # 16.4 SDK has a broken module map (duplicate SwiftBridging) that fails to import
@@ -76,14 +76,23 @@ MACOS="$CONTENTS/MacOS"
 echo "==> building dashboard"
 (cd ../web && npm run build --silent)
 
+echo "==> resolving pinned native updater"
+swift package resolve
+SPARKLE="$PWD/.build/artifacts/sparkle/Sparkle"
+FRAMEWORKS="$SPARKLE/Sparkle.xcframework/macos-arm64_x86_64"
+[[ -d "$FRAMEWORKS/Sparkle.framework" ]] || { echo "Sparkle framework missing" >&2; exit 1; }
 echo "==> compiling"
 rm -rf "$APP"
 mkdir -p "$MACOS" "$CONTENTS/Resources"
 swiftc -O -target "arm64-apple-macos${MIN_MACOS}" \
   -framework AppKit -framework WebKit -framework UserNotifications -framework Foundation \
+  -F "$FRAMEWORKS" -framework Sparkle -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
   -o "$MACOS/DuckTerm" \
   Sources/Duckterm/*.swift
 
+mkdir -p "$CONTENTS/Frameworks"
+/usr/bin/ditto "$FRAMEWORKS/Sparkle.framework" "$CONTENTS/Frameworks/Sparkle.framework"
+cp "$SPARKLE/LICENSE" "$CONTENTS/Resources/LICENSE-Sparkle"
 echo "==> bundling app icon"
 # Edition icons are generated and reviewed together with their SVG sources.
 # Normal builds copy the exact checked-in resource, never rewrite source assets
@@ -178,6 +187,8 @@ plist["DuckTermSupportEmail"] = os.environ["DUCKTERM_SUPPORT_EMAIL"]
 path.write_bytes(plistlib.dumps(plist))
 PYCONFIG
 fi
+
+"${PYTHON:-../.venv/bin/python}" configure-updates.py "$CONTENTS/Info.plist"
 
 built_minos=$(otool -l "$MACOS/DuckTerm" | awk '/LC_BUILD_VERSION/{f=1} f&&/minos/{print $2; exit}')
 if [[ "$built_minos" != "$MIN_MACOS" ]]; then

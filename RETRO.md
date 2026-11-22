@@ -23,6 +23,102 @@ Lesson: "pre-existing" is a statement about blame, not about health. If a
 failure survives three sessions of being correctly identified as someone
 else's, it has no owner and the person who keeps tripping over it should just
 fix it.
+## 2026-11-22 — The duplicated condition was real; my fix for it was not
+
+Two readers answered "is this connector on". The panel used policy.enabled AND
+every chosen harness registered; run() used the flag alone. I probed it, got
+panel=False with run()=True after dropping a harness entry, called it the
+GitHub incident and put the panel's predicate into run() as well.
+
+CI failed four tests, and they were right. Two things I had not checked:
+
+run() is only ever reached AS the `connector-run <name>` command inside a
+harness entry. By the time it executes, the calling harness's entry
+demonstrably exists - the invocation is the proof. And run() cannot tell which
+harness invoked it, so requiring ALL chosen harnesses means Codex losing its
+entry would stop Claude Code from running a connector it can reach perfectly
+well. My gate was both redundant and wrong in the same line.
+
+Also: disable() sets policy.enabled false, so the flag alone already catches
+what the owner actually clicks. My gate never protected the incident I claimed
+it protected - it only fired in the configuration those four tests set up.
+
+The honest residue is smaller than the ticket. _RunnerPolicy folds harness
+config into its watch signature only in the legacy branch, so for a connector
+with a policy file, harness revocation mid-run is genuinely unwatched. That is
+a real gap, it needs the calling harness's identity to fix properly, and it is
+not what I shipped.
+
+Lesson: a probe that shows two readers disagreeing proves the disagreement, not
+that either one is wrong. Before unifying them, find out how each is actually
+reached - the stricter condition is not automatically the safer one, and
+"fail-closed" is not a justification when the thing being closed is a path that
+was never open.
+
+## 2026-11-22 — A test the client refuses is not a test the server passed
+
+The broker's TLS floor was untested: lowering minimum_version from 1.2 to 1.0
+failed nothing. The obvious test is "connect with a TLS 1.1 client and assert
+refusal", and it would have been worthless here. This OpenSSL 3.6.3 build will
+not offer TLS 1.1 at all - capping a client there raises
+NO_PROTOCOLS_AVAILABLE locally, before a single byte reaches the server, and
+the error is byte-identical whether the server's floor is 1.2 or 1.0. The test
+would have been green with the floor deleted.
+
+I only know that because I ran both variants side by side before writing the
+test, which is the habit worth keeping: when a negative test passes, check
+which side did the refusing. A refusal from the client proves nothing about
+the server.
+
+What the test asserts instead: the floor on the product's own context object
+(the value a policy change actually edits), plus a live handshake from a client
+capped at exactly 1.2, so the floor is proved to be a floor and not a wall.
+Both mutations now fail - lowering the floor, which is the security
+regression, and raising it to 1.3, which is the availability one.
+
+## 2026-11-21 — A first page is not the complete source catalog
+
+PR #354 paginated memory sources, but the retained-checkpoint scope test still
+looked only at the first page. Checkpoint ids determine source ordering, so the
+test passed locally and failed in CI when its checkpoint sorted after item 20.
+Force that ordering in the regression, follow every cursor, and check both that
+the session can read its checkpoint and that moving scope still hides it. No
+access check needed weakening; the test needed to use the API's paging contract.
+
+## 2026-11-21 — Merge disclosure must describe the full readable source
+
+A merge sends a short summary but grants read access to a broader source catalog.
+Calling that only “summaries and evidence” hid inbox exchanges, tasks and saved
+artifacts from the owner’s decision. Both merge flows now name those records,
+including messages with other agents across folders, before confirmation. Share
+the disclosure component so the two flows cannot drift. Access behavior is unchanged.
+
+## 2026-11-21 — Bundle defaults are not enforced update policy
+
+Review found that Sparkle can read saved preferences before Info.plist. Declaring
+manual updates in the bundle therefore did not guarantee that installs used our
+preflight. The adapter now supplies the validated feed through Sparkle’s delegate,
+clears the saved feed override, and disables automatic checks and downloads before
+starting. The bundle also disallows automatic installation. Native installer
+regressions seed conflicting preferences and verify preflight still runs.
+
+Lesson: test a framework’s effective configuration, including persisted overrides,
+rather than assuming its packaged defaults enforce application policy. Invalid
+public signing keys must also return a controlled failure instead of crashing.
+
+## 2026-11-21 — A download link is not a complete app updater
+
+Settings exposed “Update DuckTerm” without an installer, and its text discussed
+CLI/server updates even though the Mac app carries its own backend. Users could
+follow the control and still run old app components. The replacement uses the
+native signed-bundle installer and verifies both app and backend versions after
+relaunch. A disposable native Test bundle exercises successful replacement,
+tampered feed/archive rejection, and a backend mismatch. Signing keys and
+per-edition published feeds remain explicit release prerequisites.
+
+Lesson: verify the outcome promised by a control across the installation boundary.
+A successful download, build, or new app version alone does not prove the running
+backend was updated. Never label any of those partial results as update success.
 
 ## 2026-11-21 — The local gate checked formatting with two tools that disagree
 
