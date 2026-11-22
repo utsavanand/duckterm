@@ -3,11 +3,80 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import time
+import uuid
 from typing import Any
 
-from duckterm import memory_continuity, memory_sources, memory_spans
+from duckterm import checkpoint_settings, memory_continuity, memory_sources, memory_spans
+from duckterm.core import memory_folding
 from duckterm.core.session_api import APIError
-from duckterm.persistence.saved_state import conversation
+from duckterm.persistence.saved_state import checkpoint_marker, conversation, transaction
+
+AUTOMATIC_LABEL = "Automatic"
+GAP_LABEL = "Automatic checkpoints off"
+
+
+def in_gap(row: dict[str, Any], periods: list[tuple[int, int]]) -> bool:
+    """Written while automatic checkpoints were off; untimed rows never are."""
+    at = row.get("at")
+    return isinstance(at, int) and any(off <= at <= on for off, on in periods)
+
+
+def _gap(
+    server: Any,
+    key: str,
+    captured: dict[str, Any],
+    rows: list[dict[str, Any]],
+    periods: list[tuple[int, int]],
+) -> dict[str, Any] | None:
+    """Unsummarized rows an automatic checkpoint leaves out (owner, 2026-11-15)."""
+    processed: set[tuple[str, str]] = set()
+    for leaf in memory_folding.rows(server.digests, key, captured["source"]["scope_hash"]):
+        for source, records in leaf.get("continuity", {}).get("processed", {}).items():
+            processed.update((source, record) for record in records)
+    skipped = [r for r in rows if (r["source"], r["record"]) not in processed]
+    if not skipped:
+        return None
+    return {
+        "periods": [
+            list(p)
+            for p in sorted(
+                {next((off, on) for off, on in periods if off <= r["at"] <= on) for r in skipped}
+            )
+        ],
+        "records": len(skipped),
+        "first_at": min(r["at"] for r in skipped),
+        "last_at": max(r["at"] for r in skipped),
+    }
+
+
+def record_gap(server: Any, key: str, captured: dict[str, Any]) -> str | None:
+    """Save the gap as its own checkpoint entry, once per off period per agent."""
+    gap = captured.get("checkpoint_gap")
+    if not gap:
+        return None
+    conn = server.history._conn
+    seen: set[tuple[int, ...]] = set()
+    for (text,) in conn.execute(
+        "SELECT record_json FROM checkpoints WHERE session_key=? AND label=?", (key, GAP_LABEL)
+    ):
+        seen.update(tuple(p) for p in json.loads(text).get("gap", {}).get("periods", []))
+    new = [p for p in gap["periods"] if tuple(p) not in seen]
+    if not new:
+        return None
+    now = int(time.time() * 1000)
+    record = checkpoint_marker(captured, None, {}, now)
+    record["gap"] = {**gap, "periods": new}
+    identity = uuid.uuid4().hex
+    with transaction(conn):
+        conn.execute(
+            "INSERT INTO checkpoints "
+            "(id,session_key,label,summary,record_json,markdown_path,created_at) "
+            "VALUES (?,?,?,'',?,NULL,?)",
+            (identity, key, GAP_LABEL, json.dumps(record), now),
+        )
+    return identity
 
 
 async def freeze(
@@ -18,6 +87,7 @@ async def freeze(
     *,
     selection: dict[str, Any] | None = None,
     order: str | None = None,
+    automatic: bool = False,
 ) -> dict[str, Any]:
     captured = await memory_continuity.capture(server, key, captured)
     if selection is not None and (captured.get("memory_gaps") or "memory_sources" not in captured):
@@ -40,6 +110,14 @@ async def freeze(
     eligible.sort(key=lambda r: bool(r["current"]))  # old generations before the current one
     lookback = settings["lookback_records"]
     chosen = eligible if lookback == "all" else eligible[-lookback:]
+    if automatic:
+        periods = checkpoint_settings.off_periods(settings)
+        skipped = [r for r in chosen if in_gap(r, periods)]
+        if skipped:
+            chosen = [r for r in chosen if not in_gap(r, periods)]
+            gap = _gap(server, key, captured, skipped, periods)
+            if gap:
+                captured["checkpoint_gap"] = gap
     available = len(eligible)
     if selection is not None:
         from duckterm import checkpoint_plan

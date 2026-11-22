@@ -238,6 +238,7 @@ _LOCKED_PAGE = """<!doctype html><meta charset="utf-8"><title>DuckTerm</title>
 _ROUTES: list[Route] = [
     Route("GET", "/edition", lambda s, r, w, h, b, seg: s._edition(w)),
     Route("GET", "/checkpoint-settings", lambda s, r, w, h, b, seg: s._checkpoint_settings(w)),
+    Route("GET", "/checkpoint-health", lambda s, r, w, h, b, seg: s._checkpoint_health(w)),
     Route("POST", "/checkpoint-settings", lambda s, r, w, h, b, seg: s._checkpoint_settings(w, b)),
     Route("GET", "/ai-settings", lambda s, r, w, h, b, seg: s._ai_settings(w)),
     Route("POST", "/ai-settings", lambda s, r, w, h, b, seg: s._ai_settings(w, b)),
@@ -484,6 +485,9 @@ class Server:
 
         self.checkpoint_requests = CheckpointRequests(self)
         self.progress_coordinator = ProgressCoordinator(self)
+        from duckterm.core.auto_checkpoints import AutoCheckpoints
+
+        self.auto_checkpoints = AutoCheckpoints(self)
         self.memory = Memory(self)
         self.memory_preparation = MemoryPreparation(self)
         from duckterm.handoff_review import HandoffReview
@@ -3243,7 +3247,6 @@ class Server:
                     interrupt=request.get("interrupt", False),
                     memory=request.get("memory"),
                     request_key=request.get("request_key"),
-                    require_preparation=True,
                 )
             else:
                 raise APIError(405, "Unsupported restart operation")
@@ -5662,6 +5665,17 @@ class Server:
         except APIError as exc:
             await _write_json(writer, exc.status, {"error": str(exc)})
 
+    async def _checkpoint_health(self, writer: asyncio.StreamWriter) -> None:
+        from duckterm import checkpoint_settings
+        from duckterm.core import checkpoint_health
+
+        try:
+            automatic = checkpoint_settings.load()["automatic"]
+        except APIError:
+            automatic = None
+        agents = checkpoint_health.report(self.history._conn, int(time.time() * 1000))
+        await _write_json(writer, 200, {"automatic": automatic, "agents": agents})
+
     async def _ai_settings(self, writer: asyncio.StreamWriter, body: bytes | None = None) -> None:
         from duckterm.llm import ai_settings, backend
 
@@ -5765,8 +5779,13 @@ class Server:
         try:
             if label != "Before harness switch" and selection is None:
                 captured = await memory_checkpoint.freeze(
-                    self, session_key, captured, checkpoint_settings.load()
+                    self,
+                    session_key,
+                    captured,
+                    checkpoint_settings.load(),
+                    automatic=label == memory_checkpoint.AUTOMATIC_LABEL,
                 )
+                memory_checkpoint.record_gap(self, session_key, captured)
             captured["trigger"] = trigger
             update = await self.progress_coordinator.refresh_result(
                 session_key, captured, on_progress=on_progress
@@ -6513,6 +6532,11 @@ class Server:
                 on_listening(host, port)
             self.archives.recover()
             sweeper = asyncio.create_task(self._sweep_dead_loop())
+            auto_checkpoints = (
+                asyncio.create_task(self.auto_checkpoints.loop())
+                if self.edition.includes("checkpoints")
+                else None
+            )
             collaboration_worker = (
                 asyncio.create_task(self.collaboration.run())
                 if self.edition.includes("inbox")
@@ -6535,6 +6559,9 @@ class Server:
                     with contextlib.suppress(asyncio.CancelledError):
                         await mobile_manager
                     sweeper.cancel()
+                    if auto_checkpoints is not None:
+                        auto_checkpoints.cancel()
+                        await self.auto_checkpoints.close()
                     if collaboration_worker is not None:
                         collaboration_worker.cancel()
                         with contextlib.suppress(asyncio.CancelledError):
