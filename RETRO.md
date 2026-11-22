@@ -1,3 +1,27 @@
+## 2026-11-21 — A test that builds its own config tests the config, not the product
+
+The broker's mutual-TLS tests looked like proof that the server demands client
+certificates. They were not. Each test built its own `ssl.SSLContext` with
+`CERT_REQUIRED` instead of using `serve()`'s, so they asserted the setting they
+had just written. Mutating the product to `ssl.CERT_NONE` left all 5 passing:
+the broker could have stopped checking client certificates entirely and the
+suite would have stayed green. Security caught this reviewing #416, where I had
+just fixed the certificates themselves and reported the tests as passing.
+
+Two lessons. A test that constructs its own copy of the thing under test has a
+duplicate, and a duplicate drifts silently — the fix is to export the real
+object (`server_context(settings)`) and have the test use it. And "the tests
+pass" is a claim about the tests; the question is whether they can fail. A
+mutation takes a minute: break the behaviour on purpose and watch for red.
+
+The negative case mattered too. The only rejection tested was "no certificate
+at all", which a server can pass while ignoring the issuer. The new case offers
+a well-formed certificate from a second CA and asserts no credential is read.
+Related: [[green-tests-no-working-feature]], [[intent-rendered-as-state]].
+
+Still unverified after this: mutating `minimum_version` from TLSv1_2 to TLSv1
+does not fail anything, because a modern client negotiates 1.3 regardless.
+
 ## 2026-11-19 — Long pastes vanished because tmux caps a command at 1000 arguments
 
 Terminal input reaches an agent pane through `tmux send-keys -H`, one hex
