@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { api, KitDetail, KitInstalled, KitInventory, KitPlan, KitProcedure, KitRunSummary, KitsOverview } from "./api";
 import { Button, useToast } from "./ui";
 import "./skillKits.css";
@@ -319,6 +319,14 @@ function AddView({ project, knownDirs, onProject, harnessesPresent, busy, onCanc
   const [inventoryError, setInventoryError] = useState<string | null>(null);
   const [harnesses, setHarnesses] = useState<string[]>(Object.entries(harnessesPresent).filter(([, present]) => present).map(([h]) => h));
   const [options, setOptions] = useState<Record<string, string>>({});
+  // The overview that says which harnesses are on PATH usually lands after
+  // this form mounts; until the user ticks a box, every present harness is
+  // selected, however late the overview arrives.
+  const touched = useRef(false);
+  useEffect(() => {
+    if (touched.current) return;
+    setHarnesses(Object.entries(harnessesPresent).filter(([, present]) => present).map(([h]) => h));
+  }, [harnessesPresent]);
   const allHarnesses = useMemo(() => Object.keys(harnessesPresent).length ? Object.keys(harnessesPresent) : ["claude-code", "codex", "copilot", "opencode"], [harnessesPresent]);
 
   useEffect(() => {
@@ -362,7 +370,7 @@ function AddView({ project, knownDirs, onProject, harnessesPresent, busy, onCanc
             {allHarnesses.map((h) => (
               <label className="rd-kits-check" key={h}>
                 <input type="checkbox" checked={harnesses.includes(h)} disabled={harnessesPresent[h] === false}
-                  onChange={(e) => setHarnesses(e.target.checked ? [...harnesses, h] : harnesses.filter((x) => x !== h))} />
+                  onChange={(e) => { touched.current = true; setHarnesses(e.target.checked ? [...harnesses, h] : harnesses.filter((x) => x !== h)); }} />
                 {h} <Pill>{harnessesPresent[h] === false ? "not installed here" : "on PATH"}</Pill>
               </label>
             ))}
@@ -394,7 +402,7 @@ function AddView({ project, knownDirs, onProject, harnessesPresent, busy, onCanc
                 <div className="rd-kits-kind procedure" key={p.name}><span>procedure</span><span className="rd-kits-mono">{p.name} · {Object.keys(p.roles).join(", ")} · {p.rules.length} rules</span></div>
               ))}
               <div className="rd-kits-note" style={{ padding: "10px 14px", borderTop: "1px solid var(--border)" }}>
-                {inventory.component_count} components · {inventory.findings.filter((f) => f.level === "warning").length} warnings · {inventory.findings.filter((f) => f.level === "error").length} errors. A procedure is offered after install; applying it to a workspace is your choice.
+                {inventory.component_count} components · {inventory.findings.filter((f) => f.level === "warning").length} warnings · {inventory.findings.filter((f) => f.level === "error").length} errors. A kit with a team offers Create team after install.
               </div>
             </>
           ) : (

@@ -50,6 +50,12 @@ export default async function globalSetup() {
   const testCodexRoot = join(home, "test-codex");
   mkdirSync(join(testClaudeRoot, "projects"), { recursive: true });
   mkdirSync(join(testCodexRoot, "sessions"), { recursive: true });
+  // The Skill kits page installs only for harnesses found on PATH; CI has no
+  // Claude Code, so a no-op stub stands in. Nothing launches it
+  // (DUCKTERM_NO_TERMINAL), it only has to exist.
+  const stubBin = join(home, "bin");
+  mkdirSync(stubBin, { recursive: true });
+  writeFileSync(join(stubBin, "claude"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
 
   // A deterministic stand-in for the LLM backend: the observation-loop spec
   // asserts these exact rules come back as AGENTS.md suggestions. (It also
@@ -67,6 +73,7 @@ export default async function globalSetup() {
       cwd: REPO,
       env: {
         ...process.env,
+        PATH: `${stubBin}:${process.env.PATH ?? ""}`,
         DUCKTERM_HOME: home,
         DUCKTERM_RELEASE_CHECK: "off",
         CLAUDE_CONFIG_DIR: testClaudeRoot,

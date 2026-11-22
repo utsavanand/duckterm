@@ -4,26 +4,34 @@ import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import { postEvent, seedSession } from "./helpers";
 
-// Skill kits end to end: add a kit by path in the Skill kits dialog and read
-// its contents. DuckTerm never runs a kit's own script, so there is nothing
-// to install from here and a legacy install.sh never executes.
+// Skill kits end to end: add a kit by path on the Skill kits page, review
+// the dry run, install, and read what the skill does on the kit's page.
+// DuckTerm writes the kit's files itself and never runs a kit's own script,
+// so a stray install.sh in the kit is never executed.
 
-test("add a skill kit and view its contents; nothing offers to install", async ({
+test("add a skill kit, review, install and read a skill; the kit's script never runs", async ({
   page,
 }) => {
   const kit = mkdtempSync(join(tmpdir(), "rd-e2e-kit-"));
+  const project = mkdtempSync(join(tmpdir(), "rd-e2e-kit-project-"));
   mkdirSync(join(kit, "skills", "ship-it"), { recursive: true });
   writeFileSync(
     join(kit, "skills", "ship-it", "SKILL.md"),
     "---\nname: ship-it\ndescription: Reviews, tests, then ships.\n---\n",
   );
   writeFileSync(
-    join(kit, "duckterm-harness.json"),
-    JSON.stringify({
-      name: `kit-${Date.now()}`,
-      description: "skills and hooks for the e2e test",
-      install: ["./install.sh"],
-    }),
+    join(kit, "skill-kit.toml"),
+    [
+      "manifest_version = 1",
+      `name = "kit-${Date.now()}"`,
+      'description = "skills and hooks for the e2e test"',
+      'version = "0.1.0"',
+      "",
+      "[[components]]",
+      'kind = "skill"',
+      'path = "skills/ship-it"',
+      "",
+    ].join("\n"),
   );
   writeFileSync(join(kit, "install.sh"), "#!/bin/sh\ntouch installed.marker\n", {
     mode: 0o755,
@@ -32,16 +40,26 @@ test("add a skill kit and view its contents; nothing offers to install", async (
   await page.goto("/");
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Skill kits" }).click();
+  await page.getByRole("button", { name: "Add skill kit…" }).click();
 
-  await page.getByPlaceholder("~/ws-my-projects/uv-suite").fill(kit);
-  await page.getByRole("button", { name: "Add", exact: true }).click();
-  const row = page.locator(".rd-harness", { hasText: "skills and hooks" });
-  await expect(row).toBeVisible();
+  await page.getByLabel(/Kit folder/).fill(kit);
+  await page.getByLabel("Install into").fill(project);
+  const review = page.getByRole("button", { name: "Review what will change" });
+  await expect(review).toBeEnabled();
+  await review.click();
 
-  await row.getByRole("button", { name: "view contents" }).click();
-  await expect(row).toContainText("Reviews, tests, then ships.");
-  await expect(row.getByRole("button", { name: /install/i })).toHaveCount(0);
+  await expect(page.getByText(/a dry run; nothing is written until you press Install/)).toBeVisible();
+  expect(existsSync(join(project, ".claude", "skills", "ship-it", "SKILL.md"))).toBe(false);
+  await page.getByRole("button", { name: /Install 1 component/ }).click();
+
+  await expect(page.getByRole("heading", { name: /kit-\d+/ })).toBeVisible();
+  await page.locator(".rd-kits-group > summary", { hasText: "Skills" }).click();
+  await page.locator(".rd-kits-skill > summary", { hasText: "/ship-it" }).click();
+  await expect(page.getByText("Reviews, tests, then ships.")).toBeVisible();
+
+  expect(existsSync(join(project, ".claude", "skills", "ship-it", "SKILL.md"))).toBe(true);
   expect(existsSync(join(kit, "installed.marker"))).toBe(false);
+  expect(existsSync(join(project, "installed.marker"))).toBe(false);
 });
 
 // The observation loop: corrections seeded for a folder come back as proposed
