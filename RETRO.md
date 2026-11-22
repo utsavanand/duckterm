@@ -18,6 +18,17 @@ What the test asserts instead: the floor on the product's own context object
 capped at exactly 1.2, so the floor is proved to be a floor and not a wall.
 Both mutations now fail - lowering the floor, which is the security
 regression, and raising it to 1.3, which is the availability one.
+## 2026-11-21 — The local gate checked formatting with two tools that disagree
+
+scripts/gate.sh ran both `black --check` and `ruff format --check`; CI runs
+only black. The two wrap an assert with a message differently, so for that
+shape no formatting satisfies both: ruff format "fixed" a line in #415 into
+the form black rejects, and CI failed on formatting alone. A gate step that
+CI does not run cannot be the reason a branch is or isn't shippable, so it
+only produces false failures. Removed ruff format from the gate; black stays
+the one formatter, matching ci.yml. Keep the local gate a superset of CI's
+checks only where the extra step agrees with CI.
+
 ## 2026-11-21 — Synchronize asynchronous tests on observable progress
 
 PR #409's foreground-refresh test assumed twenty task yields completed a failed
