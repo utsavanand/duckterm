@@ -16,6 +16,7 @@ keep a step from reaching past its workspace:
   links are never copied in either direction.
 """
 
+import json
 import os
 import shutil
 import subprocess
@@ -24,7 +25,7 @@ from pathlib import Path
 from typing import Any
 
 from duckterm.autopilot.sandbox import Mount, Sandbox, harness_env
-from duckterm.kits import runner
+from duckterm.kits import adapters, runner
 from duckterm.kits.runner import ProcessResult
 
 RUNS = Path(runner.RUNS)
@@ -114,6 +115,26 @@ class AutopilotExecutor(runner.Executor):
             out = Path(rel)
             _copy(self.dirs.scratch / out.relative_to(RUNS), self.dirs.project / out, skip=set())
         return ProcessResult(proc.returncode, proc.stdout, proc.stderr)
+
+    def harness_ready(
+        self, harness: str, project: Path, *, hooks: bool, limits: runner.Limits
+    ) -> str | None:
+        """The runner's pre-check, answered from inside the sandbox: the host's
+        PATH and ~/.claude.json say nothing about where the step runs."""
+        binary = adapters.ADAPTERS[harness].binary
+        if self.box.exec(["sh", "-c", f'command -v "{binary}"']).returncode != 0:
+            return f"{harness} is not installed in the sandbox image"
+        if harness == "codex" and hooks and not limits.codex_trusted:
+            return "this kit has hooks and Codex only runs project hooks the owner trusted"
+        if harness == "claude-code" and hooks:
+            proc = self.box.exec(["sh", "-c", "cat $HOME/.claude.json"])
+            try:
+                record = json.loads(proc.stdout)["projects"][str(project)]
+            except (ValueError, KeyError, TypeError):
+                record = {}
+            if record.get("hasTrustDialogAccepted") is not True:
+                return f"the sandbox has no Claude Code trust record for {project}"
+        return None
 
     def after_step(self, run: runner.Run, attempt: dict[str, Any]) -> None:
         """Commit the attempt's changes to the run branch before the runner

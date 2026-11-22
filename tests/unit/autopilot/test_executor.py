@@ -38,6 +38,42 @@ def test_copy_skips_links_and_receipts(tmp_path: Path) -> None:
     assert not (dst / "r1" / "linked").exists()
 
 
+class _Box:
+    """Answers `command -v` and `cat ~/.claude.json` as a sandbox would."""
+
+    def __init__(self, binaries: set[str], claude_json: str) -> None:
+        self.binaries = binaries
+        self.claude_json = claude_json
+
+    def exec(self, argv: list[str], **_: object) -> subprocess.CompletedProcess[str]:
+        script = argv[-1]
+        if script.startswith("command -v"):
+            found = any(f'"{b}"' in script for b in self.binaries)
+            return subprocess.CompletedProcess(argv, 0 if found else 1, "", "")
+        return subprocess.CompletedProcess(argv, 0, self.claude_json, "")
+
+
+@pytest.mark.parametrize(
+    ("binaries", "projects", "reason"),
+    [
+        (set(), {}, "claude-code is not installed in the sandbox image"),
+        ({"claude"}, {}, "the sandbox has no Claude Code trust record for /run/repo"),
+        ({"claude"}, {"/elsewhere": {"hasTrustDialogAccepted": True}}, "no Claude Code trust"),
+        ({"claude"}, {"/run/repo": {"hasTrustDialogAccepted": True}}, None),
+    ],
+)
+def test_harness_check_is_answered_by_the_sandbox_not_the_host(
+    tmp_path: Path, binaries: set[str], projects: dict[str, object], reason: str | None
+) -> None:
+    box = _Box(binaries, json.dumps({"projects": projects}))
+    ex = AutopilotExecutor(box, executor.RunDirs(tmp_path), "tok", "b")  # type: ignore[arg-type]
+    got = ex.harness_ready("claude-code", Path("/run/repo"), hooks=True, limits=runner.Limits())
+    if reason is None:
+        assert got is None
+    else:
+        assert got is not None and reason in got
+
+
 def _repo(path: Path) -> Path:
     path.mkdir()
     git = ["git", "-C", str(path), "-c", "user.name=t", "-c", "user.email=t@t"]
