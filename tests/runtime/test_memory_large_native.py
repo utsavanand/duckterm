@@ -148,6 +148,43 @@ def test_a_rewritten_transcript_keeps_both_whole_copies(tmp_path, monkeypatch):
     ]
 
 
+def compacted(size):
+    body = json.dumps(
+        {
+            "timestamp": "2026-11-17T00:00:00Z",
+            "type": "compacted",
+            "payload": {"replacement_history": "x" * size},
+        }
+    )
+    return body.encode() + b"\n"
+
+
+def test_an_oversized_codex_compaction_line_is_hashed_but_not_parsed(tmp_path, monkeypatch):
+    # A 1.5 GB ui-dev history had 23 compaction lines of 16-23 MB (2026-11-17).
+    monkeypatch.setattr(memory_sources, "MAX_LINE_BYTES", 4096)
+    path = tmp_path / "rollout.jsonl"
+    raw = message("Before the compaction") + compacted(20_000) + message("After the compaction")
+    path.write_bytes(raw)
+    read = memory_sources.read_native("probe", source(path))
+    assert [r["text"] for r in read["records"]] == ["Before the compaction", "After the compaction"]
+    assert read["version"] == hashlib.sha256(raw).hexdigest()
+
+
+@pytest.mark.parametrize(
+    ("runtime", "line"),
+    [
+        ("codex", message("y" * 8000)),
+        ("claude-code", compacted(20_000)),
+    ],
+)
+def test_other_oversized_lines_are_still_refused(tmp_path, monkeypatch, runtime, line):
+    monkeypatch.setattr(memory_sources, "MAX_LINE_BYTES", 4096)
+    path = tmp_path / "native.jsonl"
+    path.write_bytes(line)
+    with pytest.raises(APIError, match="exceeds the current read bound"):
+        memory_sources.read_native("probe", {**source(path), "runtime": runtime})
+
+
 @pytest.mark.parametrize(
     ("runtime", "line"),
     [
