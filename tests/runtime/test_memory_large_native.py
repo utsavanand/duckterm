@@ -184,6 +184,51 @@ def test_a_tampered_pointer_or_copy_is_refused(tmp_path, monkeypatch):
         memory_sources.read_native("probe", v1)
 
 
+def rewrite_records(path, edit):
+    """Rewrite a records copy and recompute its own checksum, as an attacker could."""
+    header, *lines = path.read_bytes().splitlines(keepends=True)
+    lines = edit(lines)
+    meta = {
+        **json.loads(header),
+        "records": len(lines),
+        "sha256": hashlib.sha256(b"".join(lines)).hexdigest(),
+    }
+    path.write_bytes((json.dumps(meta) + "\n").encode() + b"".join(lines))
+    return meta["sha256"]
+
+
+def test_a_rewritten_copy_with_a_recomputed_checksum_is_refused(tmp_path, monkeypatch):
+    monkeypatch.setenv("DUCKTERM_HOME", str(tmp_path / "state"))
+    path = tmp_path / "native.jsonl"
+    path.write_bytes(message("Owner said: never push without approval"))
+    saved = memory_sources.read_native("probe", source(path), retain=True)
+    kept = memory_sources.directory("probe") / (saved["snapshot"] + ".records")
+    rewrite_records(
+        kept, lambda lines: [lines[0].replace(b"never push without approval", b"ALWAYS push")]
+    )
+    with pytest.raises(APIError, match="checksum"):
+        memory_sources.read_native("probe", saved)
+    # A reference that doesn't carry the digest can't vouch for the copy either.
+    with pytest.raises(APIError, match="checksum"):
+        memory_sources.read_native(
+            "probe", {k: v for k, v in saved.items() if k != "records_sha256"}
+        )
+
+
+@pytest.mark.parametrize(
+    "line", [b'{"id":"0","role":"user"}\n', b"[1]\n", b"not json\n"], ids=["no-text", "list", "bad"]
+)
+def test_a_malformed_record_is_refused_not_a_crash(tmp_path, monkeypatch, line):
+    monkeypatch.setenv("DUCKTERM_HOME", str(tmp_path / "state"))
+    path = tmp_path / "native.jsonl"
+    path.write_bytes(message("decision"))
+    saved = memory_sources.read_native("probe", source(path), retain=True)
+    kept = memory_sources.directory("probe") / (saved["snapshot"] + ".records")
+    bound = rewrite_records(kept, lambda lines: [line])
+    with pytest.raises(APIError, match="unreadable record"):
+        memory_sources.read_native("probe", {**saved, "records_sha256": bound})
+
+
 def compacted(size, **header):
     body = json.dumps(
         {

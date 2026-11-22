@@ -164,7 +164,12 @@ def _records_file(key: str, snapshot: str) -> tuple[Path, dict[str, Any] | None]
     return root / (value["of"] + ".records"), value
 
 
-def _read_records(key: str, snapshot: str) -> dict[str, Any] | None:
+def _read_records(key: str, snapshot: str, bound: Any) -> dict[str, Any] | None:
+    """Read a version's records, checked against the digest its reference holds.
+
+    The file's own checksum only catches damage: anyone who can rewrite the file
+    can rewrite that too. The reference saved in the database binds the content.
+    """
     found = _records_file(key, snapshot)
     if found is None:
         return None
@@ -189,19 +194,29 @@ def _read_records(key: str, snapshot: str) -> dict[str, Any] | None:
         if pointer is None
         else (pointer["records"], pointer["sha256"])
     )
-    if (len(lines) != count if pointer is None else len(lines) < count) or hashlib.sha256(
-        b"".join(lines[:count])
-    ).hexdigest() != digest:
+    if (
+        (len(lines) != count if pointer is None else len(lines) < count)
+        or hashlib.sha256(b"".join(lines[:count])).hexdigest() != digest
+        or digest != bound
+    ):
         raise APIError(409, "Retained conversation checksum does not match")
     records = []
     for line in lines[:count]:
-        record = json.loads(line)
+        try:
+            record = json.loads(line)
+        except ValueError as exc:
+            raise APIError(409, "Retained conversation has an unreadable record") from exc
+        if not isinstance(record, dict) or not all(
+            isinstance(record.get(field), str) for field in ("id", "role", "text")
+        ):
+            raise APIError(409, "Retained conversation has an unreadable record")
         record.setdefault("summary_text", record["text"])
         records.append(record)
     sizes = meta if pointer is None else pointer
     return {
         "path": path,
         "records": records,
+        "records_sha256": digest,
         "bytes": sizes["bytes"],
         "unprocessed_attachments": sizes["unprocessed_attachments"],
         "normalization": meta["normalization"],
@@ -222,8 +237,11 @@ def _retain_records(
     attachments: int,
     records: list[dict[str, Any]],
     prefixes: dict[int, str],
-) -> None:
-    """Write one version's records; keep one whole copy per growing conversation."""
+) -> str:
+    """Write one version's records and return their digest for the reference.
+
+    Keeps one whole copy per growing conversation.
+    """
     import fcntl
 
     root = directory(key)
@@ -305,6 +323,7 @@ def _retain_records(
         with os.fdopen(fd, "w") as stream:
             json.dump(index, stream)
         os.replace(name, index_path)
+    return str(meta["sha256"])
 
 
 def _timestamp(value: Any) -> int | None:
@@ -324,7 +343,7 @@ def read_native(key: str, source: dict[str, Any], *, retain: bool = False) -> di
     if snapshot is not None:
         if not isinstance(snapshot, str) or not re.fullmatch(r"[a-f0-9]{64}", snapshot):
             raise APIError(409, "Invalid retained conversation reference")
-        stored = _read_records(key, snapshot)
+        stored = _read_records(key, snapshot, source.get("records_sha256"))
         if stored is not None:
             return {
                 **source,
@@ -332,6 +351,7 @@ def read_native(key: str, source: dict[str, Any], *, retain: bool = False) -> di
                 "path": str(stored["path"]),
                 "fence": None,
                 "records": stored["records"],
+                "records_sha256": stored["records_sha256"],
                 "bytes": stored["bytes"],
                 "unprocessed_attachments": stored["unprocessed_attachments"],
                 "coverage": "parsed_text_and_tool_records",
@@ -518,8 +538,11 @@ def read_native(key: str, source: dict[str, Any], *, retain: bool = False) -> di
         version = digest.hexdigest()
         if snapshot is not None and version != snapshot:
             raise APIError(409, "Retained conversation checksum does not match")
-        if retaining:
+        bound = (
             _retain_records(key, source, version, size, attachments, records, prefixes)
+            if retaining
+            else None
+        )
         return {
             **source,
             "version": version,
@@ -532,7 +555,7 @@ def read_native(key: str, source: dict[str, Any], *, retain: bool = False) -> di
             "unprocessed_attachments": attachments,
             "coverage": "parsed_text_and_tool_records",
             "normalization": NORMALIZATION,
-            **({"snapshot": version} if retain else {}),
+            **({"snapshot": version, "records_sha256": bound} if retaining else {}),
         }
     except OSError as exc:
         raise APIError(409, "Conversation could not be read or retained") from exc

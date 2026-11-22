@@ -69,7 +69,7 @@ class Memory:
                 "title": runtime + " conversation",
                 "current": current,
             }
-            for field in ("snapshot", "path", "root"):
+            for field in ("snapshot", "records_sha256", "path", "root"):
                 if field in value:
                     entry[field] = value[field]
             if entry.get("root", root) != root:
@@ -248,6 +248,7 @@ class Memory:
         return {
             **source,
             "snapshot": result["snapshot"],
+            "records_sha256": result["records_sha256"],
             "bytes": result["bytes"],
             "coverage": result["coverage"],
             "unprocessed_attachments": result["unprocessed_attachments"],
@@ -693,7 +694,15 @@ class Memory:
                     native_refs[ref["source"]] = {
                         **{
                             k: saved[k]
-                            for k in ("id", "runtime", "native_id", "cwd", "path", "snapshot")
+                            for k in (
+                                "id",
+                                "runtime",
+                                "native_id",
+                                "cwd",
+                                "path",
+                                "snapshot",
+                                "records_sha256",
+                            )
                         },
                         "root": catalog["root"],
                     }

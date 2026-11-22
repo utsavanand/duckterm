@@ -51,7 +51,10 @@ def test_tool_only_output_is_not_owner_or_assistant_text(memory_rig, runtime):
     assert (memory_sources.directory("agent") / (loaded["snapshot"] + ".records")).is_file()
     path.unlink()
     assert (
-        memory_sources.read_native("agent", {**source, "snapshot": loaded["snapshot"]})["records"]
+        memory_sources.read_native(
+            "agent",
+            {**source, "snapshot": loaded["snapshot"], "records_sha256": loaded["records_sha256"]},
+        )["records"]
         == loaded["records"]
     )
 
