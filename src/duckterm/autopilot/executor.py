@@ -24,6 +24,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from duckterm import github_projects
 from duckterm.autopilot.sandbox import Mount, Sandbox, harness_env
 from duckterm.kits import adapters, runner
 from duckterm.kits.runner import ProcessResult
@@ -70,6 +71,19 @@ def prepare(source: str, ref: str, branch: str, root: Path) -> RunDirs:
     dirs = RunDirs(root)
     root.mkdir(parents=True, exist_ok=True)
     _git("clone", "-q", "--no-hardlinks", "--branch", ref, source, str(dirs.project))
+    return _start_branch(dirs, branch)
+
+
+def prepare_github(repo: str, ref: str, branch: str, root: Path) -> RunDirs:
+    """Clone `repo` through DuckTerm's GitHub connection (its default branch
+    when `ref` is empty) and start the run branch there."""
+    dirs = RunDirs(root)
+    root.mkdir(parents=True, exist_ok=True)
+    github_projects.clone(repo, ref, dirs.project)
+    return _start_branch(dirs, branch)
+
+
+def _start_branch(dirs: RunDirs, branch: str) -> RunDirs:
     _git("-C", str(dirs.project), "checkout", "-q", "-b", branch)
     with (dirs.project / ".git" / "info" / "exclude").open("a") as f:
         f.write("\n.duckterm/\n")

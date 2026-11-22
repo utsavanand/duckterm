@@ -27,6 +27,7 @@ do not keep anyone out.
 |------|---------------|-------|------------|
 | `skill_kits` | Settings → Skill kits (add a kit by folder, view its contents, remove it), the `/harnesses` routes, the session panel's "Skill kit" row, and the `duckterm kit` CLI (validate, plan, install, verify, uninstall). Being built against the Skill Kit Specification (draft 9). | 2026-11-16 | The install wizard is built on `plan`/`install` and the owner has run a kit end to end. Owner's call. |
 | `background_rule_suggestions` | Reconcile original observations after checkpoints in Code/Full. Off by default; pending proposals and capture fingerprints stay in DuckTerm home under `rule-reviews/`, keyed by canonical directory path. The manual Suggest button is independent. | 2026-11-21 | Security and QA approve background capture. Owner’s call. |
+| `autopilot` | The Autopilot sidebar row and page, putting a flow on autopilot, and the `/api/autopilot` routes. Runs flows in Docker sandboxes on this Mac with the owner's Claude subscription; the GitHub issues trigger is polled every 2 minutes. | 2026-11-22 | Runs open pull requests and merge behind the approval gates, and the owner has used it on a real repository. Owner's call. |
 
 ## Graduated
 
