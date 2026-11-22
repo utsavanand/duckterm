@@ -212,7 +212,16 @@ def test_digest_bridge_reconciles_original_sources_without_installing_rules(
         assert not calls  # no typed-rule opt-in
         (workdir / ".duckterm-rules.json").write_text('{"rules": []}')
         server._file_digest_candidates(row)
-        state = json.loads((workdir / ".duckterm-rules.json").read_text())
+        assert not calls  # a cloned rules file does not enable background capture
+        from duckterm import editions
+        from duckterm.core.agents_rules import read_catalog
+
+        server.edition = editions.EditionConfig(
+            "full", editions.FULL.features | {"background_rule_suggestions"}
+        )
+        server._file_digest_candidates(row)
+        assert json.loads((workdir / ".duckterm-rules.json").read_text()) == {"rules": []}
+        state = read_catalog(workdir)
         assert state["rules"] == []
         assert state["proposals"][0]["action"] == "create_rule"
         assert state["proposals"][0]["status"] == "pending"
@@ -229,6 +238,11 @@ def test_repeated_digest_strings_are_not_original_evidence(
 ) -> None:
     monkeypatch.setenv("DUCKTERM_HOME", str(tmp_path / "home"))
     server = _server()
+    from duckterm import editions
+
+    server.edition = editions.EditionConfig(
+        "full", editions.FULL.features | {"background_rule_suggestions"}
+    )
     workdir = tmp_path / "proj"
     workdir.mkdir()
     (workdir / ".duckterm-rules.json").write_text('{"rules": []}')

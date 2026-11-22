@@ -1,3 +1,17 @@
+## 2026-11-21 — Keep review memory separate from shared instructions
+
+A checkpoint must not turn a cloned rule catalogue into permission to generate
+and write unreviewed guidance into the repository. Store pending reconciliation,
+source fingerprints and candidate rules in the local DuckTerm home, and require
+an explicit instance flag for background capture. Only reviewed active rules
+render into AGENTS.md. Match prompt-delivery provenance before treating a hook's
+UserPromptSubmit event as owner guidance.
+
+Rule files are repository-controlled inputs: open them without following
+symlinks, keep locks outside the repository, and require a backed-up explicit
+replacement before converting handwritten instructions. Exercise these boundaries
+through real HTTP as well as storage tests; a happy-path round trip misses them.
+
 ## 2026-11-21 — The local gate checked formatting with two tools that disagree
 
 scripts/gate.sh ran both `black --check` and `ruff format --check`; CI runs
