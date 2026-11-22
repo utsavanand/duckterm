@@ -1,3 +1,17 @@
+## 2026-11-21 — A download link is not a complete app updater
+
+Settings exposed “Update DuckTerm” without an installer, and its text discussed
+CLI/server updates even though the Mac app carries its own backend. Users could
+follow the control and still run old app components. The replacement uses the
+native signed-bundle installer and verifies both app and backend versions after
+relaunch. A disposable native Test bundle exercises successful replacement,
+tampered feed/archive rejection, and a backend mismatch. Signing keys and
+per-edition published feeds remain explicit release prerequisites.
+
+Lesson: verify the outcome promised by a control across the installation boundary.
+A successful download, build, or new app version alone does not prove the running
+backend was updated. Never label any of those partial results as update success.
+
 ## 2026-11-21 — Check a format against real files before anchoring on it
 
 #414 skipped an oversized Codex line when `"type":"compacted"` appeared anywhere
