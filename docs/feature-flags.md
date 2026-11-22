@@ -25,7 +25,7 @@ do not keep anyone out.
 
 | Flag | What it gates | Since | Ships when |
 |------|---------------|-------|------------|
-| `skill_kits` | Settings → Skill kits: a full page listing the kits installed in a workspace's repository and the procedures they ship, the add flow (kit folder → review the plan → install), each kit's page with verify, flows and uninstall; the `/kits/*` routes behind it and the legacy `/harnesses` routes; the session panel's "Skill kit" row; the `duckterm kit` CLI (validate, plan, install, verify, uninstall, run, runs). Built against the Skill Kit Specification (draft 11). | 2026-11-16 | The install wizard is built on `plan`/`install` and the owner has run a kit end to end. Owner's call. |
+| `skill_kits` | Settings → Skill kits: a full page listing the kits installed in a workspace's repository and the procedures they ship, the add flow (kit folder → review the plan → install), each kit's page with verify, flows, every component kind with its details, Create team and uninstall; a session's Flows tab with gates answered under their step; the `/kits/*` and `/api/v1/session/kits/*` routes behind them and the legacy `/harnesses` routes; the session panel's "Skill kit" row; the `duckterm kit` CLI (validate, plan, install, verify, uninstall, run, runs). Built against the Skill Kit Specification (draft 11). | 2026-11-16 | The install wizard is built on `plan`/`install` and the owner has run a kit end to end. Owner's call. |
 
 ## Graduated
 
