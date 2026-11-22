@@ -118,10 +118,11 @@ export function LaunchModal({
     let stale = false;
     fetch(`/agents-md?dir=${encodeURIComponent(path)}`)
       .then((r) => r.json())
-      .then((d: { rules?: { status: string }[] }) => {
+      .then((d: { rules?: { status: string }[]; proposals?: { status: string }[] }) => {
         if (!stale)
           setPendingRules(
-            (d.rules ?? []).filter((r) => r.status === "candidate").length,
+            (d.rules ?? []).filter((r) => r.status === "candidate").length +
+            (d.proposals ?? []).filter((p) => p.status === "pending").length,
           );
       })
       .catch(() => undefined);
