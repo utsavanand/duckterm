@@ -1,0 +1,125 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "DuckTerm version 2 stored rule",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "id",
+    "text"
+  ],
+  "properties": {
+    "id": {
+      "type": "string",
+      "maxLength": 16000,
+      "pattern": "\\S"
+    },
+    "text": {
+      "type": "string",
+      "maxLength": 16000,
+      "pattern": "\\S"
+    },
+    "scope": {
+      "type": "string",
+      "maxLength": 16000,
+      "pattern": "^(all|(?:codex|claude-code|copilot|opencode)(?:/[a-zA-Z0-9._-]+)?)$"
+    },
+    "status": {
+      "type": "string",
+      "maxLength": 16000,
+      "enum": [
+        "active",
+        "candidate",
+        "rejected",
+        "retired"
+      ]
+    },
+    "source": {
+      "type": "string",
+      "maxLength": 16000
+    },
+    "added": {
+      "type": "string",
+      "maxLength": 16000
+    },
+    "heading": {
+      "type": "string",
+      "maxLength": 16000
+    },
+    "note": {
+      "type": "string",
+      "maxLength": 16000
+    },
+    "title": {
+      "type": "string",
+      "maxLength": 120
+    },
+    "explanation": {
+      "type": "string",
+      "maxLength": 16000
+    },
+    "when": {
+      "type": "string",
+      "maxLength": 16000
+    },
+    "revision": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "evidence": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "exceptions": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "string",
+        "maxLength": 4000,
+        "pattern": "\\S"
+      }
+    },
+    "source_refs": {
+      "type": "array",
+      "maxItems": 100,
+      "items": {
+        "type": "string",
+        "maxLength": 4000,
+        "pattern": "\\S"
+      }
+    },
+    "examples": {
+      "type": "array",
+      "maxItems": 8,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "situation",
+          "do"
+        ],
+        "properties": {
+          "situation": {
+            "type": "string",
+            "maxLength": 4000,
+            "pattern": "\\S"
+          },
+          "do": {
+            "type": "string",
+            "maxLength": 4000,
+            "pattern": "\\S"
+          },
+          "avoid": {
+            "type": "string",
+            "maxLength": 4000,
+            "pattern": "\\S"
+          },
+          "explanation": {
+            "type": "string",
+            "maxLength": 4000,
+            "pattern": "\\S"
+          }
+        }
+      }
+    }
+  }
+}
