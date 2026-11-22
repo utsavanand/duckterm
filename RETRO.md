@@ -1,3 +1,12 @@
+## 2026-11-21 — Bug-report email depended on the release machine's environment
+
+The Mac build included a support recipient only when a release environment
+variable was set. Distributed apps therefore disabled Create email on machines
+without a local preference. Bundle the owner-approved public support address for
+every edition and retain the custom-build override. Test the actual plist-writing
+steps with the variable absent, empty, and overridden. Report creation still opens
+only a draft in the user's mail app; the user must review it and press Send.
+
 ## 2026-11-19 — Long pastes vanished because tmux caps a command at 1000 arguments
 
 Terminal input reaches an agent pane through `tmux send-keys -H`, one hex
