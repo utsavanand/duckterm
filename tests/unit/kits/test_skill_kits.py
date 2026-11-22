@@ -536,3 +536,51 @@ path = "knowledge/more.md"
     install.apply(plan.build(kit, project, ["claude-code"]))
     refused = plan.build(fast, project, ["claude-code"])
     assert [c.kind for c in refused.conflicts] == ["conflicts-with"]
+
+
+# ── flows: the /<flow> shortcut the kit page advertises ─────────────────────
+
+
+def _flow_kit(tmp_path):
+    root = tmp_path / "flowkit"
+    (root / "skills" / "judge").mkdir(parents=True)
+    (root / "flows").mkdir()
+    (root / "skill-kit.toml").write_text(
+        'manifest_version = 1\nname = "flowkit"\ndescription = "d"\nversion = "1.0.0"\n\n'
+        '[[components]]\nkind = "skill"\npath = "skills/judge"\n\n'
+        '[[components]]\nkind = "flow"\npath = "flows/ship.json"\n'
+    )
+    (root / "skills" / "judge" / "SKILL.md").write_text(
+        "---\nname: judge\ndescription: Decides.\n---\nDecide.\n"
+    )
+    (root / "flows" / "ship.json").write_text(
+        json.dumps(
+            {
+                "description": "Ship a topic",
+                "inputs": {"topic": "text"},
+                "steps": [{"id": "a", "run": "judge"}],
+            }
+        )
+    )
+    return manifest.load(root)
+
+
+def test_flow_install_writes_the_claude_code_command_that_starts_it(tmp_path):
+    kit = _flow_kit(tmp_path)
+    p = plan.build(kit, tmp_path / "proj", ["claude-code", "codex"])
+    assert not p.errors
+    shortcut = [x for x in p.placements if x.path == ".claude/commands/ship.md"]
+    assert len(shortcut) == 1 and shortcut[0].harness == "claude-code"
+    text = shortcut[0].content.decode()
+    assert "description: Ship a topic" in text
+    assert "allowed-tools: Bash(duckterm kit run:*)" in text
+    assert "duckterm kit run flowkit/ship --input topic=<topic>" in text
+    assert "$ARGUMENTS" in text
+    assert "Do not do the steps yourself" in text
+
+
+def test_flow_shortcut_is_not_written_for_harnesses_without_commands(tmp_path):
+    kit = _flow_kit(tmp_path)
+    p = plan.build(kit, tmp_path / "proj", ["codex"])
+    assert not [x for x in p.placements if x.path.startswith(".claude/commands/")]
+    assert [x for x in p.placements if x.path.endswith("/ship.json")]

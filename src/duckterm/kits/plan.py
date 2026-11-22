@@ -226,7 +226,7 @@ def build(
         elif c.kind == "settings":
             placements += adapters.place_settings(kit, c, active)
         elif c.kind == "flow":
-            placements += adapters.place_flow(kit, c)
+            placements += adapters.place_flow(kit, c, active)
     for team in kit.teams:
         placements.append(adapters.place_team(kit, team))
     placements = _dedupe(placements)
