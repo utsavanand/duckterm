@@ -47,6 +47,21 @@ and forget() already stamp. No new lock; the version marker was already there.
 Read-modify-write around anything slow needs a check at the write, not just at
 the read. And when a status display and an enforcement path read different
 fields, they will eventually disagree.
+## 2026-11-21 — Check a format against real files before anchoring on it
+
+#414 skipped an oversized Codex line when `"type":"compacted"` appeared anywhere
+in its first 512 bytes, so a nested `{"type":"compacted"}` inside a message
+would also be skipped. Security suggested matching the leading
+`{"timestamp":…,"type":…}` header exactly. Before writing that, I counted the
+headers in every Codex history on this Mac: 589 of the 1,046 compaction lines
+used `timestamp,type`, but 457 put an `ordinal` between the two. The exact
+anchor would have failed those 457 with 413 and made ui-dev's history unreadable
+again, the bug #414 fixed. The match now accepts any top-level scalar fields
+before `type`, which covers all 1,046 lines and still refuses a nested type.
+
+Lesson: when tightening a parser against a third-party format, measure the real
+population first. A reviewer's example of the format is one sample, not the
+spec.
 
 ## 2026-11-21 — A test that builds its own config tests the config, not the product
 
@@ -71,6 +86,31 @@ Related: [[green-tests-no-working-feature]], [[intent-rendered-as-state]].
 
 Still unverified after this: mutating `minimum_version` from TLSv1_2 to TLSv1
 does not fail anything, because a modern client negotiates 1.3 regardless.
+
+## 2026-11-21 — Bug-report email depended on the release machine's environment
+
+The Mac build included a support recipient only when a release environment
+variable was set. Distributed apps therefore disabled Create email on machines
+without a local preference. Bundle the owner-approved public support address for
+every edition and retain the custom-build override. Test the actual plist-writing
+steps with the variable absent, empty, and overridden. Report creation still opens
+only a draft in the user's mail app; the user must review it and press Send.
+
+## 2026-11-19 — Tests kept an unreachable harness-switch path alive
+
+The switch endpoint has required a prepared hand-over since the preparation
+dialog shipped, but `Restarts.request` kept a flag defaulting to the older path:
+write a "Before harness switch" checkpoint and seed from its summary. Only tests
+called it that way, so about 50 tests exercised launch, interrupt and recovery
+guards through code the product could not reach, and the owner was told a thin
+brief could still occur on a switch. Removing the flag moved those tests onto
+real preparation, which surfaced two real behaviors: a queued "after this turn"
+switch fails as stale if the turn ends after preparation, and a prepared switch
+does not survive a DuckTerm restart.
+
+When an endpoint pins an internal flag, delete the other branch rather than
+keeping it for tests. A test helper that reaches an internal default is evidence
+for a path no user takes.
 
 ## 2026-11-19 — Long pastes vanished because tmux caps a command at 1000 arguments
 

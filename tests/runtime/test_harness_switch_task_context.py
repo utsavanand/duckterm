@@ -6,9 +6,8 @@ import json
 import pytest
 from tests.runtime import test_restart_harness_switch as fixtures
 
-from duckterm import harness_switch
-
 rig = fixtures.rig
+offline = fixtures.offline
 
 
 def seed_tasks(server):
@@ -27,55 +26,28 @@ def seed_tasks(server):
     return active, parked
 
 
-def test_switch_seed_includes_owned_open_tasks_without_changing_them(rig, monkeypatch):
+def test_switch_seed_includes_owned_open_tasks_without_changing_them(rig):
     server, _, _, _ = rig
     active, parked = seed_tasks(server)
     history = server.history
-    before = history.folder_tasks.list_tasks()
-    changes = history._conn.total_changes
 
-    async def checkpoint(*args):
-        return await fixtures.ready_checkpoint(server, summary="Completed checkpoint summary")
+    async def run():
+        proof = await fixtures.prepare(server)
+        before = history.folder_tasks.list_tasks()
+        changes = history._conn.total_changes
+        prepared = await server.memory_preparation.prepared("a", proof, "claude-code", "")
+        assert history.folder_tasks.list_tasks() == before
+        assert history._conn.total_changes == changes
+        return prepared["seed"]
 
-    monkeypatch.setattr(server, "_create_checkpoint", checkpoint)
-    prepared = asyncio.run(harness_switch.prepare(server, "a", history.session("a")))
-    seed = prepared["seed"]
+    seed = asyncio.run(run())
     for value in (active["id"], parked["id"], "Finish the release", "in_progress", "parked"):
         assert value in seed
     assert "publish after review" not in seed
     assert "Wait for owner feedback" not in seed
     assert "duckterm session task list" in seed
-    assert "Completed checkpoint summary" in seed
-    assert "NEW conversation" in seed
     for value in ("Already shipped", "Another agent owns this", "Outside the shared scope"):
         assert value not in seed
-    assert history.folder_tasks.list_tasks() == before
-    assert history._conn.total_changes == changes
-
-
-def test_tasks_are_read_after_checkpoint_and_with_current_shared_scope(rig, monkeypatch):
-    server, _, _, _ = rig
-    active, parked = seed_tasks(server)
-    history = server.history
-
-    async def checkpoint(*args):
-        with history._conn:
-            history.folder_tasks.update(active["id"], {"status": "done"})
-            history._conn.execute(
-                "UPDATE folder_tasks SET owner_session='someone-else' WHERE id=?",
-                (parked["id"],),
-            )
-        history.set_meta("a", group="NewScope")
-        with history._conn:
-            history.folder_tasks.start("NewScope", "a", "Current new assignment")
-        return await fixtures.ready_checkpoint(server, summary="Summary")
-
-    monkeypatch.setattr(server, "_create_checkpoint", checkpoint)
-    prepared = asyncio.run(harness_switch.prepare(server, "a", history.session("a")))
-    assert "Current new assignment" in prepared["seed"]
-    assert "Finish the release" not in prepared["seed"]
-    assert "Revisit design" not in prepared["seed"]
-    assert "Outside the shared scope" not in prepared["seed"]
 
 
 def test_task_context_is_bounded_and_calls_out_omissions(rig):
@@ -117,12 +89,8 @@ def test_switch_launch_gets_task_context_and_leaves_task_ownership_intact(
     active, parked = seed_tasks(server)
     history = server.history
     if source == "claude-code":
-        history.set_harness_identity("a", source, "claude", None)
-        screen[0] = "────────────────\n❯ \n────────────────"
+        fixtures.claude_source(server, screen)
     launches = []
-
-    async def checkpoint(*args):
-        return await fixtures.ready_checkpoint(server, summary="Summary")
 
     async def launch(**kwargs):
         launches.append(kwargs)
@@ -135,12 +103,10 @@ def test_switch_launch_gets_task_context_and_leaves_task_ownership_intact(
         )
         return "a"
 
-    monkeypatch.setattr(server, "_create_checkpoint", checkpoint)
     monkeypatch.setattr(server.orchestrator, "launch", launch)
 
     async def run():
-        await server.restarts.request("a", "", target)
-        await hook(server, runtime=source)
+        await fixtures.switch(server, "", target)
         await drain(server)
 
     asyncio.run(run())
