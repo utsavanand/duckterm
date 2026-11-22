@@ -46,6 +46,8 @@ def test_test_apps_require_isolated_feed_and_production_cannot_use_it():
         {"DucktermTestBuild": True},
         {"DucktermEdition": "lite"},
         {"SURequireSignedFeed": False},
+        {"SUAllowsAutomaticUpdates": True},
+        {"SUAllowsAutomaticUpdates": None},
         {"SUPublicEDKey": ""},
         {"SUFeedURL": "https://evil.test/feed.xml"},
         {"CFBundleVersion": "0.4.209"},

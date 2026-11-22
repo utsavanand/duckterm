@@ -7,13 +7,13 @@ before making the GitHub release latest.
 """
 import argparse
 import base64
-from pathlib import Path
 import plistlib
 import re
 import subprocess
 import tempfile
 import xml.etree.ElementTree as ET
 import zipfile
+from pathlib import Path
 
 SPARKLE = "http://www.andymatuschak.org/xml-namespaces/sparkle"
 ET.register_namespace("sparkle", SPARKLE)
@@ -37,6 +37,7 @@ def validate_info(info, edition, version):
         or info.get("SURequireSignedFeed") is not True
         or info.get("SUEnableAutomaticChecks") is not False
         or info.get("SUAutomaticallyUpdate") is not False
+        or info.get("SUAllowsAutomaticUpdates") is not False
     ):
         raise ValueError("Archive version, edition or signed update configuration is incorrect")
     key = info.get("SUPublicEDKey", "")

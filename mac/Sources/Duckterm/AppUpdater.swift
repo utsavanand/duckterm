@@ -34,6 +34,11 @@ final class AppUpdater: NSObject, SPUUserDriver, SPUUpdaterDelegate {
         if policy != nil {
             let updater = SPUUpdater(hostBundle: bundle, applicationBundle: bundle, userDriver: self, delegate: self)
             self.updater = updater
+            // Preferences must not override the signed feed or enable a path
+            // that bypasses the owner's install action and our preflight.
+            updater.clearFeedURLFromUserDefaults()
+            updater.automaticallyChecksForUpdates = false
+            updater.automaticallyDownloadsUpdates = false
             do { try updater.start() }
             catch { fail("The signed updater could not start. Install the latest app manually.") }
         }
@@ -94,6 +99,8 @@ final class AppUpdater: NSObject, SPUUserDriver, SPUUpdaterDelegate {
             fail("Update not confirmed. App \(installed); backend \(backend ?? "unavailable"). Reopen DuckTerm to retry verification.")
         }
     }
+
+    func feedURLString(for updater: SPUUpdater) -> String? { policy?.feed.absoluteString }
 
     func updater(_ updater: SPUUpdater, shouldProceedWithUpdate item: SUAppcastItem, updateCheck: SPUUpdateCheck) throws {
         guard policy?.accepts(archive: item.fileURL, version: item.versionString,

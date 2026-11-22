@@ -1,3 +1,16 @@
+## 2026-11-21 — Bundle defaults are not enforced update policy
+
+Review found that Sparkle can read saved preferences before Info.plist. Declaring
+manual updates in the bundle therefore did not guarantee that installs used our
+preflight. The adapter now supplies the validated feed through Sparkle’s delegate,
+clears the saved feed override, and disables automatic checks and downloads before
+starting. The bundle also disallows automatic installation. Native installer
+regressions seed conflicting preferences and verify preflight still runs.
+
+Lesson: test a framework’s effective configuration, including persisted overrides,
+rather than assuming its packaged defaults enforce application policy. Invalid
+public signing keys must also return a controlled failure instead of crashing.
+
 ## 2026-11-21 — A download link is not a complete app updater
 
 Settings exposed “Update DuckTerm” without an installer, and its text discussed

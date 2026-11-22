@@ -28,7 +28,8 @@ let key = Curve25519.Signing.PrivateKey()
 let secret = root.appendingPathComponent("key")
 try key.rawRepresentation.base64EncodedData().write(to: secret)
 try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: secret.path)
-try key.publicKey.rawRepresentation.base64EncodedData().write(to: root.appendingPathComponent("public-key"))
+let publicFile = root.appendingPathComponent("public-key")
+try key.publicKey.rawRepresentation.base64EncodedData().write(to: publicFile)
 """
 
 
@@ -105,6 +106,7 @@ def exercise(case):
             "SUFeedURL": base + "/appcast.xml",
             "SUEnableAutomaticChecks": False,
             "SUAutomaticallyUpdate": False,
+            "SUAllowsAutomaticUpdates": False,
             "SUVerifyUpdateBeforeExtraction": True,
             "SURequireSignedFeed": True,
             "NSAppTransportSecurity": {"NSAllowsLocalNetworking": True},
@@ -125,7 +127,13 @@ def exercise(case):
         signature = subprocess.check_output([*signer, "-p", str(archive)], text=True).strip()
         appcast = root / "appcast.xml"
         appcast.write_text(
-            f"""<?xml version="1.0"?><rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle"><channel><title>Isolated test</title><item><title>0.4.209</title><sparkle:version>0.4.209</sparkle:version><enclosure url="{base}/update.zip" length="{archive.stat().st_size}" type="application/octet-stream" sparkle:edSignature="{signature}" /></item></channel></rss>"""
+            f"""<?xml version="1.0"?>
+<rss version="2.0" xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">
+<channel><title>Isolated test</title><item><title>0.4.209</title>
+<sparkle:version>0.4.209</sparkle:version>
+<enclosure url="{base}/update.zip" length="{archive.stat().st_size}"
+ type="application/octet-stream" sparkle:edSignature="{signature}" />
+</item></channel></rss>"""
         )
         run(*signer, str(appcast))
         if case == "corrupt-archive":
@@ -150,6 +158,9 @@ def exercise(case):
                 installed = plistlib.loads((app / "Contents/Info.plist").read_bytes())[
                     "CFBundleVersion"
                 ]
+                if case in ["success", "backend-mismatch"]:
+                    assert (root / "preflight").read_text() == "checked"
+                    assert (root / "restart-ready").read_text() == "ready"
                 assert sentinel.read_text() == "Retain existing test data"
                 assert state["phase"] == ("succeeded" if case == "success" else "failed"), state
                 assert installed == ("0.4.208" if case.startswith("corrupt") else "0.4.209"), state

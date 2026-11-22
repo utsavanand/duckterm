@@ -15,8 +15,16 @@ enum LaunchDestination {
     func applicationDidFinishLaunching(_ notification: Notification) {
         root = URL(fileURLWithPath: Bundle.main.object(forInfoDictionaryKey: "DuckTermUpdateProbeRoot") as! String)
         let defaults = UserDefaults.standard
+        // Simulate old or externally written preferences before every launch.
+        defaults.set("http://127.0.0.1:1/untrusted.xml", forKey: "SUFeedURL")
+        defaults.set(true, forKey: "SUEnableAutomaticChecks")
+        defaults.set(true, forKey: "SUAutomaticallyUpdate")
         updater = AppUpdater(defaults: defaults)
-        updater.preflight = {}
+        precondition(defaults.string(forKey: "SUFeedURL") == nil)
+        precondition(!defaults.bool(forKey: "SUEnableAutomaticChecks"))
+        // With SUAllowsAutomaticUpdates=false, Sparkle intentionally ignores
+        // the old SUAutomaticallyUpdate preference (its setter is a no-op).
+        updater.preflight = { [self] in try Data("checked".utf8).write(to: root.appendingPathComponent("preflight")) }
         updater.prepareRestart = { [self] in try Data("ready".utf8).write(to: root.appendingPathComponent("restart-ready")) }
         updater.onChange = { [self] state in
             let data = try! JSONSerialization.data(withJSONObject: state)

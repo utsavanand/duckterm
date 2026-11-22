@@ -16,6 +16,10 @@ Opening Settings checks the signed feed. Downloading starts only after the owner
 selects Update & restart. Progress is measured from received bytes; extraction
 and restart are separate states. Closing Settings leaves the operation running;
 reopening reads native state. Cancel is available before extraction begins.
+The adapter supplies the validated bundle feed directly, clears any saved feed
+override, and disables automatic checks/downloads before Sparkle starts. The
+bundle disallows automatic installation, so saved preferences cannot bypass the
+explicit install action and preflight.
 
 Sparkle verifies the signed feed and archive before extraction and owns the
 installation helper, bundle replacement and relaunch. Policy restricts each
@@ -86,6 +90,8 @@ After `swift package --package-path mac resolve`, run
 `python scripts/test_native_app_update.py` from a graphical Mac login. It builds
 disposable Test bundles with the production updater adapter and a temporary key;
 it checks success, tampered archive/feed rejection, and backend-version mismatch.
+Each launch seeds a conflicting saved feed and automatic-update preferences;
+success also requires the explicit preflight and restart checks to have run.
 The backend version is a fixture in this probe, not a real DuckTerm server.
 It does not replace testing session reconnection with the complete signed release
 candidate. `--case` runs one scenario. Every Test bundle and preference domain

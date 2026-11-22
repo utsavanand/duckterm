@@ -3,8 +3,8 @@
 import argparse
 import base64
 import os
-from pathlib import Path
 import plistlib
+from pathlib import Path
 from urllib.parse import urlsplit
 
 
@@ -41,6 +41,7 @@ def configure(info, public_key, test_feed=None):
         "SUPublicEDKey": public_key,
         "SUEnableAutomaticChecks": False,
         "SUAutomaticallyUpdate": False,
+        "SUAllowsAutomaticUpdates": False,
         "SUEnableSystemProfiling": False,
         "SUShowReleaseNotes": False,
         "SUVerifyUpdateBeforeExtraction": True,
