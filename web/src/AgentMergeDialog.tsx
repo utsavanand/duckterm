@@ -7,6 +7,7 @@ import { checkpointNotice } from "./checkpointState";
 import type { CheckpointSelection } from "./api";
 import { SourceMemory, mergeClosure } from "./SourceMemory";
 import { Modal } from "./ui";
+import { MergeMemoryDisclosure } from "./MergeMemoryDisclosure";
 import "./forkMerge.css";
 import "./agentMerge.css";
 
@@ -144,6 +145,7 @@ export function AgentMergeDialog({ service, sourceKey, sourceName, onClose }: { 
         {preview && <>
           <div className="rd-merge-route"><strong>{sourceName}</strong>→<strong>{preview.target.name}</strong></div>
           {!preview.target.allowed && <p role="alert">{preview.target.reason}</p>}
+          <MergeMemoryDisclosure source={sourceName} target={preview.target.name} />
           <label className="rd-agent-merge-choice"><input type="checkbox" checked={includeContext} onChange={e => { edited.current.includeContext = true; setIncludeContext(e.target.checked); }} />Conversation context<small>A reviewed summary. The original conversations remain separate.</small></label>
           {includeContext && <textarea aria-invalid={emptyContext} aria-describedby={emptyContext ? "merge-context-error" : undefined} aria-label="Context to send" value={context} maxLength={12000} placeholder="Review or write the context the destination should receive" onChange={e => { edited.current.context = true; setContext(e.target.value); }} />}
           {emptyContext && <p id="merge-context-error" className="rd-agent-merge-validation">Write context to send, generate a summary below, or deselect Conversation context.</p>}
@@ -170,7 +172,7 @@ export function AgentMergeDialog({ service, sourceKey, sourceName, onClose }: { 
         {includeNotes && <section><h3>Notes to append</h3><pre>{notes}</pre></section>}
         {code && <GitReview git={preview.git} />}
         <p>{preview.target.priorityDelivery ? "The request reaches an idle agent immediately, or waits until a busy agent finishes its turn." : "This agent receives the request in its inbox; automatic delivery is unavailable."}</p>
-        <section><h3>Source memory</h3><p>{preview.target.name} can read {sourceName}’s saved summaries and linked evidence after it closes.</p><p>{sourceName} closes after its current turn finishes and its input is empty. Typed drafts and original history are preserved.</p></section><p>{includeNotes && "The reviewed notes are appended once when you send."}</p>
+        <MergeMemoryDisclosure source={sourceName} target={preview.target.name} /><section><p>{sourceName} closes after its current turn finishes and its input is empty. Typed drafts and original history are preserved.</p></section><p>{includeNotes && "The reviewed notes are appended once when you send."}</p>
       </>}
       {record && <section aria-label="Saved merge request"><strong>{record.sourceName} → {record.targetName}</strong><p>Delivery: {record.delivery}</p><p>{record.notes !== null ? "Notes appended once. " : ""}{record.closeSource ? mergeClosure(record.sourceClosed, record.closeState) : "This earlier merge kept both agents open."}</p>{record.memorySource && <button className="rd-btn rd-btn-ghost" onClick={() => setReadingMemory(true)}>Open source memory ↗</button>}{record.git && <p>Code integration was requested. Delivery or acknowledgement does not confirm that the code is merged.</p>}<pre>{record.packet}</pre>{record.reply && <><h3>Destination reply</h3><pre>{record.reply}</pre></>}{!record.statusAvailable && <p>Live delivery tracking is unavailable.</p>}</section>}
       {!record && !reviewing && history.length > 0 && <details><summary>Recent merge requests ({history.length})</summary>{history.map(item => <button type="button" className="rd-agent-merge-history" key={item.id} onClick={() => setRecord(item)}>{item.sourceName} → {item.targetName} · {item.delivery} · {new Date(item.createdAt).toLocaleString()}</button>)}</details>}

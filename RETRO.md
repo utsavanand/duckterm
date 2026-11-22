@@ -1,3 +1,11 @@
+## 2026-11-21 — Merge disclosure must describe the full readable source
+
+A merge sends a short summary but grants read access to a broader source catalog.
+Calling that only “summaries and evidence” hid inbox exchanges, tasks and saved
+artifacts from the owner’s decision. Both merge flows now name those records,
+including messages with other agents across folders, before confirmation. Share
+the disclosure component so the two flows cannot drift. Access behavior is unchanged.
+
 ## 2026-11-19 — Long pastes vanished because tmux caps a command at 1000 arguments
 
 Terminal input reaches an agent pane through `tmux send-keys -H`, one hex

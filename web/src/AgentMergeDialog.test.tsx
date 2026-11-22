@@ -26,9 +26,11 @@ it("reviews choices and retries an uncertain send without duplicate request iden
   vi.mocked(service.send).mockRejectedValueOnce(new Error("Connection lost"));
   await choose();
   expect(screen.getByRole("checkbox", { name: /Code from/ })).toBeDisabled();
+  expect(screen.getByText(/available conversation history, saved summaries, session notes, tasks, events, and files saved as artifacts/)).toBeVisible();
   fireEvent.change(screen.getByLabelText("Context to send"), { target: { value: " Owner edited context \n" } });
   fireEvent.click(screen.getByRole("checkbox", { name: /^Notes/ }));
   fireEvent.click(screen.getByRole("button", { name: "Review merge" }));
+  expect(screen.getByText(/inbox messages with you and other agents/)).toBeVisible();
   expect(service.send).not.toHaveBeenCalled();
   fireEvent.click(screen.getByRole("button", { name: "Merge and close Source" }));
   await screen.findByRole("alert");

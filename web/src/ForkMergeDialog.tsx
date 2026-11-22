@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { SourceMemory, mergeClosure } from "./SourceMemory";
 import { Modal } from "./ui";
+import { MergeMemoryDisclosure } from "./MergeMemoryDisclosure";
 import "./forkMerge.css";
 
 export type MergeDelivery = "pending next turn" | "inbox only" | "delivered" | "acknowledged" | "cancelled";
@@ -109,7 +110,8 @@ export function ForkMergeDialog({ service, onClose, onSaved, sourceKey }: {
           <textarea ref={editor} id="fork-merge-summary" value={summary} disabled={busy || !preview.allowed} maxLength={16384} onChange={event => setSummary(event.target.value)} />
           <p>This sends a summary of the fork, not the full thread.</p>
           {preview.child.branch && <div className="rd-merge-worktree"><code>{preview.child.branch}{preview.child.commit && ` · ${preview.child.commit}`}</code><p>Code changes go through git or a pull request. This action does not merge code.</p></div>}
-          <p>The parent receives a link to the child’s saved summaries and evidence. After its current turn finishes and its input is empty, the child closes. Its history remains readable.</p>
+          {preview.parent && <MergeMemoryDisclosure source={preview.child.name} target={preview.parent.name} />}
+          <p>After its current turn finishes and its input is empty, the child closes. Its history remains readable.</p>
           {!preview.memory && <p role="alert">Update DuckTerm on this computer to merge with source memory.</p>}
           {preview.parent && <p>{!preview.parent.priorityDelivery ? "This parent receives inbox mail only; automatic delivery is unavailable." : preview.parent.state === "busy" ? "The parent finishes its current turn before receiving the note." : "The note can reach an idle parent immediately."}</p>}
           <p>A merge checkpoint is created on the parent only when the note is delivered.</p>

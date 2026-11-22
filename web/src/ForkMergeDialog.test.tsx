@@ -11,6 +11,8 @@ it("reviews an editable summary and defaults to closing the child without sendin
   const editor = await screen.findByRole("textbox", { name: /Summary to send/ });
   expect(screen.queryByRole("checkbox", { name: "Keep child open" })).not.toBeInTheDocument();
   expect(api.send).not.toHaveBeenCalled();
+  expect(screen.getByText(/inbox messages with you and other agents/)).toBeVisible();
+  expect(screen.getByText(/files saved as artifacts/)).toBeVisible();
   expect(screen.getByText(/does not merge code/)).toBeVisible();
   expect(screen.getByText(/checkpoint is created.*only when/)).toBeVisible();
   const exact = "  Résumé 🦆\nKeep every space.\n";
