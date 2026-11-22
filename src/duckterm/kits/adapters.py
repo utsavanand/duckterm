@@ -914,7 +914,8 @@ def _flow_shortcut(kit: m.Kit, flow: str, spec: dict[str, Any]) -> bytes:
     session it is typed in. The command runs `duckterm kit run`, which hands
     the run to the DuckTerm server when a session credential is present, so
     the steps show as child sessions; the agent only relays the output."""
-    inputs = spec.get("inputs") if isinstance(spec.get("inputs"), dict) else {}
+    raw = spec.get("inputs")
+    inputs: dict[str, Any] = raw if isinstance(raw, dict) else {}
     argv = f"duckterm kit run {kit.name}/{flow}"
     for name in sorted(inputs):
         argv += f" --input {name}=<{name}>"
