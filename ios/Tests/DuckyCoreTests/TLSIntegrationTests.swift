@@ -30,7 +30,8 @@ private final class TLSFixture {
         let deadline = ProcessInfo.processInfo.systemUptime + 15
         while ProcessInfo.processInfo.systemUptime < deadline {
             var descriptor = pollfd(fd: output.fileHandleForReading.fileDescriptor, events: Int16(POLLIN), revents: 0)
-            if poll(&descriptor, 1, 100) == 0 { continue }
+            // -1 (EINTR) must not fall through to a read that could block past the deadline.
+            if poll(&descriptor, 1, 100) <= 0 { continue }
             guard let byte = try output.fileHandleForReading.read(upToCount: 1), !byte.isEmpty else { throw DuckyError.invalidResponse }
             if byte == Data([10]) { return String(decoding: data, as: UTF8.self) }
             data.append(byte)
@@ -50,18 +51,21 @@ private final class TLSFixture {
     }
     func close() {
         try? input.fileHandleForWriting.close()
-        let deadline = ProcessInfo.processInfo.systemUptime + 4
-        while process.isRunning && ProcessInfo.processInfo.systemUptime < deadline { Thread.sleep(forTimeInterval: 0.02) }
-        if process.isRunning {
+        if !exited(within: 4) {
             process.terminate()
-            let stop = ProcessInfo.processInfo.systemUptime + 1
-            while process.isRunning && ProcessInfo.processInfo.systemUptime < stop { Thread.sleep(forTimeInterval: 0.02) }
-            if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+            if !exited(within: 1) { kill(process.processIdentifier, SIGKILL) }
             XCTFail("TLS fixture needed forced cleanup")
         }
-        process.waitUntilExit()
-        XCTAssertEqual(process.terminationStatus, 0)
+        // Not waitUntilExit: on a Swift concurrency thread it can wait on its run loop forever
+        // after the child has already exited (sampled in CI-style hangs of this suite).
+        if exited(within: 5) { XCTAssertEqual(process.terminationStatus, 0) }
+        else { XCTFail("TLS fixture \(process.processIdentifier) did not exit after SIGKILL") }
         try? FileManager.default.removeItem(at: scratch)
+    }
+    private func exited(within seconds: TimeInterval) -> Bool {
+        let deadline = ProcessInfo.processInfo.systemUptime + seconds
+        while process.isRunning && ProcessInfo.processInfo.systemUptime < deadline { Thread.sleep(forTimeInterval: 0.02) }
+        return !process.isRunning
     }
 }
 

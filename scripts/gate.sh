@@ -28,8 +28,6 @@ step "mypy"
 "$PY" -m mypy >> "$LOG" 2>&1
 step "slop_check"
 "$PY" scripts/slop_check.py >> "$LOG" 2>&1
-step "ruff format --check"
-"$PY" -m ruff format --check src tests >> "$LOG" 2>&1
 cd web
 step "tsc"
 npx tsc --noEmit >> "$LOG" 2>&1

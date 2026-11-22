@@ -15,6 +15,19 @@ from duckterm.persistence.history import HistoryStore
 from duckterm.server import Server
 
 
+def _new(title: str, text: str, ref: str) -> dict:
+    return {
+        "claim": text,
+        "memory_kind": "procedural",
+        "source_refs": [ref],
+        "action": "create_rule",
+        "reason": "A distinct owner instruction.",
+        "target": None,
+        "changes": {"rule": {"title": title, "text": text, "scope": "all"}},
+        "context": None,
+    }
+
+
 async def _suggest(port: int, token: str, directory: str) -> tuple[int, dict]:
     payload = json.dumps({"dir": directory}).encode()
     return await _request(
@@ -40,6 +53,7 @@ def test_suggest_gathers_corrections_and_returns_rules(
             "session_key": "s1",
             "cwd": str(workdir),
             "launched": True,
+            "test": True,
             "_ts": 1,
             "_id": "a",
         }
@@ -70,6 +84,7 @@ def test_suggest_gathers_corrections_and_returns_rules(
             "session_key": "other",
             "cwd": "/somewhere/else",
             "launched": True,
+            "test": True,
             "_ts": 5,
             "_id": "d",
         }
@@ -98,7 +113,14 @@ def test_suggest_gathers_corrections_and_returns_rules(
     def fake_summarize(prompt: str, **_kw) -> Summary:
         seen["prompt"] = prompt
         return Summary(
-            text="- [all] [1] Use rg, not grep\n- [codex] [1] Don't add obvious comments",
+            text=json.dumps(
+                {
+                    "decisions": [
+                        _new("Use rg", "Use rg, not grep", "event:c"),
+                        _new("Comments", "Don't add obvious comments", "annotation:ann1"),
+                    ]
+                }
+            ),
             backend="fake",
         )
 
@@ -113,18 +135,15 @@ def test_suggest_gathers_corrections_and_returns_rules(
 
     status, body = asyncio.run(scenario())
     assert status == 200
-    assert [(s["id"], s["scope"], s["status"]) for s in body["suggestions"]] == [
-        ("use-rg-not-grep", "all", "candidate"),
-        ("don-t-add-obvious-comments", "codex", "candidate"),
-    ]
-    assert all(s["source"] == "correction" for s in body["suggestions"])
-    assert body["corrections_seen"] == 2  # the follow-up + the annotation
-    # The LLM saw the real corrections — and NOT the task prompt or the
-    # other folder's steering.
+    assert [p["action"] for p in body["proposals"]] == ["create_rule", "create_rule"]
+    assert all(p["status"] == "pending" for p in body["proposals"])
+    assert body["corrections_seen"] == 3
     assert "use rg instead of grep" in seen["prompt"]
     assert "stop adding obvious comments" in seen["prompt"]
-    assert "build the CSV exporter" not in seen["prompt"]
+    # First prompts can include durable instructions too; classification decides.
+    assert "build the CSV exporter" in seen["prompt"]
     assert "unrelated steering" not in seen["prompt"]
+    assert not (workdir / "AGENTS.md").exists()
 
 
 def test_suggest_with_no_corrections_skips_the_llm(
@@ -133,7 +152,7 @@ def test_suggest_with_no_corrections_skips_the_llm(
     store = HistoryStore(tmp_path / "db.sqlite")
     (tmp_path / "empty").mkdir()
 
-    def boom(prompt: str, **_kw) -> Summary:
+    def boom(prompt: str) -> Summary:
         raise AssertionError("summarize must not be called with no corrections")
 
     monkeypatch.setattr(suggest_mod, "summarize", boom)
@@ -147,7 +166,7 @@ def test_suggest_with_no_corrections_skips_the_llm(
 
     status, body = asyncio.run(scenario())
     assert status == 200
-    assert body == {"suggestions": [], "corrections_seen": 0}
+    assert body == {"proposals": [], "corrections_seen": 0}
 
 
 def test_rejected_tombstone_blocks_reproposal(
@@ -177,6 +196,7 @@ def test_rejected_tombstone_blocks_reproposal(
             "session_key": "s1",
             "cwd": str(workdir),
             "launched": True,
+            "test": True,
             "_ts": 1,
             "_id": "a",
         }
@@ -195,7 +215,25 @@ def test_rejected_tombstone_blocks_reproposal(
     monkeypatch.setattr(
         suggest_mod,
         "summarize",
-        lambda prompt, **_kw: Summary(text="- [all] [2] Use rg, not grep", backend="fake"),
+        lambda prompt, **_kw: Summary(
+            text=json.dumps(
+                {
+                    "decisions": [
+                        {
+                            "claim": "Use rg",
+                            "memory_kind": "procedural",
+                            "source_refs": ["event:p1"],
+                            "action": "needs_review",
+                            "reason": "This instruction was previously rejected.",
+                            "target": {"rule_id": "use-rg-not-grep", "base_revision": 1},
+                            "changes": None,
+                            "context": None,
+                        }
+                    ]
+                }
+            ),
+            backend="fake",
+        ),
     )
 
     async def scenario() -> tuple[int, dict]:
@@ -207,4 +245,8 @@ def test_rejected_tombstone_blocks_reproposal(
 
     status, body = asyncio.run(scenario())
     assert status == 200
-    assert body["suggestions"] == []  # tombstoned, not re-proposed
+    assert body["proposals"][0]["action"] == "needs_review"
+    assert (
+        json.loads((workdir / ".duckterm-rules.json").read_text())["rules"][0]["status"]
+        == "rejected"
+    )

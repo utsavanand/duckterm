@@ -11,7 +11,12 @@ no markdown fences, exactly this shape:
 - learnings: decisions made and constraints discovered about the WORK itself.
   Record the CURRENT decision, not the history of rejected alternatives. Skip
   transient environment hiccups unless they constrain future work.
-- user_learnings: recurring collaboration patterns ONLY — a behavior you
+- user_learnings: unapproved observations about reusable behavior, not installed
+  rules. Preserve explicit scope and attribution. Copied summaries and forked
+  accounts of one event are not independent evidence. Keep progress/results in
+  summary, project facts in learnings, and temporary directions in current context.
+  A useful episode remains in the summary even when it suggests a behavioral lesson.
+  Recurring collaboration patterns ONLY — a behavior you
   observed at least TWICE, or a preference the user stated outright as a rule.
   A one-off remark or a single decision is an anecdote, not a pattern: leave
   it out. Describe the behavior neutrally ("approves with terse replies —
