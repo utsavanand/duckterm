@@ -1,3 +1,26 @@
+## 2026-11-22 — Test checkpoint capture across the actual thread boundary
+
+Background rule capture read HistoryStore from an asyncio worker, violating
+SQLite connection thread affinity. Helper-only tests missed the failure.
+Collect frozen observations on the event-loop thread, then pass that snapshot
+to the worker for model/file work. Keep optimistic save checks and report
+capture failures without logging private observations. Exercise the real
+checkpoint refresh with the flag enabled and verify local pending proposals.
+
+## 2026-11-21 — Keep review memory separate from shared instructions
+
+A checkpoint must not turn a cloned rule catalogue into permission to generate
+and write unreviewed guidance into the repository. Store pending reconciliation,
+source fingerprints and candidate rules in the local DuckTerm home, and require
+an explicit instance flag for background capture. Only reviewed active rules
+render into AGENTS.md. Match prompt-delivery provenance before treating a hook's
+UserPromptSubmit event as owner guidance.
+
+Rule files are repository-controlled inputs: open them without following
+symlinks, keep locks outside the repository, and require a backed-up explicit
+replacement before converting handwritten instructions. Exercise these boundaries
+through real HTTP as well as storage tests; a happy-path round trip misses them.
+
 ## 2026-11-22 — I called them pre-existing five times instead of fixing them
 
 Ten tests in test_connectors.py failed on this Mac for weeks. Every time I

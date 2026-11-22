@@ -9,7 +9,7 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
-import { apiPost, postEvent, seedSession } from "./helpers";
+import { api, apiPost, postEvent, seedSession } from "./helpers";
 
 // Skill kits end to end: add a kit by path in the Skill kits dialog and read
 // its contents. DuckTerm never runs a kit's own script, so there is nothing
@@ -80,7 +80,7 @@ test("AGENTS.md suggests rules from observed corrections", async ({ page }) => {
   await expect(candidate).toBeVisible({ timeout: 10_000 });
 
   // Accept one, reject the other; save. Only the accepted rule renders into
-  // AGENTS.md; the rejected one is kept as a tombstone in rules.json.
+  // AGENTS.md; review history stays local and is returned through the API.
   await candidate.getByRole("button", { name: "Accept change" }).click();
   await page
     .locator(".ar-proposal", { hasText: "No emoji" })
@@ -99,7 +99,10 @@ test("AGENTS.md suggests rules from observed corrections", async ({ page }) => {
     "active",
   ]);
   const saved = JSON.parse(readFileSync(join(dir, ".duckterm-rules.json"), "utf8"));
-  expect(saved.proposals.map((p: { status: string }) => p.status).sort()).toEqual(["accepted", "rejected"]);
+  expect(saved).not.toHaveProperty("proposals");
+  expect(saved).not.toHaveProperty("capture_fingerprint");
+  const review = await (await api(`/agents-md?dir=${encodeURIComponent(dir)}`)).json();
+  expect(review.proposals.map((p: { status: string }) => p.status).sort()).toEqual(["accepted", "rejected"]);
   await apiPost(`/sessions/${key}/delete`);
   rmSync(dir, { recursive: true, force: true });
 });

@@ -5,15 +5,19 @@ Reconciliation proposals remain separate until reviewed and saved. Only active
 rules render into AGENTS.md.
 """
 
+import errno
 import fcntl
 import hashlib
 import json
 import os
 import re
+import stat
 import tempfile
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Any
+
+from duckterm.helpers import paths
 
 RULES_FILENAME = ".duckterm-rules.json"
 AGENTS_FILENAME = "AGENTS.md"
@@ -67,25 +71,79 @@ def rule_id(text: str) -> str:
     return "-".join(words[:6]) or "rule"
 
 
-def load_rules(directory: Path) -> list[RuleBlock]:
-    path = directory / RULES_FILENAME
-    if not path.is_file():
-        return []
-    known = set(RuleBlock.__dataclass_fields__)
-    raw = json.loads(path.read_text())
+def _read_text(path: Path) -> str | None:
+    """Never follow repository-controlled symlinks, including during an open race."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise ValueError(f"Refusing symlink: {path.name}") from exc
+        raise
+    with os.fdopen(fd) as stream:
+        if not stat.S_ISREG(os.fstat(stream.fileno()).st_mode):
+            raise ValueError(f"Expected a regular file: {path.name}")
+        return stream.read()
+
+
+def review_path(directory: Path) -> Path:
+    """Local review state is isolated by the canonical filesystem directory."""
+    key = hashlib.sha256(os.fsencode(directory.expanduser().resolve())).hexdigest()
+    return paths.home() / "rule-reviews" / f"{key}.json"
+
+
+def _review_state(directory: Path, raw: dict[str, Any]) -> dict[str, Any]:
+    text = _read_text(review_path(directory))
+    # Read legacy records without rewriting the repository on GET. A reviewed
+    # save migrates them; background capture only updates the private file.
+    state = (
+        json.loads(text)
+        if text is not None
+        else {
+            "proposals": raw.get("proposals", []),
+            "capture_fingerprint": raw.get("capture_fingerprint", ""),
+            "candidates": [],
+        }
+    )
+    if (
+        not isinstance(state, dict)
+        or not isinstance(state.get("proposals", []), list)
+        or not isinstance(state.get("candidates", []), list)
+        or not isinstance(state.get("capture_fingerprint", ""), str)
+    ):
+        raise ValueError("Invalid reconciliation history")
+    return state
+
+
+def _catalog_rules(directory: Path) -> tuple[dict[str, Any], list[RuleBlock]]:
+    text = _read_text(directory / RULES_FILENAME)
+    raw = json.loads(text) if text is not None else {}
     if not isinstance(raw, dict) or not isinstance(raw.get("rules", []), list):
         raise ValueError("Invalid rule catalogue")
     if raw.get("schema_version", 1) not in (1, 2):
         raise ValueError("Unsupported rule schema version")
+    known = set(RuleBlock.__dataclass_fields__)
     out: list[RuleBlock] = []
     for entry in raw.get("rules", []):
         if raw.get("schema_version") == 2:
             out.append(parse_rule(entry))
-            continue
-        if not isinstance(entry, dict) or not entry.get("id") or not entry.get("text"):
-            continue
-        out.append(RuleBlock(**{k: v for k, v in entry.items() if k in known}))
-    return out
+        elif isinstance(entry, dict) and entry.get("id") and entry.get("text"):
+            out.append(RuleBlock(**{k: v for k, v in entry.items() if k in known}))
+    return raw, out
+
+
+def load_rules(directory: Path) -> list[RuleBlock]:
+    raw, rules = _catalog_rules(directory)
+    ids = {r.id for r in rules}
+    for entry in _review_state(directory, raw).get("candidates", []):
+        candidate = parse_rule(entry)
+        if candidate.status != "candidate":
+            raise ValueError("Local candidates must remain unreviewed")
+        if candidate.id not in ids:
+            rules.append(candidate)
+            ids.add(candidate.id)
+    return rules
 
 
 def parse_rule(entry: Any) -> RuleBlock:
@@ -147,25 +205,22 @@ def validate_example(example: Any) -> None:
 
 def catalog_version(directory: Path) -> str:
     digest = hashlib.sha256()
-    for name in (RULES_FILENAME, AGENTS_FILENAME):
-        path = directory / name
-        digest.update(name.encode())
-        digest.update(path.read_bytes() if path.is_file() else b"")
+    for path in (directory / RULES_FILENAME, directory / AGENTS_FILENAME, review_path(directory)):
+        digest.update(path.name.encode())
+        digest.update((_read_text(path) or "").encode())
     return digest.hexdigest()
 
 
 def read_catalog(directory: Path) -> dict[str, Any]:
-    path = directory / RULES_FILENAME
-    raw = json.loads(path.read_text()) if path.is_file() else {}
+    raw, _ = _catalog_rules(directory)
     rules = load_rules(directory)
-    if not isinstance(raw.get("proposals", []), list):
-        raise ValueError("Invalid reconciliation history")
-    md = directory / AGENTS_FILENAME
-    text = md.read_text() if md.is_file() else ""
+    review = _review_state(directory, raw)
+    md_text = _read_text(directory / AGENTS_FILENAME)
+    text = md_text or ""
     expected = raw.get("rendered_sha256")
     drift = bool(
-        md.is_file()
-        and path.is_file()
+        md_text is not None
+        and ((directory / RULES_FILENAME).is_file() or bool(text))
         and (
             text != render_agents_md(rules)
             or (expected and hashlib.sha256(text.encode()).hexdigest() != expected)
@@ -173,18 +228,21 @@ def read_catalog(directory: Path) -> dict[str, Any]:
     )
     return {
         "rules": [asdict(r) for r in rules],
-        "proposals": raw.get("proposals", []),
+        "proposals": review.get("proposals", []),
         "version": catalog_version(directory),
         "drift": drift,
         "text": text,
         "rendered_text": render_agents_md(rules),
-        "managed": path.is_file(),
-        "exists": md.is_file(),
-        "capture_fingerprint": raw.get("capture_fingerprint", ""),
+        "managed": (directory / RULES_FILENAME).is_file(),
+        "schema_version": raw.get("schema_version", 1),
+        "exists": md_text is not None,
+        "capture_fingerprint": review.get("capture_fingerprint", ""),
     }
 
 
 def atomic_text(path: Path, text: str) -> None:
+    if path.is_symlink():
+        raise ValueError(f"Refusing symlink: {path.name}")
     fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
     try:
         with os.fdopen(fd, "w") as stream:
@@ -208,7 +266,12 @@ def save_rules(
     render: bool = True,
 ) -> None:
     """Serialize catalogue writers, including checkpoint and dashboard requests."""
-    with (directory / ".duckterm-rules.lock").open("a") as lock:
+    local = review_path(directory)
+    local.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if local.parent.is_symlink():
+        raise ValueError("Refusing symlinked rule review directory")
+    fd = os.open(local.with_suffix(".lock"), os.O_WRONLY | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         _save_rules(
             directory,
@@ -236,7 +299,13 @@ def _save_rules(
     current = read_catalog(directory)
     if expected_version is not None and expected_version != current["version"]:
         raise ValueError("Rules changed since this page was opened. Reload before saving.")
-    if current["drift"] and render and not reconcile_drift:
+    text = render_agents_md(rules) if render else current["text"]
+    drift = (
+        current["drift"]
+        if current["managed"]
+        else bool(current["text"] and current["text"] != text)
+    )
+    if drift and render and not reconcile_drift:
         raise ValueError(
             "AGENTS.md differs from the stored rules. Review the file before replacing it."
         )
@@ -245,26 +314,34 @@ def _save_rules(
         raise ValueError("Duplicate rule IDs")
     for rule in rules:
         parse_rule(asdict(rule))
-    text = render_agents_md(rules) if render else current["text"]
-    raw = {
-        "schema_version": 2,
-        "rules": [asdict(r) for r in rules],
+    review = {
+        "candidates": [asdict(r) for r in rules if r.status == "candidate"],
         "proposals": proposals if proposals is not None else current["proposals"],
         "capture_fingerprint": (
             capture_fingerprint
             if capture_fingerprint is not None
             else current["capture_fingerprint"]
         ),
+    }
+    # Background capture must not modify any repository file, including a
+    # legacy catalogue.
+    if not render:
+        atomic_text(review_path(directory), json.dumps(review, indent=2) + "\n")
+        return
+    raw = {
+        "schema_version": 2,
+        "rules": [asdict(r) for r in rules if r.status != "candidate"],
         "rendered_sha256": hashlib.sha256(text.encode()).hexdigest(),
     }
     # JSON is authoritative; a failed second replacement is detected on the next read.
-    if reconcile_drift and current["drift"]:
+    if reconcile_drift and drift:
         backup = directory / f"AGENTS.md.before-{current['version'][:12]}"
         if not backup.exists():
             atomic_text(backup, current["text"])
     atomic_text(path, json.dumps(raw, indent=2) + "\n")
-    if render:
-        atomic_text(directory / AGENTS_FILENAME, text)
+    atomic_text(directory / AGENTS_FILENAME, text)
+    # A review is only recorded as accepted after its rule has been installed.
+    atomic_text(review_path(directory), json.dumps(review, indent=2) + "\n")
 
 
 def rule_body(rule: RuleBlock) -> str:

@@ -1322,7 +1322,7 @@ class Server:
             await _write_json(writer, 200, {"prompt": prompt})
             return
         assert supervisor is not None
-        sent = await self._submit_prompt(session_key, prompt) == "submitted"
+        sent = await self._submit_prompt(session_key, prompt, source="system") == "submitted"
         await _write_json(writer, 200 if sent else 409, {"sent": sent})
 
     async def _session_enroll(
@@ -3722,19 +3722,18 @@ class Server:
             revision = await self.progress_coordinator.refresh(session_key)
             row = self.history.session(session_key)
             if revision and row:
-                await asyncio.to_thread(self._file_digest_candidates, row)
+                await self._refresh_rule_candidates(row)
         except Exception as exc:  # provider/background boundary; retain last good progress
             print(f"[duckterm] progress refresh failed: {type(exc).__name__}", file=sys.stderr)
 
-    def _file_digest_candidates(self, row: dict[str, Any]) -> None:
-        """Reconcile original observations after a checkpoint, never repeated summaries."""
-        import hashlib
-        from dataclasses import asdict
-
+    async def _refresh_rule_candidates(self, row: dict[str, Any]) -> None:
+        """Snapshot SQLite-backed observations on the owning event-loop thread."""
         from duckterm.core import agents_rules
-        from duckterm.core.rule_proposals import merge_proposals
 
-        if not self.edition.includes("rule_suggestions"):
+        if not (
+            self.edition.includes("rule_suggestions")
+            and self.edition.includes("background_rule_suggestions")
+        ):
             return
         directory = row.get("worktree_path") or row.get("cwd")
         if not directory:
@@ -3742,12 +3741,21 @@ class Server:
         base = Path(str(directory)).expanduser()
         if not (base / agents_rules.RULES_FILENAME).is_file():
             return
+        corrections = tuple(self._corrections_for_dir(str(base)))
+        if corrections:
+            await asyncio.to_thread(self._file_digest_candidates, base, corrections)
+
+    @staticmethod
+    def _file_digest_candidates(base: Path, corrections: tuple[Correction, ...]) -> None:
+        """Reconcile an immutable snapshot without accessing the history connection."""
+        from dataclasses import asdict
+
+        from duckterm.core import agents_rules
+        from duckterm.core.rule_proposals import merge_proposals
+
         try:
             state = agents_rules.read_catalog(base)
             if state["drift"]:
-                return
-            corrections = self._corrections_for_dir(str(base))
-            if not corrections:
                 return
             fingerprint = hashlib.sha256(
                 json.dumps(
@@ -3768,9 +3776,9 @@ class Server:
                 capture_fingerprint=fingerprint,
                 render=False,
             )
-        except (ValueError, TypeError, OSError):
-            # A failed capture does not affect the checkpoint or last approved rules.
-            return
+        except (ValueError, TypeError, OSError) as exc:
+            # Keep checkpoint/rules intact; log the category without private observations.
+            print(f"[duckterm] rule capture failed: {type(exc).__name__}", file=sys.stderr)
 
     async def _session_timeline(
         self, writer: asyncio.StreamWriter, headers: dict[str, str], key: str, query: str
@@ -4394,7 +4402,9 @@ class Server:
         now = int(time.time() * 1000)
         refusal = await self._typing_refusal(key)
         if refusal is None:
-            status = await self._submit_prompt(key, text)
+            status = await self._submit_prompt(
+                key, text, source="owner" if answered_by == "owner" else "relay"
+            )
             if status != "failed":
                 self.relay.close(
                     note,
@@ -4742,7 +4752,7 @@ class Server:
     _SUBMIT_GAP_S = 0.3
     _SUBMIT_CONFIRM_S = 4.0
 
-    async def _submit_prompt(self, key: str, text: str) -> str:
+    async def _submit_prompt(self, key: str, text: str, *, source: str = "owner") -> str:
         """Type text into a session's prompt and make sure it was submitted.
         Returns "submitted", "stuck" (still sitting in the prompt after a
         second Enter), or "failed" (couldn't write to the terminal)."""
@@ -4754,6 +4764,11 @@ class Server:
         ):
             return "failed"
         typed_at = int(time.time() * 1000)
+        # Record before writing: a hook can arrive before paste confirmation.
+        # This is delivery provenance, not a second UserPromptSubmit event.
+        self.bus.publish(
+            {"event_type": "PromptDelivery", "session_key": key, "text": text, "source": source}
+        )
         if self.restarts.pending(key):
             return "failed"
         if not await asyncio.to_thread(
@@ -5386,7 +5401,7 @@ class Server:
         if not directory:
             await _write_json(writer, 400, {"error": "dir required"})
             return
-        path = (Path(str(directory)).expanduser() / "AGENTS.md").resolve()
+        path = Path(str(directory)).expanduser().resolve() / "AGENTS.md"
         if not self._agents_md_dir_allowed(str(path)):
             await _write_json(writer, 400, {"error": "file outside the allowed roots"})
             return
@@ -5443,16 +5458,36 @@ class Server:
                         f"annotation:{ann['id']}",
                     )
                 )
-            for event in self.history.events_for(key):
+            session_events = self.history.events_for(key)
+            injected = {
+                " ".join(str(e.get("text") or "").split())
+                for e in session_events
+                if e.get("event_type") == "OracleNudge"
+                or (e.get("event_type") == "PromptDelivery" and e.get("source") != "owner")
+            }
+            for event in session_events:
                 if (
                     event.get("event_type") == events.USER_PROMPT_SUBMIT
                     and event.get("prompt")
                     and event.get("_id")
                 ):
+                    prompt = str(event["prompt"])
+                    if (
+                        " ".join(prompt.split()) in injected
+                        or prompt.lstrip().startswith("Duckterm Oracle:")
+                        or event.get("source") in {"oracle", "peer", "inbox", "system"}
+                    ):
+                        continue
+                    if prompt.startswith(
+                        ("Duckterm session capability:", "Rules for your runtime")
+                    ):
+                        _, separator, prompt = prompt.partition("\n\nUser's task:\n")
+                        if not separator or not prompt.strip():
+                            continue
                     out.append(
                         Correction(
                             "user-prompt",
-                            str(event["prompt"]),
+                            prompt,
                             runtime,
                             model,
                             f"event:{event['_id']}",
@@ -5488,20 +5523,13 @@ class Server:
         if not base.is_dir():
             await _write_json(writer, 400, {"error": f"no such directory: {directory}"})
             return
-        path = (base / "AGENTS.md").resolve()
+        path = base / "AGENTS.md"
         if not self._agents_md_dir_allowed(str(path)):
             await _write_json(writer, 400, {"error": "file outside the allowed roots"})
             return
         try:
             state = agents_rules.read_catalog(base)
-            if (
-                state["managed"]
-                and "version" not in req
-                and json.loads((base / agents_rules.RULES_FILENAME).read_text()).get(
-                    "schema_version"
-                )
-                == 2
-            ):
+            if state["managed"] and "version" not in req and state["schema_version"] == 2:
                 raise ValueError("A current rules version is required. Reload before saving.")
             if isinstance(rules_raw, list):
                 from dataclasses import asdict
@@ -6825,7 +6853,7 @@ class Server:
             )
             if not text:
                 continue
-            status = await self._submit_prompt(key, text)
+            status = await self._submit_prompt(key, text, source="oracle")
             if status == "failed":
                 continue
             if pinned and status == "submitted":
