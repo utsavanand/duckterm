@@ -79,11 +79,27 @@ def load_secret(name: str) -> str | None:
     return (private_read(_secret_file(name)) or "").strip() or None
 
 
+def _secret_exists(name: str) -> bool:
+    from duckterm.helpers import keychain
+    from duckterm.helpers.private_files import private_read
+
+    if os.environ.get("DUCKTERM_HOSTED"):
+        return False
+    if _use_keychain():
+        return keychain.access(_keychain_service(name), "exists") is not None
+    return bool((private_read(_secret_file(name)) or "").strip())
+
+
 def stored_secret(name: str) -> bool:
-    """True when Duckterm holds this connector's credential itself."""
-    if load_secret(name) is not None:
+    """True when Duckterm holds this connector's credential itself.
+
+    Presence only: status() runs on every panel load and on the 30 s poll, and
+    decrypting the value there would make a locked keychain fail the whole
+    connector list rather than just the actions that need the secret.
+    """
+    if _secret_exists(name):
         return True
-    return name == "porkbun" and load_secret("porkbun-secret") is not None
+    return name == "porkbun" and _secret_exists("porkbun-secret")
 
 
 def delete_secret(name: str) -> None:
@@ -818,8 +834,17 @@ def _refresh_identity(name: str) -> None:
         identity = github_identity(credential[0])
     except RuntimeError:
         return
-    if identity != current.get("identity"):
-        _save_policy(name, {**current, "identity": identity})
+    if identity == current.get("identity"):
+        return
+    # The lookup above can take seconds, and the panel verifies on open --
+    # exactly when the owner is about to click Disable or Forget. Writing the
+    # snapshot read before that call would restore enabled, source and
+    # generation, re-arming a connector the owner just switched off. Re-read
+    # and write only if nothing the owner controls has changed meanwhile.
+    latest = policy(name)
+    if any(latest.get(k) != current.get(k) for k in ("enabled", "source", "generation")):
+        return
+    _save_policy(name, {**latest, "identity": identity})
 
 
 def _rpc_failure(reply: dict[str, object], summary: str) -> dict[str, object]:

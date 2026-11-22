@@ -44,19 +44,25 @@ def access(service: str, operation: str, value: str = "") -> str | None:
     encoded = service.encode()
     account = b"duckterm"
     length, data, item = c_uint32(), c_void_p(), c_void_p()
+    # Asking for the value decrypts it, which prompts when the keychain is
+    # locked. "exists" passes NULL for length and data so the lookup only
+    # reports whether the item is there.
+    wants_value = operation != "exists"
     code = api.SecKeychainFindGenericPassword(
         None,
         len(encoded),
         encoded,
         len(account),
         account,
-        ctypes.byref(length),
-        ctypes.byref(data),
+        ctypes.byref(length) if wants_value else None,
+        ctypes.byref(data) if wants_value else None,
         ctypes.byref(item),
     )
     if code not in (0, -25300):
         raise RuntimeError(f"Keychain access failed ({code}); unlock your login keychain")
     try:
+        if operation == "exists":
+            return "yes" if code == 0 else None
         if operation == "read":
             return ctypes.string_at(data, length.value).decode() if code == 0 else None
         if operation == "delete":

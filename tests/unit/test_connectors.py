@@ -441,3 +441,56 @@ def test_refresh_identity_keeps_the_stored_name_when_the_provider_is_unreachable
     connectors._refresh_identity("github")
 
     assert json.loads((tmp_path / "github.json").read_text())["identity"] == "tester"
+
+
+def test_disable_during_identity_refresh_is_not_undone(
+    isolated_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Disable landing inside the identity lookup must survive it.
+
+    The panel verifies on open, which is exactly when the owner reaches for
+    Disable. The lookup can take seconds, so the policy read before it is
+    stale by the time the write happens.
+    """
+    _stub(isolated_env, "github-mcp-server", "sleep 0")
+    _stub(isolated_env, "duckterm", "exit 0")
+    connectors.save_secret("github", "ghp_stored")
+    monkeypatch.setattr(connectors, "github_identity", lambda token: "tester")
+    connectors.enable("github", source="stored", home=tmp_path)
+    assert connectors.policy("github")["enabled"] is True
+
+    def switch_account_while_owner_disables(token: str) -> str:
+        connectors.disable("github", home=tmp_path)
+        return "switched-account"
+
+    monkeypatch.setattr(connectors, "github_identity", switch_account_while_owner_disables)
+    connectors._refresh_identity("github")
+
+    after = connectors.policy("github")
+    assert after["enabled"] is False, "identity refresh re-enabled a disabled connector"
+    # run() consults only policy.enabled, so a restored True serves the
+    # connector again even though the panel shows it off.
+    assert connectors.status("github", home=tmp_path)["enabled"] is False
+
+
+def test_forget_during_identity_refresh_is_not_undone(
+    isolated_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Forget clears the source; the refresh must not write it back."""
+    _stub(isolated_env, "github-mcp-server", "sleep 0")
+    _stub(isolated_env, "duckterm", "exit 0")
+    connectors.save_secret("github", "ghp_stored")
+    monkeypatch.setattr(connectors, "github_identity", lambda token: "tester")
+    connectors.enable("github", source="stored", home=tmp_path)
+
+    def forget_while_owner_clicks(token: str) -> str:
+        connectors.forget("github", home=tmp_path)
+        return "switched-account"
+
+    monkeypatch.setattr(connectors, "github_identity", forget_while_owner_clicks)
+    connectors._refresh_identity("github")
+
+    after = connectors.policy("github")
+    assert after["enabled"] is False, "identity refresh re-enabled a forgotten connector"
+    assert after["source"] is None, "identity refresh restored a source Forget cleared"
+    assert connectors.load_secret("github") is None
