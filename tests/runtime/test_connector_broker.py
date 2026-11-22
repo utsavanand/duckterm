@@ -569,3 +569,81 @@ def test_client_certificate_from_another_ca_is_refused_and_reads_no_secret(
             await server.wait_closed()
 
     asyncio.run(scenario())
+
+
+@pytest.mark.skipif(not shutil.which("openssl"), reason="TLS test needs openssl")
+def test_broker_refuses_tls_below_its_floor_and_serves_at_it(tmp_path: Path, monkeypatch) -> None:
+    """The broker's TLS floor is TLS 1.2, and a sub-floor client gets nothing.
+
+    Two halves, because neither alone is enough. The floor is asserted on the
+    product's own context object, which is what a change lowering the policy
+    actually edits. The handshake then proves the floor is a floor rather than
+    a wall: a client capped at exactly 1.2 still gets served, so raising the
+    minimum past the version real agents negotiate would fail here too.
+
+    A client capped *below* the floor cannot be used to prove the server
+    enforces it. This OpenSSL build refuses to offer TLS 1.1 at all -- it
+    raises NO_PROTOCOLS_AVAILABLE locally, with the same error whether the
+    server's minimum is 1.2 or 1.0 -- so such a test would pass with the floor
+    deleted. That is why the sub-floor half is an assertion on the policy and
+    not a connection attempt.
+    """
+    certificates(tmp_path)
+    config = tmp_path / "config.json"
+    settings = {
+        "workspaces": {"workspace": ["github"]},
+        "connectors": {
+            "github": {
+                "enabled": True,
+                "reference": "projects/test/secrets/github/versions/1",
+                "identity": "test-user",
+                "write_access": False,
+            }
+        },
+    }
+    config.write_text(json.dumps(settings))
+    fake = tmp_path / "fake.py"
+    fake.write_text("import sys\nfor line in sys.stdin:\n print(line.rstrip(), flush=True)\n")
+    monkeypatch.setattr(
+        connector_broker,
+        "command",
+        lambda name, cred, write: ([sys.executable, str(fake)], dict(os.environ)),
+    )
+    store = FakeStore()
+    broker = connector_broker.Broker(config, store)
+
+    tls = connector_broker.server_context(
+        {
+            "certificate": tmp_path / "server.crt",
+            "private_key": tmp_path / "server.key",
+            "client_ca": tmp_path / "ca.crt",
+        }
+    )
+    # Anything below 1.2 is refused by policy. Lowering the product's floor
+    # changes this value, which is the mutation this assertion exists to catch.
+    assert tls.minimum_version is ssl.TLSVersion.TLSv1_2
+    assert ssl.TLSVersion.TLSv1_2 > ssl.TLSVersion.TLSv1_1
+
+    async def scenario() -> None:
+        server = await asyncio.start_server(broker.handle, "127.0.0.1", 0, ssl=tls)
+        port = server.sockets[0].getsockname()[1]
+        try:
+            client = ssl.create_default_context(cafile=str(tmp_path / "ca.crt"))
+            client.load_cert_chain(tmp_path / "workspace.crt", tmp_path / "workspace.key")
+            # Exactly at the floor: no 1.3 fallback hiding a broken minimum.
+            client.maximum_version = ssl.TLSVersion.TLSv1_2
+            reader, writer = await asyncio.open_connection(
+                "127.0.0.1", port, ssl=client, server_hostname="server"
+            )
+            assert writer.get_extra_info("ssl_object").version() == "TLSv1.2"
+            writer.write(b'{"name":"github"}\n')
+            await writer.drain()
+            assert json.loads(await asyncio.wait_for(reader.readline(), 3)) == {"ready": True}
+            writer.close()
+            with contextlib.suppress(ssl.SSLError, ConnectionError):
+                await writer.wait_closed()
+        finally:
+            server.close()
+            await server.wait_closed()
+
+    asyncio.run(scenario())
