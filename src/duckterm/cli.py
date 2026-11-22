@@ -155,7 +155,6 @@ def build_parser() -> argparse.ArgumentParser:
     admin.add_argument("name")
     admin.add_argument("--config", default=Path("/etc/duckterm-broker/config.json"), type=Path)
     admin.add_argument("--version", type=int)
-    admin.add_argument("--write-access", action="store_true")
     admin.add_argument("--disable", action="store_true")
     from duckterm import session_client
 
@@ -831,9 +830,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 connector_client.attach(args.config)
                 print("Shared connectors registered for Claude Code and Codex; start new sessions")
             else:
-                connector_broker.admin(
-                    args.config, args.name, args.version, args.write_access, args.disable
-                )
+                connector_broker.admin(args.config, args.name, args.version, args.disable)
             return 0
         except (OSError, ValueError, RuntimeError) as exc:
             print(f"duckterm: {exc}", file=sys.stderr)
