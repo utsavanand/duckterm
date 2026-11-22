@@ -1,3 +1,27 @@
+## 2026-11-21 — A test that builds its own config tests the config, not the product
+
+The broker's mutual-TLS tests looked like proof that the server demands client
+certificates. They were not. Each test built its own `ssl.SSLContext` with
+`CERT_REQUIRED` instead of using `serve()`'s, so they asserted the setting they
+had just written. Mutating the product to `ssl.CERT_NONE` left all 5 passing:
+the broker could have stopped checking client certificates entirely and the
+suite would have stayed green. Security caught this reviewing #416, where I had
+just fixed the certificates themselves and reported the tests as passing.
+
+Two lessons. A test that constructs its own copy of the thing under test has a
+duplicate, and a duplicate drifts silently — the fix is to export the real
+object (`server_context(settings)`) and have the test use it. And "the tests
+pass" is a claim about the tests; the question is whether they can fail. A
+mutation takes a minute: break the behaviour on purpose and watch for red.
+
+The negative case mattered too. The only rejection tested was "no certificate
+at all", which a server can pass while ignoring the issuer. The new case offers
+a well-formed certificate from a second CA and asserts no credential is read.
+Related: [[green-tests-no-working-feature]], [[intent-rendered-as-state]].
+
+Still unverified after this: mutating `minimum_version` from TLSv1_2 to TLSv1
+does not fail anything, because a modern client negotiates 1.3 regardless.
+
 ## 2026-11-19 — Long pastes vanished because tmux caps a command at 1000 arguments
 
 Terminal input reaches an agent pane through `tmux send-keys -H`, one hex
@@ -14,6 +38,24 @@ its argument-count limit, not just the byte size. When probing tmux, use a
 private -L socket: the default socket may be served by a different tmux build
 than the client binary you ran. The regression test pastes 4.6 KB into a real
 pane and compares what arrived byte for byte.
+
+## 2026-11-19 — CI passing is not the certificate being valid
+
+Four connector-broker tests failed on the owner's Mac while CI was green on the
+same commit. The test certificates were never valid: the CA had no Subject Key
+Identifier and the leaves had no Authority Key Identifier. Older OpenSSL simply
+did not check, so the gate that was supposed to catch this had quietly been
+accepting a malformed chain for as long as the test existed. OpenSSL 3.6 checks,
+and the owner's toolchain got there first.
+
+Two things worth keeping. The reported fix ("mark the CA as a CA") was already
+true in the code — basicConstraints CA:TRUE was there — so applying the
+diagnosis verbatim would have changed nothing and looked like a failed fix. Read
+the generated artifact (openssl x509 -text) rather than the suggestion. And the
+test builds certificates with the openssl CLI but verifies them through Python's
+ssl, which on this Mac are different implementations (LibreSSL 3.3.6 vs OpenSSL
+3.6.3); a fix has to be run under both CLIs, because CI's is neither of the ones
+you assume. Related: [[green-tests-no-working-feature]].
 
 ## 2026-11-19 — Measure the constraint before deleting the content
 

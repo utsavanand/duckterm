@@ -43,6 +43,15 @@ export type LocalVoiceStatus =
   | { state: "failed"; reason: string; size: string };
 
 // One Ask Oracle exchange, as stored server-side (at = epoch ms).
+// GET /checkpoint-health: agents active in the last 7 days, problems first.
+export interface AgentMemoryHealth {
+  key: string; name: string; runtime: string | null;
+  status: "failing" | "none" | "behind" | "current";
+  saved_at: number | null; new_messages: number; gaps: number; active_at: number;
+  last_attempt: { at: number; state: string | null; reason: string | null } | null;
+}
+export interface CheckpointHealth { automatic: boolean | null; agents: AgentMemoryHealth[] }
+
 export interface CheckpointSettings {
   lookback_records: number | "all";
   writer_model: "haiku" | "sonnet" | "opus";
@@ -511,6 +520,7 @@ export const api = {
   removeArtifact: (key: string, id: string) => artifactRequest<{ removed: boolean }>(`/sessions/${encodeURIComponent(key)}/artifacts/${id}`, "DELETE"),
 
   checkpointSettings: () => get<CheckpointSettings>("/checkpoint-settings", undefined, { authed: true }),
+  checkpointHealth: () => get<CheckpointHealth>("/checkpoint-health", undefined, { authed: true }),
   saveCheckpointSettings: (value: CheckpointSettings) => post<CheckpointSettings>("/checkpoint-settings", value),
   aiSettings: () => get<AiState>("/ai-settings", undefined, { authed: true }),
   saveAiSettings: (value: AiSettings) => post<AiState>("/ai-settings", value),

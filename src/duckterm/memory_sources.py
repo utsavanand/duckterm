@@ -23,6 +23,7 @@ MAX_TEXT_BYTES = 64 * 1024 * 1024
 # Codex compaction metadata can exceed 8 MiB even with little parsed text.
 # Bound each JSON allocation independently of the accumulated text budget.
 MAX_LINE_BYTES = 16 * 1024 * 1024
+COMPACTED = re.compile(rb'"type"\s*:\s*"compacted"')
 NORMALIZATION = "native-blocks-v2"
 
 
@@ -232,7 +233,25 @@ def read_native(key: str, source: dict[str, Any], *, retain: bool = False) -> di
             while size < end and (raw := stream.readline(min(MAX_LINE_BYTES + 1, end - size))):
                 size += len(raw)
                 if len(raw) > MAX_LINE_BYTES:
-                    raise APIError(413, "Conversation record exceeds the current read bound")
+                    if source["runtime"] != "codex" or not COMPACTED.search(raw[:512]):
+                        raise APIError(413, "Conversation record exceeds the current read bound")
+                    # Codex's compaction copy of the conversation is never parsed;
+                    # stream it through the hash in bounded chunks. Lines of
+                    # 16-23 MB made a 1.5 GB ui-dev history unreadable (2026-11-17).
+                    while True:
+                        digest.update(raw)
+                        if output is not None:
+                            output.write(raw)
+                        if raw.endswith(b"\n") or size >= end:
+                            break
+                        raw = stream.readline(min(MAX_LINE_BYTES + 1, end - size))
+                        if not raw:
+                            break
+                        size += len(raw)
+                    if size in previous_sizes:
+                        prefixes[size] = digest.hexdigest()
+                    index += 1
+                    continue
                 digest.update(raw)
                 if size in previous_sizes:
                     prefixes[size] = digest.hexdigest()
