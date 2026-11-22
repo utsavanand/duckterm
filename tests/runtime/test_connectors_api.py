@@ -46,6 +46,11 @@ def isolated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     server_bin = bin_dir / "github-mcp-server"
     server_bin.write_text("#!/bin/sh\nexit 0\n")
     server_bin.chmod(0o755)
+    # Same reason as the unit fixture: PATH holds only bin_dir, so enable() ->
+    # _duckterm_bin() needs a duckterm here or it raises on the environment.
+    duckterm = bin_dir / "duckterm"
+    duckterm.write_text("#!/bin/sh\nexit 0\n")
+    duckterm.chmod(0o755)
     monkeypatch.setattr(connectors, "github_identity", lambda token: "test-user")
     return home
 
