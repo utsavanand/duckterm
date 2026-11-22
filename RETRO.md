@@ -69,6 +69,18 @@ and forget() already stamp. No new lock; the version marker was already there.
 Read-modify-write around anything slow needs a check at the write, not just at
 the read. And when a status display and an enforcement path read different
 fields, they will eventually disagree.
+## 2026-11-21 — Synchronize asynchronous tests on observable progress
+
+PR #409's foreground-refresh test assumed twenty task yields completed a failed
+refresh and armed its retry. On a loaded CI worker, the fake clock tick could
+arrive before the retry was waiting, so the test stayed stale. It now waits for
+the retry and polling clocks to report that they are suspended, with bounded
+expectations, before advancing or asserting the result.
+
+The browser job also exhausted its fifteen-minute budget after cold Playwright
+dependencies took six minutes. Account for installation and all edition runs in
+the job budget; a cancelled run is not passing evidence.
+
 ## 2026-11-21 — Check a format against real files before anchoring on it
 
 #414 skipped an oversized Codex line when `"type":"compacted"` appeared anywhere
@@ -222,6 +234,18 @@ I first read it as my change breaking three tests; it breaks the same tests
 without my change. Scrub the env (`env -u DUCKTERM_HOME -u DUCKTERM_INSTANCE
 -u DUCKTERM_PORT ...`) and all 30 pass. Compare against a pristine worktree
 before attributing a failure, and count the failures rather than reading names.
+## 2026-11-16 — Reconcile behavioral guidance against its original evidence
+
+Repeated checkpoint summaries are not independent corrections. Counting them as
+new evidence turns one episode into an apparently well-supported permanent rule.
+Capture now compares original event and annotation references with the existing
+rule catalogue, and proposes a revision, example, or evidence link before adding
+a rule. Episodic observations remain separate from instructions.
+
+A generated-file banner is not evidence that its source and export still agree.
+Compare both before saving, reject stale revisions, and preserve a backup when
+the owner explicitly reconciles external edits. Tests cover both Markdown and
+JSON drift as well as review-before-activation.
 
 ## 2026-11-07 — Folder chat had a message broker its answer path could never reach
 
