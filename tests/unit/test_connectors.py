@@ -493,4 +493,64 @@ def test_forget_during_identity_refresh_is_not_undone(
     after = connectors.policy("github")
     assert after["enabled"] is False, "identity refresh re-enabled a forgotten connector"
     assert after["source"] is None, "identity refresh restored a source Forget cleared"
+    # The fresh re-read alone would also satisfy the two lines above, because
+    # Forget writes enabled and source before the refresh reads them again.
+    # Only the identity is the refresh's own payload, so this is the assertion
+    # that fails when the compare-and-set guard is removed.
+    assert after["identity"] is None, (
+        "identity refresh wrote an identity onto a forgotten connector"
+    )
     assert connectors.load_secret("github") is None
+
+
+@pytest.mark.parametrize("failing", ["read", "exists"])
+def test_connector_list_survives_an_unreachable_keychain(
+    isolated_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failing: str
+) -> None:
+    """A locked keychain costs the owner the credential answer, not the list.
+
+    Before stored_secret stopped decrypting, a RuntimeError from the keychain
+    propagated out of status() and the panel rendered no connectors at all.
+    """
+    from duckterm.helpers import keychain
+
+    monkeypatch.setattr(connectors, "_use_keychain", lambda: True)
+
+    def access(service: str, operation: str, value: str = "") -> str | None:
+        if operation == failing:
+            raise RuntimeError("Keychain access failed (-25293); simulated")
+        return "yes" if operation == "exists" else None
+
+    monkeypatch.setattr(keychain, "access", access)
+
+    rows = connectors.list_status(home=tmp_path)
+    assert [row["name"] for row in rows] == list(connectors.NAMES)
+    github = next(row for row in rows if row["name"] == "github")
+    if failing == "exists":
+        # Unknown, not absent: the secret may be sitting in the keychain
+        # intact, so the panel must not offer Forget or claim nothing is held.
+        assert github["stored_secret_unknown"] is True
+        assert github["stored_secret"] is False
+    else:
+        # "read" is only ever reached by the actions that need the value.
+        assert github["stored_secret_unknown"] is False
+        assert github["stored_secret"] is True
+
+
+def test_secret_consuming_actions_still_fail_closed_on_a_locked_keychain(
+    isolated_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Tolerating the presence failure must not make enable tolerate it too."""
+    from duckterm.helpers import keychain
+
+    _stub(isolated_env, "github-mcp-server", "sleep 0")
+    _stub(isolated_env, "duckterm", "exit 0")
+    monkeypatch.setattr(connectors, "_use_keychain", lambda: True)
+
+    def access(service: str, operation: str, value: str = "") -> str | None:
+        raise RuntimeError("Keychain access failed (-25293); simulated")
+
+    monkeypatch.setattr(keychain, "access", access)
+    with pytest.raises(RuntimeError):
+        connectors.enable("github", source="stored", home=tmp_path)
+    assert connectors.policy("github", home=tmp_path).get("enabled") is not True

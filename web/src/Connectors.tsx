@@ -47,7 +47,7 @@ const sourceTags: Record<string, string> = {
 // A proved tool count beats "configured", which only means a file was written.
 function summaryLabel(c: Connector, check: (ConnectorCheck & { at: number }) | undefined): string {
   if (c.managed) return "Managed by your connector host";
-  if (!c.enabled) return c.credential || c.stored_secret
+  if (!c.enabled) return c.credential || c.stored_secret || c.stored_secret_unknown
     ? "Off — not available to any agent"
     : (c.detail ?? "Not set up");
   if (check && !check.ok) return `Not working — ${check.detail ?? "verification failed"}`;
@@ -236,7 +236,7 @@ export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
               </label>}
               {c.credential && <div className="rd-connector-desc">
                 {c.enabled
-                  ? `Turning this off withdraws ${c.title} from the agents below. ${c.stored_secret ? "Your keys stay saved." : "Your CLI login is untouched."}`
+                  ? `Turning this off withdraws ${c.title} from the agents below. ${c.stored_secret_unknown ? "Nothing saved is deleted." : c.stored_secret ? "Your keys stay saved." : "Your CLI login is untouched."}`
                   : `${c.title} is set up but no agent can reach it.`}
               </div>}
 
@@ -286,7 +286,9 @@ export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
                 <input aria-label={`${c.title} API key`} type="password" autoComplete="off" value={token} placeholder={c.credential === "stored" ? "Leave blank to reuse stored credentials" : "API key or personal access token"} onChange={e => setToken(e.target.value)} />
                 {c.name === "porkbun" && <input aria-label="Porkbun secret key" type="password" autoComplete="off" value={secret} placeholder="Secret key" onChange={e => setSecret(e.target.value)} />}
               </>}
-              <div className="rd-connector-desc">{c.stored_secret
+              <div className="rd-connector-desc">{c.stored_secret_unknown
+                ? `Duckterm could not reach the keychain, so whether it holds a ${c.title} credential is unknown. Unlock your login keychain to see it.`
+                : c.stored_secret
                 ? "Revocation must be completed on the provider’s website. Disable does not revoke authorization."
                 : `Uses your ${c.title} CLI login on this computer. Duckterm stores no credential for it — sign out of that CLI to revoke access.`}</div>
 

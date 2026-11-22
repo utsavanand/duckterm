@@ -283,6 +283,7 @@ export interface Connector {
   revoke_url: string;
   credential: string | null; // "gh-cli" | "stored" | "railway-cli" | null
   stored_secret: boolean; // Duckterm holds the credential itself (not a provider CLI login)
+  stored_secret_unknown: boolean; // the keychain could not be reached, so neither answer is known
   installed: Record<string, boolean>; // per harness
   harnesses: string[]; // the agents this connector is registered for
   harnesses_present: Record<string, boolean>; // which agent CLIs exist here

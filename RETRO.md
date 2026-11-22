@@ -1,3 +1,26 @@
+## 2026-11-22 — A failed lookup is not a negative answer
+
+Making status() check credential presence instead of decrypting the secret
+fixed the locked-keychain crash for the value, but left the presence lookup
+raising on the same path. One connector's unreachable keychain still cost the
+owner the entire connector list - three rows gone, nothing to click.
+
+The tempting patch is `except: return False`. That trades a crash for a lie:
+the secret is very likely sitting in the keychain intact, and False is what the
+panel reads to mean "Duckterm holds nothing for this", which then tells the
+owner their CLI login is untouched and hides Forget. A credential question has
+three answers - yes, no, and cannot tell - and collapsing the third into "no"
+is how a UI ends up confidently wrong about the thing the owner most needs to
+trust.
+
+So: catch per connector, keep the row, and carry the unknown through to the
+surface (stored_secret_unknown) so the panel says it cannot tell. The
+destructive affordances stay hidden on unknown, and the actions that actually
+consume the secret keep raising - tolerating a presence failure must not make
+enable tolerate a read failure. A regression test for each of the two
+operations, because only the "exists" one was broken and a single test would
+not have said which.
+
 ## 2026-11-22 — A read, a network call, and a write is a lost update
 
 _refresh_identity read the connector policy, asked GitHub who the token belongs

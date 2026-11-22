@@ -102,6 +102,20 @@ def stored_secret(name: str) -> bool:
     return name == "porkbun" and _secret_exists("porkbun-secret")
 
 
+def stored_secret_state(name: str) -> bool | None:
+    """Whether Duckterm holds this credential, or None when it cannot tell.
+
+    A locked or unavailable keychain makes even the presence lookup raise. That
+    must not cost the owner the whole connector list, and it must not be
+    reported as "no stored credential" either -- the secret may be sitting
+    there intact. None means unknown, and the panel says so.
+    """
+    try:
+        return stored_secret(name)
+    except (OSError, RuntimeError):
+        return None
+
+
 def delete_secret(name: str) -> None:
     from duckterm.helpers import keychain
 
@@ -482,6 +496,7 @@ def status(name: str, *, home: Path | None = None) -> dict[str, object]:
         available = ["stored"]
         ready = shutil.which("uvx") is not None and source is not None
         detail = None if ready else "Needs uv and an API key + secret"
+    held = stored_secret_state(name)
     descriptions = {
         "github": "Repos, PRs, issues, and actions",
         "railway": "Deployments, services, and logs",
@@ -500,7 +515,8 @@ def status(name: str, *, home: Path | None = None) -> dict[str, object]:
         "identity": current.get("identity"),
         # "credential" names the source, so it is truthy even for a CLI
         # login Duckterm never stored. Forget/Revoke need the real answer.
-        "stored_secret": stored_secret(name),
+        "stored_secret": held is True,
+        "stored_secret_unknown": held is None,
         "sources": available,
         "write_access": current.get("write_access", False),
         "installed": installed,
@@ -541,6 +557,7 @@ def list_status(*, home: Path | None = None) -> list[dict[str, object]]:
             "credential": "shared-host" if remote.get(name, {}).get("enabled") else None,
             # Provider credentials live on the broker, never on this machine.
             "stored_secret": False,
+            "stored_secret_unknown": False,
             "installed": {
                 "claude-code": _claude_registered(name, home=home),
                 "codex": _codex_registered(name, home=home),

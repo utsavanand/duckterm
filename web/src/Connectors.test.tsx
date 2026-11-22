@@ -7,7 +7,7 @@ vi.mock("./api", () => ({ api: { connectors: vi.fn(), enableConnector: vi.fn(), 
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 beforeEach(() => { vi.mocked(api.verifyConnector).mockResolvedValue({ name: "porkbun", ok: true, tools: 3, detail: null }); });
 
-const row: Connector = { name: "porkbun", title: "Porkbun", description: "DNS", credential: null, stored_secret: false, identity: null, sources: ["stored"], write_access: false, enabled: false, installed: {}, ready: false, detail: null, managed: false, revoke_url: "https://porkbun.com/account/api", last_used: null, use_count: 0, harnesses: ["claude-code", "codex"], harnesses_present: { "claude-code": true, codex: true } };
+const row: Connector = { name: "porkbun", title: "Porkbun", description: "DNS", credential: null, stored_secret: false, stored_secret_unknown: false, identity: null, sources: ["stored"], write_access: false, enabled: false, installed: {}, ready: false, detail: null, managed: false, revoke_url: "https://porkbun.com/account/api", last_used: null, use_count: 0, harnesses: ["claude-code", "codex"], harnesses_present: { "claude-code": true, codex: true } };
 
 it("requires a separate write opt-in and sends read-only by default", async () => {
   vi.mocked(api.connectors).mockResolvedValue({ connectors: [row] });
@@ -257,4 +257,16 @@ it("re-proves a connector after its credential or permissions change", async () 
   // A different permission can serve a different tool set, so the proved count
   // must not survive the change that invalidated it.
   expect(await screen.findByText(/12 tools/)).toBeVisible();
+});
+
+it("names an unreachable keychain instead of claiming no credential is stored", async () => {
+  // stored_secret false with unknown true must not read as "no stored key":
+  // the panel previously rendered no rows at all in this case.
+  const unknown: Connector = { ...row, credential: "stored", stored_secret: false, stored_secret_unknown: true };
+  vi.mocked(api.connectors).mockResolvedValue({ connectors: [unknown] });
+  render(<Connectors />);
+  fireEvent.click(await screen.findByLabelText(/^Configure /));
+  expect(await screen.findByText(/whether it holds a Porkbun credential is unknown/)).toBeVisible();
+  // Forget would delete a secret we cannot even confirm exists.
+  expect(screen.queryByText("Forget stored credentials")).toBeNull();
 });
