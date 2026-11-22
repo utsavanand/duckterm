@@ -70,7 +70,7 @@ def test_legacy_copy_is_unchanged(tmp_path, monkeypatch):
     first = memory_sources.read_native("probe", source(p), retain=True)
     root = memory_sources.directory("probe")
     (root / "latest.json").unlink()
-    old = root / (first["snapshot"] + ".jsonl")
+    old = root / (first["snapshot"] + ".records")
     before = old.read_bytes()
     with p.open("ab") as f:
         f.write(message("new"))
@@ -107,7 +107,7 @@ def test_retry_after_interrupted_index_write_preserves_old_version(tmp_path, mon
     write = Path.write_text
 
     def partial_pointer(path, text, *args, **kw):
-        if path.suffix == ".prefix":
+        if path.suffix == ".records-prefix":
             write(path, "{")
             raise OSError("injected pointer interruption")
         return write(path, text, *args, **kw)
@@ -152,7 +152,7 @@ def test_atomic_pointer_publication_failure_preserves_prior_route(tmp_path, monk
     replace = os.replace
 
     def fail_pointer(src, dst):
-        if Path(dst).suffix == ".prefix":
+        if Path(dst).suffix == ".records-prefix":
             raise OSError("injected publish failure")
         return replace(src, dst)
 

@@ -1,3 +1,22 @@
+## 2026-11-21 — Memory kept 4.9 GB of raw history to prove 1% of it
+
+Each checkpoint retained a byte-for-byte copy of the agent's native
+conversation, so memory could still show its evidence after Claude or Codex
+cleaned up or rewrote the file. The raw file is mostly not conversation: ids,
+token counts and hidden reasoning on every Claude line, and Codex's compaction
+copies of the whole history. Measured with DuckTerm's own reader, a 521 MB Codex
+rollout held 1.15 MB of text and a 54.5 MB Claude conversation 7.1 MB. Across
+agents the copies reached 4.9 GB, the largest part of a backup.
+
+Copies now keep the extracted records. The handle is still the digest of the
+native bytes, so every saved evidence link resolves unchanged; the records
+carry their own digest for verification. It took the owner asking how the
+stores relate before anyone listed them side by side.
+
+Lesson: when a store exists "for evidence", measure how much of it a reader
+ever uses. Keeping the form you read, verified, is the evidence; the bytes
+around it are not.
+
 ## 2026-11-21 — Check a format against real files before anchoring on it
 
 #414 skipped an oversized Codex line when `"type":"compacted"` appeared anywhere

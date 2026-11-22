@@ -60,14 +60,16 @@ def test_history_larger_than_old_raw_limit_preserves_first_and_last_messages(tmp
         path.unlink(missing_ok=True)
 
 
-def test_retention_keeps_exact_raw_bytes_including_metadata(tmp_path, monkeypatch):
+def test_retention_keeps_records_without_native_metadata(tmp_path, monkeypatch):
     monkeypatch.setenv("DUCKTERM_HOME", str(tmp_path / "state"))
     path = tmp_path / "native.jsonl"
     raw = message("old decision") + b'{"type":"compacted","payload":{}}\n' + message("new work")
     path.write_bytes(raw)
     saved = memory_sources.read_native("probe", source(path), retain=True)
-    snapshot = memory_sources.directory("probe") / (saved["snapshot"] + ".jsonl")
-    assert snapshot.read_bytes() == raw
+    root = memory_sources.directory("probe")
+    assert not list(root.glob("*.jsonl"))
+    kept = (root / (saved["snapshot"] + ".records")).read_bytes()
+    assert b"compacted" not in kept and b"payload" not in kept
     path.unlink()
     restored = memory_sources.read_native("probe", saved)
     assert restored["records"] == saved["records"]
@@ -122,10 +124,11 @@ def test_an_appended_transcript_keeps_one_copy_and_every_version_reads_exactly(
     v3 = memory_sources.read_native("probe", source(path), retain=True)
     root = memory_sources.directory("probe")
     # One whole copy; the older versions are pointers into it.
-    assert sorted(p.name for p in root.glob("*.jsonl")) == [v3["snapshot"] + ".jsonl"]
-    assert {p.stem for p in root.glob("*.prefix")} == {v1["snapshot"], v2["snapshot"]}
+    assert sorted(p.name for p in root.glob("*.records")) == [v3["snapshot"] + ".records"]
+    pointers = list(root.glob("*.records-prefix"))
+    assert {p.name.split(".")[0] for p in pointers} == {v1["snapshot"], v2["snapshot"]}
     # Every older version points straight at the whole copy: one hop, not a chain.
-    assert {json.loads(p.read_text())["of"] for p in root.glob("*.prefix")} == {v3["snapshot"]}
+    assert {json.loads(p.read_text())["of"] for p in pointers} == {v3["snapshot"]}
     path.unlink()
     for saved, texts in ((v1, ["first decision"]), (v2, ["first decision", "second decision"])):
         restored = memory_sources.read_native("probe", saved)
@@ -141,11 +144,44 @@ def test_a_rewritten_transcript_keeps_both_whole_copies(tmp_path, monkeypatch):
     path.write_bytes(message("rewritten wording") + message("more"))
     v2 = memory_sources.read_native("probe", source(path), retain=True)
     root = memory_sources.directory("probe")
-    assert {p.stem for p in root.glob("*.jsonl")} == {v1["snapshot"], v2["snapshot"]}
-    assert not list(root.glob("*.prefix"))
+    assert {p.stem for p in root.glob("*.records")} == {v1["snapshot"], v2["snapshot"]}
+    assert not list(root.glob("*.records-prefix"))
     assert [r["text"] for r in memory_sources.read_native("probe", v1)["records"]] == [
         "original wording"
     ]
+
+
+def test_a_raw_copy_from_before_records_still_reads_and_is_left_alone(tmp_path, monkeypatch):
+    monkeypatch.setenv("DUCKTERM_HOME", str(tmp_path / "state"))
+    path = tmp_path / "native.jsonl"
+    raw = message("legacy decision")
+    path.write_bytes(raw)
+    current = memory_sources.read_native("probe", source(path))
+    legacy = memory_sources.directory("probe") / (current["version"] + ".jsonl")
+    legacy.write_bytes(raw)
+    with path.open("ab") as stream:
+        stream.write(message("later work"))
+    memory_sources.read_native("probe", source(path), retain=True)
+    path.unlink()
+    restored = memory_sources.read_native("probe", {**source(path), "snapshot": current["version"]})
+    assert [r["text"] for r in restored["records"]] == ["legacy decision"]
+    assert legacy.read_bytes() == raw
+
+
+def test_a_tampered_pointer_or_copy_is_refused(tmp_path, monkeypatch):
+    monkeypatch.setenv("DUCKTERM_HOME", str(tmp_path / "state"))
+    path = tmp_path / "native.jsonl"
+    path.write_bytes(message("first decision"))
+    v1 = memory_sources.read_native("probe", source(path), retain=True)
+    with path.open("ab") as stream:
+        stream.write(message("second decision"))
+    memory_sources.read_native("probe", source(path), retain=True)
+    root = memory_sources.directory("probe")
+    pointer = root / (v1["snapshot"] + ".records-prefix")
+    value = json.loads(pointer.read_text())
+    pointer.write_text(json.dumps({**value, "records": 2}))
+    with pytest.raises(APIError, match="checksum"):
+        memory_sources.read_native("probe", v1)
 
 
 def compacted(size, **header):

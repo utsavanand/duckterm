@@ -261,7 +261,7 @@ class Memory:
         ):
             raise APIError(409, "Invalid retained conversation reference")
         path = (
-            memory_sources.snapshot_file(key, snapshot)[0]
+            memory_sources.retained_path(key, snapshot)
             if snapshot is not None
             else memory_sources.native_path(source)
         )
