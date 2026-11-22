@@ -4,7 +4,7 @@ import { api, KitInventory, KitPlan, KitsOverview } from "./api";
 import { SkillKitsPage } from "./SkillKitsPage";
 
 vi.mock("./api", () => ({
-  api: { kitsOverview: vi.fn(), kitsPlan: vi.fn(), kitsInstall: vi.fn(), kitsUninstall: vi.fn(), kitsVerify: vi.fn(), kitsRun: vi.fn() },
+  api: { kitsOverview: vi.fn(), kitsPlan: vi.fn(), kitsInstall: vi.fn(), kitsUninstall: vi.fn(), kitsVerify: vi.fn(), kitsRun: vi.fn(), kitsCreateTeam: vi.fn() },
 }));
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 
@@ -84,4 +84,18 @@ it("walks add → review → install and lands on the installed kit", async () =
   expect(screen.getByText("never")).toBeVisible();
   expect(screen.getByText("/uvs-spec")).toBeInTheDocument();
   expect(screen.getByText(/Convert requirements into a structured/)).toBeInTheDocument();
+});
+
+it("creates a team as a new workspace named after it, or as you name it", async () => {
+  vi.mocked(api.kitsOverview).mockResolvedValue(overview);
+  vi.mocked(api.kitsCreateTeam).mockResolvedValue({ team: { folder: "Payments squad", team: "uv-coding", description: "", kit: "uv-suite", kit_version: "0.34.0", project: "/ws/duckterm", roles: procedure.roles, rules: procedure.rules, created_at: 1 } });
+  const created = vi.fn();
+  render(<SkillKitsPage defaultDir="/ws/duckterm" knownDirs={[]} onClose={() => {}} fallback={null} onTeamCreated={created} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Create team" }));
+  const name = screen.getByLabelText("Workspace name");
+  expect(name).toHaveValue("uv-coding");
+  fireEvent.change(name, { target: { value: "Payments squad" } });
+  fireEvent.click(screen.getByRole("button", { name: "Create workspace" }));
+  await waitFor(() => expect(api.kitsCreateTeam).toHaveBeenCalledWith({ project: "/ws/duckterm", kit: "uv-suite", team: "uv-coding", name: "Payments squad" }, ""));
+  await waitFor(() => expect(created).toHaveBeenCalledWith("Payments squad"));
 });

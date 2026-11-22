@@ -125,3 +125,38 @@ def test_start_run_returns_the_run_id_before_the_step_finishes(tmp_path, monkeyp
         json.loads((project / ".duckterm" / "runs" / run_id / "run.json").read_text())["state"]
         == "succeeded"
     )
+
+
+def test_create_team_records_the_procedure_under_the_home_and_refuses_twice(tmp_path, monkeypatch):
+    from duckterm.helpers import instance
+
+    monkeypatch.setattr(instance, "home", lambda: tmp_path / "home")
+    project = _project(tmp_path)
+    api.install_kit({"kit": str(SAMPLE), "project": str(project), "harnesses": ["claude-code"]})
+    out = api.create_team({"project": str(project), "kit": "sample-kit", "team": "feature-squad"})
+    team = out["team"]
+    assert team["folder"] == "feature-squad" and team["kit_version"] == "0.1.0"
+    assert set(team["roles"]) == {"dev", "reviewer"}
+    assert team["rules"][0] == {"role": "dev", "review_by": "reviewer"}
+    assert api.teams()["teams"][0]["folder"] == "feature-squad"
+    assert api.team_for_folder("feature-squad")["team"] == "feature-squad"
+    assert api.team_for_folder("other") is None
+    with pytest.raises(api.KitApiError) as e:
+        api.create_team({"project": str(project), "kit": "sample-kit", "team": "feature-squad"})
+    assert e.value.status == 409
+    named = api.create_team(
+        {
+            "project": str(project),
+            "kit": "sample-kit",
+            "team": "feature-squad",
+            "name": "Payments squad",
+        }
+    )
+    assert named["team"]["folder"] == "Payments squad"
+    with pytest.raises(api.KitApiError) as e:
+        api.create_team({"project": str(project), "kit": "sample-kit", "team": "nope"})
+    assert e.value.status == 404
+    with pytest.raises(api.KitApiError, match="without slashes"):
+        api.create_team(
+            {"project": str(project), "kit": "sample-kit", "team": "feature-squad", "name": "a/b"}
+        )

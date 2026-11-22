@@ -353,6 +353,8 @@ _ROUTES: list[Route] = [
     Route("POST", "/kits/runs", lambda s, r, w, h, b, seg: s._kits(w, "runs", b)),
     Route("POST", "/kits/run-detail", lambda s, r, w, h, b, seg: s._kits(w, "run", b)),
     Route("POST", "/kits/gate", lambda s, r, w, h, b, seg: s._kits(w, "gate", b)),
+    Route("POST", "/kits/teams", lambda s, r, w, h, b, seg: s._kits(w, "teams", b)),
+    Route("POST", "/kits/team", lambda s, r, w, h, b, seg: s._kits(w, "team", b)),
     # ── connectors (GitHub, Railway, … — credentials + MCP install) ──
     Route("POST", "", lambda s, r, w, h, b, seg: s._forget_connector(w, seg),
           **_mid("/connectors/", "/forget")),
@@ -2626,6 +2628,8 @@ class Server:
             "verify": lambda: kits_api.verify_kits(payload),
             "start": lambda: kits_api.start_run(payload),
             "gate": lambda: kits_api.answer_gate(payload, str(payload.get("run_id") or "")),
+            "teams": lambda: kits_api.teams(),
+            "team": lambda: self._create_team_record(kits_api, payload),
         }
         try:
             result = await asyncio.to_thread(calls[action])
@@ -2633,6 +2637,14 @@ class Server:
             await _write_json(writer, exc.status, {"error": str(exc)})
             return
         await _write_json(writer, 200, result)
+
+    def _create_team_record(self, kits_api: Any, payload: dict[str, Any]) -> dict[str, Any]:
+        """A team is a workspace with a procedure: the record first (it refuses
+        a bad request without touching anything), then the workspace itself,
+        registered like New workspace does so an empty one persists."""
+        result = kits_api.create_team(payload)
+        self.history.create_folder(str(result["team"]["folder"]), now=int(time.time() * 1000))
+        return result
 
     def _suites_for(self, directory: object) -> list[str]:
         """Which installed skill kits (e.g. uv-suite) a

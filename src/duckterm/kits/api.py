@@ -380,6 +380,89 @@ def verify_kits(body: dict[str, Any]) -> dict[str, Any]:
     return {"reports": [r.__dict__ for r in install.verify(project)]}
 
 
+# ── teams: a workspace created from a kit's team template ────────────────────
+
+
+def _teams_dir() -> Path:
+    from duckterm.helpers import instance
+
+    return instance.home() / "teams"
+
+
+def _team_file(folder: str) -> Path:
+    import urllib.parse
+
+    return _teams_dir() / (urllib.parse.quote(folder, safe="") + ".json")
+
+
+def team_for_folder(folder: str) -> dict[str, Any] | None:
+    path = _team_file(folder)
+    if not path.is_file():
+        return None
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def teams() -> dict[str, Any]:
+    out = []
+    folder = _teams_dir()
+    if folder.is_dir():
+        for f in sorted(folder.glob("*.json")):
+            try:
+                data = json.loads(f.read_text())
+            except (OSError, ValueError):
+                continue
+            if isinstance(data, dict):
+                out.append(data)
+    return {"teams": out}
+
+
+def create_team(body: dict[str, Any]) -> dict[str, Any]:
+    """The record a team is: the workspace's name, the procedure (roles and
+    rules) copied from the kit's template at this moment, and where it came
+    from. The server creates the workspace itself; this writes the record
+    under the DuckTerm home, beside the kit records, never into the
+    repository."""
+    project = _project(body.get("project"))
+    kit_name = str(body.get("kit") or "")
+    team_name = str(body.get("team") or "")
+    folder = str(body.get("name") or team_name).strip()
+    if not kit_name or not team_name:
+        raise KitApiError(400, "kit and team are required")
+    if not folder or "/" in folder or folder.startswith("."):
+        raise KitApiError(400, "a workspace name is required, without slashes")
+    record = planning.load_record(project)
+    entry = record["kits"].get(kit_name)
+    if entry is None:
+        raise KitApiError(404, f"kit {kit_name!r} is not installed in {project}")
+    template = next((p for p in entry.get("procedures", []) if p.get("name") == team_name), None)
+    if template is None:
+        raise KitApiError(404, f"kit {kit_name!r} offers no team {team_name!r}")
+    existing = team_for_folder(folder)
+    if existing is not None:
+        raise KitApiError(409, f"workspace {folder!r} is already a team ({existing.get('team')})")
+    import time
+
+    data = {
+        "folder": folder,
+        "team": team_name,
+        "description": template.get("description", ""),
+        "kit": kit_name,
+        "kit_version": entry.get("version"),
+        "project": str(project),
+        "roles": template.get("roles", {}),
+        "rules": template.get("rules", []),
+        "created_at": int(time.time()),
+    }
+    path = _team_file(folder)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2) + "\n")
+    return {"team": data}
+
+
 # ── flow runs: started in a thread, watched through the run file ─────────────
 
 _threads: dict[str, threading.Thread] = {}

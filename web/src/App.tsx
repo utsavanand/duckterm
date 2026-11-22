@@ -681,6 +681,7 @@ function Dashboard() {
           sessionKey={selected?.key}
           onClose={() => setModal(null)}
           fallback={<HarnessesModal sessionKey={selected?.key} onClose={() => setModal(null)} />}
+          onTeamCreated={(folder) => { refreshFolders(); setModal(null); setSelectedFolder(folder); }}
         />
       )}
       {actionAnchor && actionSession && <SessionActions key={actionSession.key + ":" + actionAnchor.x + ":" + actionAnchor.y} anchor={actionAnchor} session={actionSession}

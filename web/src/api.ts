@@ -495,6 +495,7 @@ export interface KitRun extends KitRunSummary {
   attempts: { step: string; attempt: number; kind: string; status: string; choice: string | null; reason: string; outputs: Record<string, unknown> }[];
   gates: { step: string; visit: number; question: string | null; show: unknown; choices: string[]; response: unknown }[];
 }
+export interface KitTeam { folder: string; team: string; description: string; kit: string; kit_version: string | null; project: string; roles: Record<string, { purpose: string; skills: string[] }>; rules: Record<string, unknown>[]; created_at: number }
 export interface KitsOverview { project: string; kits: KitInstalled[]; procedures: KitProcedure[]; harnesses_present: Record<string, boolean>; runs: KitRunSummary[] }
 
 export const api = {
@@ -757,6 +758,9 @@ export const api = {
     post<{ runs: KitRunSummary[] }>("/kits/runs", { project }, context),
   kitsRunDetail: (project: string, run_id: string, context?: string) =>
     post<{ run: KitRun; steps: { id: string; kind: string; skill?: string | null; question?: string | null; routes?: Record<string, string> | null }[] }>("/kits/run-detail", { project, run_id }, context),
+  kitsTeams: (context?: string) => post<{ teams: KitTeam[] }>("/kits/teams", {}, context),
+  kitsCreateTeam: (body: { project: string; kit: string; team: string; name?: string }, context?: string) =>
+    post<{ team: KitTeam }>("/kits/team", body, context),
   kitsGate: (project: string, run_id: string, step: string, answer: string, context?: string) =>
     post<{ run_id: string; resumed: boolean }>("/kits/gate", { project, run_id, step, answer }, context),
   // Legacy skill-kit registry (duckterm-harness.json suites, e.g. uv-suite before its manifest).
