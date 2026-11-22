@@ -19,6 +19,8 @@ Items are durable memory, with a high bar. Save an item only if an agent picking
 - learning: a lesson from a real failure that changes future work
 - reference: where the detail lives (spec, PR, artifact, file)
 
+Distinguish procedural observations (how to behave in future matching situations), episodic context (what happened), and factual project knowledge. Constraints, conventions and behavioral learnings retain original source references; they do not install AGENTS.md rules. Repeated summaries or forks of one event do not establish recurrence. Preserve temporary directions needed for continuation without treating them as permanent rules. Separate rule reconciliation and owner review install reusable guidance.
+
 Return one JSON object and nothing else:
 {"summary": "at most 1200 characters: what happened in this span, its latest stage and why",
  "overview": "one or two sentences, at most 400 characters",
