@@ -1,3 +1,24 @@
+## 2026-11-22 — A test the client refuses is not a test the server passed
+
+The broker's TLS floor was untested: lowering minimum_version from 1.2 to 1.0
+failed nothing. The obvious test is "connect with a TLS 1.1 client and assert
+refusal", and it would have been worthless here. This OpenSSL 3.6.3 build will
+not offer TLS 1.1 at all - capping a client there raises
+NO_PROTOCOLS_AVAILABLE locally, before a single byte reaches the server, and
+the error is byte-identical whether the server's floor is 1.2 or 1.0. The test
+would have been green with the floor deleted.
+
+I only know that because I ran both variants side by side before writing the
+test, which is the habit worth keeping: when a negative test passes, check
+which side did the refusing. A refusal from the client proves nothing about
+the server.
+
+What the test asserts instead: the floor on the product's own context object
+(the value a policy change actually edits), plus a live handshake from a client
+capped at exactly 1.2, so the floor is proved to be a floor and not a wall.
+Both mutations now fail - lowering the floor, which is the security
+regression, and raising it to 1.3, which is the availability one.
+
 ## 2026-11-21 — Check a format against real files before anchoring on it
 
 #414 skipped an oversized Codex line when `"type":"compacted"` appeared anywhere
