@@ -716,6 +716,8 @@ class Server:
                 if urllib.parse.urlsplit(path).path.startswith("/api/v1/session/memory/"):
                     result = await self.memory.session_request(method, path, headers, body)
                     status = 200
+                elif urllib.parse.urlsplit(path).path.startswith("/api/v1/session/kits/"):
+                    status, result = await self._session_kits(method, path, headers, body)
                 else:
                     federated = await collaboration_session(
                         self.collaboration, method, path, headers, body
@@ -2649,6 +2651,46 @@ class Server:
         stats = transcript_stats(path)
         self._context_cache[str(path)] = (mtime, stats)
         return stats
+
+    async def _session_kits(
+        self, method: str, path: str, headers: dict[str, str], body: bytes
+    ) -> tuple[int, dict[str, Any]]:
+        """A session starting, watching or answering a flow of its own: the
+        caller is the session its credential names, its project is its own
+        folder unless it says otherwise, and every harness step of the run is
+        a child session of it. `duckterm kit run` inside a session uses this."""
+        from duckterm.kits import api as kits_api
+
+        key = self.history.session_api.authenticate(headers)
+        suffix = urllib.parse.urlsplit(path).path.removeprefix("/api/v1/session/kits/")
+        try:
+            payload: Any = json.loads(body or b"{}")
+        except json.JSONDecodeError:
+            return 400, {"error": "invalid JSON"}
+        if not isinstance(payload, dict):
+            return 400, {"error": "body must be an object"}
+        row = self.history.session(key) or {}
+        payload.setdefault("project", row.get("worktree_path") or row.get("cwd") or "")
+        payload["session"] = key
+        tracker = _FlowStepTracker(self, asyncio.get_running_loop())
+        calls = {
+            ("POST", "run"): lambda: kits_api.start_run(payload, tracker),
+            ("GET", "runs"): lambda: kits_api.runs(payload.get("project")),
+            ("POST", "runs"): lambda: kits_api.runs(payload.get("project")),
+            ("POST", "run-detail"): lambda: kits_api.run_detail(
+                payload.get("project"), str(payload.get("run_id") or "")
+            ),
+            ("POST", "gate"): lambda: kits_api.answer_gate(
+                payload, str(payload.get("run_id") or ""), tracker
+            ),
+        }
+        call = calls.get((method, suffix))
+        if call is None:
+            return 404, {"error": f"no session kit route {method} {suffix!r}"}
+        try:
+            return 200, await asyncio.to_thread(call)
+        except kits_api.KitApiError as exc:
+            return exc.status, {"error": str(exc)}
 
     async def _kits(self, writer: asyncio.StreamWriter, action: str, body: bytes) -> None:
         """The Skill kits page's calls, all answered by duckterm.kits.api over

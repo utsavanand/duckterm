@@ -206,7 +206,111 @@ def main(args: argparse.Namespace) -> int:
     return 2
 
 
+def _server_run(args: argparse.Namespace) -> int | None:
+    """Inside a DuckTerm session, a run goes through the server so each step
+    shows as a child session; the terminal watches the run file through the
+    session API and prints what it sees. Returns None when there is no
+    session to speak for, so the local runner takes over."""
+    import os
+    import time
+    import urllib.error
+    import urllib.request
+
+    from duckterm.helpers import session_credentials
+
+    if not os.environ.get("DUCKTERM_SESSION_KEY"):
+        return None
+    try:
+        url, token = session_credentials.client_credentials()
+    except ValueError:
+        return None
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+    def call(route: str, body: dict[str, Any]) -> dict[str, Any]:
+        req = urllib.request.Request(
+            f"{url}/api/v1/session/kits/{route}",
+            data=json.dumps(body).encode(),
+            headers=headers,
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read().decode())
+        return data if isinstance(data, dict) else {}
+
+    project = str(Path(args.project).resolve())
+    try:
+        if args.resume:
+            if args.gate:
+                call(
+                    "gate",
+                    {
+                        "project": project,
+                        "run_id": args.resume,
+                        "step": args.gate[0],
+                        "answer": args.gate[1],
+                    },
+                )
+            run_id = args.resume
+        else:
+            if not args.flow:
+                raise SystemExit("duckterm kit run: give <kit>/<flow> or --resume RUN_ID")
+            started = call(
+                "run",
+                {
+                    "project": project,
+                    "flow": args.flow,
+                    "harness": args.harness,
+                    "inputs": _options(args.input),
+                },
+            )
+            run_id = str(started["run_id"])
+            print(f"{run_id}  {args.flow}  started through the DuckTerm server")
+            print("  each step runs as a child session of this one")
+        seen = 0
+        while True:
+            detail = call("run-detail", {"project": project, "run_id": run_id})
+            state = detail["run"]
+            for a in state["attempts"][seen:]:
+                if a["status"] != "started":
+                    choice = f"  → {a['choice']}" if a.get("choice") else ""
+                    head = f"  {a['step']:<14} attempt {a['attempt']}  {a['kind']:<9} "
+                    print(head + a["status"] + choice)
+            seen = len([a for a in state["attempts"] if a["status"] != "started"])
+            if state["state"] in ("succeeded", "failed", "waiting_gate", "cancelled"):
+                break
+            time.sleep(2)
+    except urllib.error.HTTPError as exc:
+        try:
+            message = json.loads(exc.read().decode()).get("error", str(exc))
+        except ValueError:
+            message = str(exc)
+        print(f"duckterm kit: {message}", file=sys.stderr)
+        return 1
+    except (urllib.error.URLError, OSError, KeyError, ValueError) as exc:
+        print(f"duckterm kit: {exc}", file=sys.stderr)
+        return 1
+    if state["state"] == "waiting_gate":
+        gate = [g for g in state["gates"] if g["response"] is None][-1]
+        print(
+            f"gate {gate['step']!r} (visit {gate['visit']}): {gate.get('question') or 'approve?'}"
+        )
+        print(
+            f"  answer with: duckterm kit run --resume {run_id} --gate {gate['step']} "
+            + "|".join(gate["choices"])
+        )
+        return 3
+    if state.get("failure"):
+        f = state["failure"]
+        print(f"failed at {f['step']} (attempt {f['attempt']}): {f['reason']}")
+    else:
+        print(f"succeeded; run file {runner.RUNS}/{run_id}/run.json")
+    return 0 if state["state"] == "succeeded" else 1
+
+
 def _run(args: argparse.Namespace) -> int:
+    served = _server_run(args)
+    if served is not None:
+        return served
     project = Path(args.project)
     limits = runner.Limits(yolo=args.yolo, codex_trusted=args.codex_trusted)
     if args.step_limit:

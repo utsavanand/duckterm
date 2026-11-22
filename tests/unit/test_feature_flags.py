@@ -56,6 +56,8 @@ def test_kit_routes_belong_to_the_skill_kits_flag():
         ("POST", "/kits/install"),
         ("POST", "/kits/run"),
         ("POST", "/kits/gate"),
+        ("POST", "/api/v1/session/kits/run"),
+        ("GET", "/api/v1/session/kits/runs"),
     ):
         assert editions.request_features(method, url) == ("skill_kits",), url
     assert "skill_kits" not in editions.request_features("GET", "/sessions")

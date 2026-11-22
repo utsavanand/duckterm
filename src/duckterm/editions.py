@@ -186,6 +186,8 @@ def _path_feature(method: str, path: str, body: bytes) -> str | None:
             return "artifacts"
         if suffix.startswith("memory/"):
             return "context"
+        if suffix.startswith("kits/"):
+            return "skill_kits"
         return "inbox"
     if path.startswith(("/api/v1/collaboration/", "/collaboration/")):
         return "inbox"
