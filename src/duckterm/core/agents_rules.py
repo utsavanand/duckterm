@@ -1,8 +1,8 @@
 """Typed AGENTS.md rules: one .duckterm-rules.json per folder is the source of
 truth; AGENTS.md is rendered from it and carries a generated banner.
 
-Design: docs/design/rule-protocol/runtime.md. Reconciliation proposals remain
-separate until reviewed and saved. Only active rules render into AGENTS.md.
+Reconciliation proposals remain separate until reviewed and saved. Only active
+rules render into AGENTS.md.
 """
 
 import fcntl
