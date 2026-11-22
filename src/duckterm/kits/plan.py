@@ -22,12 +22,37 @@ class PathEscape(ValueError):
     pass
 
 
+def written_roots() -> frozenset[str]:
+    """The only top-level names the adapters ever write under a project. A
+    record path outside them (.git/, a source file, a gitignored local file
+    the adapters never touch) is refused before anything reads it."""
+    roots = {"AGENTS.md", "CLAUDE.md", ".duckterm", ".duckterm-rules.json"}
+    for a in adapters.ADAPTERS.values():
+        for value in (
+            *a.skill_roots,
+            a.agents_dir,
+            a.hooks_file,
+            a.hooks_dir,
+            a.mcp_file,
+            a.settings_file,
+            a.knowledge_paths,
+            a.rules_dir,
+        ):
+            if value:
+                roots.add(Path(value).parts[0])
+    return frozenset(roots)
+
+
 def inside(project: Path, rel: str) -> Path:
-    """`project / rel`, refused unless it stays inside the project once every
-    symlink on the way is resolved. The install record and component names
-    come from the repository, so neither is trusted to name a path."""
-    if not rel or Path(rel).is_absolute() or ".." in Path(rel).parts:
+    """`project / rel`, refused unless it is a path the adapters write and it
+    stays inside the project once every symlink on the way is resolved. The
+    install record and component names come from the repository, so neither
+    is trusted to name a path."""
+    parts = Path(rel).parts
+    if not rel or Path(rel).is_absolute() or ".." in parts:
         raise PathEscape(f"{rel!r} must be a relative path inside the project")
+    if ".git" in parts or parts[0] not in written_roots():
+        raise PathEscape(f"{rel!r} is not a path skill kits write")
     target = project / rel
     if not target.resolve().is_relative_to(project.resolve()):
         raise PathEscape(f"{rel!r} resolves outside the project")
@@ -241,8 +266,9 @@ def _conflicts(
             if isinstance(e, dict) and e.get("sha256") and isinstance(e.get("path"), str):
                 owned[e["path"]] = (owner_kit, e["sha256"])
         for cid in entry.get("components", []):
-            _, kind, cname = cid.split("/", 2)
-            names[(kind, cname)] = owner_kit
+            parts = str(cid).split("/")
+            if len(parts) == 3:
+                names[(parts[1], parts[2])] = owner_kit
     for p in placements:
         if p.op in ("write", "copy-tree"):
             for rel, data in _materialise(p):

@@ -1,14 +1,18 @@
 """Apply a plan, write the record, uninstall from the record, verify (§5, §9,
-§III.4, §III.12). Every write is temp-file + rename. The record is the sole
-authority for uninstall: nothing DuckTerm did not write is ever removed, and
-an edited file is kept and listed. A file the installer edits (a JSON merge, a
-TOML or instruction block, the CLAUDE.md import) is snapshotted first: when it
-is still exactly what the install wrote, uninstall puts the original bytes
-back; when the owner changed it since, only the recorded additions come out."""
+§III.4, §III.12). Every write is temp-file + rename.
+
+Two records. `.duckterm/installed.json` travels with the repository and says
+what a kit wrote; a copy of each kit's entry lives under the DuckTerm home,
+keyed by project path. The repository copy is advisory: a clone controls it.
+Only when it matches the home copy does uninstall restore the bytes it saved
+("before", "was"); otherwise it strips what a kit of that name would have
+written (attributed blocks, kit-owned rules, copied files that still hash)
+and leaves every other byte, including the owner's config JSON, alone."""
 
 from __future__ import annotations
 
 import copy
+import hashlib
 import json
 import os
 import re
@@ -19,6 +23,7 @@ from pathlib import Path
 from typing import Any
 
 from duckterm.core import agents_rules
+from duckterm.helpers import instance
 from duckterm.kits import adapters
 from duckterm.kits import manifest as m
 from duckterm.kits.plan import RECORD, PathEscape, Plan, _materialise, inside, load_record, sha256
@@ -120,6 +125,35 @@ def _entry_path(project: Path, e: Any) -> Path:
     return _target(project, e["path"])
 
 
+def _home_record(project: Path) -> Path:
+    key = hashlib.sha256(str(project.resolve()).encode()).hexdigest()[:24]
+    return instance.home() / "kits" / "records" / f"{key}.json"
+
+
+def _load_home(project: Path) -> dict[str, Any]:
+    path = _home_record(project)
+    if not path.is_file():
+        return {}
+    data = json.loads(path.read_text())
+    kits = data.get("kits") if isinstance(data, dict) else None
+    return kits if isinstance(kits, dict) else {}
+
+
+def _save_home(project: Path, kits: dict[str, Any]) -> None:
+    path = _home_record(project)
+    if kits:
+        _write_json(path, {"project": str(project.resolve()), "kits": kits})
+    else:
+        path.unlink(missing_ok=True)
+
+
+def _trusted(project: Path, kit_name: str, entry: dict[str, Any]) -> bool:
+    """The repository's entry is only believed when this DuckTerm wrote it:
+    its saved bytes, replaced values and list items are otherwise an
+    attacker's text with a path to write it to."""
+    return _load_home(project).get(kit_name) == entry
+
+
 def _restore(path: Path, before: str | None) -> None:
     if before is None:
         path.unlink(missing_ok=True)
@@ -153,7 +187,7 @@ def apply(plan: Plan, *, replace: bool = False) -> Report:
         # never duplicated. A kit file edited since install is kept here and
         # was already a file-exists conflict in the plan, so it is only
         # overwritten under --replace.
-        _remove_entries(project, previous, Report(kit.name))
+        _remove_entries(project, kit.name, previous, report, _trusted(project, kit.name, previous))
         _prune_dirs(project, previous)
     entries: list[dict[str, Any]] = []
     # Folders the earlier install made and that still stand (.duckterm holds
@@ -202,6 +236,9 @@ def apply(plan: Plan, *, replace: bool = False) -> Report:
         created.add(record_path.parent)
     record["kits"][kit.name]["dirs"] = sorted(d.relative_to(project).as_posix() for d in created)
     _write_json(record_path, record)
+    home = _load_home(project)
+    home[kit.name] = record["kits"][kit.name]
+    _save_home(project, home)
     report.written.append(RECORD)
     return report
 
@@ -307,6 +344,7 @@ def _agents_block(
             "how": "rule",
             "component": p.component,
             "rule_id": rule_id,
+            "rule": {"text": text, "status": "active", "scope": "all", "kit_version": kit.version},
         }
     path = project / "AGENTS.md"
     before = _snapshot(path)
@@ -361,20 +399,33 @@ def uninstall(project: Path, kit_name: str) -> Report:
     if entry is None:
         report.notes.append(f"{kit_name} is not installed here")
         return report
-    _remove_entries(project, entry, report)
+    if not m.NAME_RE.match(kit_name):
+        raise InstallRefused(f"{kit_name!r} is not a kit name")
+    trusted = _trusted(project, kit_name, entry)
+    if not trusted:
+        report.notes.append(
+            f"{RECORD} was not written by this DuckTerm: kit text was stripped, saved "
+            "bytes were not restored, and config JSON was left as it is"
+        )
+    _remove_entries(project, kit_name, entry, report, trusted)
     del record["kits"][kit_name]
     if record["kits"]:
         _write_json(project / RECORD, record)
     else:
         (project / RECORD).unlink(missing_ok=True)
     _prune_dirs(project, entry)
+    home = _load_home(project)
+    home.pop(kit_name, None)
+    _save_home(project, home)
     report.notes.append(
         "Keychain credentials, provider consent and CLI tools stay: a kit is not access"
     )
     return report
 
 
-def _remove_entries(project: Path, entry: dict[str, Any], report: Report) -> None:
+def _remove_entries(
+    project: Path, kit_name: str, entry: dict[str, Any], report: Report, trusted: bool
+) -> None:
     for e in reversed(entry.get("entries", [])):
         path = _entry_path(project, e)
         how = e["how"]
@@ -387,17 +438,55 @@ def _remove_entries(project: Path, entry: dict[str, Any], report: Report) -> Non
             path.unlink()
             report.removed.append(e["path"])
         elif how == "rule":
-            rules = [r for r in agents_rules.load_rules(project) if r.id != e["rule_id"]]
-            agents_rules.save_rules(project, rules)
-            report.removed.append(f"rule {e['rule_id']}")
+            rule_id = e["rule_id"]
+            rules = agents_rules.load_rules(project)
+            keep = [r for r in rules if not (r.id == rule_id and r.kit == kit_name)]
+            if len(keep) != len(rules):
+                agents_rules.save_rules(project, keep)
+                report.removed.append(f"rule {rule_id}")
         elif how in EDITED:
             if not path.is_file():
                 continue
-            if sha256(path.read_bytes()) == e["after_sha256"]:
+            if trusted and sha256(path.read_bytes()) == e["after_sha256"]:
                 _restore(path, e["before"])
-            else:
+            elif trusted:
                 _remove_additions(path, e)
+            elif how == "json":
+                report.kept.append(e["path"])
+                continue
+            else:
+                _strip_kit_text(path, kit_name, e)
             report.removed.append(_label(e))
+
+
+def _component_name(kit_name: str, e: dict[str, Any]) -> str:
+    """The component's own name, taken from an id of the form
+    <kit>/<kind>/<name>; anything else in that field is refused."""
+    parts = str(e.get("component", "")).split("/")
+    if len(parts) != 3 or parts[0] != kit_name or not m.COMPONENT_RE.match(parts[2]):
+        raise InstallRefused(f"{RECORD}: entry names a component not of kit {kit_name}")
+    return parts[2]
+
+
+def _strip_kit_text(path: Path, kit_name: str, e: dict[str, Any]) -> None:
+    """Untrusted record: remove only text between markers this kit would have
+    written, derived from the kit and component names rather than read from
+    the record, and never write anything the record supplied."""
+    text = path.read_text()
+    if e["how"] == "toml-block":
+        name = _component_name(kit_name, e)
+        cid = f"{kit_name}/{str(e['component']).split('/')[1]}/{name}"
+        begin = TOML_BEGIN.format(kit=kit_name, cid=cid)
+        text = _strip_block(text, begin, TOML_END.format(kit=kit_name, cid=cid))
+    elif e["how"] == "block":
+        text = _strip_attributed(text, kit_name, _component_name(kit_name, e))
+    else:
+        text = _strip_block(text, adapters.IMPORT_OPEN, adapters.IMPORT_CLOSE)
+    text = text.rstrip("\n") + "\n" if text.strip() else ""
+    if text:
+        _write_atomic(path, text.encode())
+    else:
+        path.unlink()
 
 
 def _label(e: dict[str, Any]) -> str:
@@ -509,9 +598,13 @@ def verify(project: Path) -> list[Report]:
                 continue
             how = e["how"]
             if how == "rule":
-                rules = {r.id: r for r in agents_rules.load_rules(project)}
-                if e["rule_id"] not in rules:
+                rule = next(
+                    (r for r in agents_rules.load_rules(project) if r.id == e["rule_id"]), None
+                )
+                if rule is None:
                     report.missing.append(f"rule {e['rule_id']}")
+                elif not _rule_matches(rule, name, e.get("rule")):
+                    report.drifted.append(f"rule {e['rule_id']}")
                 continue
             if not path.is_file():
                 report.missing.append(e["path"])
@@ -527,6 +620,20 @@ def verify(project: Path) -> list[Report]:
                 report.drifted.append("CLAUDE.md import")
         out.append(report)
     return out
+
+
+def _rule_matches(rule: agents_rules.RuleBlock, kit_name: str, want: Any) -> bool:
+    """Installed instructions are only effective while the rule is active, is
+    still this kit's and still says what the kit shipped."""
+    if not isinstance(want, dict):
+        return rule.kit == kit_name and rule.status == "active"
+    return (
+        rule.kit == kit_name
+        and rule.text == want.get("text")
+        and rule.status == want.get("status")
+        and rule.scope == want.get("scope")
+        and rule.kit_version == want.get("kit_version")
+    )
 
 
 def _additions_present(data: bytes, e: dict[str, Any]) -> bool:

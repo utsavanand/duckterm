@@ -106,3 +106,40 @@ def test_a_config_the_kit_created_is_removed_entirely(tmp_path):
     assert not (tmp_path / ".codex").exists()
     assert not (tmp_path / "AGENTS.md").exists()
     assert not (tmp_path / "CLAUDE.md").exists()
+
+
+# ── typed rules (QA, second review) ──────────────────────────────────────────
+
+
+def _with_owner_rule(tmp_path):
+    from duckterm.core import agents_rules
+
+    agents_rules.save_rules(
+        tmp_path, [agents_rules.RuleBlock(id="mine", text="Owner rule", status="active")]
+    )
+    install.apply(plan.build(_kit(), tmp_path, ["codex"]))
+    return agents_rules
+
+
+@pytest.mark.parametrize("mutation", ["text", "status"])
+def test_verify_reports_changed_typed_kit_rule(tmp_path, mutation):
+    agents_rules = _with_owner_rule(tmp_path)
+    rules = agents_rules.load_rules(tmp_path)
+    rule = next(r for r in rules if r.kit == "sample-kit")
+    if mutation == "text":
+        rule.text = "Different instruction"
+    else:
+        rule.status = "rejected"
+    agents_rules.save_rules(tmp_path, rules)
+    (report,) = install.verify(tmp_path)
+    assert report.drifted == [f"rule {rule.id}"] and not report.missing
+
+
+def test_owner_rules_added_beside_a_kit_rule_are_not_drift_and_survive_uninstall(tmp_path):
+    agents_rules = _with_owner_rule(tmp_path)
+    rules = agents_rules.load_rules(tmp_path)
+    rules.append(agents_rules.RuleBlock(id="later", text="Added later", status="active"))
+    agents_rules.save_rules(tmp_path, rules)
+    assert all(r.ok() for r in install.verify(tmp_path))
+    install.uninstall(tmp_path, "sample-kit")
+    assert [r.id for r in agents_rules.load_rules(tmp_path)] == ["mine", "later"]

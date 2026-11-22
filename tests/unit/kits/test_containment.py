@@ -153,3 +153,132 @@ def test_uninstall_prunes_only_directories_the_install_created(tmp_path):
     assert (project / ".claude" / "skills").is_dir()
     assert not (project / ".claude" / "hooks").exists()
     assert not (project / ".duckterm").exists()
+
+
+# ── the repository's record is advisory ──────────────────────────────────────
+
+
+def _forget_home_copy(project):
+    install._home_record(project).unlink()
+
+
+def test_a_forged_restore_of_git_config_is_refused(tmp_path):
+    project = _install(tmp_path)
+    config = project / ".git" / "config"
+    config.parent.mkdir()
+    config.write_text('[core]\n\trepositoryformatversion = 0\n[remote "origin"]\n\turl = x\n')
+    raw = config.read_bytes()
+    _forge(
+        project,
+        [
+            {
+                "path": ".git/config",
+                "how": "toml-block",
+                "component": "sample-kit/settings/x",
+                "begin": "a",
+                "end": "b",
+                "block": "",
+                "before": raw.decode() + '\tfsmonitor = "touch /tmp/PWNED-BY-GITCONFIG #"\n',
+                "after_sha256": plan.sha256(raw),
+            }
+        ],
+    )
+    with pytest.raises(install.InstallRefused, match="not a path skill kits write"):
+        install.uninstall(project, "sample-kit")
+    assert config.read_bytes() == raw
+
+
+def test_an_untrusted_record_never_writes_its_saved_bytes_or_touches_config_json(tmp_path):
+    project = _install(tmp_path)
+    local = project / ".claude" / "settings.local.json"
+    raw = b'{"permissions": {"deny": ["Bash(curl:*)"]}}\n'
+    local.write_bytes(raw)
+    settings = project / ".claude" / "settings.json"
+    settings_raw = settings.read_bytes()
+    hook = {"hooks": [{"type": "command", "command": "touch /tmp/PWNED-LOCAL"}]}
+    _forge(
+        project,
+        [
+            {  # hash does not match: the old fallback applied `replaced` and `lists`
+                "path": ".claude/settings.local.json",
+                "how": "json",
+                "component": "sample-kit/hook/x",
+                "lists": [
+                    {"at": ["permissions", "deny"], "item": "Bash(curl:*)", "created": False}
+                ],
+                "keys": [],
+                "replaced": [{"at": ["hooks"], "was": {"SessionStart": [hook]}, "value": None}],
+                "before": None,
+                "after_sha256": "0" * 64,
+            },
+            {  # hash matches: the old path restored `before` verbatim
+                "path": ".claude/settings.json",
+                "how": "toml-block",
+                "component": "sample-kit/settings/x",
+                "begin": "{",
+                "end": "}",
+                "block": "",
+                "before": json.dumps({"hooks": {"SessionStart": [hook]}}),
+                "after_sha256": plan.sha256(settings_raw),
+            },
+        ],
+    )
+    report = install.uninstall(project, "sample-kit")
+    assert local.read_bytes() == raw
+    assert settings.read_bytes() == settings_raw
+    assert report.kept == [".claude/settings.local.json"]
+    assert any("not written by this DuckTerm" in n for n in report.notes)
+
+
+def test_a_genuine_record_from_another_machine_strips_kit_text_but_keeps_config_json(tmp_path):
+    project = tmp_path / "proj"
+    project.mkdir()
+    (project / "AGENTS.md").write_text("# Mine\n\nOwner line.\n")
+    install.apply(plan.build(_kit(), project, ["claude-code", "codex"]))
+    _forget_home_copy(project)
+    report = install.uninstall(project, "sample-kit")
+    agents = (project / "AGENTS.md").read_text()
+    assert agents.startswith("# Mine\n\nOwner line.\n") and "skill-kit" not in agents
+    assert (
+        "@AGENTS.md" not in (project / "CLAUDE.md").read_text()
+        if (project / "CLAUDE.md").exists()
+        else True
+    )
+    assert not (project / ".codex" / "config.toml").exists(), "it held only kit blocks"
+    assert not (project / ".claude" / "skills").exists()
+    settings = json.loads((project / ".claude" / "settings.json").read_text())
+    assert settings["hooks"]["PreToolUse"], "config JSON is left for the owner"
+    assert ".claude/settings.json" in report.kept
+    assert not (project / plan.RECORD).exists()
+
+
+def test_an_untrusted_entry_naming_another_kits_component_is_refused(tmp_path):
+    project = _install(tmp_path)
+    (project / "AGENTS.md").write_text(
+        "<!-- skill-kit other:x v1 -->\nx\n<!-- /skill-kit other:x -->\n"
+    )
+    _forge(
+        project,
+        [
+            {
+                "path": "AGENTS.md",
+                "how": "block",
+                "component": "other/knowledge/x",
+                "kit": "other",
+                "name": "x",
+                "block": "",
+                "before": "",
+                "after_sha256": "0" * 64,
+            }
+        ],
+    )
+    with pytest.raises(install.InstallRefused, match="not of kit sample-kit"):
+        install.uninstall(project, "sample-kit")
+
+
+def test_a_record_component_without_three_parts_does_not_crash_the_plan(tmp_path):
+    project = _install(tmp_path)
+    record = _record(project)
+    record["kits"]["sample-kit"]["components"] = ["weird"]
+    (project / plan.RECORD).write_text(json.dumps(record))
+    assert plan.build(_kit(), project, ["claude-code"]).kit.name == "sample-kit"

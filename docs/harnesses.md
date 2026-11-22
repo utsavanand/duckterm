@@ -115,10 +115,14 @@ owner's edits stay. A copied kit file edited since install is kept and listed.
 values are gone is *drifted*; the owner's own additions beside them are
 neither. Reinstalling repairs; it never duplicates a hook, rule or block.
 
-The record comes with the repository, so a clone controls it: every entry
-path is refused unless it is relative and still inside the project once
-symlinks are resolved, and a copied file is only removed while it hashes to
-what the record says. Component names are one path segment (`[a-z0-9_-]`),
+The record comes with the repository, so a clone controls it. A copy of each
+kit's entry is kept under the DuckTerm home, keyed by project path, and the
+repository's entry is believed only when it matches that copy; otherwise
+uninstall strips the text a kit of that name would have written (attributed
+blocks, kit-owned rules, copied files that still hash), leaves config JSON as
+it is and says so. Every entry path is refused unless it is a path the
+adapters write (never `.git/`), relative, and still inside the project once
+symlinks are resolved. Component names are one path segment (`[a-z0-9_-]`),
 and a kit's own sources must be real files under the kit root; a symlink
 anywhere on the way fails `validate`. Uninstall prunes only the directories
 the install created.
