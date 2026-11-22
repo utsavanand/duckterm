@@ -386,19 +386,17 @@ def test_status_reports_which_agent_clis_exist_here(
     "drop_policy_flag,drop_harness_entry",
     [(False, False), (True, False), (False, True), (True, True)],
 )
-def test_panel_and_run_read_one_source_of_truth(
+def test_panel_reports_availability_from_one_predicate(
     isolated_env: Path,
     tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
     drop_policy_flag: bool,
     drop_harness_entry: bool,
 ) -> None:
-    """Flip either store and the panel and run() must still agree.
+    """Either store being off makes the panel say unavailable.
 
-    The (False, True) case is the regression: a harness entry removed outside
-    Duckterm used to leave the panel showing Off while run() read only
-    policy.enabled and kept serving the connector. That is how GitHub stayed
-    live on an agent after the owner saw it switched off.
+    The (False, True) case is the one that matters: a harness entry removed
+    outside Duckterm leaves policy.enabled set, and the panel must still not
+    claim the connector is available to an agent that cannot resolve it.
     """
     from duckterm.agents import mcp_install
 
@@ -415,16 +413,15 @@ def test_panel_and_run_read_one_source_of_truth(
     if drop_harness_entry:
         mcp_install.managed_remove("github", "codex", home=tmp_path)
 
-    panel = connectors.status("github", home=tmp_path)["enabled"]
-    gate = connectors.available_to_agents("github", home=tmp_path)
-    assert panel == gate, f"panel says {panel} while run() would gate on {gate}"
-    assert panel is not (drop_policy_flag or drop_harness_entry)
+    expected = not (drop_policy_flag or drop_harness_entry)
+    assert connectors.available_to_agents("github", home=tmp_path) is expected
+    assert connectors.status("github", home=tmp_path)["enabled"] is expected
 
 
-def test_an_unreadable_harness_config_reads_as_off_rather_than_raising(
+def test_an_unreadable_harness_config_reads_as_unavailable_rather_than_raising(
     isolated_env: Path, tmp_path: Path
 ) -> None:
-    """Fail-closed: a damaged config must not serve, and must not crash run()."""
+    """Fail-closed for display: a damaged config must not crash the panel."""
     _stub(isolated_env, "github-mcp-server", "sleep 0")
     _stub(isolated_env, "duckterm", "exit 0")
     connectors.save_secret("github", "ghp_stored")
@@ -432,7 +429,6 @@ def test_an_unreadable_harness_config_reads_as_off_rather_than_raising(
 
     from duckterm.agents import mcp_install
 
-    broken = mcp_install._managed_path("codex", tmp_path)
-    broken.write_text("{ this is not json")
+    mcp_install._managed_path("codex", tmp_path).write_text("{ this is not json")
     assert connectors.available_to_agents("github", home=tmp_path) is False
     assert connectors.status("github", home=tmp_path)["enabled"] is False

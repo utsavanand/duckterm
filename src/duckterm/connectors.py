@@ -115,19 +115,22 @@ def _codex_registered(name: str, *, home: Path | None = None) -> bool:
 
 
 def available_to_agents(name: str, *, home: Path | None = None) -> bool:
-    """Whether this connector is on, as both the panel and run() must read it.
+    """Whether every harness the owner chose can currently reach this connector.
 
-    Two conditions, not one. The policy flag is what Disable writes, and the
-    harness entries are what an agent actually resolves the connector through,
-    so a connector is usable only when both say so. They are separate stores
-    and they can disagree: disable() writes both, but anything else that drops
-    a harness entry -- a hand-edited .mcp.json, another tool, a partial write
-    -- leaves the flag set. run() reading only the flag is how GitHub kept
-    serving while the panel showed Off.
+    The policy flag is what Disable writes; the harness entries are what an
+    agent resolves the connector through. Both must hold for the panel to claim
+    the connector is available, because a missing entry means that agent cannot
+    reach it however the flag reads.
 
-    Fail-closed by construction: a missing or unparseable harness config makes
-    managed_installed() return False, so a damaged file reads as off rather
-    than raising inside the connector launcher.
+    This is the panel's predicate, not run()'s. run() is reached only as the
+    `connector-run <name>` command inside a harness entry, so by the time it
+    executes, the calling harness's entry demonstrably exists -- and it cannot
+    tell which harness invoked it, so it must not refuse because a *different*
+    chosen harness lost its entry.
+
+    Fail-closed for display: a missing or unparseable harness config makes
+    managed_installed() return False, so a damaged file reads as unavailable
+    rather than raising inside status().
     """
     if not policy(name, home=home).get("enabled"):
         return False
@@ -666,7 +669,7 @@ def run(name: str) -> None:
         connector_client.run(name)
         return
     current = policy(name)
-    if not available_to_agents(name):
+    if not current.get("enabled"):
         raise SystemExit("Connector disabled in Duckterm")
     argv, env = server_command(name, current)
     # Keep the supervisor alive so Disable closes already-running MCP processes.
