@@ -1,3 +1,30 @@
+## 2026-11-22 — Two stores, one question, and nobody owns the answer
+
+A connector's on/off state lived in two places: the policy flag Disable writes,
+and the harness entries an agent actually resolves the connector through. The
+panel read both (flag AND entries). run() read only the flag. Nothing was
+wrong with either expression on its own, which is why this survived review -
+the bug was that there were two of them.
+
+disable() writes both stores, so Duckterm's own actions kept them agreeing, and
+that is what made this look theoretical. It is not: anything else that drops a
+harness entry - a hand-edited .mcp.json, another tool, a partial write - leaves
+the flag set. I probed it rather than argued it, and got panel=False with
+run()=True, which is exactly the GitHub incident: switched off on screen, still
+serving.
+
+Choosing which store wins is the real decision, and "the one the panel already
+used" was right for a reason worth writing down: the panel's question is "can
+my agents use this now", a connector with no harness entry cannot be reached,
+and managed_installed() already returns False on a damaged config, so the
+fail-closed direction and the honest direction are the same direction. Making
+the flag authoritative would have fixed the disagreement by making the panel
+lie instead.
+
+Lesson: when two call sites answer the same user-facing question, the fix is
+one accessor, not two matching conditions. Two conditions that agree today are
+a coincidence with a commit date on it.
+
 ## 2026-11-21 — Check a format against real files before anchoring on it
 
 #414 skipped an oversized Codex line when `"type":"compacted"` appeared anywhere
