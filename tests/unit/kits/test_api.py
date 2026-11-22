@@ -160,3 +160,53 @@ def test_create_team_records_the_procedure_under_the_home_and_refuses_twice(tmp_
         api.create_team(
             {"project": str(project), "kit": "sample-kit", "team": "feature-squad", "name": "a/b"}
         )
+
+
+def test_a_tracked_run_announces_each_harness_step_as_a_child_of_the_session(tmp_path, monkeypatch):
+    project = _project(tmp_path)
+    api.install_kit({"kit": str(SAMPLE), "project": str(project), "harnesses": ["claude-code"]})
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake = bin_dir / "claude"
+    fake.write_text(
+        '#!/bin/sh\nmkdir -p "$SKILL_KIT_OUTPUT_DIR"\n'
+        'printf "%s" "$DUCKTERM_SESSION_KEY" > "$SKILL_KIT_OUTPUT_DIR/findings.md"\n'
+        'printf \'{"structured_output":{"verdict":"approve","reason":"ok"}}\'\n'
+    )
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+    monkeypatch.setattr(runner, "_claude_trusts", lambda project: True)
+
+    class Tracker(api.StepTracker):
+        def __init__(self):
+            self.began, self.ended = [], []
+
+        def begin(self, child_key, info):
+            self.began.append((child_key, info))
+            return {"DUCKTERM_SESSION_KEY": child_key}
+
+        def end(self, child_key, exit_code):
+            self.ended.append((child_key, exit_code))
+
+    tracker = Tracker()
+    out = api.start_run(
+        {
+            "project": str(project),
+            "flow": "sample-kit/review",
+            "harness": "claude-code",
+            "session": "parent-1",
+        },
+        tracker,
+    )
+    api._threads[out["run_id"]].join(timeout=20)
+    run = api.run_detail(str(project), out["run_id"])["run"]
+    assert run["state"] == "succeeded", run.get("failure")
+    child = f"{out['run_id']}:verdict:1"
+    assert [k for k, _ in tracker.began] == [child]
+    info = tracker.began[0][1]
+    assert info["parent"] == "parent-1" and info["flow"] == "sample-kit/review"
+    assert info["step"] == "verdict" and info["harness"] == "claude-code"
+    assert tracker.ended == [(child, 0)]
+    findings = project / ".duckterm" / "runs" / out["run_id"] / "verdict" / "1" / "findings.md"
+    assert findings.read_text() == child
+    assert run["executor_state"] == {"session": "parent-1"}

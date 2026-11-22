@@ -10,7 +10,7 @@ import json
 import threading
 import tomllib
 from pathlib import Path
-from typing import Any
+from typing import Any, Protocol
 
 from duckterm.kits import adapters, install, runner, validate
 from duckterm.kits import manifest as m
@@ -468,6 +468,57 @@ def create_team(body: dict[str, Any]) -> dict[str, Any]:
 _threads: dict[str, threading.Thread] = {}
 
 
+class StepTracker(Protocol):
+    """What the server gives a run so each harness step shows as a child
+    session of the session that started the flow: `begin` is told the child
+    key and what the step is and answers with the environment the step runs
+    under (the DuckTerm session key and credentials); `end` is told how it
+    exited. Script steps are not sessions and are not tracked."""
+
+    def begin(self, child_key: str, info: dict[str, Any]) -> dict[str, str]:
+        return {}
+
+    def end(self, child_key: str, exit_code: int) -> None:
+        return None
+
+
+class TrackedExecutor(runner.Executor):
+    def __init__(self, tracker: StepTracker, session: str) -> None:
+        self.tracker = tracker
+        self.session = session
+
+    def run_process(
+        self,
+        argv: list[str],
+        *,
+        cwd: Path,
+        env: dict[str, str],
+        stdin: str | None,
+        timeout: float,
+    ) -> runner.ProcessResult:
+        harness = {"claude": "claude-code", "codex": "codex"}.get(Path(argv[0]).name, "")
+        if not harness or "SKILL_KIT_STEP" not in env:
+            return super().run_process(argv, cwd=cwd, env=env, stdin=stdin, timeout=timeout)
+        child = f"{env['SKILL_KIT_RUN']}:{env['SKILL_KIT_STEP']}:{env['SKILL_KIT_ATTEMPT']}"
+        extra = self.tracker.begin(
+            child,
+            {
+                "parent": self.session,
+                "flow": env.get("SKILL_KIT_FLOW", ""),
+                "step": env["SKILL_KIT_STEP"],
+                "attempt": env["SKILL_KIT_ATTEMPT"],
+                "harness": harness,
+                "cwd": str(cwd),
+                "command": argv,
+            },
+        )
+        result = super().run_process(
+            argv, cwd=cwd, env={**env, **extra}, stdin=stdin, timeout=timeout
+        )
+        self.tracker.end(child, result.exit)
+        return result
+
+
 def runs(project_value: Any) -> dict[str, Any]:
     project = _project(project_value)
     return {"project": str(project), "runs": runner.list_runs(project)}
@@ -495,9 +546,10 @@ def run_detail(project_value: Any, run_id: str) -> dict[str, Any]:
     }
 
 
-def start_run(body: dict[str, Any]) -> dict[str, Any]:
+def start_run(body: dict[str, Any], tracker: StepTracker | None = None) -> dict[str, Any]:
     """Start a flow and return its run id at once; a model step takes minutes,
-    so the page watches the run file rather than the request."""
+    so the page watches the run file rather than the request. With a tracker
+    and a session, every harness step runs as a child session of it."""
     project = _project(body.get("project"))
     flow = str(body.get("flow") or "")
     if not flow:
@@ -518,6 +570,7 @@ def start_run(body: dict[str, Any]) -> dict[str, Any]:
     except runner.RunRefused as exc:
         raise KitApiError(400, str(exc)) from exc
     session = str(body.get("session") or "")
+    executor = TrackedExecutor(tracker, session) if tracker and session else None
     started: dict[str, Any] = {}
     ready = threading.Event()
 
@@ -534,6 +587,7 @@ def start_run(body: dict[str, Any]) -> dict[str, Any]:
                 inputs={str(k): str(v) for k, v in inputs.items()},
                 limits=limits,
                 on_start=announce,
+                executor=executor,
                 executor_state={"session": session} if session else None,
             )
         except runner.RunRefused as exc:
@@ -553,7 +607,9 @@ def start_run(body: dict[str, Any]) -> dict[str, Any]:
     return {"run_id": run_id, "flow": flow, "harness": harness}
 
 
-def answer_gate(body: dict[str, Any], run_id: str) -> dict[str, Any]:
+def answer_gate(
+    body: dict[str, Any], run_id: str, tracker: StepTracker | None = None
+) -> dict[str, Any]:
     project = _project(body.get("project"))
     step = str(body.get("step") or "")
     answer = str(body.get("answer") or "")
@@ -563,14 +619,16 @@ def answer_gate(body: dict[str, Any], run_id: str) -> dict[str, Any]:
         yolo=bool(body.get("yolo")), codex_trusted=bool(body.get("codex_trusted"))
     )
     try:
-        runner.load_run(project, run_id)
+        run = runner.load_run(project, run_id)
     except runner.RunRefused as exc:
         raise KitApiError(404, str(exc)) from exc
+    session = str((run.state.get("executor_state") or {}).get("session") or "")
+    executor = TrackedExecutor(tracker, session) if tracker and session else None
     outcome: dict[str, Any] = {}
 
     def drive() -> None:
         try:
-            runner.resume(project, run_id, gate=(step, answer), limits=limits)
+            runner.resume(project, run_id, gate=(step, answer), limits=limits, executor=executor)
         except runner.RunRefused as exc:
             outcome["error"] = str(exc)
         except runner.GatePending:

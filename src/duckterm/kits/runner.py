@@ -784,6 +784,7 @@ def _harness(
     prompt = _prompt(run, step, skill_name, skill, attempt, outdir, last_error)
     env: dict[str, str] = {
         "SKILL_KIT_RUN": run.id,
+        "SKILL_KIT_FLOW": str(run.state["flow"]),
         "SKILL_KIT_STEP": step["id"],
         "SKILL_KIT_ATTEMPT": str(attempt["attempt"]),
         "SKILL_KIT_OUTPUT_DIR": str(outdir.relative_to(run.project)),

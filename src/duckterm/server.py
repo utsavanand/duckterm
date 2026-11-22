@@ -55,6 +55,7 @@ import socket
 import sqlite3
 import sys
 import tempfile
+import threading
 import time
 import traceback
 import urllib.parse
@@ -166,6 +167,54 @@ _RESUME_NUDGE = (
     "outside the conversation (dev servers, watchers, background jobs) died "
     "with it — re-verify before assuming, then continue where you left off."
 )
+
+
+class _FlowStepTracker:
+    """Each harness step of a flow run is a child session of the session that
+    started the flow, recorded the way a fork is: a SessionStart row with the
+    parent key, the step's hooks reporting under the child key, a SessionEnd
+    when the process exits. Called from the runner's thread, so every publish
+    hops onto the event loop."""
+
+    def __init__(self, server: "Server", loop: asyncio.AbstractEventLoop) -> None:
+        self.server = server
+        self.loop = loop
+
+    def _publish(self, event: dict[str, Any]) -> None:
+        done = threading.Event()
+
+        def go() -> None:
+            try:
+                self.server.bus.publish(event)
+            finally:
+                done.set()
+
+        self.loop.call_soon_threadsafe(go)
+        done.wait(timeout=5)
+
+    def begin(self, child_key: str, info: dict[str, Any]) -> dict[str, str]:
+        cwd = str(info.get("cwd") or "")
+        self._publish(
+            {
+                "event_type": events.SESSION_START,
+                "session_key": child_key,
+                "source_app": Path(cwd).name if cwd else "flow",
+                "runtime": info.get("harness") or "claude-code",
+                "cwd": cwd,
+                "repo_path": cwd,
+                "parent_session_key": info.get("parent"),
+                "intention": (
+                    f"flow {info.get('flow')} · {info.get('step')} (attempt {info.get('attempt')})"
+                ),
+                "launched": True,
+                "pty_owned": False,
+                "command": shlex.join(list(info.get("command") or [])),
+            }
+        )
+        return {**self.server._session_env(child_key), "DUCKTERM_SESSION_KEY": child_key}
+
+    def end(self, child_key: str, exit_code: int) -> None:
+        self._publish({"event_type": events.SESSION_END, "session_key": child_key})
 
 
 def _build_runtime(name: str | None, command: str) -> AgentRuntime:
@@ -2616,6 +2665,7 @@ class Server:
         if not isinstance(payload, dict):
             await _write_json(writer, 400, {"error": "body must be an object"})
             return
+        tracker = _FlowStepTracker(self, asyncio.get_running_loop())
         calls = {
             "overview": lambda: kits_api.overview(payload.get("project")),
             "runs": lambda: kits_api.runs(payload.get("project")),
@@ -2626,8 +2676,10 @@ class Server:
             "install": lambda: kits_api.install_kit(payload),
             "uninstall": lambda: kits_api.uninstall_kit(payload),
             "verify": lambda: kits_api.verify_kits(payload),
-            "start": lambda: kits_api.start_run(payload),
-            "gate": lambda: kits_api.answer_gate(payload, str(payload.get("run_id") or "")),
+            "start": lambda: kits_api.start_run(payload, tracker),
+            "gate": lambda: kits_api.answer_gate(
+                payload, str(payload.get("run_id") or ""), tracker
+            ),
             "teams": lambda: kits_api.teams(),
             "team": lambda: self._create_team_record(kits_api, payload),
         }
