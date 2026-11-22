@@ -6,6 +6,7 @@ import WebKit
 /// spawning duplicates.
 final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, WKUIDelegate, WKScriptMessageHandler, WKScriptMessageHandlerWithReply {
     private var window: NSWindow?
+    private let remoteSettings: RemoteSettingsControls
     private var web: WKWebView?
     private var dashboardLoaded = false
     private lazy var artifactDownloads = ArtifactDownloads(
@@ -205,8 +206,9 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         webView.configuration.userContentController.addUserScript(desktopScript())
     }
 
-    init(url: URL) {
+    init(url: URL, remoteSettings: RemoteSettingsControls? = nil) {
         self.url = url
+        self.remoteSettings = remoteSettings ?? RemoteSettingsControls()
     }
 
     func connect(url: URL, remote: Bool, title: String) {
@@ -331,19 +333,7 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
             defer: false
         )
         win.title = AppIdentity.name
-        let computerButton = NSButton(
-            title: "Settings…",
-            target: nil,
-            action: NSSelectorFromString("showSettings:")
-        )
-        computerButton.bezelStyle = .rounded
-        computerButton.frame = NSRect(x: 0, y: 2, width: 100, height: 26)
-        computerButton.toolTip = "Manage remote computers"
-        let computerControl = NSTitlebarAccessoryViewController()
-        computerControl.layoutAttribute = .right
-        computerControl.view = NSView(frame: NSRect(x: 0, y: 0, width: 110, height: 30))
-        computerControl.view.addSubview(computerButton)
-        win.addTitlebarAccessoryViewController(computerControl)
+        remoteSettings.attach(to: win)
         win.contentView = web
         win.center()
         win.delegate = self

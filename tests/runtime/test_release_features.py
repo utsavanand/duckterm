@@ -174,3 +174,54 @@ def test_malformed_legacy_flag_file_does_not_enable_release_features(isolated):
     (isolated / "flags.json").write_text("{broken")
     assert release_features.overrides()[1]
     assert not release_features.enabled("skill_kits")
+
+
+@pytest.mark.parametrize("edition", [editions.LITE, editions.CODE, editions.FULL])
+def test_disabled_errors_distinguish_flags_from_edition(isolated, edition):
+    history = HistoryStore(isolated / "errors.sqlite")
+    try:
+        server = Server(history=history, edition=edition)
+        for method, path in [
+            ("GET", "/harnesses"),
+            ("GET", "/backup"),
+            ("DELETE", "/ai-settings/key"),
+        ]:
+            code, result = request(server, method, path)
+            assert code == 403
+            assert "disabled by its feature flag" in result["error"]
+        with pytest.raises(APIError, match="disabled by its feature flag"):
+            server.require_feature("harness_management")
+        expected = (
+            "disabled by its feature flag"
+            if edition == editions.FULL
+            else "unavailable in Duckterm"
+        )
+        with pytest.raises(APIError, match=expected):
+            server.require_feature("remote_workspaces")
+    finally:
+        history.close()
+
+
+@pytest.mark.parametrize("enabled", [False, True])
+def test_optional_cli_gate_uses_release_flags_over_legacy(isolated, monkeypatch, capsys, enabled):
+    # The kit parser/handler is pending in PR 420. Exercise main's real admission
+    # path with its future parser result, without running an installer.
+    from argparse import Namespace
+
+    from duckterm import cli
+
+    monkeypatch.delenv("DUCKTERM_DESKTOP_PROFILE", raising=False)
+    monkeypatch.setenv("DUCKTERM_EDITION", "full")
+    (isolated / "flags.json").write_text(json.dumps({"enabled": [] if enabled else ["skill_kits"]}))
+    configure(isolated, skill_kits=enabled)
+    parser = Mock()
+    parser.parse_args.return_value = Namespace(command="kit")
+    monkeypatch.setattr(cli, "build_parser", lambda: parser)
+    assert cli.main([]) == 1
+    out = capsys.readouterr()
+    if enabled:
+        assert "not implemented yet" in out.out + out.err
+        assert "disabled" not in out.err
+    else:
+        assert "skill_kits is disabled by its feature flag" in out.err
+        assert not out.out

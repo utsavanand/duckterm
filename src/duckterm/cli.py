@@ -15,7 +15,7 @@ from collections.abc import Coroutine, Sequence
 from pathlib import Path
 from typing import Any
 
-from duckterm import __version__, editions
+from duckterm import __version__, editions, release_features
 from duckterm.core import events
 from duckterm.helpers import instance
 
@@ -741,6 +741,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"duckterm: {exc}", file=sys.stderr)
             return 1
     optional = {
+        "kit": "skill_kits",
         "voice": "oracle",
         "snapshot": "checkpoints",
         "connector-run": "connectors",
@@ -756,8 +757,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 or (args.command == "restart" and not args.edition)
             )
             feature = optional.get(args.command)
+            if feature:
+                edition = release_features.apply(edition)
             if feature and not edition.includes(feature):
-                raise ValueError(f"{feature} is unavailable in Duckterm {edition.name.title()}")
+                raise ValueError(release_features.unavailable_message(feature, edition))
             if feature:
                 # Standalone handlers and children must use the same selection
                 # even when invoked from a terminal launched in an older edition.

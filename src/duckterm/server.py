@@ -63,7 +63,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TextIO
 
-from duckterm import bug_reports, connectors, editions, suites, zsh_themes
+from duckterm import bug_reports, connectors, editions, release_features, suites, zsh_themes
 from duckterm.agents import tmux
 from duckterm.agents.terminal import available_terminals, open_in_terminal
 from duckterm.core import events, fleet_questions, oracle
@@ -437,8 +437,6 @@ class Server:
         *,
         edition: editions.EditionConfig | None = None,
     ) -> None:
-        from duckterm import release_features
-
         flag_values, flag_error = release_features.overrides()
         self.edition = release_features.apply(edition or editions.configured(), flag_values)
         self.feature_flags = release_features.inventory(self.edition, flag_values, flag_error)
@@ -716,11 +714,7 @@ class Server:
                     writer,
                     403,
                     {
-                        "error": (
-                            f"{feature} is still in development; see docs/feature-flags.md"
-                            if feature in editions.DEVELOPMENT
-                            else f"{feature} is unavailable in Duckterm {self.edition.name.title()}"
-                        ),
+                        "error": release_features.unavailable_message(feature, self.edition),
                         "code": "feature_unavailable",
                         "feature": feature,
                         "edition": self.edition.name,
@@ -979,7 +973,7 @@ class Server:
 
     def require_feature(self, feature: str) -> None:
         if not self.edition.includes(feature):
-            raise APIError(403, f"{feature} is unavailable in Duckterm {self.edition.name.title()}")
+            raise APIError(403, release_features.unavailable_message(feature, self.edition))
 
     async def _login(
         self, writer: asyncio.StreamWriter, headers: dict[str, str], path: str

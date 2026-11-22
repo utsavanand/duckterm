@@ -55,6 +55,17 @@ def enabled(flag: str) -> bool:
     return flag in FLAGS and values.get(flag, False)
 
 
+def unavailable_message(feature: str, edition: EditionConfig) -> str:
+    flag = "byoc" if feature == "remote_workspaces" else feature
+    if flag in FLAGS and not (flag == "byoc" and edition.name != "full"):
+        return f"{feature} is disabled by its feature flag ({flag})"
+    from duckterm import editions
+
+    if feature in editions.DEVELOPMENT:
+        return f"{feature} is still in development; see docs/feature-flags.md"
+    return f"{feature} is unavailable in Duckterm {edition.name.title()}"
+
+
 def require(flag: str) -> None:
     from duckterm.core.session_api import APIError
 
