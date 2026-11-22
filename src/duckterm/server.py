@@ -238,6 +238,7 @@ _LOCKED_PAGE = """<!doctype html><meta charset="utf-8"><title>DuckTerm</title>
 _ROUTES: list[Route] = [
     Route("GET", "/edition", lambda s, r, w, h, b, seg: s._edition(w)),
     Route("GET", "/checkpoint-settings", lambda s, r, w, h, b, seg: s._checkpoint_settings(w)),
+    Route("GET", "/checkpoint-health", lambda s, r, w, h, b, seg: s._checkpoint_health(w)),
     Route("POST", "/checkpoint-settings", lambda s, r, w, h, b, seg: s._checkpoint_settings(w, b)),
     Route("GET", "/ai-settings", lambda s, r, w, h, b, seg: s._ai_settings(w)),
     Route("POST", "/ai-settings", lambda s, r, w, h, b, seg: s._ai_settings(w, b)),
@@ -5660,6 +5661,17 @@ class Server:
             await _write_json(writer, 200, result)
         except APIError as exc:
             await _write_json(writer, exc.status, {"error": str(exc)})
+
+    async def _checkpoint_health(self, writer: asyncio.StreamWriter) -> None:
+        from duckterm import checkpoint_settings
+        from duckterm.core import checkpoint_health
+
+        try:
+            automatic = checkpoint_settings.load()["automatic"]
+        except APIError:
+            automatic = None
+        agents = checkpoint_health.report(self.history._conn, int(time.time() * 1000))
+        await _write_json(writer, 200, {"automatic": automatic, "agents": agents})
 
     async def _ai_settings(self, writer: asyncio.StreamWriter, body: bytes | None = None) -> None:
         from duckterm.llm import ai_settings, backend
