@@ -1,3 +1,25 @@
+## 2026-11-22 — Two formatters, and the one I ran was not the gate
+
+I verified formatting with `ruff format --check`, reported the branch clean,
+and CI failed at 27 seconds. CI runs `black --check src tests scripts`
+(ci.yml:21) and never runs `ruff format --check` at all - that only exists in
+the local gate script.
+
+Worse than a missed step: the two disagree. On an assert with a message, ruff
+format wants the message parenthesised on its own lines and black wants the
+condition parenthesised instead. So ruff format had actively rewritten my line
+into the shape black rejects. Running either one alone cannot catch this, and
+"ruff format passed" was not weak evidence, it was misleading evidence.
+
+Fixes: shortened the message so the assert fits one line, which both leave
+alone, and checked black, ruff format and ruff check together rather than
+picking a winner.
+
+Lesson: verify with the tool the gate runs, not the tool that is installed.
+Before claiming a branch is clean, read the workflow and check the command
+names, because a local gate and CI can enforce different formatters on the
+same files.
+
 ## 2026-11-22 — A failed lookup is not a negative answer
 
 Making status() check credential presence instead of decrypting the secret
