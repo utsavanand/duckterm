@@ -291,12 +291,16 @@ export interface BrowseEntry {
   name: string;
   path: string;
   is_git: boolean;
+  is_kit?: boolean;
 }
+export interface BrowseKit { file: string; path: string; name?: string; version?: string; description?: string; error?: string }
 export interface BrowseResult {
   empty?: boolean;
   path: string;
   parent: string | null;
   is_git: boolean;
+  is_kit?: boolean;
+  kits?: BrowseKit[];
   entries: BrowseEntry[];
 }
 

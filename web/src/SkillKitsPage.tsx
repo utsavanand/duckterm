@@ -371,6 +371,7 @@ function AddView({ busy, onCancel, onAdd }: { busy: boolean; onCancel: () => voi
             <DirBrowser
               browse={api.browse}
               start={path.trim() || undefined}
+              kitsOnly
               pickLabel="Use this kit folder"
               onPick={(r) => { setPath(r.path); setBrowsing(false); }}
               onCancel={() => setBrowsing(false)}

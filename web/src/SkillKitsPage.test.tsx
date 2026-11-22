@@ -106,15 +106,24 @@ it("creates a team as a new workspace from the kit's installed repository", asyn
   await waitFor(() => expect(created).toHaveBeenCalledWith("Payments squad"));
 });
 
-it("browses to a kit folder instead of typing its path", async () => {
+it("browses to a kit folder: plain folders cannot be picked, a multi-kit folder offers each kit", async () => {
   vi.mocked(api.kitsCatalog).mockResolvedValue(catalog);
-  vi.mocked(api.browse).mockResolvedValue({ path: "/Users/me/Downloads", parent: "/Users/me", is_git: false, entries: [{ name: "uv-suite", path: "/Users/me/Downloads/uv-suite", is_git: false }] } as never);
+  const downloads = { path: "/Users/me/Downloads", parent: "/Users/me", is_git: false, is_kit: false, kits: [], entries: [{ name: "uv-suite", path: "/Users/me/Downloads/uv-suite", is_git: false, is_kit: true }, { name: "photos", path: "/Users/me/Downloads/photos", is_git: false, is_kit: false }] };
+  const uvSuiteFolder = { path: "/Users/me/Downloads/uv-suite", parent: "/Users/me/Downloads", is_git: false, is_kit: true, entries: [], kits: [
+    { file: "skill-kit.toml", path: "/Users/me/Downloads/uv-suite/skill-kit.toml", name: "uv-suite", version: "0.34.0", description: "careful" },
+    { file: "skill-kit.fast.toml", path: "/Users/me/Downloads/uv-suite/skill-kit.fast.toml", name: "uv-suite-fast", version: "0.34.0" },
+  ] };
+  vi.mocked(api.browse).mockImplementation(async (p?: string) => (p === "/Users/me/Downloads/uv-suite" ? uvSuiteFolder : downloads) as never);
   render(<SkillKitsPage onClose={() => {}} fallback={null} />);
   fireEvent.click(await screen.findByRole("button", { name: "Add skill kit…" }));
   fireEvent.click(screen.getByRole("button", { name: "Browse…" }));
   expect(await screen.findByText("uv-suite")).toBeVisible();
+  expect(screen.getByText("skill kit")).toBeVisible();
+  expect(screen.getByText(/Not a skill kit: no skill-kit.toml here/)).toBeVisible();
+  expect(screen.getByRole("button", { name: "Use this kit folder" })).toBeDisabled();
   fireEvent.click(screen.getByText("uv-suite"));
-  await waitFor(() => expect(api.browse).toHaveBeenLastCalledWith("/Users/me/Downloads/uv-suite"));
-  fireEvent.click(screen.getByRole("button", { name: "Use this kit folder" }));
-  expect(screen.getByLabelText("Kit folder")).toHaveValue("/Users/me/Downloads");
+  expect(await screen.findByText(/This folder holds 2 kits/)).toBeVisible();
+  expect(screen.queryByRole("button", { name: "Use this kit folder" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Use uv-suite-fast" }));
+  expect(screen.getByLabelText("Kit folder")).toHaveValue("/Users/me/Downloads/uv-suite/skill-kit.fast.toml");
 });
