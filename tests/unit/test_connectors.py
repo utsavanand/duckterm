@@ -22,6 +22,13 @@ def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     monkeypatch.setenv("PATH", str(bin_dir))
+    # PATH is replaced wholesale above, so enable() cannot find the real CLI.
+    # _duckterm_bin() raises without it and the test fails on the environment
+    # rather than on what it is checking -- which made 10 of these depend on
+    # whether a duckterm binary happened to be installed on the machine.
+    duckterm = bin_dir / "duckterm"
+    duckterm.write_text("#!/bin/sh\nexit 0\n")
+    duckterm.chmod(0o755)
     monkeypatch.setattr(connectors, "github_identity", lambda token: "test-user")
     return bin_dir
 
@@ -401,7 +408,6 @@ def test_panel_reports_availability_from_one_predicate(
     from duckterm.agents import mcp_install
 
     _stub(isolated_env, "github-mcp-server", "sleep 0")
-    _stub(isolated_env, "duckterm", "exit 0")
     connectors.save_secret("github", "ghp_stored")
     connectors.enable("github", source="stored", home=tmp_path)
     assert connectors.status("github", home=tmp_path)["enabled"] is True
@@ -423,7 +429,6 @@ def test_an_unreadable_harness_config_reads_as_unavailable_rather_than_raising(
 ) -> None:
     """Fail-closed for display: a damaged config must not crash the panel."""
     _stub(isolated_env, "github-mcp-server", "sleep 0")
-    _stub(isolated_env, "duckterm", "exit 0")
     connectors.save_secret("github", "ghp_stored")
     connectors.enable("github", source="stored", home=tmp_path)
 
