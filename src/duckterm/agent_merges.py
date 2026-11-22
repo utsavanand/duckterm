@@ -1,7 +1,7 @@
 """Reviewed agent handoffs, stored atomically with their inbox delivery.
 
-Uses a reserved bucket in the existing canonical SQLite store. No new schema,
-agent lifecycle change, conversation identity rewrite or automatic Git mutation.
+Uses reserved buckets in the existing canonical SQLite store. Closing is an
+explicit owner choice; histories and Git worktrees remain intact.
 """
 
 import asyncio
@@ -10,6 +10,7 @@ import re
 import time
 from typing import TYPE_CHECKING, Any
 
+from duckterm import memory_access
 from duckterm.agent_merge_git import snapshot
 from duckterm.core.session_api import APIError, _text
 from duckterm.helpers import security
@@ -95,6 +96,7 @@ async def preview(server: "Server", source: str, target: str) -> dict[str, Any]:
         raise APIError(409, "A session changed while preparing the merge. Review again.")
     destination = _destination(server, source, current_right)
     context, notes = _context(server, current_left), current_left.get("notes") or ""
+    access = memory_access.grant(server.history, source, target)
     evidence = {
         "source": source,
         "target": target,
@@ -103,6 +105,8 @@ async def preview(server: "Server", source: str, target: str) -> dict[str, Any]:
         "context": context,
         "notes": notes,
         "git": git,
+        "memoryAccess": access,
+        "summaryRevision": current_revision(current_left),
     }
     return {
         "source": {"key": source, "name": current_left.get("name") or source},
@@ -111,6 +115,11 @@ async def preview(server: "Server", source: str, target: str) -> dict[str, Any]:
         "notes": notes,
         "git": git,
         "revision": fingerprint(evidence),
+        "memory": {
+            "sourceSession": source,
+            "summaryRevision": current_revision(current_left),
+            "access": "Read this session's saved summaries and supporting history",
+        },
     }
 
 
@@ -134,8 +143,11 @@ def status(server: "Server", record: dict[str, Any]) -> dict[str, Any]:
         if exc.status != 404:
             raise
     # A reply is acknowledgement, not proof that Git integration succeeded.
+    closed = (server.history.session(record["source"]) or {}).get("state") == "merged"
     return {
         **record,
+        "sourceClosed": closed,
+        "closeState": ("closed" if closed else "pending") if record.get("closeSource") else None,
         "delivery": delivery,
         "statusAvailable": available,
         "reply": row["answer"] if row else None,
@@ -143,8 +155,13 @@ def status(server: "Server", record: dict[str, Any]) -> dict[str, Any]:
 
 
 def _body(request: dict[str, Any]) -> tuple[str, str, str | None, str | None]:
-    if set(request) != {"target", "revision", "context", "notes", "code", "requestKey"}:
+    required = {"target", "revision", "context", "notes", "code", "requestKey"}
+    if not required <= set(request) or set(request) - required - {"memory", "closeSource"}:
         raise APIError(400, "Expected target, revision, context, notes, code and requestKey")
+    if any(type(request.get(k, False)) is not bool for k in ("memory", "closeSource")):
+        raise APIError(400, "Memory and closeSource must be boolean choices")
+    if request.get("closeSource") and not request.get("memory"):
+        raise APIError(400, "Closing after merge requires a saved source-memory link")
     target = _text(request["target"], "target", 128)
     unique = _text(request["requestKey"], "requestKey", 64)
     if not re.fullmatch(r"[A-Za-z0-9._-]+", unique) or type(request["code"]) is not bool:
@@ -152,7 +169,7 @@ def _body(request: dict[str, Any]) -> tuple[str, str, str | None, str | None]:
     _text(request["revision"], "revision", 64)
     context = None if request["context"] is None else _text(request["context"], "context", 12000)
     notes = None if request["notes"] is None else _text(request["notes"], "notes", 12000)
-    if context is None and notes is None and not request["code"]:
+    if context is None and notes is None and not request["code"] and not request.get("memory"):
         raise APIError(400, "Choose something to merge")
     return target, unique, context, notes
 
@@ -166,7 +183,22 @@ async def send(server: "Server", source: str, request: dict[str, Any]) -> dict[s
         if previous:
             if previous["signature"] != signature:
                 raise APIError(409, "This request key already belongs to a different merge")
+            if previous.get("closeSource"):
+                from duckterm.merge_closing import finish
+
+                close_state = await finish(server, source, target)
+                return {**status(server, previous), "closeState": close_state}
             return status(server, previous)
+        if server.history.fork_merges.closing(source):
+            raise APIError(409, "Finish the existing merge before starting another")
+        if request.get("closeSource") and not _row(server, source).get("launched"):
+            raise APIError(409, "Closing requires a DuckTerm-owned source terminal")
+        if (
+            server.archives.pending(source)
+            or server.restarts.pending(source)
+            or source in server._transfer_sources
+        ):
+            raise APIError(409, "Finish the source archive, restart or transfer before merging")
         review = await preview(server, source, target)
         if not review["target"]["allowed"]:
             raise APIError(409, review["target"]["reason"])
@@ -186,6 +218,11 @@ async def send(server: "Server", source: str, request: dict[str, Any]) -> dict[s
             lines += ["", "CONVERSATION CONTEXT (reviewed summary, not the full thread)", context]
         if notes is not None:
             lines += ["", "NOTES (also appended to your session notes)", notes]
+        access = (
+            memory_access.grant(server.history, source, target) if request.get("memory") else None
+        )
+        if access:
+            lines += ["", memory_access.instructions(source, access["summaryRevision"])]
         if git:
             lines += [
                 "",
@@ -211,7 +248,14 @@ async def send(server: "Server", source: str, request: dict[str, Any]) -> dict[s
                     ensure_ascii=False,
                 ),
             ]
-        lines += ["", "Keep both agents open and preserve their conversation histories."]
+        lines += [
+            "",
+            (
+                "The source will close after its turn. Its saved memory remains readable."
+                if request.get("closeSource")
+                else "Keep both agents open and preserve their conversation histories."
+            ),
+        ]
         packet = _text("\n".join(lines), "combined merge request", 16384)
         now = int(time.time() * 1000)
         record = {
@@ -226,6 +270,9 @@ async def send(server: "Server", source: str, request: dict[str, Any]) -> dict[s
             "git": git,
             "packet": packet,
             "createdAt": now,
+            "memorySource": source if access else None,
+            "summaryRevision": review["memory"]["summaryRevision"] if access else None,
+            "closeSource": request.get("closeSource", False),
         }
         conn = server.history._conn
 
@@ -251,6 +298,8 @@ async def send(server: "Server", source: str, request: dict[str, Any]) -> dict[s
                     )
                 conn.execute("UPDATE sessions SET notes=? WHERE session_key=?", (appended, target))
             record["messageId"] = mid
+            if access:
+                memory_access.save(server.history, identity + "-memory", access, now)
             conn.execute(
                 "INSERT INTO digest_items "
                 "(id,session_key,bucket,text,status,created_at,updated_at) "
@@ -262,6 +311,11 @@ async def send(server: "Server", source: str, request: dict[str, Any]) -> dict[s
             target, packet, request_key=identity, priority=True, assignment=save
         )
         server._oracle_soon()
+        if record["closeSource"]:
+            from duckterm.merge_closing import finish
+
+            close_state = await finish(server, source, target)
+            return {**status(server, record), "closeState": close_state}
         return status(server, record)
 
 

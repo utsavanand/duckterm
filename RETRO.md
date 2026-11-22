@@ -51,6 +51,23 @@ capped at exactly 1.2, so the floor is proved to be a floor and not a wall.
 Both mutations now fail - lowering the floor, which is the security
 regression, and raising it to 1.3, which is the availability one.
 
+## 2026-11-21 — A first page is not the complete source catalog
+
+PR #354 paginated memory sources, but the retained-checkpoint scope test still
+looked only at the first page. Checkpoint ids determine source ordering, so the
+test passed locally and failed in CI when its checkpoint sorted after item 20.
+Force that ordering in the regression, follow every cursor, and check both that
+the session can read its checkpoint and that moving scope still hides it. No
+access check needed weakening; the test needed to use the API's paging contract.
+
+## 2026-11-21 — Merge disclosure must describe the full readable source
+
+A merge sends a short summary but grants read access to a broader source catalog.
+Calling that only “summaries and evidence” hid inbox exchanges, tasks and saved
+artifacts from the owner’s decision. Both merge flows now name those records,
+including messages with other agents across folders, before confirmation. Share
+the disclosure component so the two flows cannot drift. Access behavior is unchanged.
+
 ## 2026-11-21 — Bundle defaults are not enforced update policy
 
 Review found that Sparkle can read saved preferences before Info.plist. Declaring
