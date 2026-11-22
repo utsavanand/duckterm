@@ -485,7 +485,7 @@ export interface KitInstalled {
   name: string; version: string | null; harnesses: string[]; options: Record<string, string>;
   installed_at: number | null; entries: number; trusted: boolean;
   verify: { ok: boolean | null; missing: string[]; drifted: string[] };
-  flows: string[]; components: string[]; procedures: KitProcedure[];
+  flows: string[]; skills: Record<string, { description: string; effects?: string | null }>; components: string[]; procedures: KitProcedure[];
 }
 export interface KitRunSummary { run_id: string; flow: string; state: string; started_at: number; current: { step: string; attempt: number } | null; failure: { step: string; attempt: number; reason: string } | null }
 export interface KitRun extends KitRunSummary {

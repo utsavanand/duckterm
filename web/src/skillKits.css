@@ -48,3 +48,9 @@
   .rd-kits-row, .rd-kits-prow { grid-template-columns: 1fr; gap: 6px; }
   .rd-kits-cards { grid-template-columns: 1fr; }
 }
+.rd-kits-skill { border-top: 1px solid var(--border); padding: 6px 0; font-size: 0.75rem; }
+.rd-kits-skill summary { cursor: pointer; list-style: none; display: flex; gap: 8px; align-items: center; }
+.rd-kits-skill summary::-webkit-details-marker { display: none; }
+.rd-kits-skill summary::before { content: '›'; color: var(--text-soft); display: inline-block; width: 10px; }
+.rd-kits-skill[open] summary::before { content: '⌄'; }
+.rd-kits-skill .rd-kits-note { padding: 4px 0 2px 18px; }

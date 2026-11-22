@@ -19,7 +19,8 @@ const overview: KitsOverview = {
   kits: [{
     name: "uv-suite", version: "0.34.0", harnesses: ["claude-code", "codex"], options: { persona: "professional" },
     installed_at: 1, entries: 131, trusted: true, verify: { ok: true, missing: [], drifted: [] },
-    flows: ["review", "feature"], components: ["uv-suite/skill/uvs-spec", "uv-suite/hook/block_destructive", "uv-suite/flow/review"],
+    flows: ["review", "feature"], skills: { "uvs-spec": { description: "Convert requirements into a structured technical specification.", effects: "workspace" } },
+    components: ["uv-suite/skill/uvs-spec", "uv-suite/hook/block_destructive", "uv-suite/flow/review"],
     procedures: [procedure],
   }],
   procedures: [procedure],
@@ -79,5 +80,7 @@ it("walks add → review → install and lands on the installed kit", async () =
   fireEvent.click(screen.getByRole("button", { name: /Install 2 components/ }));
   await waitFor(() => expect(api.kitsInstall).toHaveBeenCalledWith(expect.objectContaining({ kit: "/kits/sample", project: "/ws/duckterm", replace: false }), ""));
   expect(await screen.findByRole("heading", { name: /sample-kit/ })).toBeVisible();
-  expect(screen.getByRole("button", { name: "Run" })).toBeVisible();
+  expect(screen.getByText(/no trigger · duckterm kit run sample-kit\/review/)).toBeVisible();
+  expect(screen.getByText("/uvs-spec")).toBeVisible();
+  expect(screen.getByText(/Convert requirements into a structured/)).toBeInTheDocument();
 });

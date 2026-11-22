@@ -59,6 +59,8 @@ def test_install_overview_verify_and_uninstall_round_trip(tmp_path):
     assert kit["name"] == "sample-kit" and kit["harnesses"] == ["claude-code"]
     assert kit["verify"]["ok"] is True and kit["trusted"] is True
     assert kit["flows"] == ["review"]
+    assert kit["skills"]["review-diff"]["description"].startswith("Reviews a diff")
+    assert kit["skills"]["review-diff"]["effects"] == "read-only"
     assert view["procedures"][0]["name"] == "feature-squad"
     assert view["procedures"][0]["kit"] == "sample-kit"
     assert view["procedures"][0]["rules"][0] == {"role": "dev", "review_by": "reviewer"}

@@ -6,6 +6,7 @@ engine underneath, so the page and the terminal cannot disagree."""
 
 from __future__ import annotations
 
+import json
 import threading
 import tomllib
 from pathlib import Path
@@ -153,6 +154,13 @@ def overview(project_value: Any) -> dict[str, Any]:
     for name, entry in record["kits"].items():
         report = reports.get(name)
         components = [str(c) for c in entry.get("components", [])]
+        skills_file = project / runner.FLOWS / name / runner.SKILLS_FILE
+        skills: dict[str, Any] = {}
+        if skills_file.is_file():
+            try:
+                skills = json.loads(skills_file.read_text()).get("skills") or {}
+            except (OSError, ValueError):
+                skills = {}
         kits.append(
             {
                 "name": name,
@@ -168,6 +176,14 @@ def overview(project_value: Any) -> dict[str, Any]:
                     "drifted": report.drifted if report else [],
                 },
                 "flows": [c.split("/", 2)[2] for c in components if c.split("/")[1:2] == ["flow"]],
+                "skills": {
+                    str(n): {
+                        "description": str(v.get("description", "")),
+                        "effects": v.get("effects"),
+                    }
+                    for n, v in skills.items()
+                    if isinstance(v, dict)
+                },
                 "components": components,
                 "procedures": entry.get("procedures", []),
             }

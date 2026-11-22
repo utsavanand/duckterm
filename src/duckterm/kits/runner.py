@@ -1157,8 +1157,15 @@ def skills_manifest(kit: Any, flows: list[dict[str, Any]], kit_root: Path) -> di
     skills: dict[str, Any] = {}
     for c in kit.by_kind("skill"):
         source = kit_root / str(c.path)
+        try:
+            from duckterm.kits import manifest as m
+
+            front = m.frontmatter((source / "SKILL.md").read_text())
+        except OSError:
+            front = {}
         skills[c.name] = {
             "installed_as": str(c.fields.get("replaces") or source.name),
+            "description": " ".join(str(front.get("description", "")).split()),
             "effects": c.fields.get("effects", "workspace"),
             "inputs": c.fields.get("inputs") or {},
             "outputs": c.fields.get("outputs") or {},

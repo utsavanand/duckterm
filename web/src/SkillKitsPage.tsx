@@ -132,16 +132,6 @@ export function SkillKitsPage({
     }
   }
 
-  async function run(flow: string) {
-    try {
-      const out = await api.kitsRun({ project: project.trim(), flow }, sessionKey);
-      toast(`Run ${out.run_id} started (${out.harness})`, "ok");
-      await refresh();
-    } catch (e) {
-      toast(`Run refused: ${(e as Error).message}`, "err");
-    }
-  }
-
   const crumb = (
     <div className="rd-kits-crumb">
       <button onClick={onClose}>Settings</button><span>›</span>
@@ -196,7 +186,6 @@ export function SkillKitsPage({
             kit={view.kit}
             runs={(overview?.runs ?? []).filter((r) => r.flow.startsWith(view.kit.name + "/"))}
             busy={busy}
-            onRun={run}
             onVerify={verifyAll}
             onUninstall={() => uninstall(view.kit.name)}
           />
@@ -462,8 +451,8 @@ function ReviewView({ project, inventory, plan, busy, onBack, onInstall }: {
   );
 }
 
-function KitView({ kit, runs, busy, onRun, onVerify, onUninstall }: {
-  kit: KitInstalled; runs: KitRunSummary[]; busy: boolean; onRun: (flow: string) => void; onVerify: () => void; onUninstall: () => void;
+function KitView({ kit, runs, busy, onVerify, onUninstall }: {
+  kit: KitInstalled; runs: KitRunSummary[]; busy: boolean; onVerify: () => void; onUninstall: () => void;
 }) {
   const [confirm, setConfirm] = useState(false);
   const byKind = kit.components.reduce<Record<string, string[]>>((acc, c) => {
@@ -495,14 +484,15 @@ function KitView({ kit, runs, busy, onRun, onVerify, onUninstall }: {
       ))}
       <div className="rd-kits-cards">
         <div className="rd-kits-card">
-          <strong>Flows</strong>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}><strong>Flows</strong><span className="rd-kits-sub">enabled on install</span></div>
           {kit.flows.length === 0 && <div className="rd-kits-sub">This kit ships no flow.</div>}
           {kit.flows.map((flow) => (
             <div className="rd-kits-line" key={flow}>
               <span className="rd-kits-mono">{flow}</span>
-              <Button size="sm" onClick={() => onRun(`${kit.name}/${flow}`)} disabled={busy}>Run</Button>
+              <span className="rd-kits-mono" style={{ color: "var(--text-soft)" }}>no trigger · duckterm kit run {kit.name}/{flow}</span>
             </div>
           ))}
+          {kit.flows.length > 0 && <div className="rd-kits-note">A flow with a trigger runs on its own; the others wait for their shortcut.</div>}
           {last && (
             <div className="rd-kits-line">
               <div className="rd-kits-note">Last run · {last.flow.split("/")[1]} · {last.state}{last.current ? ` at ${last.current.step}` : ""}{last.failure ? `: ${last.failure.reason}` : ""}</div>
@@ -521,8 +511,19 @@ function KitView({ kit, runs, busy, onRun, onVerify, onUninstall }: {
           {Object.keys(kit.options).length === 0 && !(kit.harnesses.includes("codex") && byKind.hook) && <div className="rd-kits-sub">Nothing to set for this kit.</div>}
         </div>
       </div>
+      {Object.keys(kit.skills ?? {}).length > 0 && (
+        <div className="rd-kits-card">
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}><strong>Skills</strong><span className="rd-kits-sub">click one to see what it does · invoke with /name in a session</span></div>
+          {Object.entries(kit.skills).map(([name, skill]) => (
+            <details className="rd-kits-skill" key={name}>
+              <summary><span className="rd-kits-mono">/{name}</span>{skill.effects && <Pill>{skill.effects}</Pill>}</summary>
+              <div className="rd-kits-note">{skill.description || "No description in its SKILL.md."}</div>
+            </details>
+          ))}
+        </div>
+      )}
       <details className="rd-kits-card" style={{ display: "block" }}>
-        <summary style={{ cursor: "pointer", fontWeight: 600, fontSize: "0.8125rem" }}>What this kit installed <span className="rd-kits-sub" style={{ fontWeight: 400 }}>· {counts} · {kit.entries} entries</span></summary>
+        <summary style={{ cursor: "pointer", fontWeight: 600, fontSize: "0.8125rem" }}>What else this kit installed <span className="rd-kits-sub" style={{ fontWeight: 400 }}>· {counts} · {kit.entries} entries</span></summary>
         {Object.entries(byKind).map(([kind, names]) => (
           <div className="rd-kits-line" key={kind}><span>{kind === "team" ? "team" : kind}</span><span className="rd-kits-mono" style={{ color: "var(--text-soft)", textAlign: "right" }}>{names.join(" · ")}</span></div>
         ))}
