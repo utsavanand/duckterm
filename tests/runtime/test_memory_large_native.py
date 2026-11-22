@@ -168,6 +168,27 @@ def test_a_raw_copy_from_before_records_still_reads_and_is_left_alone(tmp_path, 
     assert legacy.read_bytes() == raw
 
 
+def test_an_old_reference_keeps_reading_its_raw_copy_after_the_version_is_saved_again(
+    tmp_path, monkeypatch
+):
+    # An idle agent's next checkpoint saves the same version in the new format.
+    monkeypatch.setenv("DUCKTERM_HOME", str(tmp_path / "state"))
+    path = tmp_path / "native.jsonl"
+    raw = message("legacy decision")
+    path.write_bytes(raw)
+    current = memory_sources.read_native("probe", source(path))
+    legacy = memory_sources.directory("probe") / (current["version"] + ".jsonl")
+    legacy.write_bytes(raw)
+    old_ref = {**source(path), "snapshot": current["version"]}
+    saved = memory_sources.read_native("probe", source(path), retain=True)
+    assert saved["snapshot"] == current["version"]
+    path.unlink()
+    for ref in (old_ref, saved):
+        assert [r["text"] for r in memory_sources.read_native("probe", ref)["records"]] == [
+            "legacy decision"
+        ]
+
+
 def test_a_tampered_pointer_or_copy_is_refused(tmp_path, monkeypatch):
     monkeypatch.setenv("DUCKTERM_HOME", str(tmp_path / "state"))
     path = tmp_path / "native.jsonl"
@@ -208,8 +229,8 @@ def test_a_rewritten_copy_with_a_recomputed_checksum_is_refused(tmp_path, monkey
     )
     with pytest.raises(APIError, match="checksum"):
         memory_sources.read_native("probe", saved)
-    # A reference that doesn't carry the digest can't vouch for the copy either.
-    with pytest.raises(APIError, match="checksum"):
+    # A reference without the digest only reads a raw copy, and there is none.
+    with pytest.raises(APIError, match="unavailable"):
         memory_sources.read_native(
             "probe", {k: v for k, v in saved.items() if k != "records_sha256"}
         )

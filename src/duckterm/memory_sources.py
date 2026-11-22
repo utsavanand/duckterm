@@ -169,8 +169,11 @@ def _read_records(key: str, snapshot: str, bound: Any) -> dict[str, Any] | None:
 
     The file's own checksum only catches damage: anyone who can rewrite the file
     can rewrite that too. The reference saved in the database binds the content.
+    A reference from before records-v1 has no digest; it reads the raw copy it
+    was made against, verified by the native digest, even when the same version
+    was later saved again as records.
     """
-    found = _records_file(key, snapshot)
+    found = _records_file(key, snapshot) if bound is not None else None
     if found is None:
         return None
     path, pointer = found

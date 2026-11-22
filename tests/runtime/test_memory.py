@@ -240,7 +240,7 @@ def test_retention_keeps_records_atomically_and_detects_corruption(memory_rig):
     assert retained.stat().st_mode & 0o777 == 0o600
     retained.write_text(retained.read_text().replace("glacier", "altered"))
     with pytest.raises(APIError, match="checksum"):
-        read_native("agent", {**source, "snapshot": saved["snapshot"]})
+        read_native("agent", saved)
     assert not list(directory("agent").glob(".capture-*"))
 
 
