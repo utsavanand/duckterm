@@ -148,10 +148,11 @@ def test_a_rewritten_transcript_keeps_both_whole_copies(tmp_path, monkeypatch):
     ]
 
 
-def compacted(size):
+def compacted(size, **header):
     body = json.dumps(
         {
             "timestamp": "2026-11-17T00:00:00Z",
+            **header,
             "type": "compacted",
             "payload": {"replacement_history": "x" * size},
         }
@@ -159,11 +160,16 @@ def compacted(size):
     return body.encode() + b"\n"
 
 
-def test_an_oversized_codex_compaction_line_is_hashed_but_not_parsed(tmp_path, monkeypatch):
+@pytest.mark.parametrize("header", [{}, {"ordinal": 878}])
+def test_an_oversized_codex_compaction_line_is_hashed_but_not_parsed(tmp_path, monkeypatch, header):
     # A 1.5 GB ui-dev history had 23 compaction lines of 16-23 MB (2026-11-17).
     monkeypatch.setattr(memory_sources, "MAX_LINE_BYTES", 4096)
     path = tmp_path / "rollout.jsonl"
-    raw = message("Before the compaction") + compacted(20_000) + message("After the compaction")
+    raw = (
+        message("Before the compaction")
+        + compacted(20_000, **header)
+        + message("After the compaction")
+    )
     path.write_bytes(raw)
     read = memory_sources.read_native("probe", source(path))
     assert [r["text"] for r in read["records"]] == ["Before the compaction", "After the compaction"]
@@ -175,7 +181,20 @@ def test_an_oversized_codex_compaction_line_is_hashed_but_not_parsed(tmp_path, m
     [
         ("codex", message("y" * 8000)),
         ("claude-code", compacted(20_000)),
+        # Only the record's own type counts, not one nested in its content.
+        (
+            "codex",
+            json.dumps(
+                {
+                    "timestamp": "2026-11-17T00:00:00Z",
+                    "type": "response_item",
+                    "payload": {"type": "compacted", "text": "y" * 8000},
+                }
+            ).encode()
+            + b"\n",
+        ),
     ],
+    ids=["codex-message", "claude-compaction", "codex-nested-type"],
 )
 def test_other_oversized_lines_are_still_refused(tmp_path, monkeypatch, runtime, line):
     monkeypatch.setattr(memory_sources, "MAX_LINE_BYTES", 4096)
