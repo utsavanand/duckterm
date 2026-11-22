@@ -137,7 +137,10 @@ export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
       setEditing(null);
       setToken("");
       setSecret("");
-      toast(action === "enable" ? `${c.title} enabled — available to new agent sessions` : `${c.title} disabled in Duckterm${action === "forget" ? "; stored credentials removed" : "; authorization retained"}`);
+      // "disabled in Duckterm" read as though Duckterm itself stopped using the
+      // credential. Off withdraws the connector from agents; Duckterm's own
+      // features keep using it, and only Forget removes the credential.
+      toast(action === "enable" ? `${c.title} enabled — available to new agent sessions` : `${c.title} off for agents${action === "forget" ? "; stored credentials removed" : "; authorization retained"}`);
     } catch (e) {
       if (!current()) return;
       // Clear submitted secrets even when validation fails.
@@ -175,6 +178,12 @@ export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
         </button>
       </div>}
       {c.enabled && <div className="rd-connector-desc">{availabilityLabel(c)}</div>}
+      {/* Off is about agents only. Without this the row said nothing about what
+          Off withdraws, and the owner reads it as "Duckterm stopped using it". */}
+      {!c.enabled && c.credential && <div className="rd-connector-desc">
+        Off — no agent can use {c.title}. Duckterm still uses it for repository
+        browsing and pull request status, and your credential stays saved.
+      </div>}
       {c.managed ? <div className="rd-connector-desc">Managed through the remote connector administrator.</div> : <>
         {c.credential && <div className="rd-connector-installed">
           <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy !== null} onClick={() => edit(c)}>Change connection</button>

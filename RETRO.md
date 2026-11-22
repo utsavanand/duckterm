@@ -1,3 +1,30 @@
+## 2026-11-22 — The owner described the intent, and the code disagreed
+
+Owner decision: "Off" means off for agents only; Duckterm's own repo browser
+and PR status keep using the token. I was asked to make the panel say so.
+
+Before writing the copy I checked whether it was true. It was not. Both
+review/github.py:28 and github_projects.py:38 gate on policy.enabled, so
+Disable today blocks Duckterm's own features too - probed it directly: PR
+status returns "Enable the GitHub connector to see pull request status" and the
+repo browser raises, both immediately after Disable.
+
+So the wording alone would have shipped a panel that confidently describes
+behaviour the product does not have - the same intent-rendered-as-state class
+that keeps showing up here, except this time the stored "intent" was a decision
+in a message rather than a value in a file.
+
+I shipped the wording, because the panel's old toast ("disabled in Duckterm")
+was wrong in the other direction and the new copy matches where the product is
+going. But I did not quietly also change the gating to make my own copy true:
+that decides who can read the owner's token, and it was not what I was asked
+for. Flagged it instead, with the probe output, as the other half of the
+decision.
+
+Lesson: when a decision arrives as prose, check the code before writing UI that
+asserts it. Copy is a claim about behaviour, and shipping copy ahead of the
+behaviour is how a panel starts lying with authority.
+
 ## 2026-11-22 — I called them pre-existing five times instead of fixing them
 
 Ten tests in test_connectors.py failed on this Mac for weeks. Every time I

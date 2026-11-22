@@ -155,3 +155,24 @@ it("detects new credentials without window blur, but never polls a hidden panel"
     expect(api.connectors).toHaveBeenCalledTimes(2);
   } finally { vi.useRealTimers(); visible.mockRestore(); }
 });
+
+it("says Off means agents only, not that Duckterm stopped using the credential", async () => {
+  // Owner decision: Off withdraws the connector from agents; Duckterm's own
+  // repo browsing and PR status keep using the token, and Forget alone removes
+  // the credential. The row previously said nothing here, so the only signal
+  // was a toast reading "disabled in Duckterm".
+  const off: Connector = { ...row, credential: "stored", enabled: false };
+  vi.mocked(api.connectors).mockResolvedValue({ connectors: [off] });
+  render(<Connectors />);
+  const note = await screen.findByText(/no agent can use Porkbun/);
+  expect(note).toBeVisible();
+  expect(note.textContent).toMatch(/Duckterm still uses it/);
+  expect(note.textContent).toMatch(/credential stays saved/);
+});
+
+it("does not show the agents-only note for a connector with no credential", async () => {
+  vi.mocked(api.connectors).mockResolvedValue({ connectors: [row] });
+  render(<Connectors />);
+  await screen.findByText("Porkbun");
+  expect(screen.queryByText(/no agent can use/)).toBeNull();
+});
