@@ -2642,7 +2642,7 @@ class Server:
         """A team is a workspace with a procedure: the record first (it refuses
         a bad request without touching anything), then the workspace itself,
         registered like New workspace does so an empty one persists."""
-        result = kits_api.create_team(payload)
+        result: dict[str, Any] = kits_api.create_team(payload)
         self.history.create_folder(str(result["team"]["folder"]), now=int(time.time() * 1000))
         return result
 
