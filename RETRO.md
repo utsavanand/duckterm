@@ -46,6 +46,30 @@ Lesson: "pre-existing" is a statement about blame, not about health. If a
 failure survives three sessions of being correctly identified as someone
 else's, it has no owner and the person who keeps tripping over it should just
 fix it.
+## 2026-11-22 — My test runner was pointed at the wrong worktree
+
+I built the GitHub-only connector in a new worktree, ran the tests, got 31
+passed, and moved on. The runner script had a hardcoded `cd .../hygiene` and my
+sed to repoint it matched a path that was not in the file, so it silently kept
+testing the PREVIOUS branch. Three "green" runs proved nothing about the code I
+had just written - including a 1641-pass full-suite sweep and a check that a
+tmux failure was "pre-existing on main".
+
+What exposed it was arithmetic, not suspicion: I added four tests and the count
+stayed at 31. A pass count that does not move when you add tests is the cheapest
+possible signal, and I nearly explained it away as parametrized expansion.
+
+Pointed at the right tree, the same command gave 7 failures.
+
+Fix: the runner takes the worktree as its first argument and echoes
+`tree=<path> head=<sha>` on every run, so the tree under test is in the output
+rather than in a variable I believe is correct. A hardcoded path in a scratch
+script is a silent correctness bug the moment a second worktree exists.
+
+Lesson: a test run has two results - the assertions, and WHICH CODE ran. The
+second is invisible unless you print it. When a green run follows a change that
+should have moved some number, verify the number before trusting the green.
+
 ## 2026-11-22 — The duplicated condition was real; my fix for it was not
 
 Two readers answered "is this connector on". The panel used policy.enabled AND

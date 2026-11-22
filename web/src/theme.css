@@ -821,6 +821,10 @@ code,
 .rd-connector-row .dot.warn {
   background: var(--wait);
 }
+/* Connected but withdrawn from agents: one door open, so neither on nor off. */
+.rd-connector-row .dot.part {
+  background: var(--wait);
+}
 .rd-connector-title {
   font-weight: 600;
   font-size: 0.8125rem;
@@ -842,9 +846,61 @@ code,
 }
 .rd-connector-installed {
   font-size: 0.6875rem;
-  font-family: ui-monospace, Menlo, monospace;
   color: var(--muted);
-  margin: 4px 0 0 15px;
+  margin: 6px 0 0 15px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+/* The trailing note is a sentence, not a value: it spans the row and reads as
+   prose, where the inherited monospace made it look like output. */
+.rd-connector-installed > div {
+  flex-basis: 100%;
+  line-height: 1.45;
+}
+.rd-connector-installed a {
+  white-space: nowrap;
+}
+.rd-connector-doors {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 6px 0 0 15px;
+}
+.rd-door {
+  display: flex;
+  gap: 7px;
+  align-items: flex-start;
+  font-size: 0.75rem;
+}
+.rd-door > div {
+  min-width: 0;
+}
+.rd-door .rd-connector-desc {
+  margin-left: 0;
+}
+.rd-door-mark {
+  font-family: ui-monospace, Menlo, monospace;
+  line-height: 1.45;
+  flex-shrink: 0;
+}
+.rd-door.on .rd-door-mark {
+  color: var(--idle);
+}
+.rd-door.off .rd-door-mark,
+.rd-door.off strong {
+  color: var(--muted);
+}
+.rd-connector-warn {
+  color: var(--wait);
+}
+.rd-connector-connect {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 6px 0 0 15px;
 }
 .rd-connector-proof {
   display: flex;

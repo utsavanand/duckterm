@@ -86,12 +86,17 @@ def test_connectors_lifecycle_over_endpoints(isolated: Path, tmp_path: Path) -> 
 
 
 def test_enable_failure_maps_to_400_with_reason(isolated: Path, tmp_path: Path) -> None:
+    """A refusal from enable() reaches the panel as 400 plus its own reason.
+
+    400 rather than 404: the connector exists, this attempt was rejected. An
+    unparseable source is the cheapest such refusal that needs no network.
+    """
     server = _server(tmp_path)
     w = _W()
-    asyncio.run(server._enable_connector(w, "railway", b"{}"))
+    asyncio.run(server._enable_connector(w, "github", b'{"source": "telepathy"}'))
     status, body = _status_and_body(w)
     assert status == 400
-    assert "not installed" in body["error"]
+    assert "GitHub CLI login or stored" in body["error"]
 
 
 def test_unknown_connector_is_404(isolated: Path, tmp_path: Path) -> None:
