@@ -114,6 +114,7 @@ class UsageReader:
         self.usage = Usage()
         self.model: str | None = None
         self._pending = b""
+        self.settled = False
         self._json: bytearray | None = None
         self._started = False
 
@@ -331,23 +332,33 @@ class _Handler(BaseHTTPRequestHandler):
                 reader.feed(chunk)
                 self.wfile.write(b"%x\r\n%s\r\n" % (len(chunk), chunk))
                 self.wfile.flush()
+            # Charge before the closing chunk: once the harness has the whole
+            # reply it may send the next call, which must see this spend.
+            self._settle(run, reader, status)
             self.wfile.write(b"0\r\n\r\n")
         finally:
             conn.close()
-            usage = reader.finish()
-            self.proxy.charge(run, usage)
-            self.proxy.log(
-                run=run.run_id,
-                step=self.headers.get("x-duckterm-step"),
-                path=self.path,
-                model=reader.model,
-                status=status,
-                allowed=True,
-                input=usage.input,
-                output=usage.output,
-                cache_read=usage.cache_read,
-                cache_write=usage.cache_write,
-            )
+            self._settle(run, reader, status)
+
+    def _settle(self, run: Run, reader: UsageReader, status: int | None) -> None:
+        """Charge and log a call once, whether it ended normally or not."""
+        if reader.settled:
+            return
+        reader.settled = True
+        usage = reader.finish()
+        self.proxy.charge(run, usage)
+        self.proxy.log(
+            run=run.run_id,
+            step=self.headers.get("x-duckterm-step"),
+            path=self.path,
+            model=reader.model,
+            status=status,
+            allowed=True,
+            input=usage.input,
+            output=usage.output,
+            cache_read=usage.cache_read,
+            cache_write=usage.cache_write,
+        )
 
     do_GET = do_POST = _handle
 

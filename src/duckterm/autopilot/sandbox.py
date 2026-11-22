@@ -16,7 +16,6 @@ import json
 import secrets
 import shutil
 import subprocess
-import tempfile
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -57,9 +56,25 @@ class Limits:
     pids: int = 4096
 
 
-def create_args(run_id: str, *, image: str, limits: Limits, runtime: str) -> list[str]:
+@dataclass(frozen=True)
+class Mount:
+    source: Path
+    target: str
+    readonly: bool = False
+
+
+def create_args(
+    run_id: str, *, image: str, limits: Limits, runtime: str, mounts: tuple[Mount, ...] = ()
+) -> list[str]:
     """The `docker run` arguments for a run's sandbox. Kept separate so the
-    security flags can be checked without docker."""
+    security flags can be checked without docker. The only mounts are the
+    run's own directories (autopilot.executor)."""
+    binds: list[str] = []
+    for m in mounts:
+        spec = f"type=bind,source={m.source},target={m.target}" + (
+            ",readonly" if m.readonly else ""
+        )
+        binds += ["--mount", spec]
     return [
         "run", "-d",
         "--name", f"sb-{run_id}",
@@ -73,6 +88,7 @@ def create_args(run_id: str, *, image: str, limits: Limits, runtime: str) -> lis
         "--memory", limits.memory,
         "--workdir", WORKSPACE,
         "--label", f"duckterm.autopilot.run={run_id}",
+        *binds,
         image, "sleep", "infinity",
     ]  # fmt: skip
 
@@ -204,13 +220,18 @@ class Sandbox:
         image: str = IMAGE,
         limits: Limits | None = None,
         gateway: str = GATEWAY,
+        mounts: tuple[Mount, ...] = (),
     ) -> "Sandbox":
         sandbox = cls(run_id, "runsc" if gvisor_available() else "runc", gateway)
         docker("network", "create", "--internal", f"ap-{run_id}")
         try:
             docker(
                 *create_args(
-                    run_id, image=image, limits=limits or Limits(), runtime=sandbox.runtime
+                    run_id,
+                    image=image,
+                    limits=limits or Limits(),
+                    runtime=sandbox.runtime,
+                    mounts=mounts,
                 )
             )
             docker("network", "connect", "--alias", PROXY_ALIAS, f"ap-{run_id}", gateway)
@@ -226,55 +247,26 @@ class Sandbox:
         env: dict[str, str] | None = None,
         timeout: float = 2700,
         stdin: str | None = None,
+        workdir: str = WORKSPACE,
     ) -> subprocess.CompletedProcess[str]:
-        args = ["docker", "exec", "-i", "-w", WORKSPACE]
+        args = ["docker", "exec", "-i", "-w", workdir]
         for key, value in (env or {}).items():
             args += ["-e", f"{key}={value}"]
         return subprocess.run(
             [*args, self.name, *argv], input=stdin, capture_output=True, text=True, timeout=timeout
         )
 
-    def load_repo(self, repo: Path, ref: str, branch: str) -> None:
-        """Copy `ref` (a branch or tag) of a local repository into the workspace
-        as `branch`.
-        A bundle carries history but no remotes, credentials or hooks."""
-        with tempfile.TemporaryDirectory() as tmp:
-            bundle = Path(tmp) / "repo.bundle"
-            subprocess.run(
-                ["git", "-C", str(repo), "bundle", "create", str(bundle), ref],
-                check=True,
-                capture_output=True,
-            )
-            docker("cp", str(bundle), f"{self.name}:/tmp/repo.bundle")
-        for argv in (
-            ["git", "init", "-q", "."],
-            ["git", "fetch", "-q", "/tmp/repo.bundle", ref],
-            ["git", "checkout", "-q", "-b", branch, "FETCH_HEAD"],
-        ):
-            proc = self.exec(argv, timeout=300)
-            if proc.returncode != 0:
-                raise SandboxError(f"{' '.join(argv)} failed: {proc.stderr.strip()}")
-
-    def export_branch(self, branch: str, repo: Path) -> str:
-        """Bring the run branch back to the local repository; returns its head.
-        Stands in for the git proxy's push until that exists."""
-        proc = self.exec(["git", "bundle", "create", "/tmp/out.bundle", branch])
+    def trust(self, path: str) -> None:
+        """Mark `path` trusted for Claude Code inside this sandbox, so a kit's
+        project hooks load there. The sandbox is the run's own; nothing on the
+        developer's machine is marked."""
+        config = {
+            "hasCompletedOnboarding": True,
+            "projects": {path: {"hasTrustDialogAccepted": True}},
+        }
+        proc = self.exec(["sh", "-c", "cat > $HOME/.claude.json"], stdin=json.dumps(config))
         if proc.returncode != 0:
-            raise SandboxError(f"bundling {branch} failed: {proc.stderr.strip()}")
-        with tempfile.TemporaryDirectory() as tmp:
-            out = Path(tmp) / "out.bundle"
-            docker("cp", f"{self.name}:/tmp/out.bundle", str(out))
-            subprocess.run(
-                ["git", "-C", str(repo), "fetch", "-q", str(out), f"+{branch}:{branch}"],
-                check=True,
-                capture_output=True,
-            )
-        return subprocess.run(
-            ["git", "-C", str(repo), "rev-parse", branch],
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
+            raise SandboxError(f"could not write the trust record: {proc.stderr.strip()}")
 
     def destroy(self) -> None:
         docker("rm", "-f", self.name, check=False)

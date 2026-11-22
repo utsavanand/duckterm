@@ -17,7 +17,8 @@ from typing import Any
 import pytest
 
 from duckterm.autopilot import sandbox
-from duckterm.autopilot.sandbox import Gateway, Limits, Sandbox, create_args, harness_env
+from duckterm.autopilot.executor import RunDirs, prepare
+from duckterm.autopilot.sandbox import Gateway, Limits, Mount, Sandbox, create_args, harness_env
 
 REAL_KEY = "sk-ant-REAL-sentinel-5e1f"
 
@@ -36,6 +37,20 @@ def test_sandbox_drops_privileges_and_mounts_nothing() -> None:
         assert flag in joined
     assert "-v" not in args and "--mount" not in args and "--privileged" not in args
     assert "docker.sock" not in joined
+
+
+def test_run_directories_are_the_only_mounts_and_git_is_read_only(tmp_path: Path) -> None:
+    dirs = RunDirs(tmp_path / "run")
+    args = create_args("r1", image="img", limits=Limits(), runtime="runc", mounts=dirs.mounts())
+    binds = [args[i + 1] for i, a in enumerate(args) if a == "--mount"]
+    p = dirs.project
+    assert binds == [
+        f"type=bind,source={p},target={p}",
+        f"type=bind,source={p}/.git,target={p}/.git,readonly",
+        f"type=bind,source={p}/.duckterm/flows,target={p}/.duckterm/flows,readonly",
+        f"type=bind,source={dirs.scratch},target={p}/.duckterm/runs",
+    ]
+    assert isinstance(dirs.mounts()[0], Mount)
 
 
 def test_harness_env_carries_only_the_run_token() -> None:
@@ -106,7 +121,7 @@ class StubModel(BaseHTTPRequestHandler):
 
 
 @pytest.fixture
-def world(tmp_path: Path) -> Iterator[tuple[Gateway, Sandbox, Path, list[dict[str, Any]]]]:
+def world(tmp_path: Path) -> Iterator[tuple[Gateway, Sandbox, RunDirs, list[dict[str, Any]]]]:
     if os.environ.get("DUCKTERM_DOCKER_TESTS") != "1" or not sandbox.docker_available():
         pytest.skip("set DUCKTERM_DOCKER_TESTS=1 with docker running")
     calls: list[dict[str, Any]] = []
@@ -140,9 +155,13 @@ def world(tmp_path: Path) -> Iterator[tuple[Gateway, Sandbox, Path, list[dict[st
     (repo / "README.md").write_text("hello\n")
     subprocess.run([*git, "add", "README.md"], check=True)
     subprocess.run([*git, "commit", "-qm", "init"], check=True)
-    box = Sandbox.create("test-" + os.urandom(3).hex(), gateway=gateway.name)
+    run_id = "test-" + os.urandom(3).hex()
+    dirs = prepare(str(repo), "main", f"autopilot/{run_id}", tmp_path / "run")
+    (dirs.project / ".duckterm" / "runs" / "r1").mkdir(parents=True)
+    (dirs.project / ".duckterm" / "runs" / "r1" / "run.json").write_text('{"state": "running"}')
+    box = Sandbox.create(run_id, gateway=gateway.name, mounts=dirs.mounts())
     try:
-        yield gateway, box, repo, calls
+        yield gateway, box, dirs, calls
     finally:
         box.destroy()
         sandbox.docker("rm", "-f", gateway.name, check=False)
@@ -150,14 +169,16 @@ def world(tmp_path: Path) -> Iterator[tuple[Gateway, Sandbox, Path, list[dict[st
 
 
 def test_claude_runs_in_a_sandbox_through_the_proxy_and_nothing_else(world: Any) -> None:
-    gateway, box, repo, calls = world
-    box.load_repo(repo, "main", "autopilot/test")
-    assert box.exec(["cat", "README.md"]).stdout == "hello\n"
-    assert box.exec(["git", "remote"]).stdout == ""
+    gateway, box, dirs, calls = world
+    project = str(dirs.project)
+    assert box.exec(["cat", "README.md"], workdir=project).stdout == "hello\n"
 
     token = gateway.mint(box.run_id, budget=1_000_000, ttl=600)
     run = box.exec(
-        ["claude", "-p", "say ok", "--output-format", "json"], env=harness_env(token), timeout=180
+        ["claude", "-p", "say ok", "--output-format", "json"],
+        env=harness_env(token),
+        timeout=180,
+        workdir=project,
     )
     assert run.returncode == 0, run.stderr
     assert json.loads(run.stdout)["result"] == "SANDBOX_OK"
@@ -172,15 +193,19 @@ def test_claude_runs_in_a_sandbox_through_the_proxy_and_nothing_else(world: Any)
     )
     assert box.exec(["node", "-e", probe], timeout=30).stdout.strip() == "blocked,blocked,blocked"
 
-    # Work made in the sandbox comes back to the local repository as the run branch.
-    box.exec(["sh", "-c", "echo change >> README.md && git commit -qam step"])
-    head = box.export_branch("autopilot/test", repo)
-    assert (
-        subprocess.run(
-            ["git", "-C", str(repo), "show", f"{head}:README.md"], capture_output=True, text=True
-        ).stdout
-        == "hello\nchange\n"
+    # The workspace is shared with the host; .git, the installed flows and the
+    # run records are not writable from the sandbox.
+    box.exec(["sh", "-c", "echo change >> README.md"], workdir=project)
+    assert (dirs.project / "README.md").read_text() == "hello\nchange\n"
+    for path in (".git/hooks/pre-commit", ".duckterm/flows/planted.json"):
+        assert box.exec(["sh", "-c", f"echo x > {path}"], workdir=project).returncode != 0
+        assert not (dirs.project / path).exists()
+    forged = box.exec(
+        ["sh", "-c", "cat .duckterm/runs/r1/run.json; echo forged > .duckterm/runs/r1/run.json"],
+        workdir=project,
     )
+    assert "running" not in forged.stdout
+    assert (dirs.project / ".duckterm/runs/r1/run.json").read_text() == '{"state": "running"}'
 
     # A revoked token ends the step at once instead of retrying.
     gateway.revoke(token)
