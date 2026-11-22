@@ -241,12 +241,13 @@ def _why_inactive(c: m.Component, chosen: list[str], opts: dict[str, str]) -> st
 
 
 def _dedupe(placements: list[adapters.Placement]) -> list[adapters.Placement]:
-    """One shim per kit directory, one CLAUDE.md import, one copy per path."""
+    """One write per path: the shim, a kit's skills.json and exec scripts are
+    placed once per component that needs them and kept once."""
     seen: set[tuple[str, str]] = set()
     out = []
     for p in placements:
         key = (p.op, p.path) if p.op in ("write", "copy-tree", "claude-import") and p.path else None
-        if key and p.op != "write" or key and p.path.endswith(adapters.SHIM_NAME):
+        if key:
             if key in seen:
                 continue
             seen.add(key)

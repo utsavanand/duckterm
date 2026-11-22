@@ -78,6 +78,9 @@ duckterm kit plan     <kit> --project . --harness claude-code --harness codex
 duckterm kit install  <kit> --project . [--harness …] [--option persona=sport] [--replace]
 duckterm kit verify   --project .                # every recorded file against its hash
 duckterm kit uninstall <name> --project .        # exactly what the record says, nothing else
+duckterm kit run <kit>/<flow> --project . [--harness claude-code|codex] [--input name=value]
+duckterm kit run --resume <run-id> [--gate <step> approve|reject]
+duckterm kit runs --project .                    # every run recorded here
 ```
 
 `plan` prints one row per component and one status per harness: *installed*,
@@ -132,6 +135,49 @@ segment (`[a-z0-9_-]`),
 and a kit's own sources must be real files under the kit root; a symlink
 anywhere on the way fails `validate`. Uninstall prunes only the directories
 the install created.
+
+**Flows and the runner.** `duckterm kit run <kit>/<flow>` runs an installed
+flow (spec §3.7, Part III). Install writes the flow file under
+`.duckterm/flows/<kit>/`, a `skills.json` beside it with every skill's declared
+outputs and effects and the hash of every script a flow `exec`s, and those
+scripts. Each `run`/`decide` step is a fresh non-interactive harness process
+(`claude -p --output-format json --json-schema …`, or `codex exec
+--output-schema …`); the runner asks for a typed result and validates it
+itself, retrying an invalid one twice with the error. A step is judged by its
+exit code first, never by the harness's own status field. `gate` pauses the
+run (exit 3) until `--resume … --gate <step> <answer>`; `parallel` runs
+read-only steps together; `wait` polls CI or review on the branch head through
+`gh` until pass, fail or its timeout; `exec` runs a kit script with the step's
+inputs as JSON on stdin and reads a typed result from its last stdout line,
+refusing a script whose hash no longer matches the install. `next` sends a
+step somewhere other than the next in the list; any edge pointing backwards
+carries `max_loops`. Copilot and OpenCode steps are refused with the reason;
+Codex steps of a kit with hooks need `--codex-trusted`.
+
+Run state is `.duckterm/runs/<run-id>/run.json`: `run_id`, `flow`
+(`<kit>/<name>`), `flow_hash`, `kit`, `harness`, `inputs`, `executor` (`local`;
+autopilot adds `executor_state`), `state` (`running` · `waiting_gate` ·
+`succeeded` · `failed`), `current` {step, attempt}, `steps_taken`, `loops`
+(back-edges taken per step), `attempts` (one record per attempt: step, attempt,
+kind, harness, status `started` · `completed` · `invalid` · `failed` ·
+`abandoned`, started_at, finished_at, exit, inputs_sha256, choice, reason,
+outputs {name: value | {path, sha256}}), `gates` (step, visit, question, show,
+shown_sha256, choices, asked_at, response) and `failure` {step, attempt,
+reason}. Each attempt owns `.duckterm/runs/<run-id>/<step>/<attempt>/`, where
+its file outputs and `workspace.diff` land; a stale file elsewhere is never
+taken for this attempt's work. A run holds a `lock` file while it is driven,
+is written atomically after every change, and resumes only at a step
+boundary: a started attempt without a receipt is rerun when read-only,
+and ends the run as `outcome_unknown` when it changed the workspace or acted
+outside it. A flow file that changed since the run started refuses to resume.
+
+The executor seam (`runner.Executor`): `run_process(argv, cwd, env, stdin,
+timeout)` runs the step's process (locally a subprocess in the project;
+autopilot wraps the same argv in `docker exec` with its proxy env),
+`after_step(run, attempt)` runs after a valid attempt and before its receipt
+is written (autopilot commits and pushes the run branch there, so a receipt
+always means the work is where the next attempt will find it), and `check`
+answers `wait` steps.
 
 The dashboard's **Skill kits** dialog still only lists kits by folder path and
 shows their contents; the install wizard on top of `plan`/`install` is next.

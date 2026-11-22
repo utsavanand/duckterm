@@ -104,7 +104,7 @@ path = "flows/loop.json"
     assert any("env TOKEN must be a named variable" in m for m in messages)
     assert any("event must be one of" in m for m in messages)
     assert any("command 'hooks/missing.sh' does not exist" in m for m in messages)
-    assert any("route back to 'a' needs `max_loops`" in m for m in messages)
+    assert any("edge back to 'a' needs `max_loops`" in m for m in messages)
 
 
 def test_legacy_manifest_loads_with_no_components_and_a_rename_warning(tmp_path):

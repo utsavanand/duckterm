@@ -650,9 +650,8 @@ def place_hook(
         status = NEEDS_TRUST if a.needs_trust else INSTALLED
         if a.needs_trust:
             note = (
-                (note + "; " if note else "")
-                + "Codex runs project hooks only in a trusted project; DuckTerm never writes trust"
-            )
+                note + "; " if note else ""
+            ) + "Codex runs project hooks only in a trusted project; DuckTerm never writes trust"
         out.append(
             Placement(
                 cid,
@@ -918,19 +917,53 @@ def place_settings(kit: m.Kit, c: m.Component, chosen: list[str]) -> list[Placem
 
 
 def place_flow(kit: m.Kit, c: m.Component) -> list[Placement]:
+    """The flow file, plus what the runner needs beside it: `skills.json`
+    (every skill's declared outputs and effects, every exec script's hash)
+    and the scripts flows `exec`. Shared across flows; the planner dedupes."""
+    from duckterm.kits import runner
+
     cid = kit.component_id(c)
     source = kit.root / str(c.path)
-    return [
+    flows = []
+    for f in kit.by_kind("flow"):
+        try:
+            flows.append(json.loads((kit.root / str(f.path)).read_text()))
+        except (OSError, ValueError):
+            continue
+    manifest = runner.skills_manifest(kit, flows, kit.root)
+    folder = f"{runner.FLOWS}/{kit.name}"
+    out = [
         Placement(
             cid,
             SHARED,
             "flow",
             "write",
-            f".duckterm/flows/{kit.name}/{source.name}",
+            f"{folder}/{source.name}",
             content=source.read_bytes(),
-            note="flows need the DuckTerm runner (`duckterm kit run`), not yet built",
-        )
+            note="run with `duckterm kit run " + f"{kit.name}/{source.stem}`",
+        ),
+        Placement(
+            cid,
+            SHARED,
+            "flow",
+            "write",
+            f"{folder}/{runner.SKILLS_FILE}",
+            content=(json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode(),
+        ),
     ]
+    for rel in sorted(manifest["scripts"]):
+        out.append(
+            Placement(
+                cid,
+                SHARED,
+                "flow",
+                "write",
+                f"{folder}/{rel}",
+                content=(kit.root / rel).read_bytes(),
+                executable=True,
+            )
+        )
+    return out
 
 
 def place_team(kit: m.Kit, team: str) -> Placement:
