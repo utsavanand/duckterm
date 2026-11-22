@@ -650,8 +650,9 @@ def place_hook(
         status = NEEDS_TRUST if a.needs_trust else INSTALLED
         if a.needs_trust:
             note = (
-                note + "; " if note else ""
-            ) + "Codex runs project hooks only in a trusted project; DuckTerm never writes trust"
+                (note + "; " if note else "")
+                + "Codex runs project hooks only in a trusted project; DuckTerm never writes trust"
+            )
         out.append(
             Placement(
                 cid,
