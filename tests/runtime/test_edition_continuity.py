@@ -57,8 +57,6 @@ def test_approved_handoff_is_durable_and_idempotent(rig, tmp_path, edition):
     handoff_cases.test_owner_http_approval_is_idempotent_and_persists_checkpoint(rig, tmp_path)
 
 
-def test_approved_brief_prepares_continuity_without_an_available_model(rig, monkeypatch, edition):
+def test_approved_brief_saves_without_an_available_model(rig, monkeypatch, edition):
     assert_edition(rig[0], edition)
-    handoff_cases.test_long_reviewed_brief_uses_one_revision_without_provider_and_can_prepare(
-        rig, monkeypatch
-    )
+    handoff_cases.test_long_reviewed_brief_uses_one_revision_without_provider(rig, monkeypatch)

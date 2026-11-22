@@ -666,9 +666,7 @@ class MemoryPreparation:
         await self.validate_sources(job)
         return self.resolve_proof(key, proof, target, model)
 
-    async def prepared(
-        self, key: str, proof: dict[str, Any], target: str, model: str
-    ) -> dict[str, Any]:
+    async def prepared(self, key: str, proof: Any, target: str, model: str) -> dict[str, Any]:
         job = await self.checked_proof(key, proof, target, model)
         async with self.server.memory.locks.setdefault(key, asyncio.Lock()):
             sources, missing = await asyncio.to_thread(

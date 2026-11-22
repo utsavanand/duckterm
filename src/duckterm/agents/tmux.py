@@ -294,12 +294,21 @@ def send_special(target: str, key: str) -> bool:
 def send_raw(target: str, data: bytes) -> bool:
     """Send raw keystroke bytes to the pane verbatim (terminal path). `-H` sends
     hex byte values, so control chars / escape sequences (arrows, ctrl-C) pass
-    through exactly as typed instead of being interpreted as key names."""
-    hex_bytes = [f"{b:02x}" for b in data]
-    if not hex_bytes:
-        return True
-    ok, _ = _tmux("send-keys", "-t", exact_target(target, pane=True), "-H", *hex_bytes)
-    return ok
+    through exactly as typed instead of being interpreted as key names.
+
+    tmux rejects a command of more than 1000 arguments ("command too long"),
+    and -H spends one argument per byte, so a paste over ~996 bytes was
+    dropped whole. Send it in chunks well under that cap."""
+    pane = exact_target(target, pane=True)
+    for start in range(0, len(data), _SEND_RAW_CHUNK):
+        chunk = data[start : start + _SEND_RAW_CHUNK]
+        ok, _ = _tmux("send-keys", "-t", pane, "-H", *(f"{b:02x}" for b in chunk))
+        if not ok:
+            return False
+    return True
+
+
+_SEND_RAW_CHUNK = 512
 
 
 def resize_window(target: str, cols: int, rows: int) -> bool:

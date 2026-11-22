@@ -22,6 +22,13 @@ def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     monkeypatch.setenv("PATH", str(bin_dir))
+    # PATH is replaced wholesale above, so enable() cannot find the real CLI.
+    # _duckterm_bin() raises without it and the test fails on the environment
+    # rather than on what it is checking -- which made 10 of these depend on
+    # whether a duckterm binary happened to be installed on the machine.
+    duckterm = bin_dir / "duckterm"
+    duckterm.write_text("#!/bin/sh\nexit 0\n")
+    duckterm.chmod(0o755)
     monkeypatch.setattr(connectors, "github_identity", lambda token: "test-user")
     return bin_dir
 
@@ -380,3 +387,53 @@ def test_status_reports_which_agent_clis_exist_here(
     connectors.enable("github", source="gh-cli", home=tmp_path)
     present = connectors.status("github", home=tmp_path)["harnesses_present"]
     assert present == {"claude-code": True, "codex": False}
+
+
+@pytest.mark.parametrize(
+    "drop_policy_flag,drop_harness_entry",
+    [(False, False), (True, False), (False, True), (True, True)],
+)
+def test_panel_reports_availability_from_one_predicate(
+    isolated_env: Path,
+    tmp_path: Path,
+    drop_policy_flag: bool,
+    drop_harness_entry: bool,
+) -> None:
+    """Either store being off makes the panel say unavailable.
+
+    The (False, True) case is the one that matters: a harness entry removed
+    outside Duckterm leaves policy.enabled set, and the panel must still not
+    claim the connector is available to an agent that cannot resolve it.
+    """
+    from duckterm.agents import mcp_install
+
+    _stub(isolated_env, "github-mcp-server", "sleep 0")
+    connectors.save_secret("github", "ghp_stored")
+    connectors.enable("github", source="stored", home=tmp_path)
+    assert connectors.status("github", home=tmp_path)["enabled"] is True
+
+    if drop_policy_flag:
+        connectors._save_policy(
+            "github", {**connectors.policy("github", home=tmp_path), "enabled": False}
+        )
+    if drop_harness_entry:
+        mcp_install.managed_remove("github", "codex", home=tmp_path)
+
+    expected = not (drop_policy_flag or drop_harness_entry)
+    assert connectors.available_to_agents("github", home=tmp_path) is expected
+    assert connectors.status("github", home=tmp_path)["enabled"] is expected
+
+
+def test_an_unreadable_harness_config_reads_as_unavailable_rather_than_raising(
+    isolated_env: Path, tmp_path: Path
+) -> None:
+    """Fail-closed for display: a damaged config must not crash the panel."""
+    _stub(isolated_env, "github-mcp-server", "sleep 0")
+    connectors.save_secret("github", "ghp_stored")
+    connectors.enable("github", source="stored", home=tmp_path)
+
+    from duckterm.agents import mcp_install
+
+    mcp_install._managed_path("codex", tmp_path).write_text("{ this is not json")
+    assert connectors.available_to_agents("github", home=tmp_path) is False
+    assert connectors.status("github", home=tmp_path)["enabled"] is False
