@@ -1,3 +1,35 @@
+## 2026-11-22 — The duplicated condition was real; my fix for it was not
+
+Two readers answered "is this connector on". The panel used policy.enabled AND
+every chosen harness registered; run() used the flag alone. I probed it, got
+panel=False with run()=True after dropping a harness entry, called it the
+GitHub incident and put the panel's predicate into run() as well.
+
+CI failed four tests, and they were right. Two things I had not checked:
+
+run() is only ever reached AS the `connector-run <name>` command inside a
+harness entry. By the time it executes, the calling harness's entry
+demonstrably exists - the invocation is the proof. And run() cannot tell which
+harness invoked it, so requiring ALL chosen harnesses means Codex losing its
+entry would stop Claude Code from running a connector it can reach perfectly
+well. My gate was both redundant and wrong in the same line.
+
+Also: disable() sets policy.enabled false, so the flag alone already catches
+what the owner actually clicks. My gate never protected the incident I claimed
+it protected - it only fired in the configuration those four tests set up.
+
+The honest residue is smaller than the ticket. _RunnerPolicy folds harness
+config into its watch signature only in the legacy branch, so for a connector
+with a policy file, harness revocation mid-run is genuinely unwatched. That is
+a real gap, it needs the calling harness's identity to fix properly, and it is
+not what I shipped.
+
+Lesson: a probe that shows two readers disagreeing proves the disagreement, not
+that either one is wrong. Before unifying them, find out how each is actually
+reached - the stricter condition is not automatically the safer one, and
+"fail-closed" is not a justification when the thing being closed is a path that
+was never open.
+
 ## 2026-11-22 — A test the client refuses is not a test the server passed
 
 The broker's TLS floor was untested: lowering minimum_version from 1.2 to 1.0
