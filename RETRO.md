@@ -7,12 +7,17 @@ GitHub incident and put the panel's predicate into run() as well.
 
 CI failed four tests, and they were right. Two things I had not checked:
 
-run() is only ever reached AS the `connector-run <name>` command inside a
-harness entry. By the time it executes, the calling harness's entry
-demonstrably exists - the invocation is the proof. And run() cannot tell which
-harness invoked it, so requiring ALL chosen harnesses means Codex losing its
-entry would stop Claude Code from running a connector it can reach perfectly
-well. My gate was both redundant and wrong in the same line.
+run() cannot tell which harness invoked it, so requiring ALL chosen harnesses
+means Codex losing its entry would stop Claude Code from running a connector it
+can reach perfectly well. That alone makes the gate wrong.
+
+I first wrote a second reason here: that run() is only ever reached AS the
+`connector-run <name>` command inside a harness entry, so the invocation proves
+the entry exists. QA checked and it is false. `connector-run` is an ordinary
+registered CLI subcommand - a hand-typed `duckterm connector-run github` works,
+and so does a stale entry a harness still has cached. The conclusion held, so
+the false premise cost nothing this time, which is exactly why it survived
+review by me.
 
 Also: disable() sets policy.enabled false, so the flag alone already catches
 what the owner actually clicks. My gate never protected the incident I claimed
@@ -29,6 +34,13 @@ that either one is wrong. Before unifying them, find out how each is actually
 reached - the stricter condition is not automatically the safer one, and
 "fail-closed" is not a justification when the thing being closed is a path that
 was never open.
+
+Second lesson, from the correction above: an argument that reaches the right
+answer does not get checked. I had two reasons and needed one; nobody audits the
+spare, least of all the person who wrote it. Reaching for "X can only be called
+from Y" is the tell - that is a claim about every caller, and a registered CLI
+subcommand has callers you did not write. Check it against the argument parser,
+not against how you happen to invoke it.
 
 ## 2026-11-22 — A test the client refuses is not a test the server passed
 

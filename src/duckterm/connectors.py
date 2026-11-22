@@ -122,11 +122,16 @@ def available_to_agents(name: str, *, home: Path | None = None) -> bool:
     the connector is available, because a missing entry means that agent cannot
     reach it however the flag reads.
 
-    This is the panel's predicate, not run()'s. run() is reached only as the
-    `connector-run <name>` command inside a harness entry, so by the time it
-    executes, the calling harness's entry demonstrably exists -- and it cannot
-    tell which harness invoked it, so it must not refuse because a *different*
-    chosen harness lost its entry.
+    This is the panel's predicate, not run()'s. run() must not gate on the
+    harness entries, for a reason that does not depend on how it was invoked:
+    it cannot tell which harness is calling it, so requiring all chosen
+    harnesses would let one harness's missing entry refuse a different harness
+    that is correctly registered. The policy flag alone is the right gate there,
+    and disable() sets it.
+
+    Do not reach for "the entry must exist because the entry is what invokes
+    it": `connector-run <name>` is an ordinary CLI subcommand, so it also runs
+    from a hand-typed command or a stale entry a harness still has cached.
 
     Fail-closed for display: a missing or unparseable harness config makes
     managed_installed() return False, so a damaged file reads as unavailable
