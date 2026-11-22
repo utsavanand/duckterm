@@ -114,7 +114,6 @@ def world(tmp_path: Path) -> Iterator[tuple[Gateway, Sandbox, Path, list[dict[st
     threading.Thread(target=stub.serve_forever, daemon=True).start()
     gateway = Gateway(
         name="duckterm-autopilot-gateway-test",
-        control_port=4391,
         secret_path=tmp_path / "control-secret",
     )
     gateway.ensure(
@@ -168,7 +167,7 @@ def test_claude_runs_in_a_sandbox_through_the_proxy_and_nothing_else(world: Any)
     # Nothing but the proxy is reachable: not the model API, not the host, not metadata.
     probe = (
         "const t=u=>fetch(u,{signal:AbortSignal.timeout(4000)}).then(()=>'reached',()=>'blocked');"
-        "Promise.all(['https://api.anthropic.com/v1/messages','http://host.docker.internal:4391/',"
+        "Promise.all(['https://api.anthropic.com/v1/messages','http://host.docker.internal:4300/',"
         "'http://169.254.169.254/']. map(t)).then(r=>console.log(r.join(',')))"
     )
     assert box.exec(["node", "-e", probe], timeout=30).stdout.strip() == "blocked,blocked,blocked"

@@ -123,13 +123,17 @@ def test_claude_call_swaps_token_for_key_and_charges_usage(setup: Any) -> None:
     proxy, port, seen = setup
     token = proxy.issue("run-1", budget=100_000, ttl=60)
     status, body, _ = call(
-        port, "/v1/messages", {"authorization": f"Bearer {token}", "x-duckterm-step": "build"}
+        port,
+        "/v1/messages",
+        {"authorization": f"Bearer {token}", "x-duckterm-step": "build", "accept-encoding": "gzip"},
     )
     assert status == 200
     assert body == sse(ANTHROPIC_STREAM)
     sent = seen[0]["headers"]
     assert sent["x-api-key"] == ANTHROPIC_KEY
     assert "authorization" not in sent and "x-duckterm-step" not in sent
+    # Compressed replies would hide their usage from the proxy.
+    assert sent["accept-encoding"] == "identity"
     # 1000 input + 500 cache write + 300 output + 20000 cache reads at a tenth
     assert proxy.run(token).used == 3800
     (entry,) = [json.loads(line) for line in (proxy._log_path).read_text().splitlines()]

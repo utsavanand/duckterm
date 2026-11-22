@@ -35,9 +35,12 @@ UPSTREAM_TIMEOUT = 600
 # in full would spend a budget on Claude Code re-reading its own context.
 CACHE_READ_WEIGHT = 0.1
 
-# Hop-by-hop headers, plus anything that carries a credential or names the proxy.
+# Hop-by-hop headers, plus anything that carries a credential or names the
+# proxy. accept-encoding is dropped so replies arrive uncompressed: the proxy
+# reads token usage out of them (the real API gzips by default).
 _DROP_REQUEST = frozenset(
     {
+        "accept-encoding",
         "authorization",
         "x-api-key",
         "host",

@@ -96,7 +96,8 @@ class Gateway:
     published on 127.0.0.1 only, for this machine's DuckTerm server."""
 
     name: str = GATEWAY
-    control_port: int = 4381
+    # Docker picks a free port on 127.0.0.1; read back after start.
+    control_port: int = 0
     secret_path: Path = field(default_factory=lambda: instance.home() / "autopilot-control-secret")
 
     def _secret(self) -> str:
@@ -118,6 +119,7 @@ class Gateway:
         model API base URLs (DUCKTERM_ANTHROPIC_URL / DUCKTERM_OPENAI_URL)."""
         state = docker("inspect", "-f", "{{.State.Running}}", self.name, check=False)
         if state.stdout.strip() == "true":
+            self._read_port()
             return
         docker("rm", "-f", self.name, check=False)
         # The proxy is stdlib-only, so the gateway runs this checkout's
@@ -132,11 +134,12 @@ class Gateway:
             env["CLAUDE_CODE_OAUTH_TOKEN"] = anthropic_oauth_token
         env.update(upstreams or {})
         args = ["run", "-d", "--name", self.name, "--restart", "unless-stopped",
-                "-p", f"127.0.0.1:{self.control_port}:8081",
+                "-p", "127.0.0.1::8081",
                 "-v", f"{src}:/src:ro", "--tmpfs", "/var/log/duckterm"]  # fmt: skip
         for key, value in env.items():
             args += ["-e", f"{key}={value}"]
         docker(*args, GATEWAY_IMAGE, "python", "-m", "duckterm.autopilot.model_proxy")
+        self._read_port()
         for _ in range(50):
             try:
                 self._control("GET", "/runs/none")
@@ -146,6 +149,10 @@ class Gateway:
         raise SandboxError(
             "the model proxy did not start: " + docker("logs", self.name, check=False).stderr[-500:]
         )
+
+    def _read_port(self) -> None:
+        published = docker("port", self.name, "8081/tcp").stdout.split()[0]
+        self.control_port = int(published.rsplit(":", 1)[1])
 
     def _control(
         self, method: str, path: str, body: dict[str, object] | None = None
