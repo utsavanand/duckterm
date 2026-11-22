@@ -1,3 +1,30 @@
+## 2026-11-22 — A read, a network call, and a write is a lost update
+
+_refresh_identity read the connector policy, asked GitHub who the token belongs
+to, then wrote the whole snapshot back with a new identity. Between the read and
+the write sat a call that can take five seconds. Anything the owner did in that
+window - Disable, Forget - was silently reverted, because the write restored
+enabled, source and generation from a snapshot taken before the click.
+
+What made it reachable rather than theoretical: the panel redesign added
+verify-on-open, so the slow call now fires exactly when the owner is looking at
+the row they are about to switch off. A fix in one place opened a race in
+another, and nothing in the panel's own tests could see it.
+
+What made it dangerous: the panel looked correct afterwards. It read Off,
+because the harness entries really were removed. But run() consults only
+policy.enabled, so the connector kept serving agents. Disagreeing sources of
+truth hide a failure instead of showing it - the same shape as
+[[intent-rendered-as-state]].
+
+Fix: re-read immediately before the write and save only if enabled, source and
+generation still match - a compare-and-set on the generation uuid that disable()
+and forget() already stamp. No new lock; the version marker was already there.
+
+Read-modify-write around anything slow needs a check at the write, not just at
+the read. And when a status display and an enforcement path read different
+fields, they will eventually disagree.
+
 ## 2026-11-21 — A test that builds its own config tests the config, not the product
 
 The broker's mutual-TLS tests looked like proof that the server demands client
