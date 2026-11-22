@@ -34,9 +34,9 @@ def repository_name(value: str) -> str:
 def local_token() -> tuple[str, dict[str, Any]]:
     from duckterm import connectors
 
+    # See review/github.py: the policy flag is about agents, and browsing
+    # repositories is Duckterm's own use of the credential.
     state = connectors.policy("github")
-    if not state.get("enabled"):
-        raise ValueError("Enable the GitHub connector on this computer to browse repositories")
     credential = connectors.github_token(str(state.get("source")))
     if not credential:
         raise ValueError("Reconnect the GitHub connector on this computer")
