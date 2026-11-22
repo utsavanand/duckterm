@@ -408,7 +408,6 @@ def test_panel_reports_availability_from_one_predicate(
     from duckterm.agents import mcp_install
 
     _stub(isolated_env, "github-mcp-server", "sleep 0")
-    _stub(isolated_env, "duckterm", "exit 0")
     connectors.save_secret("github", "ghp_stored")
     connectors.enable("github", source="stored", home=tmp_path)
     assert connectors.status("github", home=tmp_path)["enabled"] is True
@@ -430,7 +429,6 @@ def test_an_unreadable_harness_config_reads_as_unavailable_rather_than_raising(
 ) -> None:
     """Fail-closed for display: a damaged config must not crash the panel."""
     _stub(isolated_env, "github-mcp-server", "sleep 0")
-    _stub(isolated_env, "duckterm", "exit 0")
     connectors.save_secret("github", "ghp_stored")
     connectors.enable("github", source="stored", home=tmp_path)
 
