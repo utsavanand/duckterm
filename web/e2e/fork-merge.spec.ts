@@ -24,7 +24,13 @@ test("reviewed merge preserves exact text and a closed child stays readable", as
     await page.evaluate(() => { localStorage.setItem("rd-theme", "dark"); document.documentElement.dataset.theme = "dark"; });
     await page.screenshot({ path: "/tmp/duckterm-fork-merge-dark.png" });
     await page.setViewportSize({ width: 390, height: 844 });
+    const disclosure = dialog.getByText(/inbox messages with you and other agents/);
+    await disclosure.scrollIntoViewIfNeeded();
+    await expect(disclosure).toBeInViewport({ ratio: 1 });
+    await page.screenshot({ path: "/tmp/duckterm-fork-merge-mobile-disclosure.png" });
+    await dialog.getByRole("button", { name: "Merge and close child" }).scrollIntoViewIfNeeded();
     await expect(dialog.getByRole("button", { name: "Merge and close child" })).toBeInViewport({ ratio: 1 });
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
     await page.screenshot({ path: "/tmp/duckterm-fork-merge-mobile.png" });
     await dialog.getByRole("button", { name: "Merge and close child" }).click();
     await expect(dialog.getByText("Source closed. Its summaries and evidence remain readable. Both histories record this merge.")).toBeVisible();
