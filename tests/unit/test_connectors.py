@@ -22,6 +22,13 @@ def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     monkeypatch.setenv("PATH", str(bin_dir))
+    # PATH is replaced wholesale above, so enable() cannot find the real CLI.
+    # _duckterm_bin() raises without it and the test fails on the environment
+    # rather than on what it is checking -- which made 10 of these depend on
+    # whether a duckterm binary happened to be installed on the machine.
+    duckterm = bin_dir / "duckterm"
+    duckterm.write_text("#!/bin/sh\nexit 0\n")
+    duckterm.chmod(0o755)
     monkeypatch.setattr(connectors, "github_identity", lambda token: "test-user")
     return bin_dir
 
