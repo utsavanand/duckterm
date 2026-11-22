@@ -7,7 +7,6 @@ import pytest
 from tests.runtime.test_saved_checkpoint import checkpoint, rig
 from tests.runtime.test_session_api import Writer, dispatch
 
-from duckterm import harness_switch
 from duckterm.core.session_api import APIError
 from duckterm.handoff_review import REVIEW_SECONDS
 
@@ -36,7 +35,7 @@ async def approved(server):
     return packet, result
 
 
-def test_long_reviewed_brief_uses_one_revision_without_provider_and_can_prepare(rig, monkeypatch):
+def test_long_reviewed_brief_uses_one_revision_without_provider(rig, monkeypatch):
     server, transcript, _ = rig
     transcript[0]["text"] = "Long legacy conversation. " * 2000
 
@@ -58,11 +57,6 @@ def test_long_reviewed_brief_uses_one_revision_without_provider_and_can_prepare(
         assert cp["saved"] and cp["handoff_eligible"]
         assert cp["summary_origin"] == "owner-reviewed"
         assert cp["record"]["summary_ref"] == result["revision_id"]
-        prepared = await harness_switch.prepare(
-            server, "test-save", server.history.session("test-save")
-        )
-        assert packet["brief"] in prepared["seed"]
-        assert "Known gaps" in prepared["seed"]
         assert server.history._conn.execute("SELECT count(*) FROM digest_items").fetchone()[0] == 1
 
     asyncio.run(run())

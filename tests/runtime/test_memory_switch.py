@@ -94,7 +94,6 @@ def test_switch_uses_prepared_brief_and_lost_response_retry_is_durable(ready_swi
             interrupt=True,
             memory=proof,
             request_key="switch-1",
-            require_preparation=True,
         )
         server.memory_preparation.cancel("a", proof["preparation_id"], "prepare")
         await drain(server)
@@ -110,7 +109,6 @@ def test_switch_uses_prepared_brief_and_lost_response_retry_is_durable(ready_swi
             interrupt=True,
             memory=proof,
             request_key="switch-1",
-            require_preparation=True,
         )
         assert repeat["id"] == op["id"] and len(calls) == 2
         with pytest.raises(APIError, match="another switch"):
@@ -121,7 +119,6 @@ def test_switch_uses_prepared_brief_and_lost_response_retry_is_durable(ready_swi
                 interrupt=True,
                 memory=proof,
                 request_key="switch-1",
-                require_preparation=True,
             )
 
     asyncio.run(run())
@@ -148,7 +145,6 @@ def test_stale_proof_cannot_stop_agent(ready_switch, change):
                 interrupt=True,
                 memory=proof,
                 request_key="switch",
-                require_preparation=True,
             )
         assert calls == []
 
@@ -160,9 +156,7 @@ def test_queued_switch_does_not_silently_extend_confirmation(ready_switch):
 
     async def run():
         proof = await prep(server)
-        await server.restarts.request(
-            "a", "", "claude-code", memory=proof, request_key="queued", require_preparation=True
-        )
+        await server.restarts.request("a", "", "claude-code", memory=proof, request_key="queued")
         await hook(server)
         await drain(server)
         result = server.restarts.receipt("a", "queued")
@@ -216,7 +210,6 @@ def test_launch_failure_reports_stopped_source_and_keeps_native_recovery(ready_s
             interrupt=True,
             memory=proof,
             request_key="failed-launch",
-            require_preparation=True,
         )
         await drain(server)
         receipt = server.restarts.receipt("a", "failed-launch")
@@ -304,7 +297,6 @@ def test_status_observation_at_final_switch_check_does_not_stop_handoff(ready_sw
             interrupt=True,
             memory=proof,
             request_key="observed-switch",
-            require_preparation=True,
         )
         await drain(server)
         receipt = server.restarts.receipt("a", "observed-switch")
