@@ -21,7 +21,9 @@ def add_parser(sub: Any) -> None:
 
     def common(p: argparse.ArgumentParser, *, kit: bool = True) -> None:
         if kit:
-            p.add_argument("kit", help="path to the kit folder (holds skill-kit.toml)")
+            p.add_argument(
+                "kit", help="path to the kit folder (holds skill-kit.toml), or to a manifest file"
+            )
         p.add_argument("--project", default=".", help="repository to install into (default: cwd)")
         p.add_argument(
             "--harness",

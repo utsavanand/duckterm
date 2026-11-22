@@ -112,10 +112,15 @@ def component_name(kind: str, fields: dict[str, Any]) -> str:
 
 
 def load(root: Path) -> Kit:
-    """Read a kit from its directory. A legacy `duckterm-harness.json` is
-    accepted with `legacy=True` so callers can warn; it carries no components."""
+    """Read a kit from its directory, or from a manifest file named directly
+    (`uv-suite/skill-kit.fast.toml`: one repository, several kits sharing its
+    files; the kit root is the file's folder). A legacy `duckterm-harness.json`
+    is accepted with `legacy=True` so callers can warn; it carries no
+    components."""
     root = Path(root)
     manifest = root / MANIFEST
+    if root.is_file() and root.suffix == ".toml":
+        manifest, root = root, root.parent
     if manifest.is_file():
         try:
             raw = tomllib.loads(manifest.read_text())

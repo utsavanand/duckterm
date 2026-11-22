@@ -496,3 +496,43 @@ rules = [ { tool = "shell", match = "rm -rf *", decision = "deny" } ]
     sport = plan.build(kit, tmp_path / "p", ["claude-code"], {"persona": "sport"})
     assert _statuses(sport, "optkit/hook/guard") == {"claude-code": "not applicable"}
     assert not any("optkit/guard.sh" in p.path for p in sport.files())
+
+
+def test_a_repository_may_hold_several_manifests_sharing_its_files(tmp_path):
+    kit = _tiny_kit(
+        tmp_path,
+        """
+manifest_version = 1
+name = "careful"
+description = "the default"
+version = "1.0.0"
+conflicts_with = ["fast"]
+
+[[components]]
+kind = "knowledge"
+path = "knowledge/notes.md"
+""",
+        {"knowledge/notes.md": "# notes\n", "knowledge/more.md": "# more\n"},
+    )
+    (kit.root / "skill-kit.fast.toml").write_text(
+        """
+manifest_version = 1
+name = "fast"
+description = "the light one"
+version = "1.0.0"
+conflicts_with = ["careful"]
+
+[[components]]
+kind = "knowledge"
+path = "knowledge/more.md"
+"""
+    )
+    fast = manifest.load(kit.root / "skill-kit.fast.toml")
+    assert fast.name == "fast" and fast.root == kit.root
+    assert [c.name for c in fast.components] == ["more"]
+    assert not [f for f in validate.validate(fast) if f.level == "error"]
+    project = tmp_path / "p"
+    project.mkdir()
+    install.apply(plan.build(kit, project, ["claude-code"]))
+    refused = plan.build(fast, project, ["claude-code"])
+    assert [c.kind for c in refused.conflicts] == ["conflicts-with"]

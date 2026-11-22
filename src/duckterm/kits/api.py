@@ -37,8 +37,8 @@ def _kit(value: Any) -> m.Kit:
     if not text:
         raise KitApiError(400, "kit is required (a folder holding skill-kit.toml)")
     path = Path(text).expanduser()
-    if not path.is_dir():
-        raise KitApiError(400, f"no such directory: {path}")
+    if not path.is_dir() and not (path.is_file() and path.suffix == ".toml"):
+        raise KitApiError(400, f"no such kit folder or manifest: {path}")
     try:
         return m.load(path)
     except (m.ManifestError, OSError, ValueError) as exc:
