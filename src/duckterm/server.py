@@ -967,7 +967,26 @@ class Server:
         identity = instance.description()
         identity["port"] = getattr(self, "_bound_port", instance.port())
         identity["url"] = f"http://127.0.0.1:{identity['port']}"
-        await _write_json(writer, 200, {**self.edition.description(), "instance": identity})
+        from duckterm import __version__
+
+        await _write_json(
+            writer,
+            200,
+            {
+                **self.edition.description(),
+                "instance": identity,
+                "runtime_version": __version__,
+                "app_update_blocked": (
+                    "A backup is running. Wait until it finishes."
+                    if (
+                        self._backup_jobs
+                        and self._backup_jobs.task
+                        and not self._backup_jobs.task.done()
+                    )
+                    else None
+                ),
+            },
+        )
 
     def require_feature(self, feature: str) -> None:
         if not self.edition.includes(feature):
