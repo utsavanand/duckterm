@@ -482,7 +482,7 @@ def test_rule_suggestions_have_their_own_capability_and_never_write_rules(
         assert code == 403 and response["feature"] == "rule_suggestions"
         model.assert_not_called()
     else:
-        assert code == 200 and response["suggestions"] == []
+        assert code == 200 and response["proposals"] == []
         model.assert_called_once()
     assert rules.read_text() == "Keep owner rules.\n"
 

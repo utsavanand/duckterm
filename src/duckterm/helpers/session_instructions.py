@@ -74,14 +74,14 @@ def scoped_rules(cwd: Path, runtime: str, model: str | None = None) -> str:
     ITS runtime explicitly instead of relying on it honoring the scope labels
     in the shared file. Empty when there are none (or rules.json is absent or
     hand-corrupted — that must not block a launch)."""
-    from duckterm.core.agents_rules import load_rules
+    from duckterm.core.agents_rules import load_rules, rule_body
 
     try:
         rules = load_rules(cwd)
     except (ValueError, OSError):
         return ""
     lines = [
-        r.text
+        rule_body(r)
         for r in rules
         if r.status == "active" and r.scope != "all" and r.matches(runtime, model)
     ]

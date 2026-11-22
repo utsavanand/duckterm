@@ -1,16 +1,19 @@
 """Typed AGENTS.md rules: one .duckterm-rules.json per folder is the source of
 truth; AGENTS.md is rendered from it and carries a generated banner.
 
-Design: docs/agents-template.md. Lifecycle: machine-proposed rules land as
-"candidate"; a human promotes to "active" or demotes to "rejected". Rejected
-rules stay as tombstones so the suggest loop never re-proposes the same rule
-from the same corrections. Only active rules render into AGENTS.md.
+Reconciliation proposals remain separate until reviewed and saved. Only active
+rules render into AGENTS.md.
 """
 
+import fcntl
+import hashlib
 import json
+import os
 import re
-from dataclasses import asdict, dataclass
+import tempfile
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Any
 
 RULES_FILENAME = ".duckterm-rules.json"
 AGENTS_FILENAME = "AGENTS.md"
@@ -19,7 +22,7 @@ GENERATED_BANNER = (
     "dashboard (AGENTS.md button); hand edits here are overwritten on save -->"
 )
 
-STATUSES = ("active", "candidate", "rejected")
+STATUSES = ("active", "candidate", "rejected", "retired")
 SOURCES = ("manual", "correction", "digest", "retro")
 
 
@@ -34,6 +37,13 @@ class RuleBlock:
     added: str = ""  # ISO date
     heading: str = ""  # optional markdown section the rule renders under
     note: str = ""  # reviewer note, e.g. why a rule was rejected
+    title: str = ""
+    explanation: str = ""
+    when: str = ""
+    examples: list[dict[str, str]] = field(default_factory=list)
+    exceptions: list[str] = field(default_factory=list)
+    revision: int = 1
+    source_refs: list[str] = field(default_factory=list)
 
     def matches(self, runtime: str, model: str | None = None) -> bool:
         """Does this rule apply to a session on `runtime` (+ optional model)?
@@ -63,20 +73,214 @@ def load_rules(directory: Path) -> list[RuleBlock]:
         return []
     known = set(RuleBlock.__dataclass_fields__)
     raw = json.loads(path.read_text())
+    if not isinstance(raw, dict) or not isinstance(raw.get("rules", []), list):
+        raise ValueError("Invalid rule catalogue")
+    if raw.get("schema_version", 1) not in (1, 2):
+        raise ValueError("Unsupported rule schema version")
     out: list[RuleBlock] = []
     for entry in raw.get("rules", []):
+        if raw.get("schema_version") == 2:
+            out.append(parse_rule(entry))
+            continue
         if not isinstance(entry, dict) or not entry.get("id") or not entry.get("text"):
             continue
         out.append(RuleBlock(**{k: v for k, v in entry.items() if k in known}))
     return out
 
 
-def save_rules(directory: Path, rules: list[RuleBlock]) -> None:
-    """Write rules.json AND render AGENTS.md next to it — the two files never
-    drift because this is the only writer."""
+def parse_rule(entry: Any) -> RuleBlock:
+    """Validate the versioned wire contract using only stdlib."""
+    if not isinstance(entry, dict) or set(entry) - set(RuleBlock.__dataclass_fields__):
+        raise ValueError("Unknown rule fields")
+    for name in ("id", "text"):
+        if not isinstance(entry.get(name), str) or not entry[name].strip():
+            raise ValueError(f"Rule {name} is required")
+    rule = RuleBlock(**entry)
+    for name in (
+        "id",
+        "text",
+        "scope",
+        "status",
+        "source",
+        "added",
+        "heading",
+        "note",
+        "title",
+        "explanation",
+        "when",
+    ):
+        value = getattr(rule, name)
+        if not isinstance(value, str) or len(value) > (120 if name == "title" else 16000):
+            raise ValueError(f"Invalid rule {name}")
+    if rule.scope.split("/", 1)[0] not in {"all", "codex", "claude-code", "copilot", "opencode"}:
+        raise ValueError("Unsupported harness scope")
+    if rule.status not in STATUSES or not re.fullmatch(
+        r"(?:all|(?:codex|claude-code|copilot|opencode)(?:/[a-zA-Z0-9._-]+)?)", rule.scope
+    ):
+        raise ValueError("Invalid rule status or harness scope")
+    for name in ("revision", "evidence"):
+        if type(getattr(rule, name)) is not int or getattr(rule, name) < 1:
+            raise ValueError(f"Invalid rule {name}")
+    for name in ("exceptions", "source_refs"):
+        values = getattr(rule, name)
+        if (
+            not isinstance(values, list)
+            or len(values) > 100
+            or any(not isinstance(v, str) or not v.strip() or len(v) > 4000 for v in values)
+        ):
+            raise ValueError(f"Invalid rule {name}")
+    if not isinstance(rule.examples, list) or len(rule.examples) > 8:
+        raise ValueError("At most eight rule examples are allowed")
+    for example in rule.examples:
+        validate_example(example)
+    return rule
+
+
+def validate_example(example: Any) -> None:
+    if not isinstance(example, dict) or set(example) - {"situation", "do", "avoid", "explanation"}:
+        raise ValueError("Invalid example fields")
+    if not {"situation", "do"} <= set(example) or any(
+        not isinstance(v, str) or not v.strip() or len(v) > 4000 for v in example.values()
+    ):
+        raise ValueError("An example needs a situation and expected behavior")
+
+
+def catalog_version(directory: Path) -> str:
+    digest = hashlib.sha256()
+    for name in (RULES_FILENAME, AGENTS_FILENAME):
+        path = directory / name
+        digest.update(name.encode())
+        digest.update(path.read_bytes() if path.is_file() else b"")
+    return digest.hexdigest()
+
+
+def read_catalog(directory: Path) -> dict[str, Any]:
     path = directory / RULES_FILENAME
-    path.write_text(json.dumps({"rules": [asdict(r) for r in rules]}, indent=2) + "\n")
-    (directory / AGENTS_FILENAME).write_text(render_agents_md(rules))
+    raw = json.loads(path.read_text()) if path.is_file() else {}
+    rules = load_rules(directory)
+    if not isinstance(raw.get("proposals", []), list):
+        raise ValueError("Invalid reconciliation history")
+    md = directory / AGENTS_FILENAME
+    text = md.read_text() if md.is_file() else ""
+    expected = raw.get("rendered_sha256")
+    drift = bool(
+        md.is_file()
+        and path.is_file()
+        and (
+            text != render_agents_md(rules)
+            or (expected and hashlib.sha256(text.encode()).hexdigest() != expected)
+        )
+    )
+    return {
+        "rules": [asdict(r) for r in rules],
+        "proposals": raw.get("proposals", []),
+        "version": catalog_version(directory),
+        "drift": drift,
+        "text": text,
+        "rendered_text": render_agents_md(rules),
+        "managed": path.is_file(),
+        "exists": md.is_file(),
+        "capture_fingerprint": raw.get("capture_fingerprint", ""),
+    }
+
+
+def atomic_text(path: Path, text: str) -> None:
+    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w") as stream:
+            stream.write(text)
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
+def save_rules(
+    directory: Path,
+    rules: list[RuleBlock],
+    *,
+    proposals: list[dict[str, Any]] | None = None,
+    expected_version: str | None = None,
+    reconcile_drift: bool = False,
+    capture_fingerprint: str | None = None,
+    render: bool = True,
+) -> None:
+    """Serialize catalogue writers, including checkpoint and dashboard requests."""
+    with (directory / ".duckterm-rules.lock").open("a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        _save_rules(
+            directory,
+            rules,
+            proposals=proposals,
+            expected_version=expected_version,
+            reconcile_drift=reconcile_drift,
+            capture_fingerprint=capture_fingerprint,
+            render=render,
+        )
+
+
+def _save_rules(
+    directory: Path,
+    rules: list[RuleBlock],
+    *,
+    proposals: list[dict[str, Any]] | None = None,
+    expected_version: str | None = None,
+    reconcile_drift: bool = False,
+    capture_fingerprint: str | None = None,
+    render: bool = True,
+) -> None:
+    """Publish the authoritative catalogue and its detectable derived export."""
+    path = directory / RULES_FILENAME
+    current = read_catalog(directory)
+    if expected_version is not None and expected_version != current["version"]:
+        raise ValueError("Rules changed since this page was opened. Reload before saving.")
+    if current["drift"] and render and not reconcile_drift:
+        raise ValueError(
+            "AGENTS.md differs from the stored rules. Review the file before replacing it."
+        )
+    ids = [r.id for r in rules]
+    if len(set(ids)) != len(ids):
+        raise ValueError("Duplicate rule IDs")
+    for rule in rules:
+        parse_rule(asdict(rule))
+    text = render_agents_md(rules) if render else current["text"]
+    raw = {
+        "schema_version": 2,
+        "rules": [asdict(r) for r in rules],
+        "proposals": proposals if proposals is not None else current["proposals"],
+        "capture_fingerprint": (
+            capture_fingerprint
+            if capture_fingerprint is not None
+            else current["capture_fingerprint"]
+        ),
+        "rendered_sha256": hashlib.sha256(text.encode()).hexdigest(),
+    }
+    # JSON is authoritative; a failed second replacement is detected on the next read.
+    if reconcile_drift and current["drift"]:
+        backup = directory / f"AGENTS.md.before-{current['version'][:12]}"
+        if not backup.exists():
+            atomic_text(backup, current["text"])
+    atomic_text(path, json.dumps(raw, indent=2) + "\n")
+    if render:
+        atomic_text(directory / AGENTS_FILENAME, text)
+
+
+def rule_body(rule: RuleBlock) -> str:
+    lines = [rule.text.strip()]
+    for label, value in (("When", rule.when), ("Why", rule.explanation)):
+        if value:
+            lines += [f"{label}: {value}"]
+    for exception in rule.exceptions:
+        lines += [f"Exception: {exception}"]
+    for example in rule.examples:
+        lines += [f"Example: {example['situation']}", f"Do: {example['do']}"]
+        if example.get("avoid"):
+            lines += [f"Avoid: {example['avoid']}"]
+        if example.get("explanation"):
+            lines += [f"Explanation: {example['explanation']}"]
+    return "\n".join(lines)
 
 
 def render_agents_md(rules: list[RuleBlock]) -> str:
@@ -97,7 +301,9 @@ def render_agents_md(rules: list[RuleBlock]) -> str:
             lines += [f"## {r.heading}", ""]
         current_heading = r.heading
         label = "" if r.scope == "all" else f" *({r.scope} only)*"
-        body = r.text.strip()
+        if r.title:
+            lines += [f"### {r.title}", ""]
+        body = rule_body(r)
         first, *rest = body.splitlines()
         lines.append(f"- {first}{label}")
         lines += [f"  {ln.strip()}" for ln in rest]
