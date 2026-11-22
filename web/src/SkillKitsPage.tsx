@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, KitCatalog, KitDetail, KitEntry, KitPlan, KitProcedure, KitWorkspace } from "./api";
+import { DirBrowser } from "./DirBrowser";
 import { Button, useToast } from "./ui";
 import "./skillKits.css";
 
@@ -351,6 +352,7 @@ function CreateTeam({ name, busy, installed, onCreate }: { name: string; busy: b
 
 function AddView({ busy, onCancel, onAdd }: { busy: boolean; onCancel: () => void; onAdd: (path: string) => void }) {
   const [path, setPath] = useState("");
+  const [browsing, setBrowsing] = useState(false);
   return (
     <>
       <div className="rd-kits-head">
@@ -359,9 +361,21 @@ function AddView({ busy, onCancel, onAdd }: { busy: boolean; onCancel: () => voi
       </div>
       <form className="rd-kits-form" style={{ gridTemplateColumns: "1fr" }} onSubmit={(e) => { e.preventDefault(); if (path.trim()) onAdd(path.trim()); }}>
         <div>
-          <label htmlFor="rd-kits-kit" style={LABEL}>Kit folder or its skill-kit.toml</label>
-          <input id="rd-kits-kit" type="text" value={path} onChange={(e) => setPath(e.target.value)} placeholder="~/ws-uv-suite  or  ~/ws-uv-suite/skill-kit.fast.toml" autoFocus />
-          <div className="rd-kits-note">A path on this machine. A folder is read through its skill-kit.toml; name a .toml file directly when a repository holds several kits. No kit code runs.</div>
+          <label htmlFor="rd-kits-kit" style={LABEL}>Kit folder</label>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <input id="rd-kits-kit" type="text" value={path} onChange={(e) => setPath(e.target.value)} placeholder="~/Downloads/uv-suite" autoFocus style={{ flex: 1 }} />
+            <Button variant="ghost" onClick={() => setBrowsing((b) => !b)}>Browse…</Button>
+          </div>
+          <div className="rd-kits-note">The folder a kit was downloaded or cloned into; it holds skill-kit.toml. When one folder holds several kits, type the path of the .toml you want. Only the manifest is read; no kit code runs.</div>
+          {browsing && (
+            <DirBrowser
+              browse={api.browse}
+              start={path.trim() || undefined}
+              pickLabel="Use this kit folder"
+              onPick={(r) => { setPath(r.path); setBrowsing(false); }}
+              onCancel={() => setBrowsing(false)}
+            />
+          )}
         </div>
       </form>
       <div className="rd-kits-footer">

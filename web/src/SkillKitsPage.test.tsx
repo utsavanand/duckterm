@@ -4,7 +4,7 @@ import { api, KitCatalog, KitEntry, KitPlan } from "./api";
 import { SkillKitsPage } from "./SkillKitsPage";
 
 vi.mock("./api", () => ({
-  api: { kitsCatalog: vi.fn(), kitsRegister: vi.fn(), kitsUnregister: vi.fn(), kitsPlan: vi.fn(), kitsInstall: vi.fn(), kitsUninstall: vi.fn(), kitsVerify: vi.fn(), kitsCreateTeam: vi.fn() },
+  api: { browse: vi.fn(), kitsCatalog: vi.fn(), kitsRegister: vi.fn(), kitsUnregister: vi.fn(), kitsPlan: vi.fn(), kitsInstall: vi.fn(), kitsUninstall: vi.fn(), kitsVerify: vi.fn(), kitsCreateTeam: vi.fn() },
 }));
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 
@@ -64,7 +64,7 @@ it("adds a kit from a path and lands on its page, not installed anywhere", async
   vi.mocked(api.kitsRegister).mockResolvedValue({ name: "sample-kit", path: "/kits/sample", version: "0.1.0", description: "" });
   render(<SkillKitsPage onClose={() => {}} fallback={null} />);
   fireEvent.click(await screen.findByRole("button", { name: "Add skill kit…" }));
-  fireEvent.change(screen.getByLabelText(/Kit folder or its skill-kit.toml/), { target: { value: "/kits/sample/skill-kit.toml" } });
+  fireEvent.change(screen.getByLabelText("Kit folder"), { target: { value: "/kits/sample/skill-kit.toml" } });
   fireEvent.click(screen.getByRole("button", { name: "Add" }));
   await waitFor(() => expect(api.kitsRegister).toHaveBeenCalledWith("/kits/sample/skill-kit.toml", ""));
   expect(await screen.findByRole("heading", { name: /sample-kit/ })).toBeVisible();
@@ -104,4 +104,17 @@ it("creates a team as a new workspace from the kit's installed repository", asyn
   fireEvent.click(screen.getByRole("button", { name: "Create workspace" }));
   await waitFor(() => expect(api.kitsCreateTeam).toHaveBeenCalledWith({ project: "/ws/duckterm", kit: "uv-suite", team: "uv-coding", name: "Payments squad" }, ""));
   await waitFor(() => expect(created).toHaveBeenCalledWith("Payments squad"));
+});
+
+it("browses to a kit folder instead of typing its path", async () => {
+  vi.mocked(api.kitsCatalog).mockResolvedValue(catalog);
+  vi.mocked(api.browse).mockResolvedValue({ path: "/Users/me/Downloads", parent: "/Users/me", is_git: false, entries: [{ name: "uv-suite", path: "/Users/me/Downloads/uv-suite", is_git: false }] } as never);
+  render(<SkillKitsPage onClose={() => {}} fallback={null} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Add skill kit…" }));
+  fireEvent.click(screen.getByRole("button", { name: "Browse…" }));
+  expect(await screen.findByText("uv-suite")).toBeVisible();
+  fireEvent.click(screen.getByText("uv-suite"));
+  await waitFor(() => expect(api.browse).toHaveBeenLastCalledWith("/Users/me/Downloads/uv-suite"));
+  fireEvent.click(screen.getByRole("button", { name: "Use this kit folder" }));
+  expect(screen.getByLabelText("Kit folder")).toHaveValue("/Users/me/Downloads");
 });

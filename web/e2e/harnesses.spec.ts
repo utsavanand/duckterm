@@ -45,7 +45,7 @@ test("add a skill kit, install it into a workspace and read a skill; the kit's s
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Skill kits" }).click();
   await page.getByRole("button", { name: "Add skill kit…" }).click();
-  await page.getByLabel(/Kit folder or its skill-kit.toml/).fill(kit);
+  await page.getByLabel("Kit folder").fill(kit);
   await page.getByRole("button", { name: "Add", exact: true }).click();
 
   await expect(page.getByRole("heading", { name: `kit-${stamp}` })).toBeVisible();
