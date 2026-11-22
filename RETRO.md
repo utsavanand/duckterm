@@ -1,3 +1,14 @@
+## 2026-11-21 — The local gate checked formatting with two tools that disagree
+
+scripts/gate.sh ran both `black --check` and `ruff format --check`; CI runs
+only black. The two wrap an assert with a message differently, so for that
+shape no formatting satisfies both: ruff format "fixed" a line in #415 into
+the form black rejects, and CI failed on formatting alone. A gate step that
+CI does not run cannot be the reason a branch is or isn't shippable, so it
+only produces false failures. Removed ruff format from the gate; black stays
+the one formatter, matching ci.yml. Keep the local gate a superset of CI's
+checks only where the extra step agrees with CI.
+
 ## 2026-11-21 — Synchronize asynchronous tests on observable progress
 
 PR #409's foreground-refresh test assumed twenty task yields completed a failed
