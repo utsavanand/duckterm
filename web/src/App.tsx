@@ -37,6 +37,7 @@ import { BugReport } from "./BugReport";
 import { DashboardMenus } from "./DashboardMenus";
 import { LiveAgentTree, LiveControlTower, LiveContextPanel, LiveInboxView, LiveSessionCard } from "./liveSessionViews";
 import { HarnessesModal } from "./HarnessesModal";
+import { SkillKitsPage } from "./SkillKitsPage";
 import { MemoryView } from "./MemoryView";
 import { TimelineView } from "./TimelineView";
 import { SessionFilesView } from "./SessionFilesView";
@@ -665,9 +666,12 @@ function Dashboard() {
       {modal === "agentsetup" && <RuntimeSetupWizard onClose={() => setModal(null)} />}
       {modal === "aimodels" && <AiModelsModal onClose={() => setModal(null)} />}
       {modal === "harnesses" && (
-        <HarnessesModal
+        <SkillKitsPage
+          defaultDir={agentsMdDir}
+          knownDirs={Array.from(new Set(sessions.map(s => s.worktreePath ?? s.cwd).filter((d): d is string => !!d)))}
           sessionKey={selected?.key}
           onClose={() => setModal(null)}
+          fallback={<HarnessesModal sessionKey={selected?.key} onClose={() => setModal(null)} />}
         />
       )}
       {actionAnchor && actionSession && <SessionActions key={actionSession.key + ":" + actionAnchor.x + ":" + actionAnchor.y} anchor={actionAnchor} session={actionSession}

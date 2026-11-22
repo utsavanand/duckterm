@@ -450,6 +450,51 @@ async function artifactRequest<T>(path: string, method = "GET"): Promise<T> {
   return result as T;
 }
 
+
+// ── Skill kits (server: duckterm.kits.api) ────────────────────────────────
+export interface KitPlanRequest { kit: string; project: string; harnesses?: string[]; options?: Record<string, string> }
+export interface KitProcedure {
+  name: string; description: string; template: string;
+  roles: Record<string, { purpose: string; skills: string[] }>;
+  rules: Record<string, unknown>[];
+  kit?: string; kit_version?: string | null;
+}
+export interface KitComponentSummary { name: string; effects?: string; event?: string; match?: string; load?: unknown; invocation?: string; harness?: string; when?: Record<string, string[]>; outputs?: string[] }
+export interface KitInventory {
+  name: string; version: string; description: string; root: string;
+  author?: string | null; license?: string | null;
+  options: Record<string, { default?: string; choices?: string[] }>;
+  components: Record<string, KitComponentSummary[]>;
+  component_count: number;
+  procedures: KitProcedure[];
+  findings: { level: string; component: string; message: string }[];
+  valid: boolean;
+}
+export interface KitPlanRow { component: string; kind: string; harnesses: Record<string, string>; notes: string[] }
+export interface KitConflict { path: string; kind: string; detail: string; choices: string[]; component: string }
+export interface KitPlan {
+  kit: { name: string; version: string }; project: string; harnesses: string[]; options: Record<string, string>;
+  findings: { level: string; component: string; message: string }[];
+  conflicts: KitConflict[];
+  rows: KitPlanRow[];
+  files: { path: string; op: string; harness: string; component: string }[];
+}
+export interface KitReport { kit: string; written: string[]; removed: string[]; kept: string[]; notes: string[] }
+export interface KitVerifyReport { kit: string; missing: string[]; drifted: string[] }
+export interface KitInstalled {
+  name: string; version: string | null; harnesses: string[]; options: Record<string, string>;
+  installed_at: number | null; entries: number; trusted: boolean;
+  verify: { ok: boolean | null; missing: string[]; drifted: string[] };
+  flows: string[]; components: string[]; procedures: KitProcedure[];
+}
+export interface KitRunSummary { run_id: string; flow: string; state: string; started_at: number; current: { step: string; attempt: number } | null; failure: { step: string; attempt: number; reason: string } | null }
+export interface KitRun extends KitRunSummary {
+  harness: string; executor: string;
+  attempts: { step: string; attempt: number; kind: string; status: string; choice: string | null; reason: string; outputs: Record<string, unknown> }[];
+  gates: { step: string; visit: number; question: string | null; show: unknown; choices: string[]; response: unknown }[];
+}
+export interface KitsOverview { project: string; kits: KitInstalled[]; procedures: KitProcedure[]; harnesses_present: Record<string, boolean>; runs: KitRunSummary[] }
+
 export const api = {
   edition: () => get<EditionDescription>("/edition", undefined, { authed: true }),
   folderStats: (folder: string) => artifactRequest<FolderStats>(`/folders/${encodeURIComponent(folder)}/stats`),
@@ -692,7 +737,27 @@ export const api = {
       return data as { updated: boolean };
     });
   },
-  // Skill kits (collections of skills/hooks/sub-agents, e.g. uv-suite).
+  // Skill kits: the engine behind `duckterm kit`, behind the skill_kits flag.
+  // Every call is a POST with the project path in the body.
+  kitsOverview: (project: string, context?: string) =>
+    post<KitsOverview>("/kits/overview", { project }, context),
+  kitsPlan: (body: KitPlanRequest, context?: string) =>
+    post<{ inventory: KitInventory; plan: KitPlan }>("/kits/plan", body, context),
+  kitsInstall: (body: KitPlanRequest & { replace?: boolean }, context?: string) =>
+    post<{ plan: KitPlan; report: KitReport }>("/kits/install", body, context),
+  kitsUninstall: (project: string, name: string, context?: string) =>
+    post<{ report: KitReport }>("/kits/uninstall", { project, name }, context),
+  kitsVerify: (project: string, context?: string) =>
+    post<{ reports: KitVerifyReport[] }>("/kits/verify", { project }, context),
+  kitsRun: (body: { project: string; flow: string; harness?: string; inputs?: Record<string, string> }, context?: string) =>
+    post<{ run_id: string; flow: string; harness: string }>("/kits/run", body, context),
+  kitsRuns: (project: string, context?: string) =>
+    post<{ runs: KitRunSummary[] }>("/kits/runs", { project }, context),
+  kitsRunDetail: (project: string, run_id: string, context?: string) =>
+    post<{ run: KitRun }>("/kits/run-detail", { project, run_id }, context),
+  kitsGate: (project: string, run_id: string, step: string, answer: string, context?: string) =>
+    post<{ run_id: string; resumed: boolean }>("/kits/gate", { project, run_id, step, answer }, context),
+  // Legacy skill-kit registry (duckterm-harness.json suites, e.g. uv-suite before its manifest).
   harnesses: (context?: string) =>
     get<{
       harnesses: {

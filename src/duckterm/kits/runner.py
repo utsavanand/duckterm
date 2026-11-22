@@ -21,6 +21,7 @@ import subprocess
 import tempfile
 import time
 import uuid
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -296,7 +297,11 @@ def start(
     executor: Executor | None = None,
     limits: Limits | None = None,
     executor_state: dict[str, Any] | None = None,
+    on_start: Callable[[Run], None] | None = None,
 ) -> Run:
+    """Run a flow to its end, a gate or a failure. `on_start` is called once
+    the run file exists and before the first step, so a server can answer
+    with the run id while a model step is still working."""
     project = Path(project).resolve()
     flow, skills, flow_hash = load_flow(project, ref)
     if harness not in adapters.ADAPTERS:
@@ -332,6 +337,8 @@ def start(
     }
     run = Run(project, state, flow, skills)
     run.save()
+    if on_start is not None:
+        on_start(run)
     return _drive(run, flow["steps"][0]["id"], ex, limits or Limits())
 
 

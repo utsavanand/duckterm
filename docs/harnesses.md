@@ -184,8 +184,18 @@ sandbox executor answers from inside the sandbox, where the harness and its
 trust record actually live. The runner itself checks only that the step's
 skill is installed in the project.
 
-The dashboard's **Skill kits** dialog still only lists kits by folder path and
-shows their contents; the install wizard on top of `plan`/`install` is next.
+**The Skill kits page** (Settings → Skill kits, behind the flag) is a front
+end to the same engine. It lists the kits installed in a workspace's
+repository with their verify state and flows, and the procedures they ship
+(from the install record, which carries each team template's roles and
+rules); Add takes a kit folder, shows the inventory and options, then the
+review page is the plan: one row per component, one status per harness, the
+conflicts with keep or replace, the files. Install, verify and uninstall call
+the engine; Run starts a flow in a server thread and the page watches the run
+file. The server routes are `POST /kits/overview | plan | install | uninstall |
+verify | run | runs | run-detail | gate`, all with the project path in the body
+(`duckterm.kits.api`). Applying a procedure to a workspace and the New team
+screen are the next slice; the page shows the button disabled until then.
 
 Endpoints: `GET /harnesses`, `POST /harnesses/register {path}`,
 `GET /harnesses/:name/contents`, `DELETE /harnesses/:name`. Registered kits

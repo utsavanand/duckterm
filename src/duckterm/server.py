@@ -342,6 +342,17 @@ _ROUTES: list[Route] = [
           **_mid("/harnesses/", "/contents")),
     Route("DELETE", "", lambda s, r, w, h, b, seg: s._deregister_harness(w, seg),
           prefix="/harnesses/"),
+    # ── skill kits: the engine behind `duckterm kit`, for the Skill kits page.
+    # All POST with the project in the body: route handlers do not see the query.
+    Route("POST", "/kits/overview", lambda s, r, w, h, b, seg: s._kits(w, "overview", b)),
+    Route("POST", "/kits/plan", lambda s, r, w, h, b, seg: s._kits(w, "plan", b)),
+    Route("POST", "/kits/install", lambda s, r, w, h, b, seg: s._kits(w, "install", b)),
+    Route("POST", "/kits/uninstall", lambda s, r, w, h, b, seg: s._kits(w, "uninstall", b)),
+    Route("POST", "/kits/verify", lambda s, r, w, h, b, seg: s._kits(w, "verify", b)),
+    Route("POST", "/kits/run", lambda s, r, w, h, b, seg: s._kits(w, "start", b)),
+    Route("POST", "/kits/runs", lambda s, r, w, h, b, seg: s._kits(w, "runs", b)),
+    Route("POST", "/kits/run-detail", lambda s, r, w, h, b, seg: s._kits(w, "run", b)),
+    Route("POST", "/kits/gate", lambda s, r, w, h, b, seg: s._kits(w, "gate", b)),
     # ── connectors (GitHub, Railway, … — credentials + MCP install) ──
     Route("POST", "", lambda s, r, w, h, b, seg: s._forget_connector(w, seg),
           **_mid("/connectors/", "/forget")),
@@ -2587,6 +2598,41 @@ class Server:
         stats = transcript_stats(path)
         self._context_cache[str(path)] = (mtime, stats)
         return stats
+
+    async def _kits(self, writer: asyncio.StreamWriter, action: str, body: bytes) -> None:
+        """The Skill kits page's calls, all answered by duckterm.kits.api over
+        the same engine `duckterm kit` uses. Install and uninstall write into
+        the project the body names; a flow run starts in a thread and is
+        watched through its run file."""
+        from duckterm.kits import api as kits_api
+
+        try:
+            payload: Any = json.loads(body or b"{}")
+        except json.JSONDecodeError:
+            await _write_json(writer, 400, {"error": "invalid JSON"})
+            return
+        if not isinstance(payload, dict):
+            await _write_json(writer, 400, {"error": "body must be an object"})
+            return
+        calls = {
+            "overview": lambda: kits_api.overview(payload.get("project")),
+            "runs": lambda: kits_api.runs(payload.get("project")),
+            "run": lambda: kits_api.run_detail(
+                payload.get("project"), str(payload.get("run_id") or "")
+            ),
+            "plan": lambda: kits_api.plan_for(payload),
+            "install": lambda: kits_api.install_kit(payload),
+            "uninstall": lambda: kits_api.uninstall_kit(payload),
+            "verify": lambda: kits_api.verify_kits(payload),
+            "start": lambda: kits_api.start_run(payload),
+            "gate": lambda: kits_api.answer_gate(payload, str(payload.get("run_id") or "")),
+        }
+        try:
+            result = await asyncio.to_thread(calls[action])
+        except kits_api.KitApiError as exc:
+            await _write_json(writer, exc.status, {"error": str(exc)})
+            return
+        await _write_json(writer, 200, result)
 
     def _suites_for(self, directory: object) -> list[str]:
         """Which installed skill kits (e.g. uv-suite) a
