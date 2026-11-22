@@ -330,10 +330,10 @@ function Dashboard() {
     let stale = false;
     sessionFetch(selected?.key ?? "", `/agents-md?dir=${encodeURIComponent(agentsMdDir)}`)
       .then((r) => r.json())
-      .then((d: { rules?: { status: string }[] }) => {
+      .then((d: { rules?: { status: string }[]; proposals?: { status: string }[] }) => {
         if (!stale)
           setRuleCandidates(
-            (d.rules ?? []).filter((r) => r.status === "candidate").length,
+            (d.rules ?? []).filter((r) => r.status === "candidate").length + (d.proposals ?? []).filter(p => p.status === "pending").length,
           );
       })
       .catch(() => undefined);
