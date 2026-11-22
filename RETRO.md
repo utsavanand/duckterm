@@ -1,3 +1,16 @@
+## 2026-11-21 — Two saved versions of one conversation evicted each other from the read cache
+
+Memory caches each conversation it reads, and drops older entries for the same
+file because a live conversation file goes stale in place. Saved versions of an
+appended conversation all read from one copy, so the same rule threw out the
+other version on every read. A search touching two versions re-read and
+re-checked the whole copy each time. The test only covered a rewritten
+conversation, where each version has its own file.
+
+Only current files evict now; saved versions are fixed by their digest. Lesson:
+when several handles share one backing file, a cache keyed on the file is
+wrong; test the shared case, not just the one-file-per-handle case.
+
 ## 2026-11-21 — Memory kept 4.9 GB of raw history to prove 1% of it
 
 Each checkpoint retained a byte-for-byte copy of the agent's native

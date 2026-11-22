@@ -46,8 +46,10 @@ def test_artifact_connections_close_even_on_corrupt_content(memory_rig, monkeypa
     assert len(opened) == 100 and all(conn.was_closed for conn in opened)
 
 
+# An appended conversation keeps one copy that both versions read from.
+@pytest.mark.parametrize("mode", ["w", "a"], ids=["rewritten", "appended"])
 def test_retained_native_cache_reuses_both_snapshots_and_detects_replacement(
-    memory_rig, monkeypatch
+    memory_rig, monkeypatch, mode
 ):
     server, _, _, tmp = memory_rig
     path = transcript(tmp, "agent-claude", "first decision")
@@ -59,10 +61,11 @@ def test_retained_native_cache_reuses_both_snapshots_and_detects_replacement(
         "path": str(path),
     }
     first = memory_sources.read_native("agent", desc, retain=True)
-    path.write_text(
-        json.dumps({"type": "user", "message": {"role": "user", "content": "second decision"}})
-        + "\n"
-    )
+    with path.open(mode) as stream:
+        stream.write(
+            json.dumps({"type": "user", "message": {"role": "user", "content": "second decision"}})
+            + "\n"
+        )
     second = memory_sources.read_native("agent", desc, retain=True)
     original = memory_sources.read_native
     reads = []
@@ -76,7 +79,7 @@ def test_retained_native_cache_reuses_both_snapshots_and_detects_replacement(
         for source in (first, second):
             assert server.memory._read_native("agent", source)["version"] == source["version"]
     assert reads == [first["snapshot"], second["snapshot"]]
-    saved = memory_sources.directory("agent") / (first["snapshot"] + ".records")
+    saved = memory_sources.retained_path("agent", first["snapshot"])
     saved.write_bytes(saved.read_bytes().replace(b"first", b"other"))
     with pytest.raises(APIError, match="checksum"):
         server.memory._read_native("agent", first)
