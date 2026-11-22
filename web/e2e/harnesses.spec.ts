@@ -49,15 +49,18 @@ test("add a skill kit, install it into a workspace and read a skill; the kit's s
   await page.getByRole("button", { name: "Add", exact: true }).click();
 
   await expect(page.getByRole("heading", { name: `kit-${stamp}` })).toBeVisible();
-  await expect(page.getByText(/Not installed in any workspace yet/)).toBeVisible();
-  await page.getByRole("button", { name: "Install into…" }).click();
-  await page.getByLabel(`${workspace} ${project}`).check();
+  await expect(page.getByText(/Step 2 of 3/)).toBeVisible();
+  await page.getByRole("button", { name: "Next: choose workspaces" }).click();
+  await page.getByLabel("These workspaces").check();
+  await page.getByLabel(workspace, { exact: true }).check();
   await page.getByRole("button", { name: "Review what will change" }).click();
 
-  await expect(page.getByText(/a dry run; nothing is written until you press Install/)).toBeVisible();
+  await expect(page.getByText(/nothing is written until you press Enable/)).toBeVisible();
   expect(existsSync(join(project, ".claude", "skills", "ship-it", "SKILL.md"))).toBe(false);
-  await page.getByRole("button", { name: /Install into 1 repository/ }).click();
+  await page.getByRole("button", { name: "Enable", exact: true }).click();
 
+  await expect(page.getByRole("heading", { name: `kit-${stamp} is enabled` })).toBeVisible();
+  await page.getByRole("button", { name: `Open kit-${stamp}` }).click();
   await expect(page.getByRole("heading", { name: `kit-${stamp}` })).toBeVisible();
   await expect(page.locator(".rd-kits-row", { hasText: workspace })).toContainText("claude-code");
   await page.locator(".rd-kits-group > summary", { hasText: "Skills" }).click();

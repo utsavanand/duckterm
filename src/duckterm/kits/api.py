@@ -398,6 +398,12 @@ def catalog(entries: list[dict[str, Any]], workspaces: list[dict[str, Any]]) -> 
         entry["procedures"] = procedures(kit)
         entry["flows"] = [Path(str(c.path)).stem for c in kit.by_kind("flow")]
         entry["runs"] = []
+        entry["policy"] = policies().get(kit.name)
+        entry["pending"] = [
+            str(w.get("name", ""))
+            for w in workspaces
+            if policy_matches(entry["policy"], str(w.get("name", ""))) and not w.get("repositories")
+        ]
         for w in workspaces:
             for project in w.get("repositories", []):
                 installed = records.get(str(project), {"kits": {}})["kits"].get(kit.name)
@@ -517,7 +523,6 @@ def create_team(body: dict[str, Any]) -> dict[str, Any]:
     from. The server creates the workspace itself; this writes the record
     under the DuckTerm home, beside the kit records, never into the
     repository."""
-    project = _project(body.get("project"))
     kit_name = str(body.get("kit") or "")
     team_name = str(body.get("team") or "")
     folder = str(body.get("name") or team_name).strip()
@@ -525,11 +530,27 @@ def create_team(body: dict[str, Any]) -> dict[str, Any]:
         raise KitApiError(400, "kit and team are required")
     if not folder or "/" in folder or folder.startswith("."):
         raise KitApiError(400, "a workspace name is required, without slashes")
-    record = planning.load_record(project)
-    entry = record["kits"].get(kit_name)
-    if entry is None:
-        raise KitApiError(404, f"kit {kit_name!r} is not installed in {project}")
-    template = next((p for p in entry.get("procedures", []) if p.get("name") == team_name), None)
+    project: Path | None = None
+    if body.get("project"):
+        # The kit is installed somewhere: copy the procedure as installed.
+        project = _project(body.get("project"))
+        record = planning.load_record(project)
+        entry = record["kits"].get(kit_name)
+        if entry is None:
+            raise KitApiError(404, f"kit {kit_name!r} is not installed in {project}")
+        version = entry.get("version")
+        offered = entry.get("procedures", [])
+    elif body.get("kit_path"):
+        # Not installed yet: the procedure comes from the manifest, and the
+        # kit is enabled for the new workspace so its first session gets it.
+        kit = _kit(body.get("kit_path"))
+        if kit.name != kit_name:
+            raise KitApiError(400, f"{body.get('kit_path')} holds {kit.name!r}, not {kit_name!r}")
+        version = kit.version
+        offered = procedures(kit)
+    else:
+        raise KitApiError(400, "project (an install) or kit_path (an added kit) is required")
+    template = next((p for p in offered if p.get("name") == team_name), None)
     if template is None:
         raise KitApiError(404, f"kit {kit_name!r} offers no team {team_name!r}")
     existing = team_for_folder(folder)
@@ -542,8 +563,8 @@ def create_team(body: dict[str, Any]) -> dict[str, Any]:
         "team": team_name,
         "description": template.get("description", ""),
         "kit": kit_name,
-        "kit_version": entry.get("version"),
-        "project": str(project),
+        "kit_version": version,
+        "project": str(project) if project else None,
         "roles": template.get("roles", {}),
         "rules": template.get("rules", []),
         "created_at": int(time.time()),
@@ -552,6 +573,155 @@ def create_team(body: dict[str, Any]) -> dict[str, Any]:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(data, indent=2) + "\n")
     return {"team": data}
+
+
+# ── enable: which workspaces a kit is for, and installing accordingly ───────
+
+
+def _policy_file() -> Path:
+    return _teams_dir().parent / "kit-policy.json"
+
+
+def policies() -> dict[str, dict[str, Any]]:
+    """Per kit: {"scope": "all"} or {"scope": "workspaces", "workspaces": [names]}.
+    A kit with no entry is added but enabled nowhere."""
+    try:
+        data = json.loads(_policy_file().read_text())
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def _save_policies(data: dict[str, dict[str, Any]]) -> None:
+    path = _policy_file()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
+
+
+def policy_matches(policy: dict[str, Any] | None, folder: str) -> bool:
+    if not policy:
+        return False
+    if policy.get("scope") == "all":
+        return True
+    return folder in [str(w) for w in policy.get("workspaces", [])]
+
+
+def add_policy_workspace(kit_name: str, folder: str) -> None:
+    """A new team workspace made from this kit gets the kit on its first session."""
+    data = policies()
+    current = data.get(kit_name) or {"scope": "workspaces", "workspaces": []}
+    if current.get("scope") == "all":
+        return
+    names = [str(w) for w in current.get("workspaces", [])]
+    if folder not in names:
+        names.append(folder)
+    data[kit_name] = {"scope": "workspaces", "workspaces": names}
+    _save_policies(data)
+
+
+def _registry_path(registry: list[dict[str, Any]], kit_name: str) -> str:
+    for row in registry:
+        if str(row.get("name")) == kit_name:
+            return str(row.get("path"))
+    raise KitApiError(404, f"no kit named {kit_name!r} is added")
+
+
+def _install_where_missing(
+    kit_path: str,
+    kit_name: str,
+    targets: list[tuple[str, str]],
+    options: dict[str, str],
+    replace: bool,
+) -> dict[str, list[dict[str, Any]]]:
+    out: dict[str, list[dict[str, Any]]] = {"installed": [], "already": [], "failed": []}
+    for workspace, project in targets:
+        where = {"workspace": workspace, "project": project}
+        try:
+            if planning.load_record(Path(project))["kits"].get(kit_name):
+                out["already"].append(where)
+                continue
+        except (OSError, ValueError):
+            pass
+        try:
+            install_kit(
+                {
+                    "kit": kit_path,
+                    "project": project,
+                    "harnesses": list(adapters.ADAPTERS),
+                    "options": options,
+                    "replace": replace,
+                }
+            )
+            out["installed"].append(where)
+        except KitApiError as exc:
+            out["failed"].append({**where, "error": str(exc)})
+    return out
+
+
+def enable(
+    body: dict[str, Any], registry: list[dict[str, Any]], workspaces: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """Enable a kit for all workspaces or the named ones: the choice is kept,
+    every matching repository known now is installed (for every harness),
+    and a matching workspace with no repository yet gets the kit when its
+    first session starts (`apply_policies`)."""
+    kit_name = str(body.get("kit") or "")
+    scope = str(body.get("scope") or "")
+    if scope not in ("all", "workspaces"):
+        raise KitApiError(400, "scope must be 'all' or 'workspaces'")
+    chosen = body.get("workspaces") or []
+    if not isinstance(chosen, list) or not all(isinstance(w, str) for w in chosen):
+        raise KitApiError(400, "workspaces must be a list of names")
+    kit_path = _registry_path(registry, kit_name)
+    policy: dict[str, Any] = (
+        {"scope": "all"} if scope == "all" else {"scope": "workspaces", "workspaces": chosen}
+    )
+    data = policies()
+    data[kit_name] = policy
+    _save_policies(data)
+    targets = [
+        (str(w.get("name", "")), str(r))
+        for w in workspaces
+        if policy_matches(policy, str(w.get("name", "")))
+        for r in w.get("repositories", [])
+    ]
+    result = _install_where_missing(
+        kit_path, kit_name, targets, _options(body.get("options")), bool(body.get("replace"))
+    )
+    pending = [
+        str(w.get("name", ""))
+        for w in workspaces
+        if policy_matches(policy, str(w.get("name", ""))) and not w.get("repositories")
+    ]
+    return {"kit": kit_name, "policy": policy, **result, "pending": pending}
+
+
+def disable(body: dict[str, Any]) -> dict[str, Any]:
+    """Forget the choice; installs stay where they are."""
+    kit_name = str(body.get("kit") or "")
+    data = policies()
+    data.pop(kit_name, None)
+    _save_policies(data)
+    return {"kit": kit_name, "policy": None}
+
+
+def apply_policies(registry: list[dict[str, Any]], folder: str, project: str) -> list[str]:
+    """A session just started in `project` under workspace `folder`: install
+    every enabled kit the repository lacks. Returns the kits installed."""
+    if not project or not Path(project).is_dir():
+        return []
+    done = []
+    for kit_name, policy in policies().items():
+        if not policy_matches(policy, folder):
+            continue
+        try:
+            kit_path = _registry_path(registry, kit_name)
+        except KitApiError:
+            continue
+        result = _install_where_missing(kit_path, kit_name, [(folder, project)], {}, False)
+        if result["installed"]:
+            done.append(kit_name)
+    return done
 
 
 # ── flow runs: started in a thread, watched through the run file ─────────────

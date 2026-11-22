@@ -262,3 +262,75 @@ def test_catalog_lists_added_kits_with_the_workspaces_they_are_installed_in(tmp_
         ("payments", str(installed), True)
     ]
     assert gone["installed_in"] == [] and "no such kit folder" in gone["error"]
+
+
+# ── enable: all workspaces or chosen ones; sessions pick up the kit later ────
+
+
+def test_enable_installs_matching_repositories_now_and_remembers_the_rest(tmp_path, monkeypatch):
+    from duckterm.helpers import instance
+
+    monkeypatch.setattr(instance, "home", lambda: tmp_path / "home")
+    root = _registry_kit(tmp_path)
+    a, b = tmp_path / "a", tmp_path / "b"
+    a.mkdir()
+    b.mkdir()
+    registry = [{"name": "regkit", "path": str(root)}]
+    workspaces = [
+        {"name": "payments", "repositories": [str(a)]},
+        {"name": "search", "repositories": [str(b)]},
+        {"name": "new-team", "repositories": []},
+    ]
+    out = api.enable(
+        {"kit": "regkit", "scope": "workspaces", "workspaces": ["payments", "new-team"]},
+        registry,
+        workspaces,
+    )
+    assert [i["project"] for i in out["installed"]] == [str(a)]
+    assert out["pending"] == ["new-team"] and out["failed"] == []
+    assert (a / ".claude" / "skills" / "judge" / "SKILL.md").is_file()
+    assert not (b / ".claude").exists()
+    assert api.policies()["regkit"] == {
+        "scope": "workspaces",
+        "workspaces": ["payments", "new-team"],
+    }
+
+    # Enabling again is idempotent; widening to all reaches the other repository.
+    again = api.enable({"kit": "regkit", "scope": "all"}, registry, workspaces)
+    assert [i["project"] for i in again["already"]] == [str(a)]
+    assert [i["project"] for i in again["installed"]] == [str(b)]
+    assert again["pending"] == ["new-team"]
+    cat = api.catalog(registry, workspaces)["kits"][0]
+    assert cat["policy"] == {"scope": "all"} and cat["pending"] == ["new-team"]
+    assert api.disable({"kit": "regkit"})["policy"] is None and api.policies() == {}
+    with pytest.raises(api.KitApiError):
+        api.enable({"kit": "nope", "scope": "all"}, registry, workspaces)
+
+
+def test_a_session_start_installs_enabled_kits_into_its_repository(tmp_path, monkeypatch):
+    from duckterm.helpers import instance
+
+    monkeypatch.setattr(instance, "home", lambda: tmp_path / "home")
+    root = _registry_kit(tmp_path)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    registry = [{"name": "regkit", "path": str(root)}]
+    api.enable({"kit": "regkit", "scope": "workspaces", "workspaces": ["team-x"]}, registry, [])
+    assert api.apply_policies(registry, "other", str(repo)) == []
+    assert api.apply_policies(registry, "team-x", str(repo)) == ["regkit"]
+    assert (repo / ".claude" / "skills" / "judge" / "SKILL.md").is_file()
+    assert api.apply_policies(registry, "team-x", str(repo)) == []
+
+
+def test_create_team_from_an_added_kit_needs_no_install(tmp_path, monkeypatch):
+    from duckterm.helpers import instance
+
+    monkeypatch.setattr(instance, "home", lambda: tmp_path / "home")
+    out = api.create_team({"kit": "sample-kit", "team": "feature-squad", "kit_path": str(SAMPLE)})
+    assert out["team"]["project"] is None and out["team"]["kit_version"] == "0.1.0"
+    assert set(out["team"]["roles"]) == {"dev", "reviewer"}
+    api.add_policy_workspace("sample-kit", "feature-squad")
+    assert api.policies()["sample-kit"] == {"scope": "workspaces", "workspaces": ["feature-squad"]}
+    with pytest.raises(api.KitApiError) as refused:
+        api.create_team({"kit": "sample-kit", "team": "feature-squad", "name": "other"})
+    assert refused.value.status == 400

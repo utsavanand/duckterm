@@ -198,11 +198,19 @@ DuckTerm (`POST /kits/register`; the record is the `harnesses` table, name
 and path). The list (`POST /kits/catalog`) shows every added kit with what it
 holds and the workspaces it is installed in. A workspace's repositories are
 where its sessions run (worktree, else repository, else cwd), so a workspace
-with no session yet cannot take a kit. Install into… picks workspaces, shows
-the dry run per repository, then writes. Every harness gets the kit; the
-review names, per harness, the components it does not support.
+with no session yet gets the kit when its first session starts. Adding is
+three steps: pick the kit (Browse marks kit folders and offers each kit of a
+multi-kit folder), read what it holds, enable it for all workspaces or chosen
+ones (`POST /kits/enable`; the choice lives in `<home>/kit-policy.json`).
+Enabling installs into every matching repository known now, after a dry run
+you can read, for every harness; the review names, per harness, the
+components the kit does not support. On every SessionStart the server
+installs enabled kits the session's repository lacks. Create team works from
+an added kit: the new workspace is enabled for the kit, so its first session
+installs it.
 
-The server routes are `POST /kits/catalog | register | unregister | overview
+The server routes are `POST /kits/catalog | register | unregister | enable |
+disable | overview
 | plan | install | uninstall | verify | run | runs | run-detail | gate | teams
 | team` (`duckterm.kits.api`); the ones that touch a repository take its
 path in the body. **Create team** (`POST /kits/team

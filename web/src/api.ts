@@ -502,8 +502,10 @@ export interface KitRun extends KitRunSummary {
 export interface KitTeam { folder: string; team: string; description: string; kit: string; kit_version: string | null; project: string; roles: Record<string, { purpose: string; skills: string[] }>; rules: Record<string, unknown>[]; created_at: number }
 export interface KitsOverview { project: string; kits: KitInstalled[]; procedures: KitProcedure[]; harnesses_present: Record<string, boolean>; runs: KitRunSummary[] }
 export interface KitInstall { workspace: string; project: string; version: string | null; harnesses: string[]; installed_at: number | null; trusted: boolean; verify: { ok: boolean | null; missing: string[]; drifted: string[] } }
+export interface KitPolicy { scope: "all" | "workspaces"; workspaces?: string[] }
+export interface KitEnableResult { kit: string; policy: KitPolicy; installed: { workspace: string; project: string }[]; already: { workspace: string; project: string }[]; failed: { workspace: string; project: string; error: string }[]; pending: string[] }
 export interface KitEntry {
-  name: string; path: string; installed_in: KitInstall[]; error?: string;
+  name: string; path: string; installed_in: KitInstall[]; error?: string; policy?: KitPolicy | null; pending?: string[];
   version?: string; description?: string; inventory?: KitInventory; details?: Record<string, KitDetail[]>; procedures?: KitProcedure[]; flows?: string[]; runs?: KitRunSummary[];
 }
 export interface KitWorkspace { name: string; repositories: string[] }
@@ -756,6 +758,8 @@ export const api = {
   kitsCatalog: (context?: string) => post<KitCatalog>("/kits/catalog", {}, context),
   kitsRegister: (kit: string, context?: string) => post<{ name: string; path: string; version: string; description: string }>("/kits/register", { kit }, context),
   kitsUnregister: (name: string, context?: string) => post<{ removed: string }>("/kits/unregister", { name }, context),
+  kitsEnable: (body: { kit: string; scope: "all" | "workspaces"; workspaces?: string[]; options?: Record<string, string>; replace?: boolean }, context?: string) => post<KitEnableResult>("/kits/enable", body, context),
+  kitsDisable: (kit: string, context?: string) => post<{ kit: string; policy: null }>("/kits/disable", { kit }, context),
   kitsOverview: (project: string, context?: string) =>
     post<KitsOverview>("/kits/overview", { project }, context),
   kitsPlan: (body: KitPlanRequest, context?: string) =>
@@ -773,7 +777,7 @@ export const api = {
   kitsRunDetail: (project: string, run_id: string, context?: string) =>
     post<{ run: KitRun; steps: { id: string; kind: string; skill?: string | null; question?: string | null; routes?: Record<string, string> | null }[] }>("/kits/run-detail", { project, run_id }, context),
   kitsTeams: (context?: string) => post<{ teams: KitTeam[] }>("/kits/teams", {}, context),
-  kitsCreateTeam: (body: { project: string; kit: string; team: string; name?: string }, context?: string) =>
+  kitsCreateTeam: (body: { project?: string | null; kit_path?: string; kit: string; team: string; name?: string }, context?: string) =>
     post<{ team: KitTeam }>("/kits/team", body, context),
   kitsGate: (project: string, run_id: string, step: string, answer: string, context?: string) =>
     post<{ run_id: string; resumed: boolean }>("/kits/gate", { project, run_id, step, answer }, context),

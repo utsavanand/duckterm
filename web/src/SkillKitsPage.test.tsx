@@ -4,7 +4,7 @@ import { api, KitCatalog, KitEntry, KitPlan } from "./api";
 import { SkillKitsPage } from "./SkillKitsPage";
 
 vi.mock("./api", () => ({
-  api: { browse: vi.fn(), kitsCatalog: vi.fn(), kitsRegister: vi.fn(), kitsUnregister: vi.fn(), kitsPlan: vi.fn(), kitsInstall: vi.fn(), kitsUninstall: vi.fn(), kitsVerify: vi.fn(), kitsCreateTeam: vi.fn() },
+  api: { browse: vi.fn(), kitsCatalog: vi.fn(), kitsRegister: vi.fn(), kitsUnregister: vi.fn(), kitsPlan: vi.fn(), kitsEnable: vi.fn(), kitsDisable: vi.fn(), kitsUninstall: vi.fn(), kitsVerify: vi.fn(), kitsCreateTeam: vi.fn() },
 }));
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 
@@ -17,13 +17,13 @@ const uvSuite: KitEntry = {
   name: "uv-suite", path: "/Users/me/ws-uv-suite", version: "0.34.0", description: "Spec, architecture, review and test workflows",
   inventory: { name: "uv-suite", version: "0.34.0", description: "", root: "/Users/me/ws-uv-suite", options: {}, components: { skill: [{ name: "uvs-spec" }] }, component_count: 42, procedures: [procedure], findings: [], valid: true },
   details: { skill: [{ name: "uvs-spec", description: "Convert requirements into a structured technical specification.", effects: "workspace" }], flow: [{ name: "review", description: "Review the diff", inputs: [], trigger: null }] },
-  procedures: [procedure], flows: ["review"], runs: [],
+  procedures: [procedure], flows: ["review"], runs: [], policy: { scope: "workspaces", workspaces: ["duckterm"] }, pending: [],
   installed_in: [{ workspace: "duckterm", project: "/ws/duckterm", version: "0.34.0", harnesses: ["claude-code", "codex"], installed_at: 1, trusted: true, verify: { ok: true, missing: [], drifted: [] } }],
 };
 const sample: KitEntry = {
   name: "sample-kit", path: "/kits/sample", version: "0.1.0", description: "One of every component kind",
   inventory: { name: "sample-kit", version: "0.1.0", description: "", root: "/kits/sample", options: {}, components: { skill: [{ name: "review-diff" }], hook: [{ name: "stop-remind-tests" }] }, component_count: 2, procedures: [], findings: [], valid: true },
-  details: { skill: [{ name: "review-diff", description: "Reviews the diff." }] }, procedures: [], flows: [], runs: [], installed_in: [],
+  details: { skill: [{ name: "review-diff", description: "Reviews the diff." }] }, procedures: [], flows: [], runs: [], installed_in: [], policy: null, pending: [],
 };
 const catalog: KitCatalog = {
   kits: [uvSuite],
@@ -68,28 +68,48 @@ it("adds a kit from a path and lands on its page, not installed anywhere", async
   fireEvent.click(screen.getByRole("button", { name: "Add" }));
   await waitFor(() => expect(api.kitsRegister).toHaveBeenCalledWith("/kits/sample/skill-kit.toml", ""));
   expect(await screen.findByRole("heading", { name: /sample-kit/ })).toBeVisible();
-  expect(screen.getByText(/Not installed in any workspace yet/)).toBeVisible();
+  expect(screen.getByText(/Step 2 of 3/)).toBeVisible();
   fireEvent.click(screen.getByText("Skills"));
   expect(screen.getByText("/review-diff")).toBeInTheDocument();
   expect(screen.getByText("Reviews the diff.")).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Next: choose workspaces" })).toBeEnabled();
+  expect(screen.getByRole("button", { name: "Finish without enabling" })).toBeVisible();
 });
 
-it("installs into chosen workspaces for every harness and names what a harness does not support", async () => {
+it("enables a kit for chosen workspaces: reviews the repositories known now, installs for every harness, and names what a harness does not support", async () => {
   vi.mocked(api.kitsCatalog).mockResolvedValue({ ...catalog, kits: [uvSuite, sample] });
   vi.mocked(api.kitsPlan).mockResolvedValue({ inventory: sample.inventory!, plan });
-  vi.mocked(api.kitsInstall).mockResolvedValue({ plan, report: { kit: "sample-kit", written: ["a"], removed: [], kept: [], notes: [] } });
+  vi.mocked(api.kitsEnable).mockResolvedValue({ kit: "sample-kit", policy: { scope: "workspaces", workspaces: ["payments", ""] }, installed: [{ workspace: "payments", project: "/ws/payments" }], already: [], failed: [], pending: [""] });
   render(<SkillKitsPage onClose={() => {}} fallback={null} />);
   fireEvent.click((await screen.findAllByRole("button", { name: "Open" }))[1]);
-  fireEvent.click(await screen.findByRole("button", { name: "Install into…" }));
-  expect(screen.getByText(/no session has run here yet/)).toBeVisible();
-  fireEvent.click(screen.getByLabelText("payments /ws/payments"));
+  fireEvent.click(await screen.findByRole("button", { name: "Enable for workspaces…" }));
+  fireEvent.click(screen.getByLabelText("These workspaces"));
+  fireEvent.click(screen.getByLabelText("payments"));
+  fireEvent.click(screen.getByLabelText("Ungrouped"));
+  expect(screen.getByText(/no session yet; installs at the first one/)).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Review what will change" }));
   await waitFor(() => expect(api.kitsPlan).toHaveBeenCalledWith({ kit: "/kits/sample", project: "/ws/payments", harnesses: catalog.harnesses, options: {} }, ""));
   expect(await screen.findByText("opencode: 1 not supported")).toBeVisible();
   expect(screen.getByText(/1 soft · 0 hard/)).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: /Install into 1 repository/ }));
-  await waitFor(() => expect(api.kitsInstall).toHaveBeenCalledWith({ kit: "/kits/sample", project: "/ws/payments", harnesses: catalog.harnesses, options: {}, replace: false }, ""));
-  expect(await screen.findByRole("heading", { name: /sample-kit/ })).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Enable" }));
+  await waitFor(() => expect(api.kitsEnable).toHaveBeenCalledWith({ kit: "sample-kit", scope: "workspaces", workspaces: ["payments", ""], options: {}, replace: false }, ""));
+  expect(await screen.findByRole("heading", { name: "sample-kit is enabled" })).toBeVisible();
+  expect(screen.getByText(/Waiting for a first session: Ungrouped/)).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Done" }));
+  expect(await screen.findByRole("heading", { name: "Skill kits" })).toBeVisible();
+});
+
+it("enabling for all workspaces with nothing to install keeps the choice without a review", async () => {
+  vi.mocked(api.kitsCatalog).mockResolvedValue({ ...catalog, workspaces: [], kits: [sample] });
+  vi.mocked(api.kitsEnable).mockResolvedValue({ kit: "sample-kit", policy: { scope: "all" }, installed: [], already: [], failed: [], pending: [] });
+  render(<SkillKitsPage onClose={() => {}} fallback={null} />);
+  fireEvent.click(await screen.findByRole("button", { name: "Open" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Enable for workspaces…" }));
+  expect(screen.getByLabelText("All workspaces")).toBeChecked();
+  fireEvent.click(screen.getByRole("button", { name: "Enable" }));
+  await waitFor(() => expect(api.kitsEnable).toHaveBeenCalledWith({ kit: "sample-kit", scope: "all", workspaces: undefined, options: {}, replace: false }, ""));
+  expect(api.kitsPlan).not.toHaveBeenCalled();
+  expect(await screen.findByText(/Every workspace you create from now on gets the kit/)).toBeVisible();
 });
 
 it("creates a team as a new workspace from the kit's installed repository", async () => {
@@ -102,7 +122,7 @@ it("creates a team as a new workspace from the kit's installed repository", asyn
   expect(name).toHaveValue("uv-coding");
   fireEvent.change(name, { target: { value: "Payments squad" } });
   fireEvent.click(screen.getByRole("button", { name: "Create workspace" }));
-  await waitFor(() => expect(api.kitsCreateTeam).toHaveBeenCalledWith({ project: "/ws/duckterm", kit: "uv-suite", team: "uv-coding", name: "Payments squad" }, ""));
+  await waitFor(() => expect(api.kitsCreateTeam).toHaveBeenCalledWith({ project: "/ws/duckterm", kit_path: "/Users/me/ws-uv-suite", kit: "uv-suite", team: "uv-coding", name: "Payments squad" }, ""));
   await waitFor(() => expect(created).toHaveBeenCalledWith("Payments squad"));
 });
 

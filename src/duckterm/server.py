@@ -401,6 +401,8 @@ _ROUTES: list[Route] = [
     Route("POST", "/kits/catalog", lambda s, r, w, h, b, seg: s._kits(w, "catalog", b)),
     Route("POST", "/kits/register", lambda s, r, w, h, b, seg: s._kits(w, "register", b)),
     Route("POST", "/kits/unregister", lambda s, r, w, h, b, seg: s._kits(w, "unregister", b)),
+    Route("POST", "/kits/enable", lambda s, r, w, h, b, seg: s._kits(w, "enable", b)),
+    Route("POST", "/kits/disable", lambda s, r, w, h, b, seg: s._kits(w, "disable", b)),
     Route("POST", "/kits/plan", lambda s, r, w, h, b, seg: s._kits(w, "plan", b)),
     Route("POST", "/kits/install", lambda s, r, w, h, b, seg: s._kits(w, "install", b)),
     Route("POST", "/kits/uninstall", lambda s, r, w, h, b, seg: s._kits(w, "uninstall", b)),
@@ -1175,6 +1177,8 @@ class Server:
         hook_output = self._inbox_hook_output(raw, str(key or ""))
         raw["hook_event"] = True
         event = self.bus.publish(raw)
+        if event.get("event_type") == events.SESSION_START:
+            self._apply_kit_policies(event)
         response = dict(event)
         if hook_output:
             response["hook_output"] = hook_output
@@ -2717,8 +2721,9 @@ class Server:
         tracker = _FlowStepTracker(self, asyncio.get_running_loop())
         # The history store is bound to this thread, so everything it answers
         # is gathered here; only the kit engine's file work runs in a thread.
-        registry = [dict(r) for r in self.history.harnesses()] if action == "catalog" else []
-        workspaces = self._kit_workspaces() if action == "catalog" else []
+        needs_registry = action in ("catalog", "enable")
+        registry = [dict(r) for r in self.history.harnesses()] if needs_registry else []
+        workspaces = self._kit_workspaces() if needs_registry else []
         if action == "unregister":
             try:
                 await _write_json(writer, 200, self._unregister_kit(payload))
@@ -2729,6 +2734,8 @@ class Server:
             "overview": lambda: kits_api.overview(payload.get("project")),
             "catalog": lambda: kits_api.catalog(registry, workspaces),
             "register": lambda: kits_api.register(payload),
+            "enable": lambda: kits_api.enable(payload, registry, workspaces),
+            "disable": lambda: kits_api.disable(payload),
             "runs": lambda: kits_api.runs(payload.get("project")),
             "run": lambda: kits_api.run_detail(
                 payload.get("project"), str(payload.get("run_id") or "")
@@ -2754,6 +2761,36 @@ class Server:
             await _write_json(writer, exc.status, {"error": str(exc)})
             return
         await _write_json(writer, 200, result)
+
+    def _apply_kit_policies(self, event: dict[str, Any]) -> None:
+        """A session started: kits enabled for its workspace (or for all) are
+        installed into its repository if missing. Registry and workspace are
+        read here, on the store's thread; the file work runs in a thread."""
+        if not self.edition.includes("skill_kits"):
+            return
+        from duckterm.kits import api as kits_api
+
+        project = str(
+            event.get("worktree_path") or event.get("repo_path") or event.get("cwd") or ""
+        )
+        if not project:
+            return
+        registry = [dict(r) for r in self.history.harnesses()]
+        if not registry or not kits_api.policies():
+            return
+        row = self.history.session(str(event.get("session_key") or "")) or {}
+        folder = str(row.get("grp") or "")
+
+        async def run() -> None:
+            try:
+                done = await asyncio.to_thread(kits_api.apply_policies, registry, folder, project)
+            except Exception as exc:  # noqa: BLE001 - never fail a session start
+                print(f"[duckterm] kit policy for {project}: {exc}", file=sys.stderr)
+                return
+            if done:
+                print(f"[duckterm] installed {', '.join(done)} into {project}", file=sys.stderr)
+
+        asyncio.get_running_loop().create_task(run())
 
     def _kit_workspaces(self) -> list[dict[str, Any]]:
         """Every workspace with the repositories its sessions run in (the
@@ -2785,7 +2822,10 @@ class Server:
         a bad request without touching anything), then the workspace itself,
         registered like New workspace does so an empty one persists."""
         result: dict[str, Any] = kits_api.create_team(payload)
-        self.history.create_folder(str(result["team"]["folder"]), now=int(time.time() * 1000))
+        folder = str(result["team"]["folder"])
+        self.history.create_folder(folder, now=int(time.time() * 1000))
+        # The team's first session installs the kit if it is not there yet.
+        kits_api.add_policy_workspace(str(result["team"]["kit"]), folder)
         return result
 
     def _suites_for(self, directory: object) -> list[str]:

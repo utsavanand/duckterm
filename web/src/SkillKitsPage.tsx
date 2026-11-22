@@ -1,21 +1,23 @@
 import { useCallback, useEffect, useState } from "react";
-import { api, KitCatalog, KitDetail, KitEntry, KitPlan, KitProcedure, KitWorkspace } from "./api";
+import { api, KitCatalog, KitDetail, KitEnableResult, KitEntry, KitPlan, KitProcedure, KitWorkspace } from "./api";
 import { DirBrowser } from "./DirBrowser";
 import { Button, useToast } from "./ui";
 import "./skillKits.css";
 
 // The Skill kits page (Settings › Skill kits): the kits added to DuckTerm,
-// what each holds, and the workspaces each is installed in. Add reads a
-// kit's manifest and remembers it; Install into picks workspaces, shows the
-// dry run for each of their repositories, then writes. A kit installs for
-// every harness; the review names what a harness does not support.
+// what each holds, and the workspaces each is enabled for. Adding is three
+// steps: pick the kit folder, read what it holds, enable it for all
+// workspaces or chosen ones. Enabling installs into every matching
+// repository known now, for every harness, and a workspace with no session
+// yet gets the kit when its first session starts.
 
 type View =
   | { name: "list" }
   | { name: "add" }
-  | { name: "kit"; kit: string }
-  | { name: "pick"; kit: string }
-  | { name: "review"; kit: string; options: Record<string, string>; plans: { workspace: string; project: string; plan: KitPlan }[] };
+  | { name: "kit"; kit: string; fromAdd?: boolean }
+  | { name: "enable"; kit: string; fromAdd?: boolean }
+  | { name: "review"; kit: string; fromAdd?: boolean; scope: "all" | "workspaces"; workspaces: string[]; options: Record<string, string>; plans: { workspace: string; project: string; plan: KitPlan }[] }
+  | { name: "done"; kit: string; result: KitEnableResult };
 
 const STATUS_CLASS: Record<string, string> = {
   installed: "ok",
@@ -40,6 +42,13 @@ function StatusPill({ status }: { status: string }) {
 
 function workspaceLabel(name: string): string {
   return name || "Ungrouped";
+}
+
+function policyText(kit: KitEntry): string {
+  if (!kit.policy) return "not enabled for any workspace yet";
+  if (kit.policy.scope === "all") return "enabled for all workspaces";
+  const names = kit.policy.workspaces ?? [];
+  return names.length ? `enabled for ${names.map(workspaceLabel).join(", ")}` : "enabled for no workspace";
 }
 
 function describeRule(rule: Record<string, unknown>): string {
@@ -95,7 +104,7 @@ export function SkillKitsPage({
       const out = await api.kitsRegister(path, sessionKey);
       toast(`Added ${out.name} ${out.version}`, "ok");
       await refresh();
-      setView({ name: "kit", kit: out.name });
+      setView({ name: "kit", kit: out.name, fromAdd: true });
     } catch (e) {
       toast(`Could not add kit: ${(e as Error).message}`, "err");
     } finally {
@@ -117,7 +126,16 @@ export function SkillKitsPage({
     }
   }
 
-  async function review(kit: KitEntry, targets: { workspace: string; project: string }[], options: Record<string, string>) {
+  function matching(kit: KitEntry, scope: "all" | "workspaces", workspaces: string[]): { workspace: string; project: string }[] {
+    const installed = new Set(kit.installed_in.map((i) => i.project));
+    return (catalog?.workspaces ?? [])
+      .filter((w) => scope === "all" || workspaces.includes(w.name))
+      .flatMap((w) => w.repositories.filter((r) => !installed.has(r)).map((r) => ({ workspace: w.name, project: r })));
+  }
+
+  async function review(kit: KitEntry, scope: "all" | "workspaces", workspaces: string[], options: Record<string, string>, fromAdd?: boolean) {
+    const targets = matching(kit, scope, workspaces);
+    if (targets.length === 0) return enable(kit, scope, workspaces, options, false);
     setBusy(true);
     try {
       const plans = [];
@@ -125,7 +143,7 @@ export function SkillKitsPage({
         const out = await api.kitsPlan({ kit: kit.path, project: t.project, harnesses: catalog?.harnesses, options }, sessionKey);
         plans.push({ ...t, plan: out.plan });
       }
-      setView({ name: "review", kit: kit.name, options, plans });
+      setView({ name: "review", kit: kit.name, fromAdd, scope, workspaces, options, plans });
     } catch (e) {
       toast(`Review failed: ${(e as Error).message}`, "err");
     } finally {
@@ -133,20 +151,28 @@ export function SkillKitsPage({
     }
   }
 
-  async function install(kit: KitEntry, plans: { workspace: string; project: string }[], options: Record<string, string>, replace: boolean) {
+  async function enable(kit: KitEntry, scope: "all" | "workspaces", workspaces: string[], options: Record<string, string>, replace: boolean) {
     setBusy(true);
-    let done = 0;
     try {
-      for (const t of plans) {
-        await api.kitsInstall({ kit: kit.path, project: t.project, harnesses: catalog?.harnesses, options, replace }, sessionKey);
-        done += 1;
-      }
-      toast(`Installed ${kit.name} into ${done} repositor${done === 1 ? "y" : "ies"}`, "ok");
-    } catch (e) {
-      toast(`Install refused after ${done} of ${plans.length}: ${(e as Error).message}`, "err");
-    } finally {
+      const result = await api.kitsEnable({ kit: kit.name, scope, workspaces: scope === "workspaces" ? workspaces : undefined, options, replace }, sessionKey);
       await refresh();
-      setView({ name: "kit", kit: kit.name });
+      setView({ name: "done", kit: kit.name, result });
+    } catch (e) {
+      toast(`Enable refused: ${(e as Error).message}`, "err");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function disable(kit: KitEntry) {
+    setBusy(true);
+    try {
+      await api.kitsDisable(kit.name, sessionKey);
+      toast(`${kit.name} is no longer enabled for new sessions; installed repositories keep it`, "ok");
+      await refresh();
+    } catch (e) {
+      toast(`Could not disable: ${(e as Error).message}`, "err");
+    } finally {
       setBusy(false);
     }
   }
@@ -175,10 +201,11 @@ export function SkillKitsPage({
     }
   }
 
-  async function createTeam(project: string, kit: string, team: string, name: string) {
+  async function createTeam(kit: KitEntry, team: string, name: string) {
     setBusy(true);
     try {
-      const out = await api.kitsCreateTeam({ project, kit, team, name }, sessionKey);
+      const project = kit.installed_in[0]?.project ?? null;
+      const out = await api.kitsCreateTeam({ project, kit_path: kit.path, kit: kit.name, team, name }, sessionKey);
       toast(`Team ${out.team.team}: workspace "${out.team.folder}" created with ${Object.keys(out.team.roles).length} roles`, "ok");
       onTeamCreated?.(out.team.folder);
     } catch (e) {
@@ -195,7 +222,8 @@ export function SkillKitsPage({
       {view.name === "list" ? <span>Skill kits</span> : <button onClick={() => setView({ name: "list" })}>Skill kits</button>}
       {view.name === "add" && <><span>›</span><span>Add</span></>}
       {view.name === "kit" && <><span>›</span><span>{view.kit}</span></>}
-      {(view.name === "pick" || view.name === "review") && <><span>›</span><button onClick={() => setView({ name: "kit", kit: view.kit })}>{view.kit}</button><span>›</span><span>Install into</span></>}
+      {(view.name === "enable" || view.name === "review") && <><span>›</span><button onClick={() => setView({ name: "kit", kit: view.kit })}>{view.kit}</button><span>›</span><span>Enable</span></>}
+      {view.name === "done" && <><span>›</span><button onClick={() => setView({ name: "kit", kit: view.kit })}>{view.kit}</button><span>›</span><span>Enabled</span></>}
     </div>
   );
 
@@ -219,21 +247,26 @@ export function SkillKitsPage({
           <KitView
             kit={current}
             busy={busy}
-            onInstall={() => setView({ name: "pick", kit: current.name })}
+            fromAdd={!!view.fromAdd}
+            onEnable={() => setView({ name: "enable", kit: current.name, fromAdd: view.fromAdd })}
+            onDisable={() => disable(current)}
             onRemove={() => remove(current.name)}
             onVerify={verify}
             onUninstall={(project) => uninstall(current.name, project)}
             onCreateTeam={createTeam}
+            onDone={() => setView({ name: "list" })}
           />
         )}
         {view.name === "kit" && !current && <div className="rd-kits-error">{view.kit} is no longer added.</div>}
-        {view.name === "pick" && current && (
-          <PickView
+        {view.name === "enable" && current && (
+          <EnableView
             kit={current}
             workspaces={catalog?.workspaces ?? []}
             busy={busy}
-            onBack={() => setView({ name: "kit", kit: current.name })}
-            onReview={(targets, options) => review(current, targets, options)}
+            fromAdd={!!view.fromAdd}
+            onBack={() => setView({ name: "kit", kit: current.name, fromAdd: view.fromAdd })}
+            onReview={(scope, workspaces, options) => review(current, scope, workspaces, options, view.fromAdd)}
+            needsReview={(scope, workspaces) => matching(current, scope, workspaces).length > 0}
           />
         )}
         {view.name === "review" && current && (
@@ -241,9 +274,12 @@ export function SkillKitsPage({
             kit={current}
             plans={view.plans}
             busy={busy}
-            onBack={() => setView({ name: "pick", kit: current.name })}
-            onInstall={(replace) => install(current, view.plans, view.options, replace)}
+            onBack={() => setView({ name: "enable", kit: current.name, fromAdd: view.fromAdd })}
+            onEnable={(replace) => enable(current, view.scope, view.workspaces, view.options, replace)}
           />
+        )}
+        {view.name === "done" && current && (
+          <DoneView kit={current} result={view.result} onOpen={() => setView({ name: "kit", kit: current.name })} onDone={() => setView({ name: "list" })} />
         )}
       </div>
     </div>
@@ -254,7 +290,7 @@ function kitState(kit: KitEntry): { text: string; tone: string } {
   if (kit.error) return { text: "cannot be read", tone: "bad" };
   const errors = kit.inventory?.findings.filter((f) => f.level === "error").length ?? 0;
   if (errors) return { text: `${errors} manifest error${errors === 1 ? "" : "s"}`, tone: "bad" };
-  if (kit.installed_in.length === 0) return { text: "not installed", tone: "mute" };
+  if (kit.installed_in.length === 0) return kit.policy ? { text: "waiting for a first session", tone: "warn" } : { text: "not enabled", tone: "mute" };
   const drifted = kit.installed_in.filter((i) => i.verify.ok === false).length;
   if (drifted) return { text: `drift in ${drifted} of ${kit.installed_in.length}`, tone: "bad" };
   const unchecked = kit.installed_in.filter((i) => i.verify.ok === null).length;
@@ -265,7 +301,7 @@ function kitState(kit: KitEntry): { text: string; tone: string } {
 function ListView({ catalog, error, busy, onAdd, onOpen, onClose, onCreateTeam }: {
   catalog: KitCatalog | null; error: string | null; busy: boolean;
   onAdd: () => void; onOpen: (name: string) => void; onClose: () => void;
-  onCreateTeam: (project: string, kit: string, team: string, name: string) => void;
+  onCreateTeam: (kit: KitEntry, team: string, name: string) => void;
 }) {
   const kits = catalog?.kits ?? [];
   const teams = kits.flatMap((k) => (k.procedures ?? []).map((p) => ({ kit: k, procedure: p })));
@@ -274,7 +310,7 @@ function ListView({ catalog, error, busy, onAdd, onOpen, onClose, onCreateTeam }
       <div className="rd-kits-head">
         <div>
           <h1>Skill kits</h1>
-          <p>Kits added to DuckTerm and the workspaces they are installed in. A kit teaches every harness how a team works: knowledge, skills, agents, hooks, permissions, tools, flows, and sometimes a procedure.</p>
+          <p>Kits added to DuckTerm and the workspaces they are enabled for. A kit teaches every harness how a team works: knowledge, skills, agents, hooks, permissions, tools, flows, and sometimes a procedure.</p>
         </div>
         <div className="rd-kits-actions">
           <Button onClick={onAdd}>Add skill kit…</Button>
@@ -285,23 +321,26 @@ function ListView({ catalog, error, busy, onAdd, onOpen, onClose, onCreateTeam }
       <section className="rd-kits-section">
         <h2>Kits <span>{catalog ? `${kits.length} added` : ""}</span></h2>
         <div className="rd-kits-table">
-          <div className="rd-kits-row"><span>Kit</span><span>Installed in</span><span>State</span><span /></div>
+          <div className="rd-kits-row"><span>Kit</span><span>Enabled for</span><span>State</span><span /></div>
           {kits.map((k) => {
             const state = kitState(k);
-            const workspaces = Array.from(new Set(k.installed_in.map((i) => workspaceLabel(i.workspace))));
             return (
               <div className="rd-kits-row" key={k.name}>
                 <div>
                   <div className="rd-kits-name">{k.name} <span className="rd-kits-mono" style={{ fontWeight: 400, color: "var(--text-soft)" }}>{k.version ?? ""}</span></div>
                   <div className="rd-kits-sub">{k.error ?? k.description ?? ""}</div>
                 </div>
-                <div className="rd-kits-pills">{workspaces.length ? workspaces.map((w) => <Pill key={w}>{w}</Pill>) : <span className="rd-kits-sub">nowhere yet</span>}</div>
+                <div className="rd-kits-pills">
+                  {k.policy?.scope === "all" && <Pill>all workspaces</Pill>}
+                  {k.policy?.scope === "workspaces" && (k.policy.workspaces ?? []).map((w) => <Pill key={w}>{workspaceLabel(w)}</Pill>)}
+                  {!k.policy && <span className="rd-kits-sub">nowhere yet</span>}
+                </div>
                 <div className="rd-kits-pills"><Pill tone={state.tone}>{state.text}</Pill>{(k.flows ?? []).length > 0 && <Pill>{k.flows!.length} flow{k.flows!.length === 1 ? "" : "s"}</Pill>}</div>
                 <Button variant="ghost" size="sm" onClick={() => onOpen(k.name)}>Open</Button>
               </div>
             );
           })}
-          {catalog && kits.length === 0 && <div className="rd-kits-row" style={{ gridTemplateColumns: "1fr" }}><span className="rd-kits-sub">No kit is added yet. Add one from a folder on this machine; nothing is installed until you choose a workspace.</span></div>}
+          {catalog && kits.length === 0 && <div className="rd-kits-row" style={{ gridTemplateColumns: "1fr" }}><span className="rd-kits-sub">No kit is added yet. Add one from a folder on this machine, then enable it for your workspaces.</span></div>}
         </div>
       </section>
       <section className="rd-kits-section">
@@ -309,7 +348,7 @@ function ListView({ catalog, error, busy, onAdd, onOpen, onClose, onCreateTeam }
         <div className="rd-kits-table">
           <div className="rd-kits-prow"><span>Team</span><span>Roles and rules</span><span /></div>
           {teams.map(({ kit, procedure }) => (
-            <ProcedureRow key={`${kit.name}/${procedure.name}`} procedure={procedure} kit={kit} busy={busy} onCreate={(name) => onCreateTeam(kit.installed_in[0]?.project ?? "", kit.name, procedure.name, name)} />
+            <ProcedureRow key={`${kit.name}/${procedure.name}`} procedure={procedure} kit={kit} busy={busy} onCreate={(name) => onCreateTeam(kit, procedure.name, name)} />
           ))}
           {catalog && teams.length === 0 && <div className="rd-kits-prow" style={{ gridTemplateColumns: "1fr" }}><span className="rd-kits-sub">None of the added kits offers a team.</span></div>}
         </div>
@@ -326,18 +365,18 @@ function ProcedureRow({ procedure, kit, busy, onCreate }: { procedure: KitProced
         <div className="rd-kits-sub">{Object.keys(procedure.roles).join(" · ")}</div>
       </div>
       <div style={{ fontSize: "0.75rem" }}>{procedure.rules.map(describeRule).join(" · ") || procedure.description}</div>
-      <CreateTeam name={procedure.name} busy={busy} installed={kit.installed_in.length > 0} onCreate={onCreate} />
+      <CreateTeam name={procedure.name} busy={busy} onCreate={onCreate} />
     </div>
   );
 }
 
-function CreateTeam({ name, busy, installed, onCreate }: { name: string; busy: boolean; installed: boolean; onCreate: (name: string) => void }) {
+function CreateTeam({ name, busy, onCreate }: { name: string; busy: boolean; onCreate: (name: string) => void }) {
   const [asking, setAsking] = useState(false);
   const [value, setValue] = useState(name);
   if (!asking) {
     return (
-      <div className="rd-kits-pills" style={{ justifyContent: "flex-end" }} title={installed ? undefined : "Install the kit into a workspace first"}>
-        <Button size="sm" onClick={() => setAsking(true)} disabled={busy || !installed}>Create team</Button>
+      <div className="rd-kits-pills" style={{ justifyContent: "flex-end" }}>
+        <Button size="sm" onClick={() => setAsking(true)} disabled={busy}>Create team</Button>
       </div>
     );
   }
@@ -357,7 +396,7 @@ function AddView({ busy, onCancel, onAdd }: { busy: boolean; onCancel: () => voi
     <>
       <div className="rd-kits-head">
         <h1>Add skill kit</h1>
-        <span className="rd-kits-sub">reads the manifest; nothing is installed yet</span>
+        <span className="rd-kits-sub">Step 1 of 3 · pick the kit; nothing is installed yet</span>
       </div>
       <form className="rd-kits-form" style={{ gridTemplateColumns: "1fr" }} onSubmit={(e) => { e.preventDefault(); if (path.trim()) onAdd(path.trim()); }}>
         <div>
@@ -366,7 +405,7 @@ function AddView({ busy, onCancel, onAdd }: { busy: boolean; onCancel: () => voi
             <input id="rd-kits-kit" type="text" value={path} onChange={(e) => setPath(e.target.value)} placeholder="~/Downloads/uv-suite" autoFocus style={{ flex: 1 }} />
             <Button variant="ghost" onClick={() => setBrowsing((b) => !b)}>Browse…</Button>
           </div>
-          <div className="rd-kits-note">The folder a kit was downloaded or cloned into; it holds skill-kit.toml. When one folder holds several kits, type the path of the .toml you want. Only the manifest is read; no kit code runs.</div>
+          <div className="rd-kits-note">The folder a kit was downloaded or cloned into; it holds skill-kit.toml. When one folder holds several kits, Browse offers each by name. Only the manifest is read; no kit code runs.</div>
           {browsing && (
             <DirBrowser
               browse={api.browse}
@@ -390,10 +429,10 @@ function AddView({ busy, onCancel, onAdd }: { busy: boolean; onCancel: () => voi
   );
 }
 
-function KitView({ kit, busy, onInstall, onRemove, onVerify, onUninstall, onCreateTeam }: {
-  kit: KitEntry; busy: boolean; onInstall: () => void; onRemove: () => void;
+function KitView({ kit, busy, fromAdd, onEnable, onDisable, onRemove, onVerify, onUninstall, onCreateTeam, onDone }: {
+  kit: KitEntry; busy: boolean; fromAdd: boolean; onEnable: () => void; onDisable: () => void; onRemove: () => void;
   onVerify: (project: string) => void; onUninstall: (project: string) => void;
-  onCreateTeam: (project: string, kit: string, team: string, name: string) => void;
+  onCreateTeam: (kit: KitEntry, team: string, name: string) => void; onDone: () => void;
 }) {
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [confirmUninstall, setConfirmUninstall] = useState<string | null>(null);
@@ -404,63 +443,36 @@ function KitView({ kit, busy, onInstall, onRemove, onVerify, onUninstall, onCrea
   const errors = kit.inventory?.findings.filter((f) => f.level === "error") ?? [];
   const warnings = (kit.inventory?.findings.length ?? 0) - errors.length;
   const groups: [string, string][] = [["skill", "Skills"], ["agent", "Agents"], ["knowledge", "Knowledge"], ["hook", "Hooks"], ["permission", "Permissions"], ["tool", "Tools"], ["settings", "Settings"]];
-  const firstProject = kit.installed_in[0]?.project ?? "";
+  const canEnable = !busy && !kit.error && errors.length === 0;
   return (
     <>
       <div className="rd-kits-head">
         <div>
           <h1>{kit.name} <span className="rd-kits-mono" style={{ fontWeight: 400, color: "var(--text-soft)" }}>{kit.version ?? ""}</span></h1>
           <p>{kit.error ?? kit.description} · <span className="rd-kits-mono">{kit.path}</span></p>
+          {fromAdd && <p className="rd-kits-sub">Step 2 of 3 · what the kit holds. Next, choose the workspaces it is for.</p>}
         </div>
         <div className="rd-kits-actions">
-          <Button onClick={onInstall} disabled={busy || !!kit.error || errors.length > 0}>Install into…</Button>
-          {!confirmRemove ? <Button variant="ghost" onClick={() => setConfirmRemove(true)}>Remove from DuckTerm…</Button> : <Button variant="danger" onClick={onRemove} disabled={busy}>Confirm remove</Button>}
+          {!fromAdd && <Button onClick={onEnable} disabled={!canEnable}>{kit.policy ? "Change workspaces…" : "Enable for workspaces…"}</Button>}
+          {!fromAdd && kit.policy && <Button variant="ghost" onClick={onDisable} disabled={busy}>Disable</Button>}
+          {!fromAdd && (!confirmRemove ? <Button variant="ghost" onClick={() => setConfirmRemove(true)}>Remove from DuckTerm…</Button> : <Button variant="danger" onClick={onRemove} disabled={busy}>Confirm remove</Button>)}
         </div>
       </div>
       {confirmRemove && <div className="rd-kits-note">Forgets the kit here. Repositories it is installed in keep their files; uninstall those first if you want them gone.</div>}
       {kit.error && <div className="rd-kits-error">{kit.error}</div>}
-      {kit.inventory && (
-        <div className="rd-kits-pills">
-          <Pill tone={errors.length ? "bad" : "ok"}>{errors.length ? `${errors.length} manifest errors` : "validate ok"}{warnings ? ` · ${warnings} warnings` : ""}</Pill>
-          <Pill>{kit.inventory.component_count} components</Pill>
-          {Object.keys(kit.inventory.options).length > 0 && <Pill>options: {Object.keys(kit.inventory.options).join(", ")}</Pill>}
-        </div>
-      )}
+      <div className="rd-kits-pills">
+        <Pill tone={kit.policy ? "ok" : "mute"}>{policyText(kit)}</Pill>
+        {(kit.pending ?? []).length > 0 && <Pill tone="warn">{kit.pending!.map(workspaceLabel).join(", ")}: installs at the first session</Pill>}
+        {kit.inventory && <Pill tone={errors.length ? "bad" : "ok"}>{errors.length ? `${errors.length} manifest errors` : "validate ok"}{warnings ? ` · ${warnings} warnings` : ""}</Pill>}
+        {kit.inventory && <Pill>{kit.inventory.component_count} components</Pill>}
+        {kit.inventory && Object.keys(kit.inventory.options).length > 0 && <Pill>options: {Object.keys(kit.inventory.options).join(", ")}</Pill>}
+      </div>
       {errors.map((f) => <div key={f.component + f.message} className="rd-kits-error">{f.component}: {f.message}</div>)}
-      <section className="rd-kits-section">
-        <h2>Installed in <span>{kit.installed_in.length ? `${kit.installed_in.length} repositor${kit.installed_in.length === 1 ? "y" : "ies"}` : "no workspace yet"}</span></h2>
-        <div className="rd-kits-table">
-          <div className="rd-kits-row"><span>Workspace</span><span>Harnesses</span><span>State</span><span /></div>
-          {kit.installed_in.map((i) => (
-            <div className="rd-kits-row" key={i.project}>
-              <div>
-                <div className="rd-kits-name">{workspaceLabel(i.workspace)}</div>
-                <div className="rd-kits-sub rd-kits-mono">{i.project}</div>
-              </div>
-              <div className="rd-kits-pills">{i.harnesses.map((h) => <Pill key={h}>{h}</Pill>)}</div>
-              <div className="rd-kits-pills">
-                {i.verify.ok === true && <Pill tone="ok">verified</Pill>}
-                {i.verify.ok === false && <Pill tone="bad">drift: {i.verify.missing.length} missing, {i.verify.drifted.length} drifted</Pill>}
-                {i.verify.ok === null && <Pill>not verified</Pill>}
-                {i.version && i.version !== kit.version && <Pill tone="warn">installed {i.version}</Pill>}
-                {!i.trusted && <Pill tone="warn">record written on another machine</Pill>}
-              </div>
-              <div className="rd-kits-actions" style={{ justifyContent: "flex-end" }}>
-                <Button variant="ghost" size="sm" onClick={() => onVerify(i.project)}>Verify</Button>
-                {confirmUninstall !== i.project
-                  ? <Button variant="ghost" size="sm" onClick={() => setConfirmUninstall(i.project)}>Uninstall…</Button>
-                  : <Button variant="danger" size="sm" disabled={busy} onClick={() => { onUninstall(i.project); setConfirmUninstall(null); }}>Confirm</Button>}
-              </div>
-            </div>
-          ))}
-          {kit.installed_in.length === 0 && <div className="rd-kits-row" style={{ gridTemplateColumns: "1fr" }}><span className="rd-kits-sub">Not installed in any workspace yet. Install into… lists your workspaces.</span></div>}
-        </div>
-        {confirmUninstall && <div className="rd-kits-note">Removes exactly what the install record lists and restores every edited file byte for byte when you have not touched it since.</div>}
-      </section>
       {(kit.procedures ?? []).map((p) => (
         <div className="rd-kits-card" key={p.name} style={{ borderColor: "var(--brand-green)" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}><strong>Team: {p.name}</strong><CreateTeam name={p.name} busy={busy} installed={!!firstProject} onCreate={(name) => onCreateTeam(firstProject, kit.name, p.name, name)} /></div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}><strong>Team: {p.name}</strong><CreateTeam name={p.name} busy={busy} onCreate={(name) => onCreateTeam(kit, p.name, name)} /></div>
           <div style={{ fontSize: "0.75rem" }}>{Object.keys(p.roles).join(" · ")} · {p.rules.map(describeRule).join(" · ")}</div>
+          <div className="rd-kits-note">Creating the team makes a new workspace with these roles and enables this kit for it.</div>
         </div>
       ))}
       {flows.length > 0 && (
@@ -491,46 +503,92 @@ function KitView({ kit, busy, onInstall, onRemove, onVerify, onUninstall, onCrea
           );
         })}
       </div>
+      {!fromAdd && (
+        <section className="rd-kits-section">
+          <h2>Installed in <span>{kit.installed_in.length ? `${kit.installed_in.length} repositor${kit.installed_in.length === 1 ? "y" : "ies"}` : "no repository yet"}</span></h2>
+          <div className="rd-kits-table">
+            <div className="rd-kits-row"><span>Workspace</span><span>Harnesses</span><span>State</span><span /></div>
+            {kit.installed_in.map((i) => (
+              <div className="rd-kits-row" key={i.project}>
+                <div>
+                  <div className="rd-kits-name">{workspaceLabel(i.workspace)}</div>
+                  <div className="rd-kits-sub rd-kits-mono">{i.project}</div>
+                </div>
+                <div className="rd-kits-pills">{i.harnesses.map((h) => <Pill key={h}>{h}</Pill>)}</div>
+                <div className="rd-kits-pills">
+                  {i.verify.ok === true && <Pill tone="ok">verified</Pill>}
+                  {i.verify.ok === false && <Pill tone="bad">drift: {i.verify.missing.length} missing, {i.verify.drifted.length} drifted</Pill>}
+                  {i.verify.ok === null && <Pill>not verified</Pill>}
+                  {i.version && i.version !== kit.version && <Pill tone="warn">installed {i.version}</Pill>}
+                  {!i.trusted && <Pill tone="warn">record written on another machine</Pill>}
+                </div>
+                <div className="rd-kits-actions" style={{ justifyContent: "flex-end" }}>
+                  <Button variant="ghost" size="sm" onClick={() => onVerify(i.project)}>Verify</Button>
+                  {confirmUninstall !== i.project
+                    ? <Button variant="ghost" size="sm" onClick={() => setConfirmUninstall(i.project)}>Uninstall…</Button>
+                    : <Button variant="danger" size="sm" disabled={busy} onClick={() => { onUninstall(i.project); setConfirmUninstall(null); }}>Confirm</Button>}
+                </div>
+              </div>
+            ))}
+            {kit.installed_in.length === 0 && <div className="rd-kits-row" style={{ gridTemplateColumns: "1fr" }}><span className="rd-kits-sub">{kit.policy ? "Enabled, but no matching workspace has run a session yet. The first session installs it." : "Not installed in any repository. Enable the kit for workspaces to install it."}</span></div>}
+          </div>
+          {confirmUninstall && <div className="rd-kits-note">Removes exactly what the install record lists and restores every edited file byte for byte when you have not touched it since.</div>}
+        </section>
+      )}
+      {fromAdd && (
+        <div className="rd-kits-footer">
+          <span />
+          <div className="rd-kits-actions">
+            <Button variant="ghost" onClick={onDone}>Finish without enabling</Button>
+            <Button onClick={onEnable} disabled={!canEnable}>Next: choose workspaces</Button>
+          </div>
+        </div>
+      )}
     </>
   );
 }
 
-function PickView({ kit, workspaces, busy, onBack, onReview }: {
-  kit: KitEntry; workspaces: KitWorkspace[]; busy: boolean; onBack: () => void;
-  onReview: (targets: { workspace: string; project: string }[], options: Record<string, string>) => void;
+function EnableView({ kit, workspaces, busy, fromAdd, onBack, onReview, needsReview }: {
+  kit: KitEntry; workspaces: KitWorkspace[]; busy: boolean; fromAdd: boolean; onBack: () => void;
+  onReview: (scope: "all" | "workspaces", workspaces: string[], options: Record<string, string>) => void;
+  needsReview: (scope: "all" | "workspaces", workspaces: string[]) => boolean;
 }) {
-  const installed = new Set(kit.installed_in.map((i) => i.project));
-  const [chosen, setChosen] = useState<Set<string>>(new Set());
+  const [scope, setScope] = useState<"all" | "workspaces">(kit.policy?.scope ?? "all");
+  const [chosen, setChosen] = useState<Set<string>>(new Set(kit.policy?.workspaces ?? []));
   const optionSpecs = kit.inventory?.options ?? {};
   const [options, setOptions] = useState<Record<string, string>>(Object.fromEntries(Object.entries(optionSpecs).flatMap(([n, s]) => (s.default ? [[n, s.default]] : []))));
-  const toggle = (project: string) => setChosen((s) => { const next = new Set(s); if (next.has(project)) next.delete(project); else next.add(project); return next; });
-  const targets = workspaces.flatMap((w) => w.repositories.filter((r) => chosen.has(r)).map((r) => ({ workspace: w.name, project: r })));
+  const toggle = (name: string) => setChosen((s) => { const next = new Set(s); if (next.has(name)) next.delete(name); else next.add(name); return next; });
+  const names = Array.from(chosen);
+  const ready = scope === "all" || names.length > 0;
+  const reviewing = ready && needsReview(scope, names);
   return (
     <>
       <div className="rd-kits-head">
         <div>
-          <h1>Install {kit.name} into…</h1>
-          <p>Step 1 of 2 · a kit installs into the repository a workspace's sessions run in, and is committed there. Every harness gets it; the review says what each one takes.</p>
+          <h1>Enable {kit.name} for…</h1>
+          <p>{fromAdd ? "Step 3 of 3 · " : ""}A kit installs into the repository a workspace's sessions run in, for every harness. A workspace with no session yet gets it when its first session starts.</p>
         </div>
       </div>
       <div className="rd-kits-table">
-        <div className="rd-kits-row" style={{ gridTemplateColumns: "1fr" }}><span>Workspaces</span></div>
-        {workspaces.map((w) => (
-          <div className="rd-kits-row" style={{ gridTemplateColumns: "1fr" }} key={w.name || "(ungrouped)"}>
-            <div>
-              <div className="rd-kits-name">{workspaceLabel(w.name)}</div>
-              {w.repositories.length === 0 && <div className="rd-kits-sub">no session has run here yet, so there is no repository to install into</div>}
-              {w.repositories.map((r) => (
-                <label className="rd-kits-check" key={r} style={{ marginTop: 6 }}>
-                  <input type="checkbox" checked={chosen.has(r)} disabled={installed.has(r)} onChange={() => toggle(r)} aria-label={`${workspaceLabel(w.name)} ${r}`} />
-                  <span className="rd-kits-mono">{r}</span>
-                  {installed.has(r) && <Pill tone="ok">installed</Pill>}
-                </label>
-              ))}
-            </div>
+        <label className="rd-kits-row rd-kits-check" style={{ gridTemplateColumns: "1fr", cursor: "pointer" }}>
+          <span><input type="radio" name="rd-kits-scope" aria-label="All workspaces" checked={scope === "all"} onChange={() => setScope("all")} /> <strong>All workspaces</strong> <span className="rd-kits-sub">every workspace now and every one you create later</span></span>
+        </label>
+        <label className="rd-kits-row rd-kits-check" style={{ gridTemplateColumns: "1fr", cursor: "pointer" }}>
+          <span><input type="radio" name="rd-kits-scope" aria-label="These workspaces" checked={scope === "workspaces"} onChange={() => setScope("workspaces")} /> <strong>These workspaces</strong></span>
+        </label>
+        {scope === "workspaces" && workspaces.map((w) => (
+          <div className="rd-kits-row" style={{ gridTemplateColumns: "1fr", paddingLeft: 36 }} key={w.name || "(ungrouped)"}>
+            <label className="rd-kits-check">
+              <input type="checkbox" checked={chosen.has(w.name)} onChange={() => toggle(w.name)} aria-label={workspaceLabel(w.name)} />
+              <span>
+                <strong>{workspaceLabel(w.name)}</strong>
+                {w.repositories.length === 0 && <span className="rd-kits-sub"> · no session yet; installs at the first one</span>}
+                {w.repositories.map((r) => <span key={r} className="rd-kits-sub rd-kits-mono" style={{ display: "block" }}>{r}</span>)}
+              </span>
+            </label>
           </div>
         ))}
-        {workspaces.length === 0 && <div className="rd-kits-row" style={{ gridTemplateColumns: "1fr" }}><span className="rd-kits-sub">No workspace yet. New › New workspace, then start a session in it.</span></div>}
+        {scope === "workspaces" && workspaces.length === 0 && <div className="rd-kits-row" style={{ gridTemplateColumns: "1fr" }}><span className="rd-kits-sub">No workspace yet. Choose All, or make one with New › New workspace and come back.</span></div>}
       </div>
       {Object.entries(optionSpecs).map(([name, spec]) => (
         <div key={name} style={{ maxWidth: 420 }}>
@@ -542,18 +600,18 @@ function PickView({ kit, workspaces, busy, onBack, onReview }: {
         </div>
       ))}
       <div className="rd-kits-footer">
-        <span>{targets.length} repositor{targets.length === 1 ? "y" : "ies"} chosen</span>
+        <span>{reviewing ? "Repositories known now are installed after a dry run you can read." : ready ? "Nothing to install yet; the choice is kept." : "Choose at least one workspace."}</span>
         <div className="rd-kits-actions">
           <Button variant="ghost" onClick={onBack}>Back</Button>
-          <Button onClick={() => onReview(targets, options)} disabled={busy || targets.length === 0}>Review what will change</Button>
+          <Button onClick={() => onReview(scope, names, options)} disabled={busy || !ready}>{reviewing ? "Review what will change" : "Enable"}</Button>
         </div>
       </div>
     </>
   );
 }
 
-function ReviewView({ kit, plans, busy, onBack, onInstall }: {
-  kit: KitEntry; plans: { workspace: string; project: string; plan: KitPlan }[]; busy: boolean; onBack: () => void; onInstall: (replace: boolean) => void;
+function ReviewView({ kit, plans, busy, onBack, onEnable }: {
+  kit: KitEntry; plans: { workspace: string; project: string; plan: KitPlan }[]; busy: boolean; onBack: () => void; onEnable: (replace: boolean) => void;
 }) {
   const [replace, setReplace] = useState(false);
   const soft = plans.flatMap((p) => p.plan.conflicts.filter((c) => c.kind === "file-exists").map((c) => ({ ...c, project: p.project })));
@@ -565,7 +623,7 @@ function ReviewView({ kit, plans, busy, onBack, onInstall }: {
       <div className="rd-kits-head">
         <div>
           <h1>Review: {kit.name} {kit.version ?? ""} → {plans.length} repositor{plans.length === 1 ? "y" : "ies"}</h1>
-          <p>Step 2 of 2 · a dry run; nothing is written until you press Install</p>
+          <p>A dry run; nothing is written until you press Enable</p>
         </div>
         <div className="rd-kits-pills">
           <Pill tone={errors.length ? "bad" : "ok"}>{errors.length ? `${errors.length} errors` : "validate ok"}</Pill>
@@ -588,7 +646,35 @@ function ReviewView({ kit, plans, busy, onBack, onInstall }: {
         <span>No kit script runs during review or install. {hooks} hook script{hooks === 1 ? "" : "s"} run later, inside the harness, through DuckTerm's shim.</span>
         <div className="rd-kits-actions">
           <Button variant="ghost" onClick={onBack}>Back</Button>
-          <Button onClick={() => onInstall(replace)} disabled={busy || hard.length > 0 || errors.length > 0}>Install into {plans.length} repositor{plans.length === 1 ? "y" : "ies"}</Button>
+          <Button onClick={() => onEnable(replace)} disabled={busy || hard.length > 0 || errors.length > 0}>Enable</Button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function DoneView({ kit, result, onOpen, onDone }: { kit: KitEntry; result: KitEnableResult; onOpen: () => void; onDone: () => void }) {
+  return (
+    <>
+      <div className="rd-kits-head">
+        <div>
+          <h1>{kit.name} is enabled</h1>
+          <p>{result.policy.scope === "all" ? "For all workspaces, now and later." : `For ${(result.policy.workspaces ?? []).map(workspaceLabel).join(", ")}.`}</p>
+        </div>
+      </div>
+      <div className="rd-kits-card">
+        {result.installed.length > 0 && <div>Installed into {result.installed.length} repositor{result.installed.length === 1 ? "y" : "ies"}: {result.installed.map((i) => <span key={i.project} className="rd-kits-mono" style={{ display: "block" }}>{workspaceLabel(i.workspace)} · {i.project}</span>)}</div>}
+        {result.already.length > 0 && <div className="rd-kits-sub">Already installed: {result.already.map((i) => workspaceLabel(i.workspace)).join(", ")}</div>}
+        {result.pending.length > 0 && <div>Waiting for a first session: {result.pending.map(workspaceLabel).join(", ")}. The kit installs when a session starts there.</div>}
+        {result.failed.map((f) => <div key={f.project} className="rd-kits-error">{workspaceLabel(f.workspace)} · {f.project}: {f.error}</div>)}
+        {result.installed.length + result.already.length + result.pending.length + result.failed.length === 0 && <div className="rd-kits-sub">No workspace matches yet. Every workspace you create from now on gets the kit at its first session.</div>}
+        {(kit.flows ?? []).length > 0 && <div className="rd-kits-note">Flows are enabled with the kit: {(kit.flows ?? []).map((f) => `/${f}`).join(", ")} in a session of an installed repository.</div>}
+      </div>
+      <div className="rd-kits-footer">
+        <span />
+        <div className="rd-kits-actions">
+          <Button variant="ghost" onClick={onOpen}>Open {kit.name}</Button>
+          <Button onClick={onDone}>Done</Button>
         </div>
       </div>
     </>
