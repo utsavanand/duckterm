@@ -193,9 +193,23 @@ review page is the plan: one row per component, one status per harness, the
 conflicts with keep or replace, the files. Install, verify and uninstall call
 the engine; Run starts a flow in a server thread and the page watches the run
 file. The server routes are `POST /kits/overview | plan | install | uninstall |
-verify | run | runs | run-detail | gate`, all with the project path in the body
-(`duckterm.kits.api`). Applying a procedure to a workspace and the New team
-screen are the next slice; the page shows the button disabled until then.
+verify | run | runs | run-detail | gate | teams | team`, all with the project
+path in the body (`duckterm.kits.api`). **Create team** (`POST /kits/team
+{project, kit, team, name?}`) makes a workspace carrying the kit's procedure:
+the record (roles and rules copied from the installed kit's template, with
+kit and version) is `<home>/teams/<name>.json`, the workspace is registered
+like New workspace, and the workspace view shows one card per role.
+
+**A run shows in the app while it runs.** The session's Flows tab lists the
+repository's runs, the session's own first, each with its steps and, at a
+gate, Approve and Reject under the step. A run the server starts for a
+session (`POST /api/v1/session/kits/run`, authenticated by the session's own
+credential; also `runs`, `run-detail`, `gate`) makes every harness step a
+child session of it: a SessionStart row with the parent key before the
+process, the step's hooks reporting under the child key, SessionEnd after.
+`duckterm kit run` inside a session hands the run to the server this way and
+watches it from the terminal; outside a session it runs locally. Script
+steps are not sessions.
 
 Endpoints: `GET /harnesses`, `POST /harnesses/register {path}`,
 `GET /harnesses/:name/contents`, `DELETE /harnesses/:name`. Registered kits

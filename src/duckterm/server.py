@@ -180,12 +180,14 @@ class _FlowStepTracker:
         self.server = server
         self.loop = loop
 
-    def _publish(self, event: dict[str, Any]) -> None:
+    def _publish(self, event: dict[str, Any], intention: str = "") -> None:
         done = threading.Event()
 
         def go() -> None:
             try:
                 self.server.bus.publish(event)
+                if intention:
+                    self.server.history.set_intention(str(event["session_key"]), intention)
             finally:
                 done.set()
 
@@ -194,22 +196,24 @@ class _FlowStepTracker:
 
     def begin(self, child_key: str, info: dict[str, Any]) -> dict[str, str]:
         cwd = str(info.get("cwd") or "")
+        flow = str(info.get("flow") or "").split("/")[-1]
         self._publish(
             {
                 "event_type": events.SESSION_START,
                 "session_key": child_key,
                 "source_app": Path(cwd).name if cwd else "flow",
+                "name": f"{flow} · {info.get('step')}",
                 "runtime": info.get("harness") or "claude-code",
                 "cwd": cwd,
                 "repo_path": cwd,
                 "parent_session_key": info.get("parent"),
-                "intention": (
-                    f"flow {info.get('flow')} · {info.get('step')} (attempt {info.get('attempt')})"
-                ),
                 "launched": True,
                 "pty_owned": False,
                 "command": shlex.join(list(info.get("command") or [])),
-            }
+            },
+            intention=(
+                f"flow {info.get('flow')} · step {info.get('step')} · attempt {info.get('attempt')}"
+            ),
         )
         return {**self.server._session_env(child_key), "DUCKTERM_SESSION_KEY": child_key}
 
