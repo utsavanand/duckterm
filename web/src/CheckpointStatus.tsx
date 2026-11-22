@@ -51,6 +51,12 @@ export function CheckpointFacts({ checkpoint: cp, compact = false, onMemory }: {
     </div>}
   </>;
 }
+function gapText(gap: NonNullable<CheckpointRecord["record"]["gap"]>) {
+  const when = (ms: number) => new Date(ms).toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+  const periods = gap.periods.map(([off, on]) => `${when(off)} to ${when(on)}`).join("; ");
+  return `Automatic checkpoints were off from ${periods}. ${gap.records.toLocaleString()} ${gap.records === 1 ? "message" : "messages"} written then ${gap.records === 1 ? "is" : "are"} not summarized; the originals stay in Messages and memory search. A manual checkpoint can still summarize them.`;
+}
+
 export function CheckpointDetails({ checkpoint: cp, open = false, onRetry, retrying = false, onMemory, onCheckpointMemory }: { checkpoint: CheckpointRecord; open?: boolean; onRetry?: () => void; retrying?: boolean; onMemory?: (revision: string) => void; onCheckpointMemory?: (id: string) => void }) {
   const status = checkpointStatus(cp);
   const r = cp.record;
@@ -59,8 +65,8 @@ export function CheckpointDetails({ checkpoint: cp, open = false, onRetry, retry
   return <details className="rd-timeline-checkpoint" open={open || undefined}>
     <summary><span className="rd-timeline-cp-heading"><strong>{title}</strong><span className={`rd-checkpoint-status ${status.ready ? "ready" : ""}`}>{status.label}</span></span>
       {cp.summary && <span className="rd-timeline-excerpt">{cp.summary}</span>}</summary>
-    <CheckpointFacts checkpoint={cp} onMemory={onMemory} />
-    {onCheckpointMemory && <button className="rd-timeline-link" onClick={() => onCheckpointMemory(cp.id)}>Read checkpoint result ↗</button>}
+    {r?.gap ? <p className="rd-checkpoint-gap">{gapText(r.gap)}</p> : <CheckpointFacts checkpoint={cp} onMemory={onMemory} />}
+    {onCheckpointMemory && !r?.gap && <button className="rd-timeline-link" onClick={() => onCheckpointMemory(cp.id)}>Read checkpoint result ↗</button>}
     {onMemory && typeof r?.summary_ref === "string" && r.summary_ref.trim() && <button className="rd-timeline-link" onClick={() => onMemory(r.summary_ref!)}>Read saved summary and evidence ↗</button>}
     {onRetry && checkpointCanRetry(cp) && <button className="rd-btn rd-btn-sm rd-btn-ghost rd-checkpoint-retry" disabled={retrying} onClick={onRetry}>{retrying ? "Updating summary…" : "Retry summary update"}</button>}
     {r && <div className="rd-checkpoint-coverage">

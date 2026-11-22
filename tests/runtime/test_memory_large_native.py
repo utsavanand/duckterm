@@ -146,3 +146,71 @@ def test_a_rewritten_transcript_keeps_both_whole_copies(tmp_path, monkeypatch):
     assert [r["text"] for r in memory_sources.read_native("probe", v1)["records"]] == [
         "original wording"
     ]
+
+
+def compacted(size):
+    body = json.dumps(
+        {
+            "timestamp": "2026-11-17T00:00:00Z",
+            "type": "compacted",
+            "payload": {"replacement_history": "x" * size},
+        }
+    )
+    return body.encode() + b"\n"
+
+
+def test_an_oversized_codex_compaction_line_is_hashed_but_not_parsed(tmp_path, monkeypatch):
+    # A 1.5 GB ui-dev history had 23 compaction lines of 16-23 MB (2026-11-17).
+    monkeypatch.setattr(memory_sources, "MAX_LINE_BYTES", 4096)
+    path = tmp_path / "rollout.jsonl"
+    raw = message("Before the compaction") + compacted(20_000) + message("After the compaction")
+    path.write_bytes(raw)
+    read = memory_sources.read_native("probe", source(path))
+    assert [r["text"] for r in read["records"]] == ["Before the compaction", "After the compaction"]
+    assert read["version"] == hashlib.sha256(raw).hexdigest()
+
+
+@pytest.mark.parametrize(
+    ("runtime", "line"),
+    [
+        ("codex", message("y" * 8000)),
+        ("claude-code", compacted(20_000)),
+    ],
+)
+def test_other_oversized_lines_are_still_refused(tmp_path, monkeypatch, runtime, line):
+    monkeypatch.setattr(memory_sources, "MAX_LINE_BYTES", 4096)
+    path = tmp_path / "native.jsonl"
+    path.write_bytes(line)
+    with pytest.raises(APIError, match="exceeds the current read bound"):
+        memory_sources.read_native("probe", {**source(path), "runtime": runtime})
+
+
+@pytest.mark.parametrize(
+    ("runtime", "line"),
+    [
+        (
+            "codex",
+            {
+                "timestamp": "2026-11-15T10:00:00.250Z",
+                "type": "response_item",
+                "payload": {"type": "message", "role": "user", "content": "Ship it."},
+            },
+        ),
+        (
+            "claude-code",
+            {
+                "timestamp": "2026-11-15T10:00:00.250Z",
+                "type": "user",
+                "uuid": "u1",
+                "message": {"role": "user", "content": "Ship it."},
+            },
+        ),
+    ],
+)
+def test_records_keep_when_the_harness_wrote_them(tmp_path, runtime, line):
+    # Automatic checkpoints skip messages written while they were switched off.
+    path = tmp_path / "native.jsonl"
+    untimed = {k: v for k, v in line.items() if k != "timestamp"}
+    path.write_text(json.dumps(line) + "\n" + json.dumps({**untimed, "uuid": "u2"}) + "\n")
+    read = memory_sources.read_native("probe", {**source(path), "runtime": runtime})
+    assert [r["at"] for r in read["records"]] == [1794736800250, None]

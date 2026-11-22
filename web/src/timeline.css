@@ -21,6 +21,7 @@
 .rd-checkpoint-facts dd { margin: 0; overflow-wrap: anywhere; }
 .rd-checkpoint-facts .ready, .rd-checkpoint-status.ready { color: var(--brand-green-strong); }
 .rd-checkpoint-coverage { font-size: 0.75rem; color: var(--text-soft); line-height: 1.7; overflow-wrap: anywhere; }
+.rd-checkpoint-gap { font-size: 0.8125rem; color: var(--text-muted); line-height: 1.6; margin: 6px 0 10px; }
 .rd-checkpoint-coverage ul { padding-left: 18px; }
 .rd-checkpoint-attempt-warning { font-weight: 500; color: var(--text); }
 .rd-checkpoint-attempt > details > summary { cursor: pointer; color: var(--text); }
