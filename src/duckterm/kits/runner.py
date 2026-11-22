@@ -443,14 +443,30 @@ def list_runs(project: Path) -> list[dict[str, Any]]:
     if root.is_dir():
         for d in sorted(root.iterdir()):
             f = d / "run.json"
-            if f.is_file():
+            if not f.is_file():
+                continue
+            try:
                 s = json.loads(f.read_text())
-                out.append(
-                    {
-                        k: s.get(k)
-                        for k in ("run_id", "flow", "state", "started_at", "current", "failure")
-                    }
+            except ValueError:
+                continue
+            summary = {
+                k: s.get(k)
+                for k in (
+                    "run_id",
+                    "flow",
+                    "state",
+                    "started_at",
+                    "updated_at",
+                    "current",
+                    "failure",
                 )
+            }
+            summary["inputs"] = s.get("inputs", {})
+            summary["session"] = (s.get("executor_state") or {}).get("session")
+            summary["steps_done"] = len(
+                {a["step"] for a in s.get("attempts", []) if a.get("status") == "completed"}
+            )
+            out.append(summary)
     return out
 
 

@@ -111,6 +111,146 @@ def procedures(kit: m.Kit) -> list[dict[str, Any]]:
     return out
 
 
+def _first_line(text: str) -> str:
+    for line in text.splitlines():
+        t = line.strip()
+        if t and not t.startswith(("#", "---", "**Severity", "**Category")):
+            return t[:220]
+    return ""
+
+
+def _script_header(path: Path) -> str:
+    try:
+        lines = path.read_text().splitlines()[1:6]
+    except OSError:
+        return ""
+    return " ".join(line[2:].strip() for line in lines if line.startswith("# "))[:220]
+
+
+def details(kit: m.Kit) -> dict[str, list[dict[str, Any]]]:
+    """What each component is, for the kit page: one entry per component with
+    the fields a person opens it for. Stored in the install record, so the page
+    needs no kit folder afterwards."""
+    out: dict[str, list[dict[str, Any]]] = {}
+    for c in kit.components:
+        e: dict[str, Any] = {"name": c.name}
+        f = c.fields
+        if c.kind == "skill" and c.path:
+            try:
+                front = m.frontmatter((kit.root / c.path / "SKILL.md").read_text())
+            except OSError:
+                front = {}
+            e.update(
+                description=" ".join(str(front.get("description", "")).split()),
+                effects=f.get("effects", "workspace"),
+                invocation=f.get("invocation", "auto"),
+                outputs=(
+                    sorted(str(k) for k in f["outputs"])
+                    if isinstance(f.get("outputs"), dict)
+                    else []
+                ),
+            )
+        elif c.kind == "agent" and c.path:
+            try:
+                front = m.frontmatter((kit.root / c.path).read_text())
+            except OSError:
+                front = {}
+            tools = [
+                t.strip("- ").strip()
+                for t in str(front.get("tools", "")).splitlines()
+                if t.strip("- ").strip()
+            ]
+            e.update(
+                description=" ".join(str(front.get("description", "")).split()),
+                model=str(front.get("model", "")),
+                tools=tools[:12],
+            )
+        elif c.kind == "knowledge" and c.path:
+            load = f.get("load", "always")
+            try:
+                text = (kit.root / c.path).read_text()
+            except OSError:
+                text = ""
+            e.update(
+                load=(
+                    "always"
+                    if load == "always"
+                    else (
+                        "on demand"
+                        if load == "on-demand"
+                        else (
+                            f"for {', '.join(str(x) for x in load.get('paths', []))}"
+                            if isinstance(load, dict)
+                            else str(load)
+                        )
+                    )
+                ),
+                description=str(f.get("description") or _first_line(text)),
+                lines=len(text.splitlines()),
+            )
+        elif c.kind == "hook":
+            e.update(
+                event=str(f.get("event", "")),
+                match=str(f.get("match", "")),
+                blocking=bool(f.get("blocking")),
+                timeout=f.get("timeout", 5),
+                description=_script_header(kit.root / str(f.get("command", ""))),
+            )
+        elif c.kind == "permission":
+            rules = [r for r in f.get("rules", []) if isinstance(r, dict)]
+            e.update(
+                rules=[
+                    {
+                        "tool": str(r.get("tool")),
+                        "match": str(r.get("match")),
+                        "decision": str(r.get("decision")),
+                    }
+                    for r in rules
+                ]
+            )
+        elif c.kind == "flow" and c.path:
+            try:
+                flow = json.loads((kit.root / c.path).read_text())
+                steps = flow.get("steps", []) if isinstance(flow, dict) else []
+            except (OSError, ValueError):
+                flow, steps = {}, []
+            e.update(
+                description=str(flow.get("description", "")) if isinstance(flow, dict) else "",
+                inputs=(
+                    sorted(str(k) for k in (flow.get("inputs") or {}))
+                    if isinstance(flow, dict)
+                    else []
+                ),
+                steps=[
+                    {
+                        "id": str(st.get("id")),
+                        "kind": runner.step_kind(st) if isinstance(st, dict) else "?",
+                    }
+                    for st in steps
+                    if isinstance(st, dict) and st.get("id")
+                ],
+                trigger=None,
+            )
+        elif c.kind == "settings":
+            try:
+                keys = (
+                    sorted(json.loads((kit.root / str(c.path)).read_text()).keys())
+                    if c.path
+                    else []
+                )
+            except (OSError, ValueError, AttributeError):
+                keys = []
+            e.update(harness=str(f.get("harness", "")), keys=keys)
+        elif c.kind == "tool":
+            spec = f.get("mcp") or f.get("cli") or {}
+            e.update(
+                form="mcp" if f.get("mcp") else "cli",
+                description=str(spec.get("doctor", "")) if isinstance(spec, dict) else "",
+            )
+        out.setdefault(c.kind, []).append(e)
+    return out
+
+
 def inventory(kit: m.Kit) -> dict[str, Any]:
     """What a kit folder holds, before any plan: counts and names per kind,
     its options and procedures, and validate's findings."""
@@ -186,6 +326,7 @@ def overview(project_value: Any) -> dict[str, Any]:
                 },
                 "components": components,
                 "procedures": entry.get("procedures", []),
+                "details": entry.get("details", {}),
             }
         )
     return {
@@ -255,7 +396,20 @@ def run_detail(project_value: Any, run_id: str) -> dict[str, Any]:
         run = runner.load_run(project, run_id)
     except runner.RunRefused as exc:
         raise KitApiError(404, str(exc)) from exc
-    return {"run": run.state}
+    return {
+        "run": run.state,
+        "steps": [
+            {
+                "id": str(st.get("id")),
+                "kind": runner.step_kind(st),
+                "skill": st.get("run") or st.get("decide"),
+                "question": st.get("gate"),
+                "routes": st.get("routes"),
+            }
+            for st in run.flow.get("steps", [])
+            if isinstance(st, dict)
+        ],
+    }
 
 
 def start_run(body: dict[str, Any]) -> dict[str, Any]:
@@ -280,6 +434,7 @@ def start_run(body: dict[str, Any]) -> dict[str, Any]:
         runner.flow_path(project, flow)
     except runner.RunRefused as exc:
         raise KitApiError(400, str(exc)) from exc
+    session = str(body.get("session") or "")
     started: dict[str, Any] = {}
     ready = threading.Event()
 
@@ -296,6 +451,7 @@ def start_run(body: dict[str, Any]) -> dict[str, Any]:
                 inputs={str(k): str(v) for k, v in inputs.items()},
                 limits=limits,
                 on_start=announce,
+                executor_state={"session": session} if session else None,
             )
         except runner.RunRefused as exc:
             started["error"] = str(exc)

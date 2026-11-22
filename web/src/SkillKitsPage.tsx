@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { api, KitInstalled, KitInventory, KitPlan, KitProcedure, KitRunSummary, KitsOverview } from "./api";
+import { api, KitDetail, KitInstalled, KitInventory, KitPlan, KitProcedure, KitRunSummary, KitsOverview } from "./api";
 import { Button, useToast } from "./ui";
 import "./skillKits.css";
 
@@ -455,79 +455,89 @@ function KitView({ kit, runs, busy, onVerify, onUninstall }: {
   kit: KitInstalled; runs: KitRunSummary[]; busy: boolean; onVerify: () => void; onUninstall: () => void;
 }) {
   const [confirm, setConfirm] = useState(false);
-  const byKind = kit.components.reduce<Record<string, string[]>>((acc, c) => {
-    const [, kind, name] = c.split("/");
-    (acc[kind] ??= []).push(name);
-    return acc;
-  }, {});
-  const counts = Object.entries(byKind).filter(([kind]) => kind !== "team").map(([kind, names]) => `${names.length} ${kind}${names.length === 1 ? "" : "s"}`).join(", ");
-  const last = runs[runs.length - 1];
+  const details = kit.details ?? {};
+  const flows = details.flow ?? kit.flows.map((f) => ({ name: f }));
+  const lastRun = (flow: string) => [...runs].reverse().find((r) => r.flow === `${kit.name}/${flow}`);
+  const groups: [string, string][] = [["skill", "Skills"], ["agent", "Agents"], ["knowledge", "Knowledge"], ["hook", "Hooks"], ["permission", "Permissions"], ["tool", "Tools"], ["settings", "Settings"]];
   return (
     <>
       <div className="rd-kits-head">
         <div>
           <h1>{kit.name} <span className="rd-kits-mono" style={{ fontWeight: 400, color: "var(--text-soft)" }}>{kit.version ?? ""}</span></h1>
-          <p>Installed for {kit.harnesses.join(" and ")} · {kit.verify.ok === true ? <Pill tone="ok">verified</Pill> : kit.verify.ok === false ? <Pill tone="bad">drift: {kit.verify.missing.length} missing, {kit.verify.drifted.length} drifted</Pill> : <Pill>not verified</Pill>}{!kit.trusted && <> · <Pill tone="warn">record written on another machine</Pill></>}</p>
+          <p>{kit.harnesses.join(" · ")} · {kit.verify.ok === true ? <Pill tone="ok">verified</Pill> : kit.verify.ok === false ? <Pill tone="bad">drift: {kit.verify.missing.length} missing, {kit.verify.drifted.length} drifted</Pill> : <Pill>not verified</Pill>}{!kit.trusted && <> · <Pill tone="warn">record written on another machine</Pill></>}</p>
         </div>
         <div className="rd-kits-actions">
           <Button variant="ghost" onClick={onVerify}>Verify</Button>
           {!confirm ? <Button variant="danger" onClick={() => setConfirm(true)}>Uninstall…</Button> : <Button variant="danger" onClick={onUninstall} disabled={busy}>Confirm uninstall</Button>}
         </div>
       </div>
-      {confirm && <div className="rd-kits-note">Uninstall removes exactly what the install record lists and restores every edited file byte for byte when you have not touched it since. Files you edited keep your changes; only the kit's additions come out.</div>}
+      {confirm && <div className="rd-kits-note">Removes exactly what the install record lists and restores every edited file byte for byte when you have not touched it since.</div>}
       {kit.procedures.map((p) => (
         <div className="rd-kits-card" key={p.name} style={{ borderColor: "var(--brand-green)" }}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}><strong>Team: {p.name}</strong><Button size="sm" disabled>Create team</Button></div>
-          <div style={{ fontSize: "0.75rem" }}>{Object.keys(p.roles).join(" · ")}. {p.rules.map(describeRule).join("; ")}.</div>
-          <div className="rd-kits-note">Creates a new workspace with this procedure and one card per role; existing agents can be moved into it afterwards. Not built yet.</div>
+          <div style={{ fontSize: "0.75rem" }}>{Object.keys(p.roles).join(" · ")} · {p.rules.map(describeRule).join(" · ")}</div>
         </div>
       ))}
-      <div className="rd-kits-cards">
+      {flows.length > 0 && (
         <div className="rd-kits-card">
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}><strong>Flows</strong><span className="rd-kits-sub">enabled on install</span></div>
-          {kit.flows.length === 0 && <div className="rd-kits-sub">This kit ships no flow.</div>}
-          {kit.flows.map((flow) => (
-            <div className="rd-kits-line" key={flow}>
-              <span className="rd-kits-mono">{flow}</span>
-              <span className="rd-kits-mono" style={{ color: "var(--text-soft)" }}>no trigger · duckterm kit run {kit.name}/{flow}</span>
-            </div>
-          ))}
-          {kit.flows.length > 0 && <div className="rd-kits-note">A flow with a trigger runs on its own; the others wait for their shortcut.</div>}
-          {last && (
-            <div className="rd-kits-line">
-              <div className="rd-kits-note">Last run · {last.flow.split("/")[1]} · {last.state}{last.current ? ` at ${last.current.step}` : ""}{last.failure ? `: ${last.failure.reason}` : ""}</div>
-              <Pill tone={last.state === "succeeded" ? "ok" : last.state === "failed" ? "bad" : last.state === "waiting_gate" ? "warn" : ""}>{last.state}</Pill>
-            </div>
-          )}
-        </div>
-        <div className="rd-kits-card">
-          <strong>Settings</strong>
-          {Object.entries(kit.options).map(([name, choice]) => (
-            <div className="rd-kits-line" key={name}><div>{name} <span className="rd-kits-mono">{choice}</span><div className="rd-kits-note">Chosen at install; reinstall to change it.</div></div></div>
-          ))}
-          {kit.harnesses.includes("codex") && byKind.hook && (
-            <div className="rd-kits-line"><div>Codex hooks<div className="rd-kits-note">Codex runs a project's hooks only after you trust the folder in Codex. DuckTerm never does that for you.</div></div><Pill tone="warn">waiting for trust</Pill></div>
-          )}
-          {Object.keys(kit.options).length === 0 && !(kit.harnesses.includes("codex") && byKind.hook) && <div className="rd-kits-sub">Nothing to set for this kit.</div>}
-        </div>
-      </div>
-      {Object.keys(kit.skills ?? {}).length > 0 && (
-        <div className="rd-kits-card">
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}><strong>Skills</strong><span className="rd-kits-sub">click one to see what it does · invoke with /name in a session</span></div>
-          {Object.entries(kit.skills).map(([name, skill]) => (
-            <details className="rd-kits-skill" key={name}>
-              <summary><span className="rd-kits-mono">/{name}</span>{skill.effects && <Pill>{skill.effects}</Pill>}</summary>
-              <div className="rd-kits-note">{skill.description || "No description in its SKILL.md."}</div>
-            </details>
-          ))}
+          <div className="rd-flow-head"><strong>Flows</strong><span>Trigger</span><span>Shortcut</span><span>Last run</span></div>
+          {flows.map((f) => {
+            const last = lastRun(f.name);
+            return (
+              <div className="rd-flow" key={f.name}>
+                <div><span className="rd-kits-mono">{f.name}</span>{f.description && <div className="rd-kits-note">{f.description}</div>}</div>
+                <span style={{ color: "var(--text-soft)" }}>{f.trigger ?? "none"}</span>
+                <span className="rd-kits-mono">/{f.name}{(f.inputs ?? []).map((i) => ` <${i}>`).join("")}</span>
+                <span>{last ? <><Pill tone={last.state === "succeeded" ? "ok" : last.state === "failed" ? "bad" : last.state === "waiting_gate" ? "warn" : ""}>{last.state === "waiting_gate" ? "waiting for you" : last.state}</Pill></> : <span style={{ color: "var(--text-soft)" }}>never</span>}</span>
+              </div>
+            );
+          })}
         </div>
       )}
-      <details className="rd-kits-card" style={{ display: "block" }}>
-        <summary style={{ cursor: "pointer", fontWeight: 600, fontSize: "0.8125rem" }}>What else this kit installed <span className="rd-kits-sub" style={{ fontWeight: 400 }}>· {counts} · {kit.entries} entries</span></summary>
-        {Object.entries(byKind).map(([kind, names]) => (
-          <div className="rd-kits-line" key={kind}><span>{kind === "team" ? "team" : kind}</span><span className="rd-kits-mono" style={{ color: "var(--text-soft)", textAlign: "right" }}>{names.join(" · ")}</span></div>
-        ))}
-      </details>
+      <div className="rd-kits-sections">
+        {groups.map(([kind, title]) => {
+          const items = details[kind] ?? [];
+          if (items.length === 0) return null;
+          return (
+            <details className="rd-kits-group" key={kind}>
+              <summary><strong>{title}</strong><span className="rd-kits-sub">{kind === "permission" ? items.reduce((n, i) => n + (i.rules?.length ?? 0), 0) : items.length}</span></summary>
+              {items.map((d) => <DetailRow key={d.name} kind={kind} d={d} />)}
+            </details>
+          );
+        })}
+      </div>
+      {kit.harnesses.includes("codex") && (details.hook ?? []).length > 0 && (
+        <div className="rd-kits-line" style={{ borderTop: 0 }}><span>Codex hooks</span><Pill tone="warn">waiting for you to trust the folder in Codex</Pill></div>
+      )}
     </>
+  );
+}
+
+function DetailRow({ kind, d }: { kind: string; d: KitDetail }) {
+  const meta =
+    kind === "skill" ? [d.effects, d.invocation === "user" ? "user-invoked" : ""].filter(Boolean).join(" · ")
+    : kind === "agent" ? [d.model, (d.tools ?? []).slice(0, 5).join(", ")].filter(Boolean).join(" · ")
+    : kind === "knowledge" ? d.load ?? ""
+    : kind === "hook" ? `${d.event ?? ""}${d.match ? ` · ${d.match}` : ""}${d.blocking ? " · blocks" : ""}`
+    : kind === "permission" ? `${d.rules?.length ?? 0} rules`
+    : kind === "settings" ? `${d.harness ?? ""} · ${(d.keys ?? []).join(", ")}`
+    : kind === "tool" ? d.form ?? ""
+    : "";
+  const title = kind === "skill" ? `/${d.name}` : d.name;
+  return (
+    <details className="rd-kits-skill">
+      <summary><span className="rd-kits-mono">{title}</span>{meta && <span style={{ color: "var(--text-soft)" }}>{meta}</span>}</summary>
+      <div className="rd-kits-note">
+        {kind === "permission" && d.rules ? (
+          <>
+            {d.rules.filter((r) => r.decision === "deny").length > 0 && <div>never: {d.rules.filter((r) => r.decision === "deny").map((r) => `${r.tool} ${r.match}`).join(" · ")}</div>}
+            {d.rules.filter((r) => r.decision === "ask").length > 0 && <div>asks: {d.rules.filter((r) => r.decision === "ask").map((r) => `${r.tool} ${r.match}`).join(" · ")}</div>}
+            {d.rules.filter((r) => r.decision === "allow").length > 0 && <div>without asking: {d.rules.filter((r) => r.decision === "allow").map((r) => `${r.tool} ${r.match}`).join(" · ")}</div>}
+          </>
+        ) : (
+          <>{d.description || "No description."}{kind === "knowledge" && d.lines ? ` (${d.lines} lines)` : ""}{kind === "skill" && (d.outputs ?? []).length > 0 ? ` · outputs: ${d.outputs!.join(", ")}` : ""}</>
+        )}
+      </div>
+    </details>
   );
 }

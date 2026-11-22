@@ -54,3 +54,28 @@
 .rd-kits-skill summary::before { content: '›'; color: var(--text-soft); display: inline-block; width: 10px; }
 .rd-kits-skill[open] summary::before { content: '⌄'; }
 .rd-kits-skill .rd-kits-note { padding: 4px 0 2px 18px; }
+.rd-kits-sections { display: flex; flex-direction: column; gap: 8px; }
+.rd-kits-group { border: 1px solid var(--border); border-radius: 6px; background: var(--bg); padding: 10px 14px; }
+.rd-kits-group > summary { cursor: pointer; list-style: none; display: flex; gap: 8px; align-items: baseline; font-size: 0.8125rem; }
+.rd-kits-group > summary::-webkit-details-marker { display: none; }
+.rd-kits-group > summary::before { content: '›'; color: var(--text-soft); display: inline-block; width: 10px; }
+.rd-kits-group[open] > summary::before { content: '⌄'; }
+.rd-kits-group[open] > summary { margin-bottom: 6px; }
+.rd-kits-group > summary .rd-kits-sub { margin-left: auto; }
+.rd-flow-head, .rd-flow { display: grid; grid-template-columns: minmax(0, 1.6fr) 90px 170px 150px; gap: 12px; align-items: center; }
+.rd-flow-head { font-size: 0.6875rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-soft); }
+.rd-flow-head strong { font-size: 0.8125rem; letter-spacing: 0; text-transform: none; color: var(--text); }
+.rd-flow { padding: 8px 0; border-top: 1px solid var(--border); font-size: 0.8125rem; }
+.rd-run { padding: 14px 16px; display: flex; flex-direction: column; gap: 12px; font-size: 0.8125rem; }
+.rd-steps { display: flex; flex-direction: column; gap: 6px; }
+.rd-step { display: grid; grid-template-columns: 22px 1fr auto; gap: 10px; align-items: center; border: 1px solid var(--border); border-radius: 6px; padding: 8px 10px; }
+.rd-step .n { width: 22px; height: 22px; border-radius: 50%; background: var(--bg-soft); color: var(--text-soft); display: grid; place-items: center; font-size: 0.6875rem; }
+.rd-step.done .n { background: color-mix(in srgb, var(--brand-green) 18%, var(--bg)); color: var(--brand-green); }
+.rd-step.now { border-color: #b8860b; }
+.rd-step .t { font-weight: 600; }
+.rd-gate { margin: -2px 0 4px 32px; padding: 10px 12px; border: 1px solid #b8860b; border-radius: 6px; display: flex; flex-direction: column; gap: 8px; }
+.rd-runbox { border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; }
+.rd-runbox > summary { list-style: none; cursor: pointer; display: flex; justify-content: space-between; gap: 10px; align-items: center; }
+.rd-runbox > summary::-webkit-details-marker { display: none; }
+.rd-runbox[open] > summary { margin-bottom: 10px; }
+@media (max-width: 860px) { .rd-flow-head, .rd-flow { grid-template-columns: 1fr; gap: 4px; } }

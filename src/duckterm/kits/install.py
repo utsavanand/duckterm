@@ -230,6 +230,7 @@ def apply(plan: Plan, *, replace: bool = False) -> Report:
         "installed_at": int(time.time()),
         "components": sorted({kit.component_id(c) for c in kit.components}),
         "procedures": _procedures(kit),
+        "details": _details(kit),
         "entries": entries,
     }
     record_path = _target(project, RECORD)
@@ -250,6 +251,12 @@ def _procedures(kit: m.Kit) -> list[dict[str, Any]]:
     from duckterm.kits import api
 
     return api.procedures(kit)
+
+
+def _details(kit: m.Kit) -> dict[str, Any]:
+    from duckterm.kits import api
+
+    return api.details(kit)
 
 
 def _is_script(rel: str) -> bool:

@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -221,8 +222,14 @@ def _run(args: argparse.Namespace) -> int:
         )
         if not harness:
             raise SystemExit("no supported harness on PATH (claude-code, codex); pass --harness")
+        session = os.environ.get("DUCKTERM_SESSION_KEY", "")
         run = runner.start(
-            project, args.flow, harness=harness, inputs=_options(args.input), limits=limits
+            project,
+            args.flow,
+            harness=harness,
+            inputs=_options(args.input),
+            limits=limits,
+            executor_state={"session": session} if session else None,
         )
     if args.json:
         print(json.dumps(run.state, indent=2, sort_keys=True, default=str))

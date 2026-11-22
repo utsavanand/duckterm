@@ -61,6 +61,17 @@ def test_install_overview_verify_and_uninstall_round_trip(tmp_path):
     assert kit["flows"] == ["review"]
     assert kit["skills"]["review-diff"]["description"].startswith("Reviews a diff")
     assert kit["skills"]["review-diff"]["effects"] == "read-only"
+    d = kit["details"]
+    assert {x["name"] for x in d["skill"]} == {"review-diff", "raise-pr"}
+    assert d["agent"][0]["name"] == "reviewer" and d["agent"][0]["description"]
+    assert any(x["load"] == "on demand" for x in d["knowledge"])
+    assert {x["event"] for x in d["hook"]} == {"before_tool", "stop"}
+    assert d["permission"][0]["rules"][1] == {
+        "tool": "shell",
+        "match": "rm -rf *",
+        "decision": "deny",
+    }
+    assert d["flow"][0]["steps"] == [{"id": "verdict", "kind": "decide"}]
     assert view["procedures"][0]["name"] == "feature-squad"
     assert view["procedures"][0]["kit"] == "sample-kit"
     assert view["procedures"][0]["rules"][0] == {"role": "dev", "review_by": "reviewer"}

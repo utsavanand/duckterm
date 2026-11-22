@@ -486,8 +486,10 @@ export interface KitInstalled {
   installed_at: number | null; entries: number; trusted: boolean;
   verify: { ok: boolean | null; missing: string[]; drifted: string[] };
   flows: string[]; skills: Record<string, { description: string; effects?: string | null }>; components: string[]; procedures: KitProcedure[];
+  details: Record<string, KitDetail[]>;
 }
-export interface KitRunSummary { run_id: string; flow: string; state: string; started_at: number; current: { step: string; attempt: number } | null; failure: { step: string; attempt: number; reason: string } | null }
+export interface KitDetail { name: string; description?: string; effects?: string; invocation?: string; outputs?: string[]; model?: string; tools?: string[]; load?: string; lines?: number; event?: string; match?: string; blocking?: boolean; timeout?: number; rules?: { tool: string; match: string; decision: string }[]; inputs?: string[]; steps?: { id: string; kind: string }[]; trigger?: string | null; harness?: string; keys?: string[]; form?: string }
+export interface KitRunSummary { run_id: string; flow: string; state: string; started_at: number; updated_at?: number; current: { step: string; attempt: number } | null; failure: { step: string; attempt: number; reason: string } | null; inputs?: Record<string, string>; session?: string | null; steps_done?: number }
 export interface KitRun extends KitRunSummary {
   harness: string; executor: string;
   attempts: { step: string; attempt: number; kind: string; status: string; choice: string | null; reason: string; outputs: Record<string, unknown> }[];
@@ -754,7 +756,7 @@ export const api = {
   kitsRuns: (project: string, context?: string) =>
     post<{ runs: KitRunSummary[] }>("/kits/runs", { project }, context),
   kitsRunDetail: (project: string, run_id: string, context?: string) =>
-    post<{ run: KitRun }>("/kits/run-detail", { project, run_id }, context),
+    post<{ run: KitRun; steps: { id: string; kind: string; skill?: string | null; question?: string | null; routes?: Record<string, string> | null }[] }>("/kits/run-detail", { project, run_id }, context),
   kitsGate: (project: string, run_id: string, step: string, answer: string, context?: string) =>
     post<{ run_id: string; resumed: boolean }>("/kits/gate", { project, run_id, step, answer }, context),
   // Legacy skill-kit registry (duckterm-harness.json suites, e.g. uv-suite before its manifest).
