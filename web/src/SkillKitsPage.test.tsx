@@ -69,7 +69,7 @@ it("walks add → review → install and lands on the installed kit", async () =
   await waitFor(() => expect(api.kitsPlan).toHaveBeenCalled());
   expect(await screen.findByText("validate: ok")).toBeVisible();
   expect(screen.getByText(/skill · 2/)).toBeVisible();
-  expect(screen.getByLabelText("Option · persona")).toHaveValue("professional");
+  expect(screen.getByLabelText("persona")).toHaveValue("professional");
   fireEvent.click(screen.getByRole("button", { name: "Review what will change" }));
   expect(await screen.findByText(/Review: sample-kit 0.1.0/)).toBeVisible();
   expect(screen.getAllByText("installed")).toHaveLength(2);

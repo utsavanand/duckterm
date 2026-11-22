@@ -264,13 +264,12 @@ function ListView({ project, knownDirs, onProject, overview, error, onAdd, onOpe
         </div>
       </section>
       <section className="rd-kits-section">
-        <h2>Procedures these kits ship <span>a procedure applied to a workspace makes it a team</span></h2>
+        <h2>Teams these kits offer <span>a team is a workspace with a procedure; creating one makes a new workspace</span></h2>
         <div className="rd-kits-table">
-          <div className="rd-kits-prow"><span>Procedure</span><span>Roles and rules</span><span /></div>
+          <div className="rd-kits-prow"><span>Team</span><span>Roles and rules</span><span /></div>
           {procedures.map((p) => <ProcedureRow key={`${p.kit}/${p.name}`} procedure={p} />)}
-          {overview && procedures.length === 0 && <div className="rd-kits-prow" style={{ gridTemplateColumns: "1fr" }}><span className="rd-kits-sub">None of the installed kits ships a procedure.</span></div>}
+          {overview && procedures.length === 0 && <div className="rd-kits-prow" style={{ gridTemplateColumns: "1fr" }}><span className="rd-kits-sub">None of the installed kits offers a team.</span></div>}
         </div>
-        <div className="rd-kits-note">One procedure is active per workspace. Applying one is the next step to build; for now the page lists what each kit offers.</div>
       </section>
     </>
   );
@@ -280,11 +279,11 @@ function ProcedureRow({ procedure }: { procedure: KitProcedure }) {
   return (
     <div className="rd-kits-prow">
       <div>
-        <div className="rd-kits-name">{procedure.name} <span className="rd-kits-mono" style={{ fontWeight: 400, color: "var(--text-soft)" }}>from {procedure.kit} {procedure.kit_version ?? ""}</span></div>
+        <div className="rd-kits-name">{procedure.name} <span className="rd-kits-mono" style={{ fontWeight: 400, color: "var(--text-soft)" }}>from {procedure.kit}</span></div>
         <div className="rd-kits-sub">{Object.keys(procedure.roles).join(" · ")}</div>
       </div>
       <div style={{ fontSize: "0.75rem" }}>{procedure.rules.map(describeRule).join(" · ") || procedure.description}</div>
-      <div className="rd-kits-pills" style={{ justifyContent: "flex-end" }}><Pill>offered</Pill><Button variant="ghost" size="sm" disabled>Apply to this workspace…</Button></div>
+      <div className="rd-kits-pills" style={{ justifyContent: "flex-end" }}><Button size="sm" disabled>Create team</Button></div>
     </div>
   );
 }
@@ -349,11 +348,11 @@ function AddView({ project, knownDirs, onProject, harnessesPresent, busy, onCanc
           </fieldset>
           {inventory && Object.entries(inventory.options).map(([name, spec]) => (
             <div key={name}>
-              <label htmlFor={`rd-kits-opt-${name}`} style={{ display: "block", fontSize: "0.6875rem", letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--text-soft)", marginBottom: 6 }}>Option · {name}</label>
+              <label htmlFor={`rd-kits-opt-${name}`} style={{ display: "block", fontSize: "0.6875rem", letterSpacing: "0.06em", textTransform: "uppercase", color: "var(--text-soft)", marginBottom: 6 }}>{name}</label>
               <select id={`rd-kits-opt-${name}`} value={options[name] ?? spec.default ?? ""} onChange={(e) => setOptions({ ...options, [name]: e.target.value })}>
                 {(spec.choices ?? []).map((c) => <option key={c} value={c}>{c}{c === spec.default ? " (default)" : ""}</option>)}
               </select>
-              <div className="rd-kits-note">Options come from the manifest; each choice turns components on or off.</div>
+              <div className="rd-kits-note">{spec.description ?? "A kit option: each choice turns components on or off."}</div>
             </div>
           ))}
         </div>
@@ -472,35 +471,31 @@ function KitView({ kit, runs, busy, onRun, onVerify, onUninstall }: {
     (acc[kind] ??= []).push(name);
     return acc;
   }, {});
+  const counts = Object.entries(byKind).filter(([kind]) => kind !== "team").map(([kind, names]) => `${names.length} ${kind}${names.length === 1 ? "" : "s"}`).join(", ");
+  const last = runs[runs.length - 1];
   return (
     <>
       <div className="rd-kits-head">
         <div>
           <h1>{kit.name} <span className="rd-kits-mono" style={{ fontWeight: 400, color: "var(--text-soft)" }}>{kit.version ?? ""}</span></h1>
-          <p>Installed for {kit.harnesses.join(" and ")}{Object.keys(kit.options).length ? ` · ${Object.entries(kit.options).map(([o, c]) => `${o}=${c}`).join(", ")}` : ""} · {kit.entries} entries recorded · {kit.trusted ? "record and home copy match" : "record written on another machine; uninstall strips kit text only"}</p>
+          <p>Installed for {kit.harnesses.join(" and ")} · {kit.verify.ok === true ? <Pill tone="ok">verified</Pill> : kit.verify.ok === false ? <Pill tone="bad">drift: {kit.verify.missing.length} missing, {kit.verify.drifted.length} drifted</Pill> : <Pill>not verified</Pill>}{!kit.trusted && <> · <Pill tone="warn">record written on another machine</Pill></>}</p>
         </div>
         <div className="rd-kits-actions">
           <Button variant="ghost" onClick={onVerify}>Verify</Button>
           {!confirm ? <Button variant="danger" onClick={() => setConfirm(true)}>Uninstall…</Button> : <Button variant="danger" onClick={onUninstall} disabled={busy}>Confirm uninstall</Button>}
         </div>
       </div>
-      <div className="rd-kits-pills">
-        {kit.verify.ok === true && <Pill tone="ok">verify: ok, {kit.entries} entries</Pill>}
-        {kit.verify.ok === false && <Pill tone="bad">verify: {kit.verify.missing.length} missing, {kit.verify.drifted.length} drifted</Pill>}
-        {kit.harnesses.includes("codex") && byKind.hook && <Pill tone="warn">codex hooks activate once you trust this folder in Codex</Pill>}
-      </div>
+      {confirm && <div className="rd-kits-note">Uninstall removes exactly what the install record lists and restores every edited file byte for byte when you have not touched it since. Files you edited keep your changes; only the kit's additions come out.</div>}
+      {kit.procedures.map((p) => (
+        <div className="rd-kits-card" key={p.name} style={{ borderColor: "var(--brand-green)" }}>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}><strong>Team: {p.name}</strong><Button size="sm" disabled>Create team</Button></div>
+          <div style={{ fontSize: "0.75rem" }}>{Object.keys(p.roles).join(" · ")}. {p.rules.map(describeRule).join("; ")}.</div>
+          <div className="rd-kits-note">Creates a new workspace with this procedure and one card per role; existing agents can be moved into it afterwards. Not built yet.</div>
+        </div>
+      ))}
       <div className="rd-kits-cards">
-        {kit.procedures.map((p) => (
-          <div className="rd-kits-card" key={p.name} style={{ borderColor: "var(--brand-green)" }}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}><strong>Procedure: {p.name}</strong><Pill>offered, not applied</Pill></div>
-            <div style={{ fontSize: "0.75rem" }}>{Object.entries(p.roles).map(([role, spec]) => `${role} (${spec.skills.join(", ")})`).join(" · ")}</div>
-            <div style={{ fontSize: "0.75rem" }}>{p.rules.map(describeRule).join(" · ")}</div>
-            <div className="rd-kits-note">Applying it gives the workspace one role card per role and makes it a team. Not built yet.</div>
-            <div><Button variant="ghost" size="sm" disabled>Apply to this workspace…</Button></div>
-          </div>
-        ))}
         <div className="rd-kits-card">
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}><strong>Flows</strong><span className="rd-kits-sub">run by DuckTerm's runner, not by a harness</span></div>
+          <strong>Flows</strong>
           {kit.flows.length === 0 && <div className="rd-kits-sub">This kit ships no flow.</div>}
           {kit.flows.map((flow) => (
             <div className="rd-kits-line" key={flow}>
@@ -508,27 +503,30 @@ function KitView({ kit, runs, busy, onRun, onVerify, onUninstall }: {
               <Button size="sm" onClick={() => onRun(`${kit.name}/${flow}`)} disabled={busy}>Run</Button>
             </div>
           ))}
-          {runs.slice(-3).reverse().map((r) => (
-            <div className="rd-kits-line" key={r.run_id}>
-              <div><span className="rd-kits-mono">{r.run_id}</span> · {r.flow.split("/")[1]}<div className="rd-kits-note">{r.state}{r.current ? ` at ${r.current.step}` : ""}{r.failure ? `: ${r.failure.reason}` : ""}</div></div>
-              <Pill tone={r.state === "succeeded" ? "ok" : r.state === "failed" ? "bad" : r.state === "waiting_gate" ? "warn" : ""}>{r.state}</Pill>
+          {last && (
+            <div className="rd-kits-line">
+              <div className="rd-kits-note">Last run · {last.flow.split("/")[1]} · {last.state}{last.current ? ` at ${last.current.step}` : ""}{last.failure ? `: ${last.failure.reason}` : ""}</div>
+              <Pill tone={last.state === "succeeded" ? "ok" : last.state === "failed" ? "bad" : last.state === "waiting_gate" ? "warn" : ""}>{last.state}</Pill>
             </div>
-          ))}
+          )}
         </div>
         <div className="rd-kits-card">
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}><strong>Components</strong><span className="rd-kits-sub">from the install record</span></div>
-          {Object.entries(byKind).map(([kind, names]) => (
-            <div className="rd-kits-line" key={kind}><span>{kind === "team" ? "procedure" : kind} · {names.length}</span><span className="rd-kits-mono" style={{ color: "var(--text-soft)", textAlign: "right" }}>{names.join(" · ")}</span></div>
+          <strong>Settings</strong>
+          {Object.entries(kit.options).map(([name, choice]) => (
+            <div className="rd-kits-line" key={name}><div>{name} <span className="rd-kits-mono">{choice}</span><div className="rd-kits-note">Chosen at install; reinstall to change it.</div></div></div>
           ))}
-        </div>
-        <div className="rd-kits-card">
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 8 }}><strong>Uninstall will</strong><span className="rd-kits-sub">exactly what the record says</span></div>
-          <div className="rd-kits-line"><span>Copied files that still match their hash</span><span className="rd-kits-mono" style={{ color: "var(--text-soft)" }}>removed</span></div>
-          <div className="rd-kits-line"><span>Edited config files, untouched since</span><span className="rd-kits-mono" style={{ color: "var(--text-soft)" }}>restored byte for byte</span></div>
-          <div className="rd-kits-line"><span>Files you edited since</span><span className="rd-kits-mono" style={{ color: "var(--text-soft)" }}>only the kit's additions come out</span></div>
-          <div className="rd-kits-line"><span>Credentials, consent, CLI tools</span><span className="rd-kits-mono" style={{ color: "var(--text-soft)" }}>never part of a kit</span></div>
+          {kit.harnesses.includes("codex") && byKind.hook && (
+            <div className="rd-kits-line"><div>Codex hooks<div className="rd-kits-note">Codex runs a project's hooks only after you trust the folder in Codex. DuckTerm never does that for you.</div></div><Pill tone="warn">waiting for trust</Pill></div>
+          )}
+          {Object.keys(kit.options).length === 0 && !(kit.harnesses.includes("codex") && byKind.hook) && <div className="rd-kits-sub">Nothing to set for this kit.</div>}
         </div>
       </div>
+      <details className="rd-kits-card" style={{ display: "block" }}>
+        <summary style={{ cursor: "pointer", fontWeight: 600, fontSize: "0.8125rem" }}>What this kit installed <span className="rd-kits-sub" style={{ fontWeight: 400 }}>· {counts} · {kit.entries} entries</span></summary>
+        {Object.entries(byKind).map(([kind, names]) => (
+          <div className="rd-kits-line" key={kind}><span>{kind === "team" ? "team" : kind}</span><span className="rd-kits-mono" style={{ color: "var(--text-soft)", textAlign: "right" }}>{names.join(" · ")}</span></div>
+        ))}
+      </details>
     </>
   );
 }

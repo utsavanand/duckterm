@@ -463,7 +463,7 @@ export interface KitComponentSummary { name: string; effects?: string; event?: s
 export interface KitInventory {
   name: string; version: string; description: string; root: string;
   author?: string | null; license?: string | null;
-  options: Record<string, { default?: string; choices?: string[] }>;
+  options: Record<string, { default?: string; choices?: string[]; description?: string }>;
   components: Record<string, KitComponentSummary[]>;
   component_count: number;
   procedures: KitProcedure[];
