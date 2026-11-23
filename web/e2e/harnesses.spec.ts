@@ -146,6 +146,45 @@ test("the dry-run matrix stays readable at 390px in both themes", async ({ page 
   rmSync(kit, { recursive: true, force: true });
 });
 
+// A repository deleted since its last session stays in workspace history, so
+// the dry run for it is refused (400). The Enable step shows the refusal with
+// the full path, and at 390px that path wraps instead of widening the page.
+test("a refused dry run is shown in the wizard at 390px without widening the page", async ({ page }) => {
+  const kit = mkdtempSync(join(tmpdir(), "rd-e2e-kit-"));
+  const project = realpathSync(mkdtempSync(join(tmpdir(), "rd-e2e-kit-project-")));
+  const stamp = Date.now();
+  mkdirSync(join(kit, "skills", "ship-it"), { recursive: true });
+  writeFileSync(join(kit, "skills", "ship-it", "SKILL.md"), "---\nname: ship-it\ndescription: Ships.\n---\n");
+  writeFileSync(
+    join(kit, "skill-kit.toml"),
+    ["manifest_version = 1", `name = "kit-${stamp}"`, 'description = "for the refusal path"', 'version = "0.1.0"', "", "[[components]]", 'kind = "skill"', 'path = "skills/ship-it"', ""].join("\n"),
+  );
+  const workspace = `kit-ws-${stamp}`;
+  await seedSession(`kit-session-${stamp}`, { name: "kit agent", group: workspace, cwd: project });
+  rmSync(project, { recursive: true, force: true });
+
+  await page.setViewportSize({ width: 390, height: 1000 });
+  await page.goto("/");
+  await page.getByRole("button", { name: "Settings", exact: true }).click();
+  await page.getByRole("button", { name: "Skill kits" }).click();
+  await page.getByRole("button", { name: "Add skill kit…" }).click();
+  await page.getByLabel("Kit folder").fill(kit);
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await page.getByRole("button", { name: "Next: choose workspaces" }).click();
+  await page.getByLabel("These workspaces").check();
+  await page.getByLabel(workspace, { exact: true }).check();
+  await page.getByRole("button", { name: "Review what will change" }).click();
+
+  const alert = page.getByRole("alert");
+  await expect(alert).toContainText(`${workspace} · ${project}: no such directory: ${project}`);
+  await expect(alert).toContainText("Nothing was written");
+  await expect(page.getByLabel(workspace, { exact: true })).toBeChecked();
+  const widths = await page.locator(".rd-kits-page").evaluate((el) => [el.scrollWidth, el.clientWidth]);
+  expect(widths[0]).toBeLessThanOrEqual(widths[1]);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
+  rmSync(kit, { recursive: true, force: true });
+});
+
 // Browse lives inside the Add form: opening it, moving around and picking a
 // manifest must never submit the form. Only the Add button (or Enter in the
 // field) registers a kit. The browser is confined to the home folder, so the

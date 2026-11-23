@@ -48,7 +48,7 @@
 .rd-kits-line:first-of-type { border-top: 0; }
 .rd-kits-files { margin: 0; font-size: 0.6875rem; line-height: 1.6; color: var(--text-soft); max-height: 320px; overflow: auto; white-space: pre; background: var(--bg-soft); border-radius: 6px; padding: 8px 10px; }
 .rd-kits-footer { display: flex; justify-content: space-between; align-items: center; gap: 8px; border-top: 1px solid var(--border); padding-top: 14px; flex-wrap: wrap; font-size: 0.75rem; color: var(--text-soft); }
-.rd-kits-error { border: 1px solid #b4262a; border-radius: 6px; padding: 10px 12px; font-size: 0.75rem; color: #a52a2a; background: color-mix(in srgb, #b4262a 8%, var(--bg)); }
+.rd-kits-error { border: 1px solid #b4262a; border-radius: 6px; padding: 10px 12px; font-size: 0.75rem; color: #a52a2a; background: color-mix(in srgb, #b4262a 8%, var(--bg)); min-width: 0; overflow-wrap: anywhere; }
 .rd-kits-page select, .rd-kits-page input[type=text] { font: inherit; font-size: 0.8125rem; padding: 8px 10px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--bg); color: var(--text); width: 100%; box-sizing: border-box; }
 @media (max-width: 860px) {
   .rd-kits-row, .rd-kits-prow { grid-template-columns: minmax(0, 1fr); gap: 6px; }

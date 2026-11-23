@@ -1031,5 +1031,5 @@ def place_team(kit: m.Kit, team: str) -> Placement:
         "none",
         team,
         status=OFFERED,
-        note="a team template; New team instantiates it into a folder, install never does",
+        note="a team template; New team instantiates it into a workspace, install never does",
     )
