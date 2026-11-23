@@ -9,14 +9,17 @@
 .rd-kits-actions { display: flex; gap: 8px; flex-wrap: wrap; }
 .rd-kits-section h2 { margin: 0 0 8px; font-size: 0.875rem; font-weight: 600; display: flex; justify-content: space-between; align-items: baseline; gap: 8px; }
 .rd-kits-section h2 span { font-size: 0.75rem; color: var(--text-soft); font-weight: 400; }
-.rd-kits-table { border: 1px solid var(--border); border-radius: 6px; background: var(--bg); overflow: hidden; }
+.rd-kits-table { border: 1px solid var(--border); border-radius: 6px; background: var(--bg); overflow: hidden; min-width: 0; }
+/* paths and names are long; every grid cell may shrink and every long token may wrap */
+.rd-kits-row > *, .rd-kits-prow > *, .rd-kits-card > * { min-width: 0; overflow-wrap: anywhere; }
+.rd-kits-row .rd-kits-actions, .rd-kits-prow .rd-kits-actions { flex-wrap: wrap; justify-content: flex-start; }
 .rd-kits-row { display: grid; grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) minmax(0, 1.2fr) auto; gap: 16px; align-items: center; padding: 12px 14px; border-top: 1px solid var(--border); }
 .rd-kits-row:first-child { border-top: 0; background: var(--bg-soft); font-size: 0.6875rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-soft); }
 .rd-kits-prow { display: grid; grid-template-columns: minmax(0, 1.3fr) minmax(0, 1.4fr) auto; gap: 16px; align-items: center; padding: 12px 14px; border-top: 1px solid var(--border); }
 .rd-kits-prow:first-child { border-top: 0; background: var(--bg-soft); font-size: 0.6875rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-soft); }
 .rd-kits-name { font-weight: 600; }
 .rd-kits-sub { font-size: 0.75rem; color: var(--text-soft); margin-top: 2px; }
-.rd-kits-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.75rem; }
+.rd-kits-mono { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.75rem; overflow-wrap: anywhere; }
 .rd-kits-pills { display: flex; gap: 6px; flex-wrap: wrap; }
 .rd-kit-pill { display: inline-block; font-size: 0.6875rem; padding: 2px 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--bg-soft); color: var(--text-soft); white-space: nowrap; }
 .rd-kit-pill.ok { background: color-mix(in srgb, var(--brand-green) 14%, var(--bg)); border-color: transparent; color: var(--brand-green); }
@@ -36,7 +39,7 @@
 .rd-kits-plan th { font-size: 0.6875rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-soft); text-align: left; padding: 8px 10px; background: var(--bg-soft); border-bottom: 1px solid var(--border); position: sticky; top: 0; }
 .rd-kits-plan td { padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
 .rd-kits-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
-.rd-kits-card { border: 1px solid var(--border); border-radius: 6px; background: var(--bg); padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; min-width: 0; }
+.rd-kits-card { border: 1px solid var(--border); border-radius: 6px; background: var(--bg); padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; min-width: 0; overflow-wrap: anywhere; }
 .rd-kits-card strong { font-size: 0.8125rem; }
 .rd-kits-line { display: flex; justify-content: space-between; gap: 10px; align-items: center; font-size: 0.75rem; padding: 6px 0; border-top: 1px solid var(--border); }
 .rd-kits-line:first-of-type { border-top: 0; }
@@ -45,8 +48,8 @@
 .rd-kits-error { border: 1px solid #b4262a; border-radius: 6px; padding: 10px 12px; font-size: 0.75rem; color: #a52a2a; background: color-mix(in srgb, #b4262a 8%, var(--bg)); }
 .rd-kits-page select, .rd-kits-page input[type=text] { font: inherit; font-size: 0.8125rem; padding: 8px 10px; border: 1px solid var(--border-strong); border-radius: 6px; background: var(--bg); color: var(--text); width: 100%; box-sizing: border-box; }
 @media (max-width: 860px) {
-  .rd-kits-row, .rd-kits-prow { grid-template-columns: 1fr; gap: 6px; }
-  .rd-kits-cards { grid-template-columns: 1fr; }
+  .rd-kits-row, .rd-kits-prow { grid-template-columns: minmax(0, 1fr); gap: 6px; }
+  .rd-kits-cards { grid-template-columns: minmax(0, 1fr); }
 }
 .rd-kits-skill { border-top: 1px solid var(--border); padding: 6px 0; font-size: 0.75rem; }
 .rd-kits-skill summary { cursor: pointer; list-style: none; display: flex; gap: 8px; align-items: center; }

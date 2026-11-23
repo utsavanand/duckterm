@@ -45,8 +45,8 @@ export function DirBrowser({
 
   if (!data) return <div role="status">
     <p>{error || "Connecting and loading folders…"}</p>
-    {error && <Button size="sm" onClick={() => setAttempt((n) => n + 1)}>Retry</Button>}
-    <Button size="sm" variant="ghost" onClick={onCancel}>Cancel browsing</Button>
+    {error && <Button type="button" size="sm" onClick={() => setAttempt((n) => n + 1)}>Retry</Button>}
+    <Button type="button" size="sm" variant="ghost" onClick={onCancel}>Cancel browsing</Button>
   </div>;
 
   return (
@@ -68,6 +68,7 @@ export function DirBrowser({
         }}
       >
         <button
+          type="button"
           className="rd-btn rd-btn-sm rd-btn-ghost"
           disabled={!data.parent || creating}
           onClick={() => data.parent && setRequestedPath(data.parent)}
@@ -121,7 +122,7 @@ export function DirBrowser({
                 <strong>{k.name ?? k.file}</strong>{k.version ? ` ${k.version}` : ""}{k.description ? ` · ${k.description}` : ""}{k.error ? ` · ${k.error}` : ""}
                 <span className="mono" style={{ display: "block", fontSize: "0.6875rem", color: "var(--muted)" }}>{k.file}</span>
               </span>
-              <Button size="sm" disabled={!!k.error} onClick={() => onPick({ ...data, path: k.path })}>Use {k.name ?? k.file}</Button>
+              <Button type="button" size="sm" disabled={!!k.error} onClick={() => onPick({ ...data, path: k.path })}>Use {k.name ?? k.file}</Button>
             </div>
           ))}
         </div>
@@ -131,7 +132,7 @@ export function DirBrowser({
       {createFolder && <div style={{ padding: "0 12px 12px" }}>
         {newFolder ? <>
           <label>New folder name<input aria-label="New folder name" style={inputStyle} value={folderName} disabled={creating} onChange={e => setFolderName(e.target.value)} /></label>
-          <Button size="sm" disabled={creating || !folderName.trim()} onClick={async () => {
+          <Button type="button" size="sm" disabled={creating || !folderName.trim()} onClick={async () => {
             setCreating(true); setCreateError("");
             try {
               const folder = await createFolder(data.path, folderName);
@@ -139,8 +140,8 @@ export function DirBrowser({
             } catch (e) { setCreateError((e as Error).message); }
             finally { setCreating(false); }
           }}>{creating ? "Creating…" : "Create folder"}</Button>
-          <Button size="sm" variant="ghost" disabled={creating} onClick={() => { setNewFolder(false); setCreateError(""); }}>Cancel new folder</Button>
-        </> : <Button size="sm" variant="ghost" onClick={() => { setNewFolder(true); setFolderName(suggestedName); }}>New folder…</Button>}
+          <Button type="button" size="sm" variant="ghost" disabled={creating} onClick={() => { setNewFolder(false); setCreateError(""); }}>Cancel new folder</Button>
+        </> : <Button type="button" size="sm" variant="ghost" onClick={() => { setNewFolder(true); setFolderName(suggestedName); }}>New folder…</Button>}
         {createError && <p role="alert">{createError}</p>}
       </div>}
       <div
@@ -152,11 +153,11 @@ export function DirBrowser({
           borderTop: "1px solid var(--border)",
         }}
       >
-        <Button size="sm" variant="ghost" disabled={creating} onClick={onCancel}>
+        <Button type="button" size="sm" variant="ghost" disabled={creating} onClick={onCancel}>
           Cancel
         </Button>
         {!(kitsOnly && (data.kits ?? []).length > 1) && (
-          <Button size="sm" disabled={creating || (emptyOnly && data.empty !== true) || (kitsOnly && (data.kits ?? []).length === 0)} onClick={() => onPick(data)}>
+          <Button type="button" size="sm" disabled={creating || (emptyOnly && data.empty !== true) || (kitsOnly && (data.kits ?? []).length === 0)} onClick={() => onPick(data)}>
             {pickLabel ?? `Use this folder${data.is_git ? " (git)" : ""}`}
           </Button>
         )}

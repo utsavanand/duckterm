@@ -2768,6 +2768,12 @@ class Server:
             except kits_api.KitApiError as exc:
                 await _write_json(writer, exc.status, {"error": str(exc)})
             return
+        if action == "team":
+            try:
+                await _write_json(writer, 200, await self._create_team_record(kits_api, payload))
+            except kits_api.KitApiError as exc:
+                await _write_json(writer, exc.status, {"error": str(exc)})
+            return
         calls = {
             "overview": lambda: kits_api.overview(payload.get("project")),
             "catalog": lambda: kits_api.catalog(registry, workspaces),
@@ -2787,7 +2793,6 @@ class Server:
                 payload, str(payload.get("run_id") or ""), tracker
             ),
             "teams": lambda: kits_api.teams(),
-            "team": lambda: self._create_team_record(kits_api, payload),
         }
         try:
             result = await asyncio.to_thread(calls[action])
@@ -2875,20 +2880,31 @@ class Server:
             raise kits_api.KitApiError(404, f"no kit named {name!r} is added")
         return {"removed": name}
 
-    def _create_team_record(self, kits_api: Any, payload: dict[str, Any]) -> dict[str, Any]:
+    async def _create_team_record(self, kits_api: Any, payload: dict[str, Any]) -> dict[str, Any]:
         """A team is a workspace with a procedure: the record first (it refuses
         a bad request without touching anything), then the workspace itself,
-        registered like New workspace does so an empty one persists."""
-        result: dict[str, Any] = kits_api.create_team(payload)
-        folder = str(result["team"]["folder"])
-        self.history.create_folder(folder, now=int(time.time() * 1000))
-        # The team's first session installs the kit if it is not there yet; the
-        # policy pins the kit tree the owner has just read on the kit page.
-        kit = str(result["team"]["kit"])
+        registered like New workspace does so an empty one persists. The
+        history store is bound to the loop thread, so only the kit's file work
+        runs in a thread; a workspace that fails to register takes its record
+        back out, so the next attempt is not a 409."""
+        kit = str(payload.get("kit") or "")
         kit_path = payload.get("kit_path") or next(
             (r["path"] for r in self.history.harnesses() if str(r.get("name")) == kit), None
         )
-        kits_api.add_policy_workspace(kit, folder, str(kit_path) if kit_path else None)
+        result: dict[str, Any] = await asyncio.to_thread(kits_api.create_team, payload)
+        folder = str(result["team"]["folder"])
+        try:
+            self.history.create_folder(folder, now=int(time.time() * 1000))
+        except Exception as exc:
+            await asyncio.to_thread(kits_api.remove_team, folder)
+            raise kits_api.KitApiError(
+                500, f"the workspace could not be registered: {exc}"
+            ) from exc
+        # The team's first session installs the kit if it is not there yet; the
+        # policy pins the kit tree the owner has just read on the kit page.
+        await asyncio.to_thread(
+            kits_api.add_policy_workspace, kit, folder, str(kit_path) if kit_path else None
+        )
         return result
 
     def _suites_for(self, directory: object) -> list[str]:

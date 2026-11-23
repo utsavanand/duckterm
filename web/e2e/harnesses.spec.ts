@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import { api, apiPost, postEvent, seedSession } from "./helpers";
@@ -70,6 +70,64 @@ test("add a skill kit, install it into a workspace and read a skill; the kit's s
   expect(existsSync(join(project, ".claude", "skills", "ship-it", "SKILL.md"))).toBe(true);
   expect(existsSync(join(kit, "installed.marker"))).toBe(false);
   expect(existsSync(join(project, "installed.marker"))).toBe(false);
+});
+
+// Browse lives inside the Add form: opening it, moving around and picking a
+// manifest must never submit the form. Only the Add button (or Enter in the
+// field) registers a kit. The browser is confined to the home folder, so the
+// fixture lives under it and is removed afterwards.
+test("Browse offers each manifest of a folder and registers nothing until Add is pressed", async ({
+  page,
+}) => {
+  const stamp = Date.now();
+  const parent = join(homedir(), ".cache", "duckterm-e2e");
+  mkdirSync(parent, { recursive: true });
+  const kit = mkdtempSync(join(parent, `kits-${stamp}-`));
+  try {
+    mkdirSync(join(kit, "skills", "ship-it"), { recursive: true });
+    writeFileSync(
+      join(kit, "skills", "ship-it", "SKILL.md"),
+      "---\nname: ship-it\ndescription: Ships.\n---\n",
+    );
+    const manifest = (name: string) =>
+      [
+        "manifest_version = 1",
+        `name = "${name}"`,
+        'description = "two kits in one folder"',
+        'version = "0.1.0"',
+        "",
+        "[[components]]",
+        'kind = "skill"',
+        'path = "skills/ship-it"',
+        "",
+      ].join("\n");
+    writeFileSync(join(kit, "skill-kit.toml"), manifest(`main-${stamp}`));
+    writeFileSync(join(kit, "skill-kit.alt.toml"), manifest(`alt-${stamp}`));
+    const registers: string[] = [];
+    page.on("request", (r) => {
+      if (r.method() === "POST" && r.url().includes("/kits/register")) registers.push(r.postData() ?? "");
+    });
+
+    await page.goto("/");
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await page.getByRole("button", { name: "Skill kits" }).click();
+    await page.getByRole("button", { name: "Add skill kit…" }).click();
+    await page.getByLabel("Kit folder").fill(kit);
+    await page.getByRole("button", { name: "Browse…" }).click();
+    await expect(page.getByRole("button", { name: `Use alt-${stamp}` })).toBeVisible();
+    await expect(page.getByRole("button", { name: `Use main-${stamp}` })).toBeVisible();
+    expect(registers).toEqual([]);
+    await page.getByRole("button", { name: `Use alt-${stamp}` }).click();
+    await expect(page.getByLabel("Kit folder")).toHaveValue(join(kit, "skill-kit.alt.toml"));
+    expect(registers).toEqual([]);
+    await page.getByRole("button", { name: "Add", exact: true }).click();
+    await expect(page.getByRole("heading", { name: `alt-${stamp}` })).toBeVisible();
+    await expect(page.getByText(/Step 2 of 3/)).toBeVisible();
+    expect(registers).toHaveLength(1);
+    expect(registers[0]).toContain("skill-kit.alt.toml");
+  } finally {
+    rmSync(kit, { recursive: true, force: true });
+  }
 });
 
 // The observation loop: corrections seeded for a folder come back as proposed

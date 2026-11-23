@@ -576,10 +576,14 @@ def create_team(body: dict[str, Any]) -> dict[str, Any]:
         "rules": template.get("rules", []),
         "created_at": int(time.time()),
     }
-    path = _team_file(folder)
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2) + "\n")
+    _write_private(_team_file(folder), json.dumps(data, indent=2) + "\n")
     return {"team": data}
+
+
+def remove_team(folder: str) -> None:
+    """Take a team record back out, for a creation that could not finish (the
+    workspace itself failed to register) so the next attempt is not a 409."""
+    _team_file(folder).unlink(missing_ok=True)
 
 
 # ── enable: which workspaces a kit is for, and installing accordingly ───────

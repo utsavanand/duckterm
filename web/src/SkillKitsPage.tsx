@@ -385,7 +385,7 @@ function CreateTeam({ name, busy, onCreate }: { name: string; busy: boolean; onC
     <form className="rd-kits-actions" style={{ justifyContent: "flex-end", alignItems: "center" }} onSubmit={(e) => { e.preventDefault(); if (value.trim()) onCreate(value.trim()); setAsking(false); }}>
       <input type="text" aria-label="Workspace name" value={value} onChange={(e) => setValue(e.target.value)} style={{ width: 200 }} autoFocus />
       <Button size="sm" disabled={busy || !value.trim()} onClick={() => { if (value.trim()) { onCreate(value.trim()); setAsking(false); } }}>Create workspace</Button>
-      <Button size="sm" variant="ghost" onClick={() => setAsking(false)}>Cancel</Button>
+      <Button type="button" size="sm" variant="ghost" onClick={() => setAsking(false)}>Cancel</Button>
     </form>
   );
 }
@@ -399,12 +399,12 @@ function AddView({ busy, onCancel, onAdd }: { busy: boolean; onCancel: () => voi
         <h1>Add skill kit</h1>
         <span className="rd-kits-sub">Step 1 of 3 · pick the kit; nothing is installed yet</span>
       </div>
-      <form className="rd-kits-form" style={{ gridTemplateColumns: "1fr" }} onSubmit={(e) => { e.preventDefault(); if (path.trim()) onAdd(path.trim()); }}>
+      <form className="rd-kits-form" style={{ gridTemplateColumns: "1fr" }} onSubmit={(e) => { e.preventDefault(); if (!browsing && path.trim()) onAdd(path.trim()); }}>
         <div>
           <label htmlFor="rd-kits-kit" style={LABEL}>Kit folder</label>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <input id="rd-kits-kit" type="text" value={path} onChange={(e) => setPath(e.target.value)} placeholder="~/Downloads/uv-suite" autoFocus style={{ flex: 1 }} />
-            <Button variant="ghost" onClick={() => setBrowsing((b) => !b)}>Browse…</Button>
+            <Button type="button" variant="ghost" onClick={() => setBrowsing((b) => !b)}>Browse…</Button>
           </div>
           <div className="rd-kits-note">The folder a kit was downloaded or cloned into; it holds skill-kit.toml. When one folder holds several kits, Browse offers each by name. Only the manifest is read; no kit code runs.</div>
           {browsing && (
@@ -422,8 +422,8 @@ function AddView({ busy, onCancel, onAdd }: { busy: boolean; onCancel: () => voi
       <div className="rd-kits-footer">
         <span />
         <div className="rd-kits-actions">
-          <Button variant="ghost" onClick={onCancel}>Cancel</Button>
-          <Button onClick={() => onAdd(path.trim())} disabled={busy || !path.trim()}>Add</Button>
+          <Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button>
+          <Button type="button" onClick={() => { if (path.trim()) onAdd(path.trim()); }} disabled={busy || !path.trim()}>Add</Button>
         </div>
       </div>
     </>
