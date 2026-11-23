@@ -67,3 +67,10 @@ def test_every_flag_has_a_row_in_the_feature_flags_doc():
     text = DOC.read_text()
     for flag in editions.DEVELOPMENT:
         assert f"| `{flag}` |" in text, f"{flag} needs a row in {DOC.name}"
+
+
+def test_background_rule_capture_requires_explicit_flag(home):
+    assert not editions.configured().includes("background_rule_suggestions")
+    (home / "flags.json").write_text('{"enabled": ["background_rule_suggestions"]}')
+    assert editions.configured().includes("background_rule_suggestions")
+    assert editions.request_features("POST", "/agents-md/suggest") == ("rule_suggestions",)

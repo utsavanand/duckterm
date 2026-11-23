@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { authHeaders } from "./api";
 import "./updateDuckTerm.css";
+import { hasAppUpdater, NativeAppUpdate } from "./NativeAppUpdate";
 export interface UpdateOperation {
   target_version: string;
   phase: "snapshot" | "install" | "restart" | "verify" | "rollback";
@@ -22,6 +23,9 @@ export interface UpdateStatus {
   backup_running?: boolean;
 }
 export function UpdateDuckTerm() {
+  return hasAppUpdater() ? <NativeAppUpdate /> : <ManualAppUpdate />;
+}
+function ManualAppUpdate() {
   const [status, setStatus] = useState<UpdateStatus | null>(null), [error, setError] = useState("");
   const [checking, setChecking] = useState(true), [attempt, setAttempt] = useState(0);
   useEffect(() => {
@@ -41,16 +45,13 @@ export function UpdateDuckTerm() {
     <h3>Update DuckTerm</h3>
     {checking ? <p role="status">Checking GitHub…</p> : status && <p className="rd-update-version">Installed {status.installed_version}{status.check_status === "checked" && <span>{status.update_available === true ? `${status.latest_version} available` : status.update_available === false ? "Up to date" : `Latest ${status.latest_version}`}</span>}</p>}
     {!checking && (error || status?.check_status === "failed") && <p role="alert">Couldn’t check for updates. {error || status?.check_error}</p>}
-    <p>Updates the CLI/server. The Mac app may need a separate download.</p>
-    <p>Checks GitHub when you open Settings or choose Check again.</p>
+    <p>Open DuckTerm on this Mac to update the complete app, or download it here.</p>
     <div className="rd-update-actions"><a className="rd-btn rd-btn-sm rd-btn-primary" href={link} target="_blank" rel="noreferrer">Download update ↗</a><button className="rd-btn rd-btn-sm" disabled={checking} onClick={() => setAttempt(n => n + 1)}>Check again</button></div>
-    <p>{status?.backup_running ? "A backup is running. Updates must wait until it finishes." : status?.reason || "In-app installation is not available yet."}</p>
     {operation && <div className="rd-update-progress" role="status">
       <strong>{verified ? `Updated to ${operation.target_version}` : operation.outcome === "failed" ? "Update failed" : operation.outcome === "succeeded" ? "Awaiting version verification" : `Updating to ${operation.target_version}`}</strong>
       <ol>{["snapshot", "install", "restart", "verify"].map(step => <li key={step} aria-current={operation.phase === step ? "step" : undefined}>{step}</li>)}</ol>
       {operation.error && <p>{operation.error}</p>}
       {operation.rollback && <p>Rollback: {operation.rollback}</p>}
     </div>}
-    <p>A future in-app update will take a snapshot first and preserve terminal sessions. Restoring that snapshot during rollback may lose history written after it.</p>
   </section>;
 }

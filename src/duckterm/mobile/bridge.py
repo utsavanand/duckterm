@@ -369,9 +369,10 @@ class Bridge:
             await self.analysis.close()
         if self.listener is not None:
             self.listener.close()
-            await self.listener.wait_closed()
         for writer in tuple(self.connections):
             writer.close()
+        if self.listener is not None:
+            await self.listener.wait_closed()
 
 
 async def start(

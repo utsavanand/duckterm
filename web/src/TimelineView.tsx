@@ -1,5 +1,7 @@
 import { Fragment, useEffect, useRef, useState } from "react";
-import { api, CheckpointRecord, forkMergeHistory, forkMergeService, ForkMergeHistory, TimelineEntry, TimelinePage } from "./api";
+import { api, agentMergeService, CheckpointRecord, forkMergeHistory, forkMergeService, ForkMergeHistory, TimelineEntry, TimelinePage } from "./api";
+import type { AgentMergeRecord } from "./AgentMergeDialog";
+import { SourceMemory, mergeClosure, type SourceMemoryTarget } from "./SourceMemory";
 import { splitSessionRef } from "./hostTransport";
 import { SessionView } from "./types";
 import { HistoryView } from "./HistoryView";
@@ -24,6 +26,8 @@ export function TimelineView({ session, active = true, checkpointTarget, onArtif
   const [filter, setFilter] = useState("all");
   const [data, setData] = useState<TimelinePage | null>(null);
   const [checkpoints, setCheckpoints] = useState<CheckpointRecord[]>([]);
+  const [sourceMemory, setSourceMemory] = useState<(SourceMemoryTarget & { origin: string }) | null>(null);
+  const [agentMerges, setAgentMerges] = useState<AgentMergeRecord[]>([]);
   const [merges, setMerges] = useState<ForkMergeHistory[]>([]);
   const [error, setError] = useState("");
   const [detailError, setDetailError] = useState("");
@@ -66,7 +70,7 @@ export function TimelineView({ session, active = true, checkpointTarget, onArtif
     }
   }, [checkpointTarget, data, filter]);
   useEffect(() => {
-    setData(null); setCheckpoints([]); setMerges([]); setError(""); setDetailError(""); setUnsupported(false);
+    setData(null); setCheckpoints([]); setMerges([]); setAgentMerges([]); setSourceMemory(null); setError(""); setDetailError(""); setUnsupported(false);
     pages.current = 1;
     if (!active) return;
     let live = true, pending = false, unavailable = false, refreshRequested = false;
@@ -88,10 +92,11 @@ export function TimelineView({ session, active = true, checkpointTarget, onArtif
         }
         if (!live) return;
         pages.current = count; setData(result); setError("");
-        const details = await Promise.allSettled([api.checkpoints(session.key), forkMergeHistory(session.key)]);
+        const details = await Promise.allSettled([api.checkpoints(session.key), forkMergeHistory(session.key), agentMergeService(session.key).history()]);
         if (!live) return;
         if (details[0].status === "fulfilled") setCheckpoints(details[0].value.checkpoints);
         if (details[1].status === "fulfilled") setMerges(details[1].value.merges);
+        if (details[2].status === "fulfilled") setAgentMerges(details[2].value.merges);
         setDetailError(details.some(d => d.status === "rejected") ? "Some saved details could not be refreshed. Previously loaded details are retained." : "");
       } catch (cause) {
         if (!live) return;
@@ -115,6 +120,7 @@ export function TimelineView({ session, active = true, checkpointTarget, onArtif
     window.addEventListener("duckterm-checkpoint", saved);
     return () => { live = false; clearInterval(timer); document.removeEventListener("visibilitychange", visible); window.removeEventListener("duckterm-checkpoint", saved); loadMore.current = () => undefined; };
   }, [session.key, active, filter]);
+  if (sourceMemory?.origin === session.key) return <SourceMemory origin={sourceMemory.origin} target={sourceMemory} onClose={() => setSourceMemory(null)} />;
   if (unsupported) return <><p className="rd-panel-empty">This server provides the earlier history view.</p><HistoryView session={session} active={active} /></>;
   let previousDay = "";
   return <section className="rd-timeline" aria-label="Session timeline">
@@ -143,13 +149,20 @@ export function TimelineView({ session, active = true, checkpointTarget, onArtif
       </Fragment>;
     })}
     {data?.next_cursor && <button className="rd-btn rd-btn-sm rd-btn-ghost" disabled={busy} onClick={() => loadMore.current()}>{busy ? "Loading…" : "Load older entries"}</button>}
+    {filter === "all" && agentMerges.length > 0 && <section className="rd-timeline-merges"><h2>Agent merges</h2>{agentMerges.map(row => <details key={row.id}>
+      <summary>{new Date(row.createdAt).toLocaleString()} · {row.sourceName} → {row.targetName} · {row.delivery}</summary>
+      <p>{row.closeSource ? mergeClosure(row.sourceClosed, row.closeState) : "This earlier merge kept both agents open."}</p>
+      {row.context && <p className="rd-timeline-full-text">{row.context}</p>}
+      {row.memorySource && <button className="rd-timeline-link" onClick={() => setSourceMemory({ origin: session.key, source: row.memorySource!, name: row.sourceName, revision: row.summaryRevision })}>Open source memory ↗</button>}
+    </details>)}</section>}
     {(filter === "all" || filter === "checkpoint") && merges.length > 0 && <section className="rd-timeline-merges"><h2>Fork merges</h2>{merges.map(row => <details key={row.id}>
       <summary>{new Date(row.createdAt).toLocaleString()} · {row.delivery}{row.statusAvailable === false ? " (last recorded)" : ""} · {row.parentDeleted ? "Parent deleted" : row.keepOpen ? "Child kept open" : row.childClosed ? "Child closed" : "Child closure pending"}</summary>
+      {row.memorySource && <button className="rd-timeline-link" onClick={() => setSourceMemory({ origin: session.key, source: row.memorySource!, name: "Source session", revision: row.summaryRevision })}>Open source memory ↗</button>}
       <p>Parent checkpoint: {row.checkpoint}</p><p className="rd-timeline-full-text">{row.summary}</p>
       {!row.keepOpen && !row.childClosed && splitSessionRef(session.key).key === row.child && <button className="rd-btn rd-btn-sm rd-btn-ghost" onClick={async () => {
         const key = session.key;
         try {
-          await forkMergeService(key).send({ summary: row.summary, keepOpen: false, requestKey: row.id.split(":").at(-1)! });
+          await forkMergeService(key).send({ summary: row.summary, keepOpen: false, ...(row.summaryRevision !== undefined ? { summaryRevision: row.summaryRevision } : {}), requestKey: row.id.split(":").at(-1)! });
           const next = await forkMergeHistory(key);
           if (keyRef.current === key) { setMerges(next.merges); setDetailError(""); }
         } catch (cause) { if (keyRef.current === key) setDetailError((cause as Error).message); }

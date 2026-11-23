@@ -334,10 +334,10 @@ function Dashboard() {
     let stale = false;
     sessionFetch(selected?.key ?? "", `/agents-md?dir=${encodeURIComponent(agentsMdDir)}`)
       .then((r) => r.json())
-      .then((d: { rules?: { status: string }[] }) => {
+      .then((d: { rules?: { status: string }[]; proposals?: { status: string }[] }) => {
         if (!stale)
           setRuleCandidates(
-            (d.rules ?? []).filter((r) => r.status === "candidate").length,
+            (d.rules ?? []).filter((r) => r.status === "candidate").length + (d.proposals ?? []).filter(p => p.status === "pending").length,
           );
       })
       .catch(() => undefined);
@@ -674,7 +674,8 @@ function Dashboard() {
       {modal === "collaboration" && has("inbox") && <CollaborationPanel onClose={() => setModal(null)} />}
       {modal === "backup" && <BackupModal onClose={() => setModal(null)} />}
       {modal === "appearance" && <AppearanceSettings {...appearance} onClose={() => setModal(null)} />}
-      {modal === "checkpointing" && has("checkpoints") && <CheckpointSettingsModal onClose={() => setModal(null)} />}
+      {modal === "checkpointing" && has("checkpoints") && <CheckpointSettingsModal onClose={() => setModal(null)}
+        onOpenAgent={key => { setModal(null); setSelectedKey(key); setView("history"); }} />}
       {modal === "agentsetup" && <RuntimeSetupWizard onClose={() => setModal(null)} />}
       {modal === "aimodels" && <AiModelsModal onClose={() => setModal(null)} />}
       {modal === "harnesses" && (

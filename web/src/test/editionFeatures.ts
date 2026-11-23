@@ -6,4 +6,4 @@ export const CODE = [...LITE, "explorer", "file_editing", "git_changes", "folder
 export const FULL = [...CODE, "oracle", "remote_workspaces"];
 // Development flags (editions.DEVELOPMENT): off in every edition until an
 // instance's flags.json turns them on.
-export const DEVELOPMENT = ["skill_kits", "home"];
+export const DEVELOPMENT = ["skill_kits", "home", "background_rule_suggestions"];

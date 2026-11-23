@@ -1,15 +1,18 @@
+import { sessionRef } from "./hostTransport";
 import { requestCheckpoint } from "./checkpointRequests";
 import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { api, forkMergeHistory, TimelinePage } from "./api";
+import { api, agentMergeService, forkMergeHistory, TimelinePage } from "./api";
 import { TimelineView, TIMELINE_MILESTONES } from "./TimelineView";
 import type { SessionView } from "./types";
 vi.mock("./checkpointSelection", () => ({ chooseCheckpoint: (key: string) => requestCheckpoint(key) }));
-vi.mock("./api", () => ({ api: { timeline: vi.fn(), checkpoints: vi.fn(), checkpointAttempt: vi.fn(), checkpoint: vi.fn() }, forkMergeHistory: vi.fn(), forkMergeService: vi.fn() }));
+vi.mock("./api", () => ({ api: { timeline: vi.fn(), checkpoints: vi.fn(), checkpointAttempt: vi.fn(), checkpoint: vi.fn() }, forkMergeHistory: vi.fn(), forkMergeService: vi.fn(), agentMergeService: vi.fn() }));
+vi.mock("./MemoryView", () => ({ MemoryView: ({ sessionKey, initialRevision }: { sessionKey: string; initialRevision: string }) => <p>Memory {sessionKey}/{initialRevision}</p> }));
 vi.mock("./HistoryView", () => ({ HistoryView: () => <p>Earlier digest history</p> }));
 const session = { key: "one", label: "Test", startedAt: 1 } as SessionView;
 const page = (text = "Saved work", cursor: string | null = null): TimelinePage => ({ summary: { text: "", updated_at: null, total: 1, counts: {} }, entries: [{ id: text, ts: 1791300000000, kind: "delivered", one_line: text, detail: { text }, refs: [] }], next_cursor: cursor });
 beforeEach(() => {
+  vi.mocked(agentMergeService).mockReturnValue({ history: vi.fn().mockResolvedValue({ merges: [] }) } as unknown as ReturnType<typeof agentMergeService>);
   vi.mocked(api.timeline).mockResolvedValue(page());
   vi.mocked(api.checkpoints).mockResolvedValue({ checkpoints: [] });
   vi.mocked(forkMergeHistory).mockResolvedValue({ merges: [] });
@@ -193,4 +196,24 @@ it("does not offer current memory as a substitute when a checkpoint has no refer
   render(<TimelineView session={session} checkpointTarget={1} onMemory={vi.fn()} />);
   await screen.findByRole("button", { name: "Retry summary update" });
   expect(screen.queryByRole("button", { name: "Read saved summary and evidence ↗" })).toBeNull();
+});
+
+it("opens a general merge source revision from the destination Timeline", async () => {
+  vi.mocked(agentMergeService).mockReturnValue({ history: vi.fn().mockResolvedValue({ merges: [{ id: "merge-1", sourceName: "Child", targetName: "Test", createdAt: 1, delivery: "delivered", closeSource: true, sourceClosed: true, memorySource: "child", summaryRevision: "old-exact" }] }) } as unknown as ReturnType<typeof agentMergeService>);
+  render(<TimelineView session={session} />);
+  fireEvent.click(await screen.findByText(/Child → Test/));
+  fireEvent.click(screen.getByRole("button", { name: "Open source memory ↗" }));
+  expect(screen.getByText("Memory child/old-exact")).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Back" }));
+  expect(screen.getByRole("heading", { name: "Agent merges" })).toBeVisible();
+});
+
+it("does not reuse a source link when the selected destination changes hosts", async () => {
+  vi.mocked(agentMergeService).mockReturnValue({ history: vi.fn().mockResolvedValue({ merges: [{ id: "merge-1", sourceName: "Child", targetName: "Test", createdAt: 1, delivery: "delivered", memorySource: "child", summaryRevision: "old-exact" }] }) } as unknown as ReturnType<typeof agentMergeService>);
+  const view = render(<TimelineView session={session} />);
+  fireEvent.click(await screen.findByText(/Child → Test/));
+  fireEvent.click(screen.getByRole("button", { name: "Open source memory ↗" }));
+  expect(screen.getByText("Memory child/old-exact")).toBeVisible();
+  view.rerender(<TimelineView session={{ ...session, key: sessionRef("other-host", "one") }} />);
+  expect(screen.queryByRole("dialog", { name: "Source memory" })).not.toBeInTheDocument();
 });
