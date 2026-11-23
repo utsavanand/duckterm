@@ -1,3 +1,13 @@
+## 2026-11-17 — Installer handoff lost terminal input
+
+The setup helper allocated a PTY, but piped the downloaded installer into its
+shell. When the installer launched Codex, stdin was still that pipe and Codex
+rejected it as non-interactive. Testing the outer PTY alone missed the failure.
+Download to the existing private action directory, then execute the script with
+inherited terminal input. Require download success before execution. Regression
+tests must exercise the installer-to-agent handoff, including interactive input,
+nonzero agent exits and a failed download that leaves a partial script behind.
+
 ## 2026-11-19 — Quote text alone cannot identify its source message
 
 A saved comment highlighted matching text in every later reply because it stored
