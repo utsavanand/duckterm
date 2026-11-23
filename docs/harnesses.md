@@ -165,7 +165,17 @@ local trial: its harness steps run, its `exec` steps are refused. A gate
 re-hashes what it showed when the answer arrives; a shown file that changed in
 between ends the run (`gate_shown_changed`), because a step's output was
 altered outside the runner. A step reading a file output (`{path, sha256}`)
-checks the hash again before it starts. Step ids match `[a-z0-9_-]{1,64}`
+checks the hash again before it starts. The run file itself is in the
+repository too, so a commit can carry one already past its gate: this machine
+notes the hash of every run file it writes (`<home>/kits/runs/<project
+key>/<run id>`), a run with no note "was not started on this machine", one
+whose file no longer matches "changed outside the runner", and `runs` marks
+such runs `recorded: false` so the Flows tab lists them without a gate or
+resume. A gate showing `workspace.diff` sees the worktree against HEAD with
+new files included (a temporary index after `git add -A`, the runs folder
+excluded) and records the worktree's tree id; the answer re-checks it and the
+next step checks it once more, so a worktree that changed after the owner
+looked fails the run (`workspace_changed`). Step ids match `[a-z0-9_-]{1,64}`
 (they name folders under `.duckterm/runs/`), run and attempt folders are
 refused through a symlink or outside the project, an `exec` file output must
 be a file under its own attempt folder, and a run file that names a flow by
@@ -201,8 +211,83 @@ sandbox executor answers from inside the sandbox, where the harness and its
 trust record actually live. The runner itself checks only that the step's
 skill is installed in the project.
 
-The dashboard's **Skill kits** dialog still only lists kits by folder path and
-shows their contents; the install wizard on top of `plan`/`install` is next.
+**The Skill kits page** (Settings → Skill kits, behind the flag) is a front
+end to the same engine. It lists the kits installed in a workspace's
+repository with their verify state and flows, and the procedures they ship
+(from the install record, which carries each team template's roles and
+rules); Add takes a kit folder, shows the inventory and options, then the
+review page is the plan: one row per component, one status per harness, the
+conflicts with keep or replace, the files. Install, verify and uninstall call
+the engine; Run starts a flow in a server thread and the page watches the run
+file. **The page starts from kits, not repositories.** Add skill kit takes a kit
+folder or a `skill-kit.toml` path, reads the manifest and adds the kit to
+DuckTerm (`POST /kits/register`; the record is the `harnesses` table, name
+and path). The list (`POST /kits/catalog`) shows every added kit with what it
+holds and the workspaces it is installed in. A workspace's repositories are
+where its sessions run (worktree, else repository, else cwd), so a workspace
+with no session yet gets the kit when its first session starts. Adding is
+three steps: pick the kit (Browse marks kit folders and offers each kit of a
+multi-kit folder), read what it holds, enable it for all workspaces or chosen
+ones (`POST /kits/enable`; the choice lives in `<home>/kit-policy.json`).
+Enabling installs into every matching repository known now, after a dry run
+you can read, for every harness; the review names, per harness, the
+components the kit does not support. Enable pins a digest of the kit tree
+the review showed (`digest` in the policy). On a SessionStart the server
+installs enabled kits the session's repository lacks, but only that pinned
+tree: a kit folder that changed since (a pull, an edit under ~/Downloads)
+installs nowhere, the page shows it as "changed since enabled", and Enable
+again is the review of the new tree. The install target is the repository
+DuckTerm launched the session in (the session row's worktree or repository
+as it stood before the event, a git root, never the home folder), and only
+when the event's cwd lies inside it; the hook's own cwd is never a target,
+because a `claude` an agent starts in another folder inherits the session
+key and reports that folder. Create team works from an added kit: the new
+workspace is enabled for the kit (pinned to the tree the kit page showed),
+so its first session installs it. `kit-policy.json` is written atomically
+and never through a symlink. A kit's name is unique in the registry;
+registering a second kit or suite of that name is refused.
+
+The server routes are `POST /kits/catalog | register | unregister | enable |
+disable | overview
+| plan | install | uninstall | verify | run | runs | run-detail | gate | teams
+| team` (`duckterm.kits.api`); the ones that touch a repository take its
+path in the body. **Create team** (`POST /kits/team
+{project, kit, team, name?}`) makes a workspace carrying the kit's procedure:
+the record (roles and rules copied from the installed kit's template, with
+kit and version) is `<home>/teams/<name>.json`, the workspace is registered
+like New workspace, and the workspace view shows one card per role.
+
+**A run shows in the app while it runs.** The session's Flows tab lists the
+repository's runs, the session's own first, each with its steps and, at a
+gate, Approve and Reject under the step. A run the server starts for a
+session (`POST /api/v1/session/kits/run`, authenticated by the session's own
+credential; also `runs` and `run-detail`) makes every harness step a child
+session of it: a SessionStart row with the parent key before the process,
+the step's hooks reporting under the child key, SessionEnd after. A session
+credential reaches only the session's own folder (the body cannot name
+another project), sees only the runs it started, and answers no gate: gates
+are the owner's, in the Flows tab, so there is no session gate route.
+Neither HTTP route takes `yolo` or `codex_trusted`; the harness keeps its
+own permission prompts unless the owner passes `--yolo` or `--codex-trusted`
+to `duckterm kit run` in a terminal outside a session, and flows run by
+name only (`<kit>/<flow>`, installed), never by file path. `duckterm kit
+run` inside a session hands the run to the server this way and watches it
+from the terminal; outside a session it runs locally. The `/<flow>` command
+a flow installs for Claude Code pre-approves exactly `duckterm kit run
+<kit>/<flow>` (no `--gate`, no `--yolo`), with the flow's description as one
+quoted frontmatter line and only identifier input names; a flow without
+inputs pre-approves the exact command, no prefix. Inside a session (any
+`DUCKTERM_SESSION_KEY`) the CLI refuses `--yolo`, `--codex-trusted` and
+`--gate` before it looks anything up, and a missing session credential is an
+error, never a fall-back to the local runner. Script steps are not sessions.
+
+Where a session lives, for kits, is the folder DuckTerm launched it in:
+the launcher writes `<home>/kits/launches/<session>.json` and nothing else
+does. The session row's `cwd` and `repo_path` follow every hook event, so a
+`claude` an agent starts in another repository moves them; the session kit
+routes and the SessionStart install never read them. A session with no
+launch record (one DuckTerm did not start) gets 409 from the session kit
+routes and no auto-install.
 
 Endpoints: `GET /harnesses`, `POST /harnesses/register {path}`,
 `GET /harnesses/:name/contents`, `DELETE /harnesses/:name`. Registered kits
