@@ -11,13 +11,15 @@ and leaves every other byte, including the owner's config JSON, alone."""
 
 from __future__ import annotations
 
+import contextlib
 import copy
 import hashlib
 import json
 import os
 import re
-import tempfile
+import secrets
 import time
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -56,25 +58,80 @@ class Report:
 # ── writing ─────────────────────────────────────────────────────────────────
 
 
+@contextlib.contextmanager
+def _parent_fd(root: Path, path: Path, *, create: bool) -> Iterator[tuple[int, str]]:
+    """A descriptor of `path`'s parent folder, reached from `root` one
+    component at a time with O_NOFOLLOW, and the final name. The plan checked
+    the path for symlinks, but a folder can be swapped for a link between that
+    check and the write (`.codex -> .git`); opening by descriptor refuses the
+    swap instead of following it. `root` itself may sit under a symlinked
+    ancestor (/tmp on macOS), so only the components below it are strict.
+    Missing folders are made on the way when `create`."""
+    rel = path.relative_to(root)
+    fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for part in rel.parts[:-1]:
+            flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+            try:
+                child = os.open(part, flags, dir_fd=fd)
+            except FileNotFoundError:
+                if not create:
+                    raise
+                os.mkdir(part, 0o755, dir_fd=fd)
+                child = os.open(part, flags, dir_fd=fd)
+            except OSError as exc:  # ELOOP: a symlink; ENOTDIR: a file
+                raise InstallRefused(
+                    f"{rel.as_posix()}: {part!r} is not a real folder; it changed since the plan"
+                ) from exc
+            os.close(fd)
+            fd = child
+        yield fd, rel.parts[-1]
+    finally:
+        os.close(fd)
+
+
 def _write_atomic(
-    path: Path, data: bytes, *, executable: bool = False, created: set[Path] | None = None
+    path: Path,
+    data: bytes,
+    *,
+    root: Path,
+    executable: bool = False,
+    created: set[Path] | None = None,
 ) -> None:
-    """`created` collects the directories this write had to make, so uninstall
-    prunes those and never a folder the owner had already."""
+    """Temp file beside the target, then rename, both through the parent's
+    descriptor (`_parent_fd`). `created` collects the directories this write
+    had to make, so uninstall prunes those and never a folder the owner had
+    already."""
     folder = path.parent
     while created is not None and not folder.exists():
         created.add(folder)
         folder = folder.parent
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(prefix=".skill-kit-", dir=path.parent)
+    mode = 0o755 if executable else 0o644
+    with _parent_fd(root, path, create=True) as (fd, name):
+        temporary = f".skill-kit-{secrets.token_hex(6)}"
+        tfd = os.open(
+            temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, mode, dir_fd=fd
+        )
+        try:
+            with os.fdopen(tfd, "wb") as stream:
+                stream.write(data)
+                os.fchmod(stream.fileno(), mode)
+            os.rename(temporary, name, src_dir_fd=fd, dst_dir_fd=fd)
+        except BaseException:
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(temporary, dir_fd=fd)
+            raise
+
+
+def _unlink(root: Path, path: Path, *, missing_ok: bool = False) -> None:
+    """Remove `path` through its parent's descriptor; the final name is never
+    followed, so a link is removed, not its target."""
     try:
-        with os.fdopen(fd, "wb") as stream:
-            stream.write(data)
-        os.chmod(temporary, 0o755 if executable else 0o644)
-        os.replace(temporary, path)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
+        with _parent_fd(root, path, create=False) as (fd, name):
+            os.unlink(name, dir_fd=fd)
+    except FileNotFoundError:
+        if not missing_ok:
+            raise
 
 
 def _read_json(path: Path) -> dict[str, Any]:
@@ -86,8 +143,8 @@ def _read_json(path: Path) -> dict[str, Any]:
     return data
 
 
-def _write_json(path: Path, data: dict[str, Any]) -> None:
-    _write_atomic(path, (json.dumps(data, indent=2) + "\n").encode())
+def _write_json(path: Path, data: dict[str, Any], *, root: Path) -> None:
+    _write_atomic(path, (json.dumps(data, indent=2) + "\n").encode(), root=root)
 
 
 EDITED = ("json", "toml-block", "block", "import")
@@ -141,10 +198,12 @@ def _load_home(project: Path) -> dict[str, Any]:
 
 def _save_home(project: Path, kits: dict[str, Any]) -> None:
     path = _home_record(project)
+    home = instance.home()
+    home.mkdir(parents=True, exist_ok=True)
     if kits:
-        _write_json(path, {"project": str(project.resolve()), "kits": kits})
+        _write_json(path, {"project": str(project.resolve()), "kits": kits}, root=home)
     else:
-        path.unlink(missing_ok=True)
+        _unlink(home, path, missing_ok=True)
 
 
 def recorded_files(project: Path, kit_name: str) -> dict[str, str] | None:
@@ -172,11 +231,11 @@ def _trusted(project: Path, kit_name: str, entry: dict[str, Any]) -> bool:
     return _load_home(project).get(kit_name) == entry
 
 
-def _restore(path: Path, before: str | None) -> None:
+def _restore(project: Path, path: Path, before: str | None) -> None:
     if before is None:
-        path.unlink(missing_ok=True)
+        _unlink(project, path, missing_ok=True)
     else:
-        _write_atomic(path, before.encode("utf-8", "surrogateescape"))
+        _write_atomic(path, before.encode("utf-8", "surrogateescape"), root=project)
 
 
 def apply(plan: Plan, *, replace: bool = False) -> Report:
@@ -218,7 +277,11 @@ def apply(plan: Plan, *, replace: bool = False) -> Report:
             for rel, data in _materialise(p):
                 target = _target(project, rel)
                 _write_atomic(
-                    target, data, executable=p.executable or _is_script(rel), created=created
+                    target,
+                    data,
+                    root=project,
+                    executable=p.executable or _is_script(rel),
+                    created=created,
                 )
                 entries.append(
                     {"path": rel, "how": "file", "sha256": sha256(data), "component": p.component}
@@ -253,7 +316,7 @@ def apply(plan: Plan, *, replace: bool = False) -> Report:
     if not record_path.parent.exists():
         created.add(record_path.parent)
     record["kits"][kit.name]["dirs"] = sorted(d.relative_to(project).as_posix() for d in created)
-    _write_json(record_path, record)
+    _write_json(record_path, record, root=project)
     home = _load_home(project)
     home[kit.name] = record["kits"][kit.name]
     _save_home(project, home)
@@ -273,7 +336,8 @@ def _json_merge(project: Path, p: adapters.Placement, created: set[Path]) -> dic
     config = _read_json(path)
     added: dict[str, Any] = {"lists": [], "keys": [], "replaced": []}
     _merge_into(config, p.data or {}, [], added)
-    _write_atomic(path, (json.dumps(config, indent=2) + "\n").encode(), created=created)
+    data = (json.dumps(config, indent=2) + "\n").encode()
+    _write_atomic(path, data, root=project, created=created)
     entry = {"path": p.path, "how": "json", "component": p.component}
     return {**entry, **added, **_edited(path, before)}
 
@@ -316,7 +380,7 @@ def _toml_block(
     text = _strip_block(text, begin, end)
     block = f"{begin}\n{(p.data or {}).get('text', '').rstrip()}\n{end}\n"
     text = (text.rstrip("\n") + "\n\n" if text.strip() else "") + block
-    _write_atomic(path, text.encode(), created=created)
+    _write_atomic(path, text.encode(), root=project, created=created)
     return {
         "path": p.path,
         "how": "toml-block",
@@ -371,7 +435,7 @@ def _agents_block(
     current = _strip_attributed(before or "", kit.name, name)
     block = f"{open_tag}\n{text}\n{close_tag}\n"
     new = (current.rstrip("\n") + "\n\n" if current.strip() else "") + block
-    _write_atomic(path, new.encode(), created=created)
+    _write_atomic(path, new.encode(), root=project, created=created)
     return {
         "path": "AGENTS.md",
         "how": "block",
@@ -402,7 +466,7 @@ def _claude_import(project: Path, created: set[Path]) -> dict[str, Any] | None:
         return {"path": "CLAUDE.md", "how": "import-adopted", "component": "import"}
     block = f"{adapters.IMPORT_OPEN}\n@AGENTS.md\n{adapters.IMPORT_CLOSE}\n"
     new = (current.rstrip("\n") + "\n\n" if current.strip() else "") + block
-    _write_atomic(path, new.encode(), created=created)
+    _write_atomic(path, new.encode(), root=project, created=created)
     return {"path": "CLAUDE.md", "how": "import", "component": "import", **_edited(path, before)}
 
 
@@ -429,9 +493,9 @@ def uninstall(project: Path, kit_name: str) -> Report:
     del record["kits"][kit_name]
     record_path = _target(project, RECORD)
     if record["kits"]:
-        _write_json(record_path, record)
+        _write_json(record_path, record, root=project)
     else:
-        record_path.unlink(missing_ok=True)
+        _unlink(project, record_path, missing_ok=True)
     _prune_dirs(project, entry)
     home = _load_home(project)
     home.pop(kit_name, None)
@@ -454,7 +518,7 @@ def _remove_entries(
             if sha256(path.read_bytes()) != e["sha256"]:
                 report.kept.append(e["path"])
                 continue
-            path.unlink()
+            _unlink(project, path)
             report.removed.append(e["path"])
         elif how == "rule":
             rule_id = e["rule_id"]
@@ -468,14 +532,14 @@ def _remove_entries(
             if not path.is_file():
                 continue
             if trusted and sha256(path.read_bytes()) == e["after_sha256"]:
-                _restore(path, e["before"])
+                _restore(project, path, e["before"])
             elif trusted:
-                _remove_additions(path, e)
+                _remove_additions(project, path, e)
             elif how == "json":
                 report.kept.append(e["path"])
                 continue
             else:
-                _strip_kit_text(path, kit_name, e)
+                _strip_kit_text(project, path, kit_name, e)
             report.removed.append(_label(e))
 
 
@@ -488,7 +552,7 @@ def _component_name(kit_name: str, e: dict[str, Any]) -> str:
     return parts[2]
 
 
-def _strip_kit_text(path: Path, kit_name: str, e: dict[str, Any]) -> None:
+def _strip_kit_text(project: Path, path: Path, kit_name: str, e: dict[str, Any]) -> None:
     """Untrusted record: remove only text between markers this kit would have
     written, derived from the kit and component names rather than read from
     the record, and never write anything the record supplied."""
@@ -504,9 +568,9 @@ def _strip_kit_text(path: Path, kit_name: str, e: dict[str, Any]) -> None:
         text = _strip_block(text, adapters.IMPORT_OPEN, adapters.IMPORT_CLOSE)
     text = text.rstrip("\n") + "\n" if text.strip() else ""
     if text:
-        _write_atomic(path, text.encode())
+        _write_atomic(path, text.encode(), root=project)
     else:
-        path.unlink()
+        _unlink(project, path)
 
 
 def _label(e: dict[str, Any]) -> str:
@@ -517,7 +581,7 @@ def _label(e: dict[str, Any]) -> str:
     return str(e["path"])
 
 
-def _remove_additions(path: Path, e: dict[str, Any]) -> None:
+def _remove_additions(project: Path, path: Path, e: dict[str, Any]) -> None:
     """The owner changed the file after the install: take out only what the
     record says this entry added and leave every other byte alone."""
     how = e["how"]
@@ -538,9 +602,9 @@ def _remove_additions(path: Path, e: dict[str, Any]) -> None:
             if isinstance(node, dict) and node.get(item["at"][-1]) == item["value"]:
                 node[item["at"][-1]] = item["was"]
         if config or e["before"] is not None:
-            _write_json(path, config)
+            _write_json(path, config, root=project)
         else:
-            path.unlink()
+            _unlink(project, path)
         return
     text = path.read_text()
     if how == "toml-block":
@@ -551,9 +615,9 @@ def _remove_additions(path: Path, e: dict[str, Any]) -> None:
         text = _strip_block(text, adapters.IMPORT_OPEN, adapters.IMPORT_CLOSE)
     text = text.rstrip("\n") + "\n" if text.strip() else ""
     if text or e["before"] is not None:
-        _write_atomic(path, text.encode())
+        _write_atomic(path, text.encode(), root=project)
     else:
-        path.unlink()
+        _unlink(project, path)
 
 
 def _contains(actual: Any, expected: Any) -> bool:
@@ -599,7 +663,8 @@ def _prune_dirs(project: Path, entry: dict[str, Any]) -> None:
     for rel in sorted(entry.get("dirs", []), key=len, reverse=True):
         folder = _target(project, str(rel))
         if folder.is_dir() and not any(folder.iterdir()):
-            folder.rmdir()
+            with _parent_fd(project, folder, create=False) as (fd, name):
+                os.rmdir(name, dir_fd=fd)
 
 
 def verify(project: Path) -> list[Report]:
