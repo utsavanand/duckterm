@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { App } from "./App";
 import { SessionView, viewFromPersisted } from "./types";
@@ -30,6 +30,8 @@ beforeEach(() => {
     const body = path === "/edition" ? probe.edition
       : path.startsWith("/session-inbox-counts") ? { counts: {} }
       : path === "/relay/count" ? { open: 0 }
+      : path === "/api/autopilot/summary" ? { available: true, active: 3, waiting_gate: 2, done_today: 0, failed_today: 0 }
+      : path === "/api/autopilot" ? { flows: [], triggers: {}, autopilots: [], runs: [], summary: { available: true, active: 3, waiting_gate: 2, done_today: 0, failed_today: 0 }, problems: [] }
       : path === "/relay" ? { notes: [], rules: [], open: 0 }
       : path === "/control-tower" ? { tokens: { days: 7, by_agent: {} }, mail: { sent: 0, answered: 0, nudges: 0 }, backup: {}, remote: { available: false, count: 0 } }
       : path.startsWith("/layouts/") ? { revision: "default", instances: [] }
@@ -211,4 +213,26 @@ it("Skill kits appears in Settings only when the instance has the development fl
   await mount([...FULL, ...DEVELOPMENT]);
   fireEvent.click(screen.getByRole("button", { name: /^Settings/ }));
   expect(screen.getAllByRole("button", { name: /^Skill kits/ })).toHaveLength(1);
+});
+
+it("Autopilot sits above Oracle in the sidebar only with its flag, and opens its page", async () => {
+  await mount([...FULL, "autopilot"]);
+  const autopilot = screen.getByRole("button", { name: "Autopilot" });
+  const oracle = screen.getByRole("button", { name: "Oracle main chat" });
+  expect(autopilot.compareDocumentPosition(oracle) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(autopilot).toHaveTextContent("3 running");
+  expect(within(autopilot).getByLabelText("2 need you")).toHaveTextContent("2");
+  await act(async () => { fireEvent.click(autopilot); });
+  expect(autopilot).toHaveAttribute("aria-pressed", "true");
+  expect(oracle).toHaveAttribute("aria-pressed", "false");
+  expect(await screen.findByRole("heading", { name: "Autopilot" })).toBeVisible();
+  await act(async () => { fireEvent.click(oracle); });
+  expect(screen.getByRole("heading", { name: /Control tower/ })).toBeVisible();
+  expect(autopilot).toHaveAttribute("aria-pressed", "false");
+});
+
+it("without the autopilot flag there is no Autopilot row and no autopilot request", async () => {
+  await mount(FULL);
+  expect(screen.queryByRole("button", { name: "Autopilot" })).toBeNull();
+  expect(probe.requests.filter(path => path.startsWith("/api/autopilot"))).toEqual([]);
 });
