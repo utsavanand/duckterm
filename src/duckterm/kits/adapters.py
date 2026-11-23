@@ -915,14 +915,19 @@ def _flow_shortcut(kit: m.Kit, flow: str, spec: dict[str, Any]) -> bytes:
     the run to the DuckTerm server when a session credential is present, so
     the steps show as child sessions; the agent only relays the output."""
     raw = spec.get("inputs")
-    inputs: dict[str, Any] = raw if isinstance(raw, dict) else {}
-    argv = f"duckterm kit run {kit.name}/{flow}"
-    for name in sorted(inputs):
-        argv += f" --input {name}=<{name}>"
+    # input names and the description come from the kit; both land in a file
+    # Claude Code reads as frontmatter, so names are identifiers (validate
+    # flags others) and the description is one quoted line
+    names = sorted(raw) if isinstance(raw, dict) else []
+    inputs = [n for n in names if m.STEP_ID_RE.match(str(n))]
+    fallback = f"Start the {flow} flow of {kit.name}"
+    desc = " ".join(str(spec.get("description") or fallback).split())
+    start = f"duckterm kit run {kit.name}/{flow}"
+    argv = start + "".join(f" --input {name}=<{name}>" for name in inputs)
     lines = [
         "---",
-        f"description: {spec.get('description') or f'Start the {flow} flow of {kit.name}'}",
-        "allowed-tools: Bash(duckterm kit run:*)",
+        f"description: {json.dumps(desc)}",
+        f"allowed-tools: Bash({start}:*)",  # this flow's start only; no --gate, no --yolo
         "---",
         f"Start the `{kit.name}/{flow}` flow of the {kit.name} skill kit from this session:",
         "",
@@ -936,9 +941,10 @@ def _flow_shortcut(kit: m.Kit, flow: str, spec: dict[str, Any]) -> bytes:
             "",
         ]
     lines += [
-        "Relay what the command prints: the run id, each step as it finishes and,"
-        " at a gate, the exact command that answers it. Do not do the steps"
-        " yourself; they run as child sessions of this one.",
+        "Relay what the command prints: the run id and each step as it finishes."
+        " A gate is answered by the owner in DuckTerm (the session's Flows tab),"
+        " not from here. Do not do the steps yourself; they run as child sessions"
+        " of this one.",
         "",
     ]
     return "\n".join(lines).encode()

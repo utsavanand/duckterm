@@ -523,6 +523,7 @@ def list_runs(project: Path) -> list[dict[str, Any]]:
                     "updated_at",
                     "current",
                     "failure",
+                    "executor_state",
                 )
             }
             summary["inputs"] = s.get("inputs", {})

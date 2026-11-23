@@ -6,7 +6,10 @@ engine underneath, so the page and the terminal cannot disagree."""
 
 from __future__ import annotations
 
+import hashlib
 import json
+import os
+import tempfile
 import threading
 import tomllib
 from pathlib import Path
@@ -399,6 +402,9 @@ def catalog(entries: list[dict[str, Any]], workspaces: list[dict[str, Any]]) -> 
         entry["flows"] = [Path(str(c.path)).stem for c in kit.by_kind("flow")]
         entry["runs"] = []
         entry["policy"] = policies().get(kit.name)
+        entry["changed"] = bool(entry["policy"]) and entry["policy"].get("digest") != kit_digest(
+            kit.root
+        )
         entry["pending"] = [
             str(w.get("name", ""))
             for w in workspaces
@@ -578,6 +584,22 @@ def create_team(body: dict[str, Any]) -> dict[str, Any]:
 # ── enable: which workspaces a kit is for, and installing accordingly ───────
 
 
+def kit_digest(root: Path) -> str:
+    """One hash over every regular file under the kit folder: path, size and
+    content, `.git` left out, symlinks left out (validate refuses them). Enable
+    pins the digest of the tree the owner reviewed; a folder that no longer
+    hashes the same (a `git pull`, an edit under ~/Downloads) installs nowhere
+    until the owner enables it again."""
+    h = hashlib.sha256()
+    for path in sorted(root.rglob("*")):
+        if ".git" in path.relative_to(root).parts or path.is_symlink() or not path.is_file():
+            continue
+        data = path.read_bytes()
+        h.update(f"{path.relative_to(root).as_posix()}\0{len(data)}\0".encode())
+        h.update(hashlib.sha256(data).digest())
+    return h.hexdigest()
+
+
 def _policy_file() -> Path:
     return _teams_dir().parent / "kit-policy.json"
 
@@ -595,7 +617,12 @@ def policies() -> dict[str, dict[str, Any]]:
 def _save_policies(data: dict[str, dict[str, Any]]) -> None:
     path = _policy_file()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(data, indent=2, sort_keys=True) + "\n")
+    if path.is_symlink():
+        raise KitApiError(500, f"{path} is a symlink; the kit policy is not written through it")
+    fd, tmp = tempfile.mkstemp(prefix=".kit-policy-", dir=path.parent)
+    with os.fdopen(fd, "w") as f:
+        f.write(json.dumps(data, indent=2, sort_keys=True) + "\n")
+    os.replace(tmp, path)
 
 
 def policy_matches(policy: dict[str, Any] | None, folder: str) -> bool:
@@ -606,16 +633,22 @@ def policy_matches(policy: dict[str, Any] | None, folder: str) -> bool:
     return folder in [str(w) for w in policy.get("workspaces", [])]
 
 
-def add_policy_workspace(kit_name: str, folder: str) -> None:
-    """A new team workspace made from this kit gets the kit on its first session."""
+def add_policy_workspace(kit_name: str, folder: str, kit_path: str | None = None) -> None:
+    """A new team workspace made from this kit gets the kit on its first
+    session. A first policy pins the kit tree the owner just read on the kit
+    page (`kit_path`); without one nothing auto-installs (see apply_policies)."""
     data = policies()
-    current = data.get(kit_name) or {"scope": "workspaces", "workspaces": []}
+    current = data.get(kit_name) or {
+        "scope": "workspaces",
+        "workspaces": [],
+        "digest": kit_digest(_kit(kit_path).root) if kit_path else None,
+    }
     if current.get("scope") == "all":
         return
     names = [str(w) for w in current.get("workspaces", [])]
     if folder not in names:
         names.append(folder)
-    data[kit_name] = {"scope": "workspaces", "workspaces": names}
+    data[kit_name] = {**current, "scope": "workspaces", "workspaces": names}
     _save_policies(data)
 
 
@@ -676,6 +709,7 @@ def enable(
     policy: dict[str, Any] = (
         {"scope": "all"} if scope == "all" else {"scope": "workspaces", "workspaces": chosen}
     )
+    policy["digest"] = kit_digest(_kit(kit_path).root)  # the tree the review showed
     data = policies()
     data[kit_name] = policy
     _save_policies(data)
@@ -716,12 +750,41 @@ def apply_policies(registry: list[dict[str, Any]], folder: str, project: str) ->
             continue
         try:
             kit_path = _registry_path(registry, kit_name)
+            kit = _kit(kit_path)
         except KitApiError:
+            continue
+        # only the tree the owner reviewed at Enable; the catalog says "changed"
+        if not policy.get("digest") or kit_digest(kit.root) != policy["digest"]:
             continue
         result = _install_where_missing(kit_path, kit_name, [(folder, project)], {}, False)
         if result["installed"]:
             done.append(kit_name)
     return done
+
+
+def policy_target(row: dict[str, Any] | None, event: dict[str, Any]) -> str | None:
+    """Where a SessionStart may install enabled kits: the repository the
+    session row named before this event (DuckTerm set it when it launched the
+    session), a git root, not the home folder, and the folder the event says
+    the session is in. The event's own cwd is a hook's word, never a target:
+    a `claude` an agent starts in another folder inherits the session key
+    and reports that folder."""
+    if not row:
+        return None
+    target = str(row.get("worktree_path") or row.get("repo_path") or "")
+    if not target:
+        return None
+    root = Path(target)
+    if not root.is_dir() or not (root / ".git").exists():
+        return None
+    resolved = root.resolve()
+    home = Path.home().resolve()
+    if resolved == home or home.is_relative_to(resolved):
+        return None
+    cwd = str(event.get("cwd") or "")
+    if cwd and not Path(cwd).resolve().is_relative_to(resolved):
+        return None
+    return str(resolved)
 
 
 # ── flow runs: started in a thread, watched through the run file ─────────────
@@ -780,17 +843,28 @@ class TrackedExecutor(runner.Executor):
         return result
 
 
-def runs(project_value: Any) -> dict[str, Any]:
+def _of_session(state: dict[str, Any], session: str | None) -> bool:
+    """A session credential sees only the runs it started."""
+    return not session or (state.get("executor_state") or {}).get("session") == session
+
+
+def runs(project_value: Any, session: str | None = None) -> dict[str, Any]:
     project = _project(project_value)
-    return {"project": str(project), "runs": runner.list_runs(project)}
+    try:
+        found = runner.list_runs(project)
+    except runner.RunRefused as exc:
+        raise KitApiError(400, str(exc)) from exc
+    return {"project": str(project), "runs": [r for r in found if _of_session(r, session)]}
 
 
-def run_detail(project_value: Any, run_id: str) -> dict[str, Any]:
+def run_detail(project_value: Any, run_id: str, session: str | None = None) -> dict[str, Any]:
     project = _project(project_value)
     try:
         run = runner.load_run(project, run_id)
     except runner.RunRefused as exc:
         raise KitApiError(404, str(exc)) from exc
+    if not _of_session(run.state, session):
+        raise KitApiError(404, f"no run {run_id} of this session")
     return {
         "run": run.state,
         "steps": [
@@ -823,9 +897,12 @@ def start_run(body: dict[str, Any], tracker: StepTracker | None = None) -> dict[
     inputs = body.get("inputs") or {}
     if not isinstance(inputs, dict):
         raise KitApiError(400, "inputs must be an object")
-    limits = runner.Limits(
-        yolo=bool(body.get("yolo")), codex_trusted=bool(body.get("codex_trusted"))
-    )
+    if flow.endswith(".json"):
+        raise KitApiError(400, "flow must be <kit>/<flow>, a flow installed in the project")
+    # Permission flags never come over HTTP: the harness keeps its own
+    # prompts (acceptEdits / --full-auto) unless the owner passes --yolo or
+    # --codex-trusted to `duckterm kit run` in a terminal.
+    limits = runner.Limits()
     try:
         runner.flow_path(project, flow)
     except runner.RunRefused as exc:
@@ -876,9 +953,7 @@ def answer_gate(
     answer = str(body.get("answer") or "")
     if not step or not answer:
         raise KitApiError(400, "step and answer are required")
-    limits = runner.Limits(
-        yolo=bool(body.get("yolo")), codex_trusted=bool(body.get("codex_trusted"))
-    )
+    limits = runner.Limits()
     try:
         run = runner.load_run(project, run_id)
     except runner.RunRefused as exc:

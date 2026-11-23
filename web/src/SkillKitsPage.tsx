@@ -290,6 +290,7 @@ function kitState(kit: KitEntry): { text: string; tone: string } {
   if (kit.error) return { text: "cannot be read", tone: "bad" };
   const errors = kit.inventory?.findings.filter((f) => f.level === "error").length ?? 0;
   if (errors) return { text: `${errors} manifest error${errors === 1 ? "" : "s"}`, tone: "bad" };
+  if (kit.changed) return { text: "changed since enabled", tone: "warn" };
   if (kit.installed_in.length === 0) return kit.policy ? { text: "waiting for a first session", tone: "warn" } : { text: "not enabled", tone: "mute" };
   const drifted = kit.installed_in.filter((i) => i.verify.ok === false).length;
   if (drifted) return { text: `drift in ${drifted} of ${kit.installed_in.length}`, tone: "bad" };
@@ -463,6 +464,7 @@ function KitView({ kit, busy, fromAdd, onEnable, onDisable, onRemove, onVerify, 
       <div className="rd-kits-pills">
         <Pill tone={kit.policy ? "ok" : "mute"}>{policyText(kit)}</Pill>
         {(kit.pending ?? []).length > 0 && <Pill tone="warn">{kit.pending!.map(workspaceLabel).join(", ")}: installs at the first session</Pill>}
+        {kit.changed && <Pill tone="warn">the kit folder changed since it was enabled: nothing new installs until you enable it again</Pill>}
         {kit.inventory && <Pill tone={errors.length ? "bad" : "ok"}>{errors.length ? `${errors.length} manifest errors` : "validate ok"}{warnings ? ` · ${warnings} warnings` : ""}</Pill>}
         {kit.inventory && <Pill>{kit.inventory.component_count} components</Pill>}
         {kit.inventory && Object.keys(kit.inventory.options).length > 0 && <Pill>options: {Object.keys(kit.inventory.options).join(", ")}</Pill>}

@@ -221,10 +221,21 @@ multi-kit folder), read what it holds, enable it for all workspaces or chosen
 ones (`POST /kits/enable`; the choice lives in `<home>/kit-policy.json`).
 Enabling installs into every matching repository known now, after a dry run
 you can read, for every harness; the review names, per harness, the
-components the kit does not support. On every SessionStart the server
-installs enabled kits the session's repository lacks. Create team works from
-an added kit: the new workspace is enabled for the kit, so its first session
-installs it.
+components the kit does not support. Enable pins a digest of the kit tree
+the review showed (`digest` in the policy). On a SessionStart the server
+installs enabled kits the session's repository lacks, but only that pinned
+tree: a kit folder that changed since (a pull, an edit under ~/Downloads)
+installs nowhere, the page shows it as "changed since enabled", and Enable
+again is the review of the new tree. The install target is the repository
+DuckTerm launched the session in (the session row's worktree or repository
+as it stood before the event, a git root, never the home folder), and only
+when the event's cwd lies inside it; the hook's own cwd is never a target,
+because a `claude` an agent starts in another folder inherits the session
+key and reports that folder. Create team works from an added kit: the new
+workspace is enabled for the kit (pinned to the tree the kit page showed),
+so its first session installs it. `kit-policy.json` is written atomically
+and never through a symlink. A kit's name is unique in the registry;
+registering a second kit or suite of that name is refused.
 
 The server routes are `POST /kits/catalog | register | unregister | enable |
 disable | overview
@@ -240,12 +251,22 @@ like New workspace, and the workspace view shows one card per role.
 repository's runs, the session's own first, each with its steps and, at a
 gate, Approve and Reject under the step. A run the server starts for a
 session (`POST /api/v1/session/kits/run`, authenticated by the session's own
-credential; also `runs`, `run-detail`, `gate`) makes every harness step a
-child session of it: a SessionStart row with the parent key before the
-process, the step's hooks reporting under the child key, SessionEnd after.
-`duckterm kit run` inside a session hands the run to the server this way and
-watches it from the terminal; outside a session it runs locally. Script
-steps are not sessions.
+credential; also `runs` and `run-detail`) makes every harness step a child
+session of it: a SessionStart row with the parent key before the process,
+the step's hooks reporting under the child key, SessionEnd after. A session
+credential reaches only the session's own folder (the body cannot name
+another project), sees only the runs it started, and answers no gate: gates
+are the owner's, in the Flows tab, so there is no session gate route.
+Neither HTTP route takes `yolo` or `codex_trusted`; the harness keeps its
+own permission prompts unless the owner passes `--yolo` or `--codex-trusted`
+to `duckterm kit run` in a terminal outside a session, and flows run by
+name only (`<kit>/<flow>`, installed), never by file path. `duckterm kit
+run` inside a session hands the run to the server this way and watches it
+from the terminal; outside a session it runs locally. The `/<flow>` command
+a flow installs for Claude Code pre-approves exactly `duckterm kit run
+<kit>/<flow>` (no `--gate`, no `--yolo`), with the flow's description as one
+quoted frontmatter line and only identifier input names. Script steps are
+not sessions.
 
 Endpoints: `GET /harnesses`, `POST /harnesses/register {path}`,
 `GET /harnesses/:name/contents`, `DELETE /harnesses/:name`. Registered kits

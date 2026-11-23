@@ -237,19 +237,23 @@ def _server_run(args: argparse.Namespace) -> int | None:
             data = json.loads(resp.read().decode())
         return data if isinstance(data, dict) else {}
 
+    if args.yolo or args.codex_trusted:
+        print(
+            "duckterm kit: --yolo and --codex-trusted are not available through the DuckTerm"
+            " server; run this outside a DuckTerm session to use them",
+            file=sys.stderr,
+        )
+        return 1
+    if args.gate:
+        print(
+            "duckterm kit: a gate is answered by the owner in DuckTerm (the session's Flows"
+            f" tab), not from a session; run {args.resume} keeps waiting",
+            file=sys.stderr,
+        )
+        return 1
     project = str(Path(args.project).resolve())
     try:
         if args.resume:
-            if args.gate:
-                call(
-                    "gate",
-                    {
-                        "project": project,
-                        "run_id": args.resume,
-                        "step": args.gate[0],
-                        "answer": args.gate[1],
-                    },
-                )
             run_id = args.resume
         else:
             if not args.flow:
@@ -294,10 +298,7 @@ def _server_run(args: argparse.Namespace) -> int | None:
         print(
             f"gate {gate['step']!r} (visit {gate['visit']}): {gate.get('question') or 'approve?'}"
         )
-        print(
-            f"  answer with: duckterm kit run --resume {run_id} --gate {gate['step']} "
-            + "|".join(gate["choices"])
-        )
+        print("  the owner answers it in DuckTerm, in this session's Flows tab")
         return 3
     if state.get("failure"):
         f = state["failure"]

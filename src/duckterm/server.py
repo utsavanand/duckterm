@@ -1199,9 +1199,16 @@ class Server:
         # Check before publishing Stop: folding that event changes waiting to idle.
         hook_output = self._inbox_hook_output(raw, str(key or ""))
         raw["hook_event"] = True
+        # the row before this event names the repository DuckTerm launched the
+        # session in; the event itself may carry a child process's cwd
+        before = (
+            self.history.session(str(key))
+            if key and raw.get("event_type") == events.SESSION_START
+            else None
+        )
         event = self.bus.publish(raw)
         if event.get("event_type") == events.SESSION_START:
-            self._apply_kit_policies(event)
+            self._apply_kit_policies(event, before)
         response = dict(event)
         if hook_output:
             response["hook_output"] = hook_output
@@ -2693,10 +2700,12 @@ class Server:
     async def _session_kits(
         self, method: str, path: str, headers: dict[str, str], body: bytes
     ) -> tuple[int, dict[str, Any]]:
-        """A session starting, watching or answering a flow of its own: the
-        caller is the session its credential names, its project is its own
-        folder unless it says otherwise, and every harness step of the run is
-        a child session of it. `duckterm kit run` inside a session uses this."""
+        """A session starting or watching a flow of its own: the caller is the
+        session its credential names, its project is its own folder (the body
+        cannot name another), it sees only runs it started, and every harness
+        step of the run is a child session of it. Gates are the owner's:
+        there is no session gate route. `duckterm kit run` inside a session
+        uses this."""
         from duckterm.kits import api as kits_api
 
         key = self.history.session_api.authenticate(headers)
@@ -2708,19 +2717,16 @@ class Server:
         if not isinstance(payload, dict):
             return 400, {"error": "body must be an object"}
         row = self.history.session(key) or {}
-        payload.setdefault("project", row.get("worktree_path") or row.get("cwd") or "")
+        payload["project"] = row.get("worktree_path") or row.get("cwd") or ""
         payload["session"] = key
         tracker = _FlowStepTracker(self, asyncio.get_running_loop())
+        project = payload["project"]
+        run_id = str(payload.get("run_id") or "")
         calls = {
             ("POST", "run"): lambda: kits_api.start_run(payload, tracker),
-            ("GET", "runs"): lambda: kits_api.runs(payload.get("project")),
-            ("POST", "runs"): lambda: kits_api.runs(payload.get("project")),
-            ("POST", "run-detail"): lambda: kits_api.run_detail(
-                payload.get("project"), str(payload.get("run_id") or "")
-            ),
-            ("POST", "gate"): lambda: kits_api.answer_gate(
-                payload, str(payload.get("run_id") or ""), tracker
-            ),
+            ("GET", "runs"): lambda: kits_api.runs(project, session=key),
+            ("POST", "runs"): lambda: kits_api.runs(project, session=key),
+            ("POST", "run-detail"): lambda: kits_api.run_detail(project, run_id, session=key),
         }
         call = calls.get((method, suffix))
         if call is None:
@@ -2781,32 +2787,39 @@ class Server:
         try:
             result = await asyncio.to_thread(calls[action])
             if action == "register":
-                self.history.add_harness(
-                    str(result["name"]), str(result["path"]), int(time.time() * 1000)
-                )
+                name, path = str(result["name"]), str(result["path"])
+                # kits share the harnesses table with suites, keyed by name; a
+                # second row of that name would silently repoint the first
+                for other in self.history.harnesses():
+                    if str(other.get("name")) == name and str(other.get("path")) != path:
+                        raise kits_api.KitApiError(
+                            409,
+                            f"{name!r} is already added from {other.get('path')}; remove it first",
+                        )
+                self.history.add_harness(name, path, int(time.time() * 1000))
         except kits_api.KitApiError as exc:
             await _write_json(writer, exc.status, {"error": str(exc)})
             return
         await _write_json(writer, 200, result)
 
-    def _apply_kit_policies(self, event: dict[str, Any]) -> None:
+    def _apply_kit_policies(self, event: dict[str, Any], before: dict[str, Any] | None) -> None:
         """A session started: kits enabled for its workspace (or for all) are
-        installed into its repository if missing. Registry and workspace are
-        read here, on the store's thread; the file work runs in a thread."""
+        installed into its repository if missing. `before` is the session row
+        as it stood before this event; the target is the repository DuckTerm
+        launched it in (`kits_api.policy_target`), never the hook's cwd.
+        Registry and workspace are read here, on the store's thread; the
+        file work runs in a thread."""
         if not self.edition.includes("skill_kits"):
             return
         from duckterm.kits import api as kits_api
 
-        project = str(
-            event.get("worktree_path") or event.get("repo_path") or event.get("cwd") or ""
-        )
+        project = kits_api.policy_target(before, event)
         if not project:
             return
         registry = [dict(r) for r in self.history.harnesses()]
         if not registry or not kits_api.policies():
             return
-        row = self.history.session(str(event.get("session_key") or "")) or {}
-        folder = str(row.get("grp") or "")
+        folder = str((before or {}).get("grp") or "")
 
         async def run() -> None:
             try:
@@ -2851,8 +2864,13 @@ class Server:
         result: dict[str, Any] = kits_api.create_team(payload)
         folder = str(result["team"]["folder"])
         self.history.create_folder(folder, now=int(time.time() * 1000))
-        # The team's first session installs the kit if it is not there yet.
-        kits_api.add_policy_workspace(str(result["team"]["kit"]), folder)
+        # The team's first session installs the kit if it is not there yet; the
+        # policy pins the kit tree the owner has just read on the kit page.
+        kit = str(result["team"]["kit"])
+        kit_path = payload.get("kit_path") or next(
+            (r["path"] for r in self.history.harnesses() if str(r.get("name")) == kit), None
+        )
+        kits_api.add_policy_workspace(kit, folder, str(kit_path) if kit_path else None)
         return result
 
     def _suites_for(self, directory: object) -> list[str]:

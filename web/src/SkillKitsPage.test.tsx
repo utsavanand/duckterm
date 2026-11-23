@@ -53,6 +53,13 @@ it("lists added kits with where they are installed and the teams they offer", as
   expect(screen.queryByLabelText(/repository/i)).toBeNull();
 });
 
+it("shows a kit whose folder changed since it was enabled as changed, not verified", async () => {
+  vi.mocked(api.kitsCatalog).mockResolvedValue({ ...catalog, kits: [{ ...uvSuite, changed: true }] });
+  render(<SkillKitsPage onClose={() => {}} fallback={<div>legacy</div>} />);
+  expect(await screen.findByText("changed since enabled")).toBeVisible();
+  expect(screen.queryByText("verified")).toBeNull();
+});
+
 it("falls back to the legacy modal when the flag is off", async () => {
   vi.mocked(api.kitsCatalog).mockRejectedValue(new Error("skill_kits is still in development; see docs/feature-flags.md"));
   render(<SkillKitsPage onClose={() => {}} fallback={<div>legacy</div>} />);

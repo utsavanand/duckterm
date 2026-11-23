@@ -517,7 +517,7 @@ export interface KitInstall { workspace: string; project: string; version: strin
 export interface KitPolicy { scope: "all" | "workspaces"; workspaces?: string[] }
 export interface KitEnableResult { kit: string; policy: KitPolicy; installed: { workspace: string; project: string }[]; already: { workspace: string; project: string }[]; failed: { workspace: string; project: string; error: string }[]; pending: string[] }
 export interface KitEntry {
-  name: string; path: string; installed_in: KitInstall[]; error?: string; policy?: KitPolicy | null; pending?: string[];
+  name: string; path: string; installed_in: KitInstall[]; error?: string; policy?: KitPolicy | null; pending?: string[]; changed?: boolean;
   version?: string; description?: string; inventory?: KitInventory; details?: Record<string, KitDetail[]>; procedures?: KitProcedure[]; flows?: string[]; runs?: KitRunSummary[];
 }
 export interface KitWorkspace { name: string; repositories: string[] }
