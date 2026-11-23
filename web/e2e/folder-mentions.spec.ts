@@ -45,7 +45,6 @@ test("folder mentions deliver owner questions, retain replies, and review broadc
     await page.getByRole('button', { name: 'Ask', exact: true }).click();
     const plan = page.getByRole('dialog', { name: 'Confirm message' });
     await expect(plan).toContainText('Report your progress.');
-    await page.screenshot({ path: '/tmp/duckterm-folder-confirm.png' });
     expect((await inbox(0)).messages).toHaveLength(1);
     await plan.getByRole('button', { name: 'Send to ui-dev', exact: true }).click();
     await expect(page.getByText('ui-dev · Queued in inbox', { exact: true })).toBeVisible();

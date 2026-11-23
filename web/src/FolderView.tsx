@@ -66,6 +66,7 @@ function FolderChat({ folder, active }: { folder: string; active: boolean }) {
   const [reviewing, setReviewing] = useState(false);
   const [plan, setPlan] = useState<FolderMessagePlan & { question: string; key: string; error?: string } | null>(null);
   const submission = useRef<{ signature: string; key: string }>();
+  const unsent = useRef<{ signature: string; key: string }>();
   const log = useRef<HTMLDivElement>(null);
   const mounted = useRef(false);
   const sending = useRef(false);
@@ -126,8 +127,14 @@ function FolderChat({ folder, active }: { folder: string; active: boolean }) {
         request_key: submission.current.key, recipients: target.recipients.filter(r => r.eligible).map(r => r.session_id),
       }) : await api.fleetAsk(value, folder, answerOnly ? undefined : submission.current.key);
       if (assign) window.dispatchEvent(new Event("folder-tasks-refresh"));
-      if ("plan" in result) { if (mounted.current) setPlan({ ...result.plan, question: value, key: crypto.randomUUID() }); }
-      else if (mounted.current) append(result.exchange);
+      if ("plan" in result) {
+        // Asking again after Cancel yields the same plan; reusing its key means
+        // a send whose response was lost cannot be delivered a second time.
+        const { identity, target, text, recipients } = result.plan;
+        const signature = JSON.stringify([identity, target, text, recipients.map(r => r.session_id)]);
+        if (unsent.current?.signature !== signature) unsent.current = { signature, key: crypto.randomUUID() };
+        if (mounted.current) setPlan({ ...result.plan, question: value, key: unsent.current.key });
+      } else if (mounted.current) append(result.exchange);
       submission.current = undefined;
     } catch (cause) {
       if (mounted.current) { setError((cause as Error).message); setQuestion(current => current || value); }
@@ -144,8 +151,8 @@ function FolderChat({ folder, active }: { folder: string; active: boolean }) {
     sending.current = true;
     setPending(plan.text);
     try {
-      // The plan's key is kept across retries so a lost response cannot send twice.
       const result = await api.folderDispatch(folder, { identity: plan.identity, target: plan.target, text: plan.text, request_key: plan.key, recipients: plan.recipients.map(r => r.session_id) });
+      unsent.current = undefined;
       if (mounted.current) { append(result.exchange); setPlan(null); }
     } catch (cause) {
       if (mounted.current) setPlan(current => current && { ...current, error: (cause as Error).message });

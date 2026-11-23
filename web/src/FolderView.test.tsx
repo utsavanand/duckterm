@@ -183,6 +183,29 @@ it("sends a natural-language message only after the owner confirms its plan", as
   expect(screen.getByText("ui-dev · Queued in inbox")).toBeVisible();
 });
 
+it("asking again after a lost send reuses the plan's key, and a later send gets a new one", async () => {
+  vi.mocked(api.folderChat).mockResolvedValue({ messages: [] });
+  const plan = { identity: "id-1", target: { kind: "session" as const, id: "ui-1" }, label: "ui-dev", text: "Please report your progress.", recipients: [{ session_id: "ui-1", name: "ui-dev" }] };
+  vi.mocked(api.fleetAsk).mockResolvedValue({ plan });
+  render(<FolderView folder="Website" />, { wrapper: edition(FULL) });
+  await act(async () => {});
+  const askAndSend = async () => {
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "Ask ui-dev to report progress" } });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Ask" })); });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Send to ui-dev" })); });
+  };
+  vi.mocked(api.folderDispatch).mockRejectedValueOnce(new Error("connection lost"));
+  await askAndSend();
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  vi.mocked(api.folderDispatch).mockResolvedValue({ exchange: { q: plan.text, a: "", at: 2, dispatch: { request_key: "k", target: plan.target, label: "ui-dev", recipients: [{ session_id: "ui-1", name: "ui-dev", message_id: "q-test", status: "queued", answer: null }] } } });
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Ask" })); });
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Send to ui-dev" })); });
+  await askAndSend();
+  const [lost, resent, repeat] = vi.mocked(api.folderDispatch).mock.calls.map(call => call[1].request_key);
+  expect(resent).toBe(lost);
+  expect(repeat).not.toBe(lost);
+});
+
 it("keeps suggestion buttons read-only even when a recipient is selected", async () => {
   await openPicker();
   fireEvent.click(screen.getByRole("option", { name: /ui-dev/ }));

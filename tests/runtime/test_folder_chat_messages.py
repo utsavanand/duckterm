@@ -264,3 +264,69 @@ def test_history_failure_and_changed_plan_cannot_duplicate_send(app, monkeypatch
     assert app.history.session_api.pending_counts() == {"one": 1}
     assert confirm(app, direct)[0] == 200
     assert app.history.session_api.pending_counts() == {"one": 1}
+
+
+def test_dispatch_requires_the_owner_header_not_a_bearer(app, monkeypatch):  # noqa: F811
+    session = enroll(app.history, "one", "a")
+    model(monkeypatch, plan())
+    body = ask(app)[1]["plan"]
+    send = {
+        "identity": body["identity"],
+        "target": body["target"],
+        "text": body["text"],
+        "request_key": "confirm",
+        "recipients": ["one"],
+    }
+    for headers in (session, {"authorization": f"Bearer {app.token}"}):
+        assert req(app, "POST", "/folders/a/dispatch", send, headers=headers) == (
+            403,
+            {"error": "session credentials cannot access owner routes"},
+        )
+    assert app.history.session_api.pending_counts() == {}
+
+
+def test_retried_ask_returns_a_fresh_plan_and_sends_nothing(app, monkeypatch):  # noqa: F811
+    enroll(app.history, "one", "a")
+    prompts = model(monkeypatch, plan())
+    first, again = ask(app), ask(app)
+    assert first == again and "plan" in first[1]
+    assert len(prompts) == 2
+    assert app.history.session_api.pending_counts() == {}
+    assert req(app, "GET", "/folders/a/chat")[1]["messages"] == []
+
+
+def test_ask_replays_a_stored_send_without_the_model(app, monkeypatch):  # noqa: F811
+    enroll(app.history, "one", "a")
+    identity, _ = app.history.folder_chats.snapshot("a")
+    question = "Ask Session one what they are working on"
+    stored = app.history.folder_chats.append(
+        "a",
+        identity,
+        question,
+        "",
+        1,
+        {
+            "request_key": "chat:first",
+            "owner_question": question,
+            "target": {"kind": "session", "id": "one"},
+            "label": "Session one",
+            "recipients": [],
+        },
+    )
+    prompts = model(monkeypatch, plan())
+    status, body = ask(app)
+    assert status == 200 and body["exchange"] == stored
+    assert ask(app, "Something else")[0] == 409
+    assert prompts == []
+    assert app.history.session_api.pending_counts() == {}
+
+
+@pytest.mark.parametrize("target", ["ab", "b", "a/../ab"])
+def test_dispatch_refuses_a_folder_outside_its_own(app, monkeypatch, target):  # noqa: F811
+    enroll(app.history, "one", "a")
+    enroll(app.history, "outside", "ab")
+    model(monkeypatch, plan("folder", "a"))
+    body = ask(app)[1]
+    status, _ = confirm(app, body, target={"kind": "folder", "id": target}, recipients=["outside"])
+    assert status == 400
+    assert app.history.session_api.pending_counts() == {}
