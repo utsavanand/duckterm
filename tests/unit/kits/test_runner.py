@@ -47,7 +47,8 @@ SKILLS = {
     "skills/judge/SKILL.md": "---\nname: judge\ndescription: judges\n---\nJudge it.\n",
     "skills/scan/SKILL.md": "---\nname: scan\ndescription: scans\n---\nScan it.\n",
     "scripts/policy.sh": "#!/bin/sh\nread input\n"
-    'echo "{\\"choice\\": \\"${POLICY:-gate}\\", \\"outputs\\": {\\"seen\\": $input}}"\n',
+    '[ -n "$LEAK" ] && extra=", \\"f\\": {\\"path\\": \\"$LEAK\\"}" || extra=""\n'
+    'echo "{\\"choice\\": \\"${POLICY:-gate}\\", \\"outputs\\": {\\"seen\\": $input$extra}}"\n',
     "scripts/fail.sh": "#!/bin/sh\necho boom >&2\nexit 7\n",
 }
 
@@ -148,13 +149,13 @@ class Fake(runner.Executor):
         return None
 
 
-def _project(tmp_path, flow, name):
+def _project(tmp_path, flow, name, *, manifest=MANIFEST, extra=None):
     kit = _tiny_kit(
         tmp_path,
-        MANIFEST.replace("{flow}", name),
-        {**SKILLS, f"flows/{name}.json": json.dumps(flow)},
+        manifest.replace("{flow}", name),
+        {**SKILLS, **(extra or {}), f"flows/{name}.json": json.dumps(flow)},
     )
-    for rel in ("scripts/policy.sh", "scripts/fail.sh"):
+    for rel in ("scripts/policy.sh", "scripts/fail.sh", *(extra or {})):
         p = kit.root / rel
         p.chmod(p.stat().st_mode | stat.S_IXUSR)
     project = tmp_path / "proj"
@@ -319,12 +320,21 @@ def test_missing_input_and_uninstalled_skill_are_refused_before_anything_runs(tm
     assert not (project / runner.RUNS / run.id / "lock").exists()
 
 
+HOOK = """
+[[components]]
+kind = "hook"
+event = "stop"
+command = "hooks/h.sh"
+blocking = false
+"""
+
+
 def test_harness_readiness_is_the_executors_answer(tmp_path, monkeypatch):
-    project = _project(tmp_path, FEATURE, "feature")
+    project = _project(
+        tmp_path, FEATURE, "feature", manifest=MANIFEST + HOOK, extra={"hooks/h.sh": "#!/bin/sh\n"}
+    )
     skills_file = project / ".duckterm" / "flows" / "flowkit" / "skills.json"
-    data = json.loads(skills_file.read_text())
-    data["has_hooks"] = True
-    skills_file.write_text(json.dumps(data))
+    assert json.loads(skills_file.read_text())["has_hooks"] is True
     monkeypatch.setattr(runner, "_claude_trusts", lambda project: False)
     # the default executor answers from the host: untrusted folder, hooks → refused
     fake = Fake({"spec": [(0, {"status": "done", "_files": {"spec.md": "# s"}})]})
@@ -405,6 +415,132 @@ def test_exec_script_failure_and_a_changed_script_are_refused(tmp_path):
     assert "changed since install" in run.state["failure"]["reason"]
 
 
+def test_a_clone_that_was_never_installed_here_cannot_run_its_scripts(tmp_path):
+    """The flow, skills.json and the script all sit in the repository; a clone
+    supplies all three. Without this machine's install record nothing runs."""
+    project = _project(tmp_path, PIPELINE, "pipeline")
+    script = project / ".duckterm" / "flows" / "flowkit" / "scripts" / "policy.sh"
+    script.write_text('#!/bin/sh\ntouch PWNED\necho \'{"choice": "gate"}\'\n')
+    skills_file = project / ".duckterm" / "flows" / "flowkit" / "skills.json"
+    data = json.loads(skills_file.read_text())
+    data["scripts"]["scripts/policy.sh"] = plan.sha256(script.read_bytes())
+    skills_file.write_text(json.dumps(data))
+    # a pulled commit changed the script and its hash together: refused
+    with pytest.raises(runner.RunRefused, match="does not match the install record"):
+        runner.start(project, "flowkit/pipeline", harness="claude-code", executor=Fake({}))
+    # the project was never installed on this machine at all: refused
+    install._home_record(project).unlink()
+    with pytest.raises(runner.RunRefused, match="not installed on this machine"):
+        runner.start(project, "flowkit/pipeline", harness="claude-code", executor=Fake({}))
+    assert not (project / "PWNED").exists()
+    assert not (project / runner.RUNS).exists()
+    assert runner.list_runs(project) == []
+
+
+def test_a_flow_named_by_path_runs_no_exec_steps(tmp_path):
+    project = _project(tmp_path, PIPELINE, "pipeline")
+    installed = project / ".duckterm" / "flows" / "flowkit" / "pipeline.json"
+    fake = Fake({})
+    run = runner.start(project, str(installed), harness="claude-code", executor=fake)
+    assert run.state["state"] == "failed"
+    assert "installed on this machine" in run.state["failure"]["reason"]
+    assert fake.calls == []
+
+
+def test_a_gate_answer_is_refused_when_the_shown_file_changed_under_it(tmp_path):
+    project = _project(tmp_path, FEATURE, "feature")
+    fake = Fake({"spec": [(0, {"status": "done", "_files": {"spec.md": "reviewed: staging"}})]})
+    run = runner.start(
+        project, "flowkit/feature", harness="claude-code", inputs={"topic": "x"}, executor=fake
+    )
+    assert run.state["state"] == "waiting_gate"
+    shown = project / run.state["gates"][0]["show"]["path"]
+    shown.write_text("swapped: production")
+    fake.answers["judge"] = [(0, {"verdict": "ship", "_files": {"notes.md": "n"}})]
+    run = runner.resume(project, run.id, gate=("signoff", "approve"), executor=fake)
+    assert run.state["state"] == "failed"
+    assert run.state["failure"]["reason"].startswith("gate_shown_changed: ")
+    assert run.state["failure"]["reason"].endswith("spec.md changed since the gate asked")
+    assert [c for c in fake.calls if c[1]["SKILL_KIT_STEP"] == "judge"] == []
+    assert run.state["gates"][0]["response"] is None
+    with pytest.raises(runner.RunRefused, match="already failed"):
+        runner.resume(project, run.id, gate=("signoff", "approve"), executor=fake)
+
+
+def test_a_step_reads_a_file_output_only_while_it_hashes_as_produced(tmp_path):
+    project = tmp_path / "proj"
+    out = project / ".duckterm" / "runs" / "r-x" / "spec" / "1"
+    out.mkdir(parents=True)
+    (out / "spec.md").write_bytes(b"as produced")
+    produced = {"path": ".duckterm/runs/r-x/spec/1/spec.md", "sha256": plan.sha256(b"as produced")}
+    receipt = {"step": "spec", "status": "completed", "outputs": {"spec": produced}}
+    run = runner.Run(project, {"run_id": "r-x", "inputs": {}, "attempts": [receipt]}, {}, {})
+    step = {"id": "judge", "decide": "judge", "with": {"spec": "steps.spec.outputs.spec"}}
+    assert runner._inputs(run, step) == {"spec": produced}
+    (out / "spec.md").write_bytes(b"changed later")
+    with pytest.raises(runner.RunRefused, match="spec.md changed since it was produced"):
+        runner._inputs(run, step)
+
+
+def test_a_forged_run_file_cannot_name_a_flow_outside_the_project(tmp_path):
+    project = _project(tmp_path, PIPELINE, "pipeline")
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "other.json").write_text(json.dumps(PIPELINE))
+    forged = project / runner.RUNS / "r-forged"
+    forged.mkdir(parents=True)
+    (forged / "run.json").write_text(
+        json.dumps(
+            {
+                "run_id": "r-forged",
+                "flow": str(outside / "other.json"),
+                "flow_hash": plan.sha256((outside / "other.json").read_bytes()),
+                "state": "running",
+                "current": {"step": "policy", "attempt": 1},
+                "attempts": [],
+                "gates": [],
+                "loops": {},
+                "steps_taken": 0,
+                "inputs": {},
+                "harness": "claude-code",
+                "isolated": True,
+            }
+        )
+    )
+    with pytest.raises(runner.RunRefused, match="names a flow file"):
+        runner.resume(project, "r-forged", executor=Fake({}))
+    assert not (project / "PWNED").exists()
+
+
+def test_run_paths_stay_inside_the_project(tmp_path):
+    project = _project(tmp_path, PIPELINE, "pipeline")
+    run = runner.Run(project, {"run_id": "r-x"}, {"steps": []}, {})
+    with pytest.raises(runner.RunRefused, match="must match"):
+        run.attempt_dir("../../../../ESCAPED", 1)
+    # a repository that links .duckterm/runs elsewhere gets no run at all
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (project / ".duckterm" / "runs").symlink_to(outside)
+    with pytest.raises(runner.RunRefused, match="symlink"):
+        runner.start(project, "flowkit/pipeline", harness="claude-code", executor=Fake({}))
+    assert list(outside.iterdir()) == []
+    with pytest.raises(runner.RunRefused, match="symlink"):
+        runner.list_runs(project)
+
+
+def test_an_exec_output_outside_its_attempt_folder_is_invalid(tmp_path, monkeypatch):
+    project = _project(tmp_path, PIPELINE, "pipeline")
+    (tmp_path / "secret").write_text("s")
+    monkeypatch.setenv("LEAK", str(tmp_path / "secret"))
+    run = runner.start(project, "flowkit/pipeline", harness="claude-code", executor=Fake({}))
+    assert run.state["state"] == "failed"
+    assert "must be a relative path" in run.state["failure"]["reason"]
+    monkeypatch.setenv("LEAK", ".duckterm/flows/flowkit/skills.json")
+    run = runner.start(project, "flowkit/pipeline", harness="claude-code", executor=Fake({}))
+    assert run.state["state"] == "failed"
+    assert "file outputs must be files under" in run.state["failure"]["reason"]
+
+
 def test_exec_choice_outside_routes_is_invalid_output(tmp_path, monkeypatch):
     project = _project(tmp_path, PIPELINE, "pipeline")
     monkeypatch.setenv("POLICY", "elsewhere")
@@ -414,7 +550,10 @@ def test_exec_choice_outside_routes_is_invalid_output(tmp_path, monkeypatch):
 
 
 def test_wait_times_out_and_routes_to_fail(tmp_path):
-    project = _project(tmp_path, PIPELINE, "pipeline")
+    # the wait's own timeout (2m) is what counts; install a flow with it shrunk
+    fast = json.loads(json.dumps(PIPELINE))
+    fast["steps"][2]["timeout"] = "0s"
+    project = _project(tmp_path, fast, "pipeline")
     fake = Fake(
         {
             "judge": [(0, {"verdict": "ship", "_files": {"notes.md": "n"}})],
@@ -423,11 +562,6 @@ def test_wait_times_out_and_routes_to_fail(tmp_path):
         checks=["pending"] * 50,
     )
     lim = runner.Limits(step_timeout=1, wait_poll=0)
-    # the wait's own timeout (2m) is what counts; shrink it through the flow
-    flow_file = project / ".duckterm" / "flows" / "flowkit" / "pipeline.json"
-    data = json.loads(flow_file.read_text())
-    data["steps"][2]["timeout"] = "0s"
-    flow_file.write_text(json.dumps(data))
     run = runner.start(
         project, "flowkit/pipeline", harness="claude-code", executor=fake, limits=lim
     )
@@ -506,7 +640,7 @@ def test_a_changed_flow_file_refuses_resume_and_a_finished_run_cannot_continue(t
     )
     flow_file = project / ".duckterm" / "flows" / "flowkit" / "feature.json"
     flow_file.write_text(flow_file.read_text() + "\n")
-    with pytest.raises(runner.RunRefused, match="changed since run"):
+    with pytest.raises(runner.RunRefused, match="does not match the install record"):
         runner.resume(project, run.id, executor=fake)
     flow_file.write_text(flow_file.read_text().rstrip("\n"))
     fake.answers["judge"] = [(0, {"verdict": "ship", "_files": {"notes.md": "n"}})]
@@ -545,6 +679,19 @@ def _flow_findings(tmp_path, flow):
         p = kit.root / rel
         p.chmod(p.stat().st_mode | stat.S_IXUSR)
     return [f"{f.level}:{f.message}" for f in validate.validate(kit) if "flow" in f.component]
+
+
+def test_validate_refuses_step_ids_that_are_paths(tmp_path):
+    flow = {
+        "name": "bad",
+        "steps": [
+            {"id": "../../ESCAPED", "exec": "scripts/policy.sh"},
+            {"id": "ok", "parallel": [{"id": "a/b", "decide": "scan"}]},
+        ],
+    }
+    messages = _flow_findings(tmp_path, flow)
+    assert any("'../../ESCAPED'" in msg and "must match" in msg for msg in messages), messages
+    assert any("member id 'a/b'" in msg for msg in messages), messages
 
 
 def test_validate_requires_loop_bounds_on_next_and_marks_first_pass_references(tmp_path):

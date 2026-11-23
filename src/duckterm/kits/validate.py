@@ -376,6 +376,9 @@ def _check_flow(
         if not isinstance(s, dict):
             continue
         sid = str(s.get("id"))
+        if not m.STEP_ID_RE.match(sid):
+            err(cid, f"step {sid!r}: id must match {m.STEP_ID_RE.pattern} (it names a folder)")
+            continue
         kinds = [k for k in ("run", "decide", "gate", "parallel", "wait", "exec") if k in s]
         if len(kinds) != 1:
             err(cid, f"step {sid}: exactly one of run / decide / gate / parallel / wait / exec")
@@ -409,6 +412,9 @@ def _check_flow(
         if kind == "parallel":
             subs = s["parallel"] if isinstance(s["parallel"], list) else []
             for sub in subs:
+                mid = str(sub.get("id"))
+                if not m.STEP_ID_RE.match(mid):
+                    err(cid, f"step {sid}: member id {mid!r} must match {m.STEP_ID_RE.pattern}")
                 skill = skills.get(str(sub.get("run") or sub.get("decide")))
                 if skill is None or skill.fields.get("effects", "workspace") != "read-only":
                     err(cid, f"step {sid}: parallel steps must run read-only skills")

@@ -26,7 +26,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from duckterm.kits import adapters
+from duckterm.kits import adapters, install
+from duckterm.kits.manifest import STEP_ID_RE
 from duckterm.kits.plan import PathEscape, inside, sha256
 
 RUNS = ".duckterm/runs"
@@ -70,6 +71,10 @@ class Executor:
     will find it"."""
 
     name = "local"
+    # True when steps run in a copy of the project (autopilot's per-run clone):
+    # only then may a workspace step with an unknown outcome be rerun. Comes from
+    # the executor, never from run.json, which the repository can forge.
+    isolated = False
 
     def run_process(
         self,
@@ -184,10 +189,12 @@ class Run:
 
     @property
     def dir(self) -> Path:
-        return self.project / RUNS / self.id
+        return _inside(self.project, f"{RUNS}/{self.id}")
 
     def attempt_dir(self, step: str, attempt: int) -> Path:
-        return self.dir / step / str(attempt)
+        if not STEP_ID_RE.match(step):
+            raise RunRefused(f"step id {step!r} must match {STEP_ID_RE.pattern}")
+        return _inside(self.project, f"{RUNS}/{self.id}/{step}/{attempt}")
 
     def save(self) -> None:
         self.state["updated_at"] = int(time.time())
@@ -224,6 +231,17 @@ def _write_json(path: Path, data: Any) -> None:
     finally:
         if os.path.exists(tmp):
             os.unlink(tmp)
+
+
+def _inside(project: Path, rel: str) -> Path:
+    """A run, attempt or shown path: under .duckterm, no symlink on the way,
+    inside the project. Everything the runner reads or writes goes through
+    here, so a clone with `.duckterm/runs -> elsewhere` or a forged run.json
+    cannot point it outside."""
+    try:
+        return inside(project, rel)
+    except PathEscape as exc:
+        raise RunRefused(str(exc)) from exc
 
 
 def _all_steps(flow: dict[str, Any]) -> list[dict[str, Any]]:
@@ -273,15 +291,46 @@ def load_flow(project: Path, ref: str) -> tuple[dict[str, Any], dict[str, Any], 
     flow = json.loads(raw)
     if not isinstance(flow, dict) or not isinstance(flow.get("steps"), list):
         raise RunRefused(f"{path}: not a flow (needs a `steps` list)")
+    for s in _all_steps(flow):
+        if not isinstance(s, dict) or not STEP_ID_RE.match(str(s.get("id"))):
+            sid = s.get("id") if isinstance(s, dict) else s
+            raise RunRefused(f"{path.name}: step id {sid!r} must match {STEP_ID_RE.pattern}")
     skills_file = path.parent / SKILLS_FILE
-    skills = json.loads(skills_file.read_text()) if skills_file.is_file() else {}
+    skills_raw = skills_file.read_bytes() if skills_file.is_file() else b""
+    skills = json.loads(skills_raw) if skills_raw else {}
     kit_name = (
         ref.partition("/")[0]
         if not ref.endswith(".json")
         else str((skills.get("kit") or {}).get("name") or path.parent.name)
     )
     flow.setdefault("name", path.stem)
-    return flow, {**skills, "kit_name": kit_name}, sha256(raw)
+    # The flow, skills.json and the scripts sit in the repository, so a clone
+    # or a pulled commit can rewrite all three together. They are believed
+    # only when they still hash as the install on this machine recorded them
+    # (DUCKTERM_HOME/kits/records). A flow named by path is a local trial:
+    # harness steps run, exec steps do not (see _exec).
+    recorded: dict[str, str] = {}
+    anchored = ref.endswith(".json") is False
+    if anchored:
+        found = install.recorded_files(project, kit_name)
+        if found is None:
+            raise RunRefused(
+                f"kit {kit_name!r} is not installed on this machine; "
+                "run `duckterm kit install` (it shows what the kit will write) first"
+            )
+        recorded = found
+        for p, data in ((path, raw), (skills_file, skills_raw)):
+            rel = p.relative_to(project).as_posix()
+            if not data or recorded.get(rel) != sha256(data):
+                raise RunRefused(
+                    f"{rel} does not match the install record on this machine; "
+                    "reinstall the kit to review and accept the change"
+                )
+    return (
+        flow,
+        {**skills, "kit_name": kit_name, "anchored": anchored, "recorded": recorded},
+        sha256(raw),
+    )
 
 
 # ── starting and resuming ────────────────────────────────────────────────────
@@ -339,11 +388,14 @@ def load_run(project: Path, run_id: str) -> Run:
     project = Path(project).resolve()
     if not run_id.startswith("r-") or "/" in run_id or ".." in run_id:
         raise RunRefused(f"{run_id!r} is not a run id")
-    path = project / RUNS / run_id / "run.json"
+    path = _inside(project, f"{RUNS}/{run_id}/run.json")
     if not path.is_file():
         raise RunRefused(f"no run {run_id} here")
     state = json.loads(path.read_text())
-    flow, skills, flow_hash = load_flow(project, state["flow"])
+    ref = str(state.get("flow") or "")
+    if ref.endswith(".json"):  # run.json is in the repository; only installed flows resume
+        raise RunRefused(f"run {run_id} names a flow file, not an installed flow; start a new run")
+    flow, skills, flow_hash = load_flow(project, ref)
     if flow_hash != state["flow_hash"]:
         raise RunRefused(
             f"flow {state['flow']} changed since run {run_id} started; start a new run"
@@ -378,6 +430,18 @@ def resume(
         routes = step.get("routes") or {"approve": None, "reject": None}
         if answer not in routes:
             raise RunRefused(f"gate {step_id!r} takes {', '.join(routes)}; not {answer!r}")
+        # The answer is to what the gate showed. Anything running as the user
+        # can rewrite the shown file between the ask and the answer, so the
+        # gate re-hashes it now. A change means a step's output was altered
+        # outside the runner; no later step may read it, so the run ends.
+        if sha256(_shown_bytes(run, g["show"])) != g["shown_sha256"]:
+            shown = g["show"].get("path") if isinstance(g["show"], dict) else g["show"]
+            return _fail(
+                run,
+                step_id,
+                g["visit"],
+                f"gate_shown_changed: {shown} changed since the gate asked",
+            )
         g["response"] = {
             "answer": answer,
             "at": int(time.time()),
@@ -416,7 +480,7 @@ def resume(
         if a["kind"] == "wait" or effects == "read-only":
             a["status"] = "abandoned"
             a["reason"] = "outcome unknown; rerun"
-        elif effects == "workspace" and run.state.get("isolated"):
+        elif effects == "workspace" and ex.isolated:
             a["status"] = "abandoned"
             a["reason"] = "outcome unknown; rerun in the isolated worktree"
         else:
@@ -431,7 +495,7 @@ def resume(
 
 
 def list_runs(project: Path) -> list[dict[str, Any]]:
-    root = Path(project) / RUNS
+    root = _inside(Path(project).resolve(), RUNS)
     out = []
     if root.is_dir():
         for d in sorted(root.iterdir()):
@@ -549,7 +613,7 @@ def _gate(run: Run, step: dict[str, Any]) -> Run:
 
 def _shown_bytes(run: Run, shown: Any) -> bytes:
     if isinstance(shown, dict) and "path" in shown:
-        p = run.project / str(shown["path"])
+        p = _inside(run.project, str(shown["path"]))
         return p.read_bytes() if p.is_file() else b""
     return json.dumps(shown, sort_keys=True).encode()
 
@@ -686,7 +750,13 @@ def _harness_for(run: Run, step: dict[str, Any]) -> str:
 def _inputs(run: Run, step: dict[str, Any]) -> dict[str, Any]:
     out: dict[str, Any] = {}
     for name, ref in (step.get("with") or {}).items():
-        out[str(name)] = _resolve(run, str(ref))
+        value = _resolve(run, str(ref))
+        # a file output is handed on as {path, sha256}; the step that reads
+        # it must see the bytes the producing step (and any gate) saw
+        is_file = isinstance(value, dict) and isinstance(value.get("path"), str)
+        if is_file and "sha256" in value and sha256(_shown_bytes(run, value)) != value["sha256"]:
+            raise RunRefused(f"input {name!r}: {value['path']} changed since it was produced")
+        out[str(name)] = value
     return out
 
 
@@ -966,7 +1036,20 @@ def _collect(
         if structured is None:
             return "no JSON result on stdout"
         outputs: dict[str, Any] = {}
+        outdir = run.attempt_dir(step["id"], attempt["attempt"])
         for name, value in (structured.get("outputs") or {}).items():
+            if isinstance(value, dict) and "path" in value:
+                try:
+                    f = _inside(run.project, str(value["path"]))
+                except RunRefused as exc:
+                    return f"output {name!r}: {exc}"
+                if not f.is_relative_to(outdir) or not f.is_file():
+                    where = outdir.relative_to(run.project).as_posix()
+                    return f"output {name!r}: file outputs must be files under {where}/"
+                value = {
+                    "path": f.relative_to(run.project).as_posix(),
+                    "sha256": sha256(f.read_bytes()),
+                }
             outputs[str(name)] = value
         if step.get("routes") is not None:
             choice = structured.get("choice")
@@ -1017,13 +1100,19 @@ def _exec(
     scripts = run.skills.get("scripts") or {}
     if rel not in scripts:
         raise RunRefused(f"exec {rel!r} is not a script this kit installed")
-    try:
-        script = inside(run.project, f"{FLOWS}/{run.skills['kit_name']}/{rel}")
-    except PathEscape as exc:
-        raise RunRefused(str(exc)) from exc
+    if not run.skills.get("anchored"):
+        raise RunRefused(
+            f"exec {rel!r}: scripts run only from a kit installed on this machine "
+            "(`duckterm kit install`), not from a flow named by path"
+        )
+    where = f"{FLOWS}/{run.skills['kit_name']}/{rel}"
+    script = _inside(run.project, where)
     if not script.is_file():
-        raise RunRefused(f"exec {rel!r}: {script.relative_to(run.project)} is missing")
-    if sha256(script.read_bytes()) != scripts[rel]:
+        raise RunRefused(f"exec {rel!r}: {where} is missing")
+    # the deciding hash is the one the install on this machine recorded; the
+    # copy in skills.json is itself anchored to that record (load_flow)
+    want = run.skills["recorded"].get(where)
+    if want is None or sha256(script.read_bytes()) != want or scripts[rel] != want:
         raise RunRefused(f"exec {rel!r} changed since install; reinstall the kit")
     args = [str(a) for a in (step.get("args") or [])]
     outdir = run.attempt_dir(step["id"], attempt["attempt"])

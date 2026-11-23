@@ -38,9 +38,11 @@ Skill kits are behind the `skill_kits` development flag: the Settings item,
 the `/harnesses` routes and the "Skill kit" row exist only on an instance that
 has turned the flag on. See [feature-flags.md](feature-flags.md).
 
-Duckterm never runs a kit's own script (owner decision 2026-10-04). A kit is
+Installing never runs a kit's own script (owner decision 2026-10-04). A kit is
 installed declaratively: the manifest lists components, and the installer
 writes each one where the chosen harness reads it, or reports why it cannot.
+The one place a kit script runs is a flow's `exec` step, at run time, and only
+a script the install on this machine recorded (see Flows and the runner).
 The format is the Skill Kit Specification (`docs/specs/skill-kit-protocol-spec.md`
 on the spec branch); `examples/skill-kits/sample-kit` holds one of every
 component kind and is the kit the installer is tried on.
@@ -148,11 +150,26 @@ exit code first, never by the harness's own status field. `gate` pauses the
 run (exit 3) until `--resume … --gate <step> <answer>`; `parallel` runs
 read-only steps together; `wait` polls CI or review on the branch head through
 `gh` until pass, fail or its timeout; `exec` runs a kit script with the step's
-inputs as JSON on stdin and reads a typed result from its last stdout line,
-refusing a script whose hash no longer matches the install. `next` sends a
-step somewhere other than the next in the list; any edge pointing backwards
-carries `max_loops`. Copilot and OpenCode steps are refused with the reason;
-Codex steps of a kit with hooks need `--codex-trusted`.
+inputs as JSON on stdin and reads a typed result from its last stdout line.
+`next` sends a step somewhere other than the next in the list; any edge
+pointing backwards carries `max_loops`. Copilot and OpenCode steps are refused
+with the reason; Codex steps of a kit with hooks need `--codex-trusted`.
+
+What the runner believes. The flow file, `skills.json` and the scripts sit in
+the repository, so a clone or a pulled commit can rewrite all three together.
+The runner reads them only when each still hashes as the install record under
+`DUCKTERM_HOME/kits/records` says this machine wrote it; a project never
+installed here is refused with "run `duckterm kit install`", which shows the
+plan first. A flow named by path (`duckterm kit run path/to/flow.json`) is a
+local trial: its harness steps run, its `exec` steps are refused. A gate
+re-hashes what it showed when the answer arrives; a shown file that changed in
+between ends the run (`gate_shown_changed`), because a step's output was
+altered outside the runner. A step reading a file output (`{path, sha256}`)
+checks the hash again before it starts. Step ids match `[a-z0-9_-]{1,64}`
+(they name folders under `.duckterm/runs/`), run and attempt folders are
+refused through a symlink or outside the project, an `exec` file output must
+be a file under its own attempt folder, and a run file that names a flow by
+path does not resume.
 
 Run state is `.duckterm/runs/<run-id>/run.json`: `run_id`, `flow`
 (`<kit>/<name>`), `flow_hash`, `kit`, `harness`, `inputs`, `executor` (`local`;
