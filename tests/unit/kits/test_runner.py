@@ -6,6 +6,7 @@ with them, never about a model."""
 import json
 import os
 import stat
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -507,9 +508,111 @@ def test_a_forged_run_file_cannot_name_a_flow_outside_the_project(tmp_path):
             }
         )
     )
-    with pytest.raises(runner.RunRefused, match="names a flow file"):
+    with pytest.raises(runner.RunRefused, match="not started on this machine"):
         runner.resume(project, "r-forged", executor=Fake({}))
+    assert [r["recorded"] for r in runner.list_runs(project)] == [False]
     assert not (project / "PWNED").exists()
+
+
+def test_a_run_file_committed_to_the_repository_cannot_resume_past_its_gate(tmp_path):
+    """The run file is in the repository. A commit can carry one for the installed
+    flow that is already past its gate, with a forged receipt whose output
+    points at the attacker's file. Only run files this machine wrote resume."""
+    project = _project(tmp_path, FEATURE, "feature")
+    fake = Fake({"spec": [(0, {"status": "done", "_files": {"spec.md": "# s"}})]})
+    run = runner.start(
+        project, "flowkit/feature", harness="claude-code", inputs={"topic": "x"}, executor=fake
+    )
+    assert run.state["state"] == "waiting_gate"
+    run_file = project / runner.RUNS / run.id / "run.json"
+    state = json.loads(run_file.read_text())
+    evil = project / runner.RUNS / run.id / "spec" / "1" / "spec.md"
+    evil.write_text("attacker plan")
+    state["attempts"][0]["outputs"]["spec"]["sha256"] = plan.sha256(b"attacker plan")
+    state["gates"] = []
+    state["state"] = "running"
+    state["current"] = {"step": "judge", "attempt": 1}
+    run_file.write_text(json.dumps(state))
+    fake.answers["judge"] = [(0, {"verdict": "ship", "_files": {"notes.md": "n"}})]
+    with pytest.raises(runner.RunRefused, match="changed outside the runner"):
+        runner.resume(project, run.id, executor=fake)
+    assert [c for c in fake.calls if c[1]["SKILL_KIT_STEP"] == "judge"] == []
+    assert [r["recorded"] for r in runner.list_runs(project)] == [False]
+    # the gate and the resume route both load the run, so neither accepts it
+    with pytest.raises(runner.RunRefused, match="changed outside the runner"):
+        runner.resume(project, run.id, gate=("signoff", "approve"), executor=fake)
+
+
+def _git_project(tmp_path, flow, name):
+    project = _project(tmp_path, flow, name)
+    git = ["git", "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false"]
+    subprocess.run([*git, "init", "-q"], cwd=project, check=True)
+    (project / "README.md").write_text("hello\n")
+    subprocess.run([*git, "add", "-A"], cwd=project, check=True)
+    subprocess.run([*git, "commit", "-q", "-m", "base"], cwd=project, check=True)
+    return project
+
+
+DIFF_GATED = {
+    "name": "gated",
+    "description": "a gate on the worktree",
+    "inputs": {"topic": "text"},
+    "steps": [
+        {"id": "spec", "run": "spec", "with": {"topic": "inputs.topic"}},
+        {
+            "id": "look",
+            "gate": "Ship these changes?",
+            "show": "workspace.diff",
+            "routes": {"approve": "judge", "reject": "fail"},
+        },
+        {
+            "id": "judge",
+            "decide": "judge",
+            "with": {"spec": "steps.spec.outputs.spec", "diff": "workspace.diff"},
+            "routes": {"ship": "end", "revise": "fail", "stop": "fail"},
+            "default": "stop",
+        },
+    ],
+}
+
+
+def test_a_gate_on_the_worktree_shows_new_files_and_holds_the_tree_it_approved(tmp_path):
+    project = _git_project(tmp_path, DIFF_GATED, "gated")
+
+    class Edits(Fake):
+        def run_process(self, argv, *, cwd, env, stdin, timeout):
+            if env.get("SKILL_KIT_STEP") == "spec":
+                (Path(cwd) / ".github").mkdir(exist_ok=True)
+                (Path(cwd) / ".github" / "new.yml").write_text("on: push\n")
+                (Path(cwd) / "README.md").write_text("hello\nedited\n")
+            return super().run_process(argv, cwd=cwd, env=env, stdin=stdin, timeout=timeout)
+
+    fake = Edits({"spec": [(0, {"status": "done", "_files": {"spec.md": "# s"}})]})
+    run = runner.start(
+        project, "flowkit/gated", harness="claude-code", inputs={"topic": "x"}, executor=fake
+    )
+    assert run.state["state"] == "waiting_gate"
+    gate = run.state["gates"][0]
+    shown = (project / gate["show"]["path"]).read_text()
+    assert "new.yml" in shown and "+edited" in shown, shown
+    assert gate["tree"] and gate["show"]["tree"] == gate["tree"]
+    # the worktree changes between the ask and the answer: the approval is void
+    (project / "README.md").write_text("hello\nswapped\n")
+    fake.answers["judge"] = [(0, {"verdict": "ship", "_files": {"notes.md": "n"}})]
+    run = runner.resume(project, run.id, gate=("look", "approve"), executor=fake)
+    assert run.state["state"] == "failed"
+    assert run.state["failure"]["reason"].startswith("workspace_changed")
+    assert [c for c in fake.calls if c[1]["SKILL_KIT_STEP"] == "judge"] == []
+
+    # unchanged between ask and answer: the approved tree carries into the next step
+    fake2 = Edits({"spec": [(0, {"status": "done", "_files": {"spec.md": "# s"}})]})
+    run2 = runner.start(
+        project, "flowkit/gated", harness="claude-code", inputs={"topic": "y"}, executor=fake2
+    )
+    fake2.answers["judge"] = [(0, {"verdict": "ship", "_files": {"notes.md": "n"}})]
+    run2 = runner.resume(project, run2.id, gate=("look", "approve"), executor=fake2)
+    assert run2.state["state"] == "succeeded", run2.state["failure"]
+    assert "approved_tree" not in run2.state
 
 
 def test_run_paths_stay_inside_the_project(tmp_path):

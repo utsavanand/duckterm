@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from duckterm.helpers import instance
 from duckterm.kits import adapters, install
 from duckterm.kits.manifest import STEP_ID_RE
 from duckterm.kits.plan import PathEscape, inside, sha256
@@ -203,7 +204,14 @@ class Run:
         public["attempts"] = [
             {k: v for k, v in a.items() if not k.startswith("_")} for a in self.state["attempts"]
         ]
-        _write_json(self.dir / "run.json", public)
+        text = json.dumps(public, indent=2, sort_keys=True) + "\n"
+        _write_text(self.dir / "run.json", text)
+        # The run file sits in the repository, so a commit can forge one that is
+        # already past its gate. This machine notes the hash of every run file
+        # it writes; load_run believes a run file only while it matches.
+        ledger = _ledger(self.project, self.id)
+        ledger.parent.mkdir(parents=True, exist_ok=True)
+        ledger.write_text(sha256(text.encode()))
 
     def step(self, sid: str) -> dict[str, Any]:
         for s in _all_steps(self.flow):
@@ -221,13 +229,23 @@ class Run:
         return done[-1] if done else None
 
 
-def _write_json(path: Path, data: Any) -> None:
+def _ledger(project: Path, run_id: str) -> Path:
+    key = hashlib.sha256(str(project.resolve()).encode()).hexdigest()[:24]
+    return instance.home() / "kits" / "runs" / key / run_id
+
+
+def _recorded(project: Path, run_id: str, raw: bytes) -> bool:
+    """Did this machine write these run file bytes?"""
+    ledger = _ledger(project, run_id)
+    return ledger.is_file() and ledger.read_text().strip() == sha256(raw)
+
+
+def _write_text(path: Path, text: str) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fd, tmp = tempfile.mkstemp(prefix=".run-", dir=path.parent)
     try:
         with os.fdopen(fd, "w") as f:
-            json.dump(data, f, indent=2, sort_keys=True)
-            f.write("\n")
+            f.write(text)
         os.replace(tmp, path)
     finally:
         if os.path.exists(tmp):
@@ -398,7 +416,12 @@ def load_run(project: Path, run_id: str) -> Run:
     path = _inside(project, f"{RUNS}/{run_id}/run.json")
     if not path.is_file():
         raise RunRefused(f"no run {run_id} here")
-    state = json.loads(path.read_text())
+    raw = path.read_bytes()
+    if not _ledger(project, run_id).is_file():
+        raise RunRefused(f"run {run_id} was not started on this machine; it does not resume here")
+    if not _recorded(project, run_id, raw):
+        raise RunRefused(f"run {run_id}: its run file changed outside the runner; start a new run")
+    state = json.loads(raw)
     ref = str(state.get("flow") or "")
     if ref.endswith(".json"):  # run.json is in the repository; only installed flows resume
         raise RunRefused(f"run {run_id} names a flow file, not an installed flow; start a new run")
@@ -449,6 +472,12 @@ def resume(
                 g["visit"],
                 f"gate_shown_changed: {shown} changed since the gate asked",
             )
+        if g.get("tree"):
+            if _workspace(run, run.dir)[1] != g["tree"]:
+                reason = "workspace_changed: the worktree changed since the gate asked"
+                return _fail(run, step_id, g["visit"], reason)
+            # the next step reads the worktree the owner approved; _begin checks again
+            run.state["approved_tree"] = g["tree"]
         g["response"] = {
             "answer": answer,
             "at": int(time.time()),
@@ -510,7 +539,8 @@ def list_runs(project: Path) -> list[dict[str, Any]]:
             if not f.is_file():
                 continue
             try:
-                s = json.loads(f.read_text())
+                raw = f.read_bytes()
+                s = json.loads(raw)
             except ValueError:
                 continue
             summary = {
@@ -531,6 +561,9 @@ def list_runs(project: Path) -> list[dict[str, Any]]:
             summary["steps_done"] = len(
                 {a["step"] for a in s.get("attempts", []) if a.get("status") == "completed"}
             )
+            # a run file this machine did not write (a clone's, a commit's) is
+            # listed but offers nothing: it does not resume and has no gate
+            summary["recorded"] = _recorded(root.parent.parent, d.name, raw)
             out.append(summary)
     return out
 
@@ -625,6 +658,8 @@ def _gate(run: Run, step: dict[str, Any]) -> Run:
         "question": step.get("gate"),
         "show": shown,
         "shown_sha256": sha256(shown_bytes),
+        # a gate on workspace.diff approves this exact worktree, not the diff file
+        "tree": shown.get("tree") if isinstance(shown, dict) and shown.get("tree") else None,
         "choices": list((step.get("routes") or {"approve": None, "reject": None}).keys()),
         "asked_at": int(time.time()),
         "response": None,
@@ -742,6 +777,9 @@ def _perform(
 
 
 def _begin(run: Run, step: dict[str, Any], kind: str) -> dict[str, Any]:
+    approved = run.state.pop("approved_tree", None)
+    if approved and _workspace(run, run.dir)[1] != approved:
+        raise RunRefused("workspace_changed: the worktree changed since the gate approved it")
     number = len([a for a in run.state["attempts"] if a["step"] == step["id"]]) + 1
     resolved = _inputs(run, step)
     attempt: dict[str, Any] = {
@@ -809,20 +847,48 @@ def _resolve(run: Run, ref: str) -> Any:
     raise RunRefused(f"unresolvable reference {ref!r}")
 
 
+def _workspace(run: Run, folder: Path) -> tuple[str, str]:
+    """The worktree against HEAD, new files included, and a tree id naming its
+    exact state. `git diff HEAD` alone leaves untracked files out, so a gate
+    showing it hid a new workflow file that a later `git add -A` would ship;
+    a temporary index takes `git add -A` (the runs folder excluded) and gives
+    both the diff and `write-tree`. ("", "") when this is not a git checkout."""
+    index = folder / ".index"
+    env = {**os.environ, "GIT_INDEX_FILE": str(index)}
+
+    def git(*args: str) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            ["git", *args], cwd=run.project, env=env, capture_output=True, text=True, timeout=120
+        )
+
+    try:
+        if git("read-tree", "HEAD").returncode != 0:
+            return "", ""
+        git("add", "-A", "--", ".", f":(exclude){RUNS}")
+        diff = git("diff", "--cached", "HEAD")
+        tree = git("write-tree")
+    except (OSError, subprocess.TimeoutExpired):
+        return "", ""
+    finally:
+        index.unlink(missing_ok=True)
+    return (
+        diff.stdout if diff.returncode == 0 else "",
+        tree.stdout.strip() if tree.returncode == 0 else "",
+    )
+
+
 def _diff(run: Run) -> dict[str, Any]:
     cur = run.state["current"]
     folder = run.attempt_dir(cur["step"], cur["attempt"])
     folder.mkdir(parents=True, exist_ok=True)
-    try:
-        proc = subprocess.run(
-            ["git", "diff", "HEAD"], cwd=run.project, capture_output=True, text=True, timeout=120
-        )
-        text = proc.stdout if proc.returncode == 0 else ""
-    except (OSError, subprocess.TimeoutExpired):
-        text = ""
+    text, tree = _workspace(run, folder)
     path = folder / "workspace.diff"
     path.write_text(text)
-    return {"path": str(path.relative_to(run.project)), "sha256": sha256(text.encode())}
+    return {
+        "path": str(path.relative_to(run.project)),
+        "sha256": sha256(text.encode()),
+        "tree": tree,
+    }
 
 
 # ── harness steps (run, decide) ──────────────────────────────────────────────
