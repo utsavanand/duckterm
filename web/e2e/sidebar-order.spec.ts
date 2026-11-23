@@ -3,11 +3,16 @@ import { apiDelete, apiPost, base, expandFolder, seedSession } from "./helpers";
 
 async function drag(page: Page, source: Locator, target: Locator, after = false, cancel = false) {
   await source.scrollIntoViewIfNeeded();
-  // scrollIntoViewIfNeeded can leave the target at the tree's edge, inside the
-  // 28px auto-scroll band, so the list scrolls away under the pointer mid-drag.
-  await target.evaluate(el => el.scrollIntoView({ block: "center" }));
-  // Centering the target may move the source below a short viewport. Restore
-  // its visibility with minimal scrolling before starting a real pointer drag.
+  // Put the target just below the tree's top edge: outside the 28px auto-scroll
+  // band (an edge target scrolls away under the pointer mid-drag), and with the
+  // most room below it, so a source further down still fits in a short window.
+  await target.evaluate(el => {
+    el.scrollIntoView({ block: "start" });
+    let list = el.parentElement;
+    while (list && !(list.scrollHeight > list.clientHeight && /auto|scroll/.test(getComputedStyle(list).overflowY))) list = list.parentElement;
+    list?.scrollBy(0, -40);
+  });
+  // Then reveal the source with minimal scrolling before a real pointer drag.
   await source.scrollIntoViewIfNeeded();
   await expect(source).toBeInViewport();
   await expect(target).toBeInViewport();
