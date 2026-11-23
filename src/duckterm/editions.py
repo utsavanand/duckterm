@@ -6,7 +6,7 @@ import re
 import tempfile
 from dataclasses import dataclass
 from typing import Literal
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from duckterm.helpers import instance
 
@@ -219,7 +219,6 @@ def _path_feature(method: str, path: str, body: bytes) -> str | None:
             return capability
     exact = {
         "/control-tower": "overview",
-        "/layouts/home": "home",
         "/checkpoint-settings": "checkpoints",
         "/agents-md/suggest": "rule_suggestions",
         "/session-inbox-counts": "inbox",
@@ -229,6 +228,9 @@ def _path_feature(method: str, path: str, body: bytes) -> str | None:
     }
     if path in exact:
         return exact[path]
+    # The layout handler unquotes its segment, so /layouts/%68ome is Home too.
+    if path.startswith("/layouts/") and unquote(path.removeprefix("/layouts/")) == "home":
+        return "home"
     if path.startswith("/file"):
         return "explorer" if method == "GET" else "file_editing"
     if path == "/fleet/ask":

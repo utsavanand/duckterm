@@ -59,6 +59,7 @@ def test_kit_routes_belong_to_the_skill_kits_flag():
 def test_home_layout_belongs_to_the_home_flag():
     assert editions.request_features("GET", "/layouts/home") == ("home",)
     assert editions.request_features("PUT", "/layouts/home") == ("home",)
+    assert editions.request_features("PUT", "/layouts/%68ome") == ("home",)
     assert editions.request_features("GET", "/layouts/oracle") == ()
 
 

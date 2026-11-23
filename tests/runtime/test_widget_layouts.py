@@ -129,9 +129,12 @@ def test_relay_exposes_existing_urgency_and_approval_class(app):
     assert [note["urgency"] for note in result["notes"]] == ["approval", "offer", "blocked"]
 
 
-def test_home_layout_is_off_without_the_flag(app):
-    status, body = req(app, "GET", "home")
-    assert status == 403 and body["code"] == "feature_unavailable"
+def test_home_layout_is_off_without_the_flag(app, tmp_path):
+    for surface in ["home", "%68ome"]:
+        for method, data in [("GET", None), ("PUT", {"instances": [], "revision": "default"})]:
+            status, body = req(app, method, surface, data)
+            assert status == 403 and body["code"] == "feature_unavailable", (method, surface)
+    assert not (tmp_path / "home-layout.json").exists()
 
 
 def test_home_layout_places_widgets_on_a_grid_in_its_own_file(app, tmp_path):
