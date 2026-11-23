@@ -29,7 +29,7 @@ def read_config(path: Path) -> dict[str, Any]:
     return value
 
 
-def command(name: str, credential: dict[str, str], write: bool) -> tuple[list[str], dict[str, str]]:
+def command(name: str, credential: dict[str, str]) -> tuple[list[str], dict[str, str]]:
     # No inherited cloud credentials, user CLI logins, proxy variables or source
     # overrides. The service's home contains no workspace code or harness config.
     env = {
@@ -40,16 +40,6 @@ def command(name: str, credential: dict[str, str], write: bool) -> tuple[list[st
     if name == "github":
         env["GITHUB_PERSONAL_ACCESS_TOKEN"] = credential["token"]
         return ["github-mcp-server", "stdio"], env
-    if name == "railway":
-        env["RAILWAY_API_TOKEN"] = credential["token"]
-        return ["railway", "mcp", "local"], env
-    if name == "porkbun":
-        env.update(
-            PORKBUN_API_KEY=credential["token"],
-            PORKBUN_SECRET_KEY=credential["secret"],
-            PORKBUN_GET_MUDDY="false",
-        )
-        return ["porkbun-mcp"] + (["--get-muddy"] if write else []), env
     raise ValueError("Unknown connector")
 
 
@@ -97,9 +87,6 @@ class Broker:
                     or bool(connectors.execution_state(name).get("enabled"))
                 ),
                 "identity": config.get("connectors", {}).get(name, {}).get("identity"),
-                "write_access": bool(
-                    config.get("connectors", {}).get(name, {}).get("write_access")
-                ),
             }
             for name in connectors.NAMES
             if name in allowed
@@ -144,7 +131,7 @@ class Broker:
                 argv, env = await asyncio.to_thread(connectors.server_command, name)
             else:
                 credential = await asyncio.to_thread(self.store.read, entry["reference"])
-                argv, env = command(name, credential, bool(entry.get("write_access")))
+                argv, env = command(name, credential)
                 del credential
             if github_projects:
                 # The same GitHub grant controls repository reads and clones.
@@ -244,7 +231,7 @@ async def serve(config: Path) -> None:
         await server.serve_forever()
 
 
-def admin(config: Path, name: str, version: int | None, write: bool, disable: bool) -> None:
+def admin(config: Path, name: str, version: int | None, disable: bool) -> None:
     """Administrator-only CLI, invoked through an administrative SSH connection.
 
     The broker user can read configuration but cannot change it. Agents have no
@@ -263,27 +250,11 @@ def admin(config: Path, name: str, version: int | None, write: bool, disable: bo
             raise ValueError("Supply an enabled numeric Secret Manager version")
         reference = f"projects/{settings['project']}/secrets/duckterm-{name}/versions/{version}"
         credential = GcpSecretStore().read(reference)
-        if name == "github":
-            identity = connectors.github_identity(credential["token"])
-        elif name == "porkbun":
-            if not connectors.porkbun_keys_valid(credential["token"], credential["secret"]):
-                raise RuntimeError("Porkbun rejected these credentials")
-            identity = "API keys verified; account identity unavailable"
-        else:
-            import subprocess
-
-            _, env = command(name, credential, False)
-            proc = subprocess.run(
-                ["railway", "whoami"], env=env, capture_output=True, text=True, timeout=15
-            )
-            if proc.returncode:
-                raise RuntimeError("Railway rejected the selected account token")
-            identity = proc.stdout.strip()[:200] or "Railway account token verified"
+        identity = connectors.github_identity(credential["token"])
         entries[name] = {
             "enabled": True,
             "reference": reference,
             "identity": identity,
-            "write_access": name == "porkbun" and write,
         }
     # Preserve the broker's read-only group access after atomic replacement.
     group = config.stat().st_gid

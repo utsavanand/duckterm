@@ -310,7 +310,7 @@ function AgentCard({
         <span className={`rd-tower-pill s-${stuck ? "stuck" : state}`}>{stuck ? "Looks stuck" : (state === "unknown" ? "Status unavailable" : STATE_WORD[state] ?? state)}</span>
       </div>
       <div className="rd-tower-card-meta">
-        {[sessionLocation(agent).remote ? sessionLocation(agent).label : null, agent.group || "No folder", agent.runtime, agent.model].filter(Boolean).join(" · ")} · updated {ago(now - agent.updatedAt)} ago
+        {[sessionLocation(agent).remote ? sessionLocation(agent).label : null, agent.group || "No workspace", agent.runtime, agent.model].filter(Boolean).join(" · ")} · updated {ago(now - agent.updatedAt)} ago
       </div>
       <div className="rd-tower-card-work">
         <span className="rd-tower-label">Working on</span>

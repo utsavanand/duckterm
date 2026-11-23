@@ -46,6 +46,21 @@ struct BugReportData {
     static let maxTotalBytes = 15 * 1024 * 1024
     var attachments: [BugAttachment] = []
 
+    /// Native reports describe this Mac; never treat a remote selection as local.
+    static func contextPath(selectionJSON: String?) -> String {
+        let base = "/bugreport/context"
+        guard let selectionJSON, selectionJSON.utf8.count <= 4096,
+              let data = selectionJSON.data(using: .utf8),
+              let selection = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              selection["host"] as? String == "local",
+              let key = selection["sessionKey"] as? String,
+              key.range(of: "^[A-Za-z0-9_.:-]{1,200}$", options: .regularExpression) != nil else { return base }
+        var path = URLComponents()
+        path.path = base
+        path.queryItems = [URLQueryItem(name: "session_key", value: key)]
+        return path.string ?? base
+    }
+
     /// Keep the native report restricted to the reviewed, redacted readiness
     /// item. Other context entries can contain session names and project paths.
     static func resumeReadiness(from response: Any) -> String? {

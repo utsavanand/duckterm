@@ -290,7 +290,7 @@ export function RuntimeSetupWizard({ onClose }: { onClose: () => void }) {
         {stage === "unknown" && runtime && status?.installed && <div className="rd-setup-minor"><button onClick={() => setStage("signin")}>Sign in</button><button onClick={() => setStep(1)}>Continue without checking</button></div>}
         {footer("Check again", checkAgain, true, busy)}</>}
       {step === 1 && <><h1 id="rd-setup-heading">DuckTerm AI · Optional</h1>
-        <p>{edition === "lite" ? "Summaries, checkpoints and session memory." : edition === "code" ? "Summaries, checkpoints, memory, PR analysis and folder chat." : "Summaries, checkpoints, memory, PR analysis, folder chat and Oracle."}</p>
+        <p>{edition === "lite" ? "Summaries, checkpoints and session memory." : edition === "code" ? "Summaries, checkpoints, memory, PR analysis and workspace chat." : "Summaries, checkpoints, memory, PR analysis, workspace chat and Oracle."}</p>
         <label className="rd-setup-choice"><input type="radio" name="setup-ai" checked={ai === "harness"} onChange={() => setAI("harness")} /><span><strong>Use an existing agent setup</strong><small>Uses Claude Code or Codex and counts toward its account allowance.</small></span></label>
         <label className="rd-setup-choice"><input type="radio" name="setup-ai" checked={ai === "key"} onChange={() => setAI("key")} /><span><strong>Use my API key or endpoint</strong><small>For DuckTerm’s internal features. Your agents keep their own setup.</small></span></label>
         {ai !== "later" && <div className="rd-setup-detail"><button className="rd-setup-secondary" onClick={() => setAISettings(true)}>{ai === "key" ? "Configure API key…" : "Configure AI models…"}</button>

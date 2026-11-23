@@ -66,7 +66,7 @@ test("header menus support keyboard navigation, dismissal, and separate rules", 
   await page.keyboard.press("Enter");
   await expect(page.getByRole("button", { name: "New session", exact: true })).toBeFocused();
   await page.keyboard.press("ArrowDown");
-  await expect(page.getByRole("button", { name: "New folder", exact: true })).toBeFocused();
+  await expect(page.getByRole("button", { name: "New workspace", exact: true })).toBeFocused();
   await page.keyboard.press("Escape");
   await expect(create).toBeFocused();
   await expect(create).toHaveAttribute("aria-expanded", "false");

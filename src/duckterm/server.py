@@ -1561,9 +1561,10 @@ class Server:
             await _write_json(writer, 401, {"error": "owner credential required"})
             return
         surface = urllib.parse.unquote(surface)
+        store = self.history.home_layout if surface == "home" else self.history.layouts
         try:
             if method == "GET":
-                result = self.history.layouts.get(surface)
+                result = store.get(surface)
             else:
                 if len(body) > 16384:
                     await _write_json(writer, 413, {"error": "Layout is too large"})
@@ -1571,7 +1572,7 @@ class Server:
                 req = json.loads(body)
                 if not isinstance(req, dict) or set(req) != {"instances", "revision"}:
                     raise ValueError("Expected instances and revision")
-                result = self.history.layouts.put(surface, req["instances"], req["revision"])
+                result = store.put(surface, req["instances"], req["revision"])
         except FileExistsError as exc:
             await _write_json(writer, 409, {"error": str(exc)})
             return
@@ -1720,9 +1721,7 @@ class Server:
                 from duckterm import resume_diagnostics
 
                 readiness = resume_diagnostics.snapshot(self.history, keys[0] if keys else None)
-                result["items"].append(
-                    await asyncio.to_thread(resume_diagnostics.render, readiness)
-                )
+                result["items"].append(await resume_diagnostics.collect(readiness))
             elif parsed.path == "/bugreport/submit" and method == "POST":
                 if len(body) > bug_reports.MAX_REQUEST_BYTES:
                     await _write_json(writer, 413, {"error": "report request too large"})
@@ -2449,8 +2448,24 @@ class Server:
         if not note:
             await _write_json(writer, 400, {"error": "note is required"})
             return
+        message_key = req.get("message_key")
+        if message_key is not None:
+            if not isinstance(message_key, str) or not re.fullmatch(r"[a-f0-9]{64}", message_key):
+                await _write_json(writer, 400, {"error": "invalid message_key"})
+                return
+            source = self._message_source(session_key)
+            messages = await asyncio.to_thread(self._read_messages, source)
+            if self._message_source(session_key) != source or not any(
+                m.get("message_key") == message_key for m in messages
+            ):
+                await _write_json(
+                    writer, 409, {"error": "message changed or is unavailable; refresh Messages"}
+                )
+                return
         ann_id = security.new_session_key("ann")
-        self.history.add_annotation(ann_id, session_key, quote, note, int(time.time() * 1000))
+        self.history.add_annotation(
+            ann_id, session_key, quote, note, int(time.time() * 1000), message_key=message_key
+        )
         # Compose the follow-up and write it to the agent's stdin (the same path
         # the terminal uses). Quote the span so the agent knows what it's about.
         supervisor = self.orchestrator.get(session_key)
@@ -4146,7 +4161,12 @@ class Server:
     async def _folder_chat_message(
         self, folder: str, question: str, request_key: str
     ) -> dict[str, Any] | None:
-        """Interpret only the owner's request, then reuse scoped inbox delivery."""
+        """Interpret only the owner's request into a plan the owner must confirm.
+
+        The model paraphrases and picks recipients, so it never sends. The
+        owner confirms the exact text and recipients through the reviewed
+        folder dispatch route, which re-validates scope at send time.
+        """
         service = FolderMessages(self.history)
         snapshot = service.recipients(folder)
         identity, messages = self.history.folder_chats.snapshot(folder)
@@ -4193,17 +4213,17 @@ class Server:
             raise APIError(
                 409, "Some recipients have no inbox. Use @ to review recipients. Nothing was sent."
             )
-        return service.send(
-            folder,
-            {
+        return {
+            "plan": {
                 "identity": identity,
                 "target": target,
+                "label": candidates[0]["name"] if target["kind"] == "session" else target["id"],
                 "text": intent["text"],
-                "request_key": request_key,
-                "recipients": [r["session_id"] for r in candidates],
-            },
-            owner_question=question,
-        )
+                "recipients": [
+                    {"session_id": r["session_id"], "name": r["name"]} for r in candidates
+                ],
+            }
+        }
 
     async def _fleet_ask(self, writer: asyncio.StreamWriter, body: bytes) -> None:
         """Route explicit folder messages; answer other questions from session digests."""
@@ -4244,6 +4264,9 @@ class Server:
                 return
             except ValueError as exc:
                 await _write_json(writer, 409, {"error": str(exc)})
+                return
+            if exchange is not None and "plan" in exchange:
+                await _write_json(writer, 200, exchange)
                 return
             if exchange is not None:
                 await _write_json(
@@ -5229,12 +5252,8 @@ class Server:
         except json.JSONDecodeError:
             await _write_json(writer, 400, {"error": "invalid JSON"})
             return
-        if not isinstance(req, dict) or (
-            "write_access" in req and not isinstance(req["write_access"], bool)
-        ):
-            await _write_json(
-                writer, 400, {"error": "expected an object with boolean write_access"}
-            )
+        if not isinstance(req, dict):
+            await _write_json(writer, 400, {"error": "expected an object"})
             return
         harnesses = req.get("harnesses")
         if harnesses is not None and not (
@@ -5243,15 +5262,12 @@ class Server:
             await _write_json(writer, 400, {"error": "harnesses must be a list of names"})
             return
         token = str(req.get("token") or "").strip() or None
-        secret = str(req.get("secret") or "").strip() or None
         try:
             result = await asyncio.to_thread(
                 connectors.enable,
                 name,
                 token,
-                secret,
                 source=req.get("source"),
-                write_access=req.get("write_access", False),
                 harnesses=harnesses,
             )
         except ValueError as e:

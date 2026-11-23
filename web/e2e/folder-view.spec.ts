@@ -24,7 +24,7 @@ test("folder chat and artifacts preserve terminals and follow folder renames", a
     const header = page.locator(".rd-group-head").filter({ has: page.getByRole("button", { name: `View interactions in ${folder}`, exact: true }) });
     await header.locator(".rd-group-name").click();
     await expect(header.locator(".rd-group-caret")).toHaveAttribute("aria-expanded", "false");
-    await expect(page.getByRole("region", { name: `Folder ${folder}`, exact: true })).toBeVisible();
+    await expect(page.getByRole("region", { name: `Workspace ${folder}`, exact: true })).toBeVisible();
     await expect(page.locator(".rd-folder-view .rd-row")).toHaveCount(0);
     await expandFolder(page, folder);
     await expect(page.getByRole("tab", { name: "Chat", exact: true })).toBeVisible();
@@ -33,7 +33,7 @@ test("folder chat and artifacts preserve terminals and follow folder renames", a
     await terminal.focus();
     await page.keyboard.type("FOLDER_DRAFT_UNSENT");
     await header.locator(".rd-group-name").click();
-    await page.getByRole("textbox", { name: "Ask this folder" }).fill("What needs my attention?");
+    await page.getByRole("textbox", { name: "Ask this workspace" }).fill("What needs my attention?");
     await page.getByRole("button", { name: "Ask", exact: true }).click();
     await expect(page.locator(".rd-folder-answer")).toContainText("Use rg");
     await page.screenshot({ path: "/tmp/duckterm-folder-chat-implemented.png" });
@@ -43,7 +43,7 @@ test("folder chat and artifacts preserve terminals and follow folder renames", a
     await page.getByRole("button", { name: "Navigation review", exact: true }).click();
     await expect(page.getByRole("dialog", { name: "Navigation review", exact: true })).toBeVisible();
     await expect(page.frameLocator('iframe[title="Preview of Navigation review"]').getByRole("heading", { name: "Navigation review" })).toBeVisible();
-    await page.getByRole("button", { name: "← Back to folder", exact: true }).click();
+    await page.getByRole("button", { name: "← Back to workspace", exact: true }).click();
     await expect(page.getByRole("dialog", { name: "Navigation review", exact: true })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "Navigation review", exact: true })).toBeFocused();
     await page.locator(".rd-row-name", { hasText: "Folder preview agent" }).click();
@@ -51,14 +51,14 @@ test("folder chat and artifacts preserve terminals and follow folder renames", a
     await header.locator(".rd-group-name").click();
     await expect(page.locator(".rd-folder-answer")).toContainText("Use rg");
     page.once("dialog", dialog => dialog.accept("Renamed website"));
-    await header.getByTitle("Rename this folder (double-clicking the name works too)").click();
+    await header.getByTitle("Rename this workspace (double-clicking the name works too)").click();
     current = "Renamed website";
     await expect(page.locator(".rd-folder-heading h1")).toHaveText(current);
     await expect(page.locator(".rd-folder-answer")).toContainText("Use rg");
     await page.emulateMedia({ colorScheme: "light" });
     await page.screenshot({ path: "/tmp/duckterm-folder-chat-light-implemented.png" });
     await page.setViewportSize({ width: 900, height: 900 });
-    await expect(page.getByRole("textbox", { name: "Ask this folder" })).toBeVisible();
+    await expect(page.getByRole("textbox", { name: "Ask this workspace" })).toBeVisible();
     await page.screenshot({ path: "/tmp/duckterm-folder-chat-narrow-implemented.png" });
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   } finally {

@@ -100,7 +100,11 @@ async def freeze(
             saved = await asyncio.to_thread(memory_sources.read_native, key, source, retain=True)
             if saved["version"] != source["version"]:
                 raise APIError(409, "Conversation changed while capturing checkpoint")
-            source = {**source, "snapshot": saved["snapshot"]}
+            source = {
+                **source,
+                "snapshot": saved["snapshot"],
+                "records_sha256": saved["records_sha256"],
+            }
         sources.append(source)
     captured = {**captured, "memory_sources": sources, "checkpoint_settings": dict(settings)}
     # Native messages contain conversation and failure text; hook copies, cards,
