@@ -39,7 +39,7 @@ export function SidebarFilters({ sessions, now, filters, onToggle, onClear, save
       })}</div>
     </div>)}
     </div>
-    {(expanded || active) && <div className="rd-filter-summary"><span role="status" title={selected.join(" · ")}>{active ? `${count} of ${sessions.length} · across all folders` : `${sessions.length} sessions · all folders`}</span>{active && <button type="button" onClick={onClear}>Clear filters</button>}</div>}
+    {(expanded || active) && <div className="rd-filter-summary"><span role="status" title={selected.join(" · ")}>{active ? `${count} of ${sessions.length} · across all workspaces` : `${sessions.length} sessions · all workspaces`}</span>{active && <button type="button" onClick={onClear}>Clear filters</button>}</div>}
     {saveError && <p className="rd-filter-storage" role="alert">Filters work here, but could not be saved for next time.</p>}
   </section>;
 }

@@ -37,11 +37,11 @@ export function FolderDetails({ folder, presentation = "details", onClose, onOpe
     return () => { stale = true; };
   }, [folder, retry, source, overview, inbox]);
   if (!overview) return null;
-  return <aside className={`rd-folder-details${presentation === "overview" ? " rd-folder-overview" : ""}`} aria-label={presentation === "overview" ? "Folder overview" : "Folder details"}>{presentation === "details" && <header><h2>Folder details</h2>{onClose && <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={onClose} aria-label="Close folder details">×</button>}</header>}
-    <small>Includes this folder and subfolders · Local sessions</small>
+  return <aside className={`rd-folder-details${presentation === "overview" ? " rd-folder-overview" : ""}`} aria-label={presentation === "overview" ? "Workspace overview" : "Workspace details"}>{presentation === "details" && <header><h2>Workspace details</h2>{onClose && <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={onClose} aria-label="Close workspace details">×</button>}</header>}
+    <small>Includes this workspace and nested workspaces · Local sessions</small>
     {error && <p role="alert">{error}</p>}
     <Widgets key={folder} surface={`folder:${folder}`} slot="folder" registry={registry} source={source} />
-    <section className="rd-folder-actions" aria-label="Folder actions">{onGrid && <button onClick={onGrid}>Grid view</button>}{inbox && onMessage && <button onClick={onMessage}>Message folder</button>}{onNewSession && <button onClick={onNewSession}>New session here</button>}</section>
+    <section className="rd-folder-actions" aria-label="Workspace actions">{onGrid && <button onClick={onGrid}>Grid view</button>}{inbox && onMessage && <button onClick={onMessage}>Message workspace</button>}{onNewSession && <button onClick={onNewSession}>New session here</button>}</section>
     <footer><button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={() => setRetry(n => n + 1)}>Refresh details</button>{updated && <small>Updated {new Date(updated).toLocaleTimeString()}</small>}</footer>
   </aside>;
 }
@@ -53,6 +53,6 @@ function Activity({ stats, onOpen }: { stats: FolderStats | null; onOpen: (key: 
   return <div className="rd-folder-activity"><strong>{total} {total === 1 ? "session" : "sessions"}</strong><p>{stats.sessions.busy} busy · {stats.sessions.idle} idle · {stats.sessions.waiting} waiting</p>
     {!!stats.waiting.length && <section><h4>Waiting on you</h4>{stats.waiting.map(session => <button key={session.key} onClick={() => onOpen(session.key)}>{session.name} ↗</button>)}</section>}
     <div className="rd-folder-period" role="group" aria-label="Activity period"><button aria-pressed={days === "1"} onClick={() => setDays("1")}>Today</button><button aria-pressed={days === "7"} onClick={() => setDays("7")}>7 days</button><small>UTC</small></div>
-    <dl><dt>Tokens</dt><dd>{compact(period.tokens)}</dd><dt>Messages sent</dt><dd>{period.sent}</dd><dt>Replies</dt><dd>{period.answered}</dd></dl><p>Messages sent to or from this folder. Token usage excludes test sessions and transcripts that cannot be matched.</p>
+    <dl><dt>Tokens</dt><dd>{compact(period.tokens)}</dd><dt>Messages sent</dt><dd>{period.sent}</dd><dt>Replies</dt><dd>{period.answered}</dd></dl><p>Messages sent to or from this workspace. Token usage excludes test sessions and transcripts that cannot be matched.</p>
   </div>;
 }

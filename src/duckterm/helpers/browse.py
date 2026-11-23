@@ -8,6 +8,7 @@ enumerate arbitrary parts of the filesystem.
 """
 
 import os
+import tomllib
 from pathlib import Path
 from typing import Any
 
@@ -33,14 +34,24 @@ def listing(path: str | None) -> dict[str, Any]:
         children = []
 
     for child in children:
-        entries.append({"name": child.name, "path": str(child), "is_git": _is_git(child)})
+        entries.append(
+            {
+                "name": child.name,
+                "path": str(child),
+                "is_git": _is_git(child),
+                "is_kit": bool(_manifests(child)),
+            }
+        )
 
     # Don't expose a parent above home — navigation stops at the home root.
     parent = base.parent if base != home and base.parent != base else None
+    kits = [_kit_summary(m) for m in _manifests(base)]
     return {
         "path": str(base),
         "parent": str(parent) if parent else None,
         "is_git": _is_git(base),
+        "is_kit": bool(kits),
+        "kits": kits,
         "entries": entries,
         "empty": empty,
     }
@@ -66,3 +77,29 @@ def create(parent: str, name: str) -> dict[str, Any]:
 
 def _is_git(p: Path) -> bool:
     return (p / ".git").exists() and os.access(p, os.R_OK)
+
+
+def _manifests(p: Path) -> list[Path]:
+    """A skill kit is a folder holding skill-kit.toml; a repository that
+    ships several kits names each one skill-kit.<variant>.toml."""
+    try:
+        found = [m for m in p.glob("skill-kit*.toml") if m.is_file() and m.suffix == ".toml"]
+    except OSError:
+        return []
+    return sorted(found, key=lambda m: (m.name != "skill-kit.toml", m.name))
+
+
+def _kit_summary(manifest: Path) -> dict[str, Any]:
+    """Name, version and description from the manifest header, so the picker
+    can tell kits apart before anything is added. Parsing only."""
+    out: dict[str, Any] = {"file": manifest.name, "path": str(manifest)}
+    try:
+        data = tomllib.loads(manifest.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, tomllib.TOMLDecodeError) as exc:
+        out["error"] = f"unreadable manifest: {exc}"
+        return out
+    for key in ("name", "version", "description"):
+        value = data.get(key)
+        if isinstance(value, str):
+            out[key] = value
+    return out

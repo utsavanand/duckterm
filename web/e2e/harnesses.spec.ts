@@ -1,54 +1,133 @@
-import {
-  existsSync,
-  mkdirSync,
-  mkdtempSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import { api, apiPost, postEvent, seedSession } from "./helpers";
 
-// Skill kits end to end: add a kit by path in the Skill kits dialog and read
-// its contents. DuckTerm never runs a kit's own script, so there is nothing
-// to install from here and a legacy install.sh never executes.
+// Skill kits end to end: add a kit by path on the Skill kits page, install it
+// into a workspace from the dry run, and read what a skill does on the kit's
+// page. DuckTerm writes the kit's files itself and never runs a kit's own
+// script, so a stray install.sh in the kit is never executed.
 
-test("add a skill kit and view its contents; nothing offers to install", async ({
+test("add a skill kit, install it into a workspace and read a skill; the kit's script never runs", async ({
   page,
 }) => {
   const kit = mkdtempSync(join(tmpdir(), "rd-e2e-kit-"));
+  const project = realpathSync(mkdtempSync(join(tmpdir(), "rd-e2e-kit-project-")));
+  const stamp = Date.now();
   mkdirSync(join(kit, "skills", "ship-it"), { recursive: true });
   writeFileSync(
     join(kit, "skills", "ship-it", "SKILL.md"),
     "---\nname: ship-it\ndescription: Reviews, tests, then ships.\n---\n",
   );
   writeFileSync(
-    join(kit, "duckterm-harness.json"),
-    JSON.stringify({
-      name: `kit-${Date.now()}`,
-      description: "skills and hooks for the e2e test",
-      install: ["./install.sh"],
-    }),
+    join(kit, "skill-kit.toml"),
+    [
+      "manifest_version = 1",
+      `name = "kit-${stamp}"`,
+      'description = "skills and hooks for the e2e test"',
+      'version = "0.1.0"',
+      "",
+      "[[components]]",
+      'kind = "skill"',
+      'path = "skills/ship-it"',
+      "",
+    ].join("\n"),
   );
   writeFileSync(join(kit, "install.sh"), "#!/bin/sh\ntouch installed.marker\n", {
     mode: 0o755,
   });
+  // A workspace is installable once a session has run in a repository.
+  const workspace = `kit-ws-${stamp}`;
+  await seedSession(`kit-session-${stamp}`, { name: "kit agent", group: workspace, cwd: project });
 
   await page.goto("/");
   await page.getByRole("button", { name: "Settings", exact: true }).click();
   await page.getByRole("button", { name: "Skill kits" }).click();
-
-  await page.getByPlaceholder("~/ws-my-projects/uv-suite").fill(kit);
+  await page.getByRole("button", { name: "Add skill kit…" }).click();
+  await page.getByLabel("Kit folder").fill(kit);
   await page.getByRole("button", { name: "Add", exact: true }).click();
-  const row = page.locator(".rd-harness", { hasText: "skills and hooks" });
-  await expect(row).toBeVisible();
 
-  await row.getByRole("button", { name: "view contents" }).click();
-  await expect(row).toContainText("Reviews, tests, then ships.");
-  await expect(row.getByRole("button", { name: /install/i })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: `kit-${stamp}` })).toBeVisible();
+  await expect(page.getByText(/Step 2 of 3/)).toBeVisible();
+  await page.getByRole("button", { name: "Next: choose workspaces" }).click();
+  await page.getByLabel("These workspaces").check();
+  await page.getByLabel(workspace, { exact: true }).check();
+  await page.getByRole("button", { name: "Review what will change" }).click();
+
+  await expect(page.getByText(/nothing is written until you press Enable/)).toBeVisible();
+  expect(existsSync(join(project, ".claude", "skills", "ship-it", "SKILL.md"))).toBe(false);
+  await page.getByRole("button", { name: "Enable", exact: true }).click();
+
+  await expect(page.getByRole("heading", { name: `kit-${stamp} is enabled` })).toBeVisible();
+  await page.getByRole("button", { name: `Open kit-${stamp}` }).click();
+  await expect(page.getByRole("heading", { name: `kit-${stamp}` })).toBeVisible();
+  await expect(page.locator(".rd-kits-row", { hasText: workspace })).toContainText("claude-code");
+  await page.locator(".rd-kits-group > summary", { hasText: "Skills" }).click();
+  await page.locator(".rd-kits-skill > summary", { hasText: "/ship-it" }).click();
+  await expect(page.getByText("Reviews, tests, then ships.")).toBeVisible();
+
+  expect(existsSync(join(project, ".claude", "skills", "ship-it", "SKILL.md"))).toBe(true);
   expect(existsSync(join(kit, "installed.marker"))).toBe(false);
+  expect(existsSync(join(project, "installed.marker"))).toBe(false);
+});
+
+// Browse lives inside the Add form: opening it, moving around and picking a
+// manifest must never submit the form. Only the Add button (or Enter in the
+// field) registers a kit. The browser is confined to the home folder, so the
+// fixture lives under it and is removed afterwards.
+test("Browse offers each manifest of a folder and registers nothing until Add is pressed", async ({
+  page,
+}) => {
+  const stamp = Date.now();
+  const parent = join(homedir(), ".cache", "duckterm-e2e");
+  mkdirSync(parent, { recursive: true });
+  const kit = mkdtempSync(join(parent, `kits-${stamp}-`));
+  try {
+    mkdirSync(join(kit, "skills", "ship-it"), { recursive: true });
+    writeFileSync(
+      join(kit, "skills", "ship-it", "SKILL.md"),
+      "---\nname: ship-it\ndescription: Ships.\n---\n",
+    );
+    const manifest = (name: string) =>
+      [
+        "manifest_version = 1",
+        `name = "${name}"`,
+        'description = "two kits in one folder"',
+        'version = "0.1.0"',
+        "",
+        "[[components]]",
+        'kind = "skill"',
+        'path = "skills/ship-it"',
+        "",
+      ].join("\n");
+    writeFileSync(join(kit, "skill-kit.toml"), manifest(`main-${stamp}`));
+    writeFileSync(join(kit, "skill-kit.alt.toml"), manifest(`alt-${stamp}`));
+    const registers: string[] = [];
+    page.on("request", (r) => {
+      if (r.method() === "POST" && r.url().includes("/kits/register")) registers.push(r.postData() ?? "");
+    });
+
+    await page.goto("/");
+    await page.getByRole("button", { name: "Settings", exact: true }).click();
+    await page.getByRole("button", { name: "Skill kits" }).click();
+    await page.getByRole("button", { name: "Add skill kit…" }).click();
+    await page.getByLabel("Kit folder").fill(kit);
+    await page.getByRole("button", { name: "Browse…" }).click();
+    await expect(page.getByRole("button", { name: `Use alt-${stamp}` })).toBeVisible();
+    await expect(page.getByRole("button", { name: `Use main-${stamp}` })).toBeVisible();
+    expect(registers).toEqual([]);
+    await page.getByRole("button", { name: `Use alt-${stamp}` }).click();
+    await expect(page.getByLabel("Kit folder")).toHaveValue(join(kit, "skill-kit.alt.toml"));
+    expect(registers).toEqual([]);
+    await page.getByRole("button", { name: "Add", exact: true }).click();
+    await expect(page.getByRole("heading", { name: `alt-${stamp}` })).toBeVisible();
+    await expect(page.getByText(/Step 2 of 3/)).toBeVisible();
+    expect(registers).toHaveLength(1);
+    expect(registers[0]).toContain("skill-kit.alt.toml");
+  } finally {
+    rmSync(kit, { recursive: true, force: true });
+  }
 });
 
 // The observation loop: corrections seeded for a folder come back as proposed

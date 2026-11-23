@@ -118,16 +118,20 @@ export function Button({
   variant = "primary",
   disabled,
   size = "md",
+  type,
 }: {
   children: React.ReactNode;
   onClick?: () => void;
   variant?: "primary" | "ghost" | "danger";
   disabled?: boolean;
   size?: "sm" | "md";
+  // a Button inside a <form> submits it unless told otherwise; browse, pick and
+  // cancel controls pass "button". The default stays the browser's.
+  type?: "button" | "submit";
 }) {
   const cls = `rd-btn rd-btn-${variant}${size === "sm" ? " rd-btn-sm" : ""}`;
   return (
-    <button className={cls} onClick={onClick} disabled={disabled}>
+    <button className={cls} type={type} onClick={onClick} disabled={disabled}>
       {children}
     </button>
   );

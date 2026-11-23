@@ -33,7 +33,7 @@ test("Inbox beside Timeline shows real session questions and replies", async ({ 
   await page.locator(".rd-row-name", { hasText: "Client implementation" }).click();
   const tabs = page.locator(".rd-view-toggle > button");
   await expect(page.getByRole("button", { name: "Open Client implementation inbox, 1 pending" })).toBeVisible();
-  await expect(tabs).toHaveText(["Terminal", "Messages", "Timeline", "Inbox (1)", "Artifacts", "PRs"]);
+  await expect(tabs).toHaveText(["Terminal", "Messages", "Timeline", "Inbox (1)", "Artifacts", "PRs", "Flows"]);
   await page.getByRole("button", { name: "Open Client implementation inbox, 1 pending" }).click();
   await expect(page.locator(".rd-session-card")).not.toHaveAttribute("open", "");
   await page.locator(".rd-session-card > summary").click();
@@ -123,7 +123,7 @@ test("Inbox scrolls independently, preserves open replies on refresh, and adapts
   await page.getByRole("button", { name: "View interactions in inbox-layout-test", exact: true }).click();
   const folderInbox = page.locator(".rd-folder-inbox");
   await expect(folderInbox.locator(".rd-inbox-message")).toHaveCount(50);
-  await expect(folderInbox.getByRole("button", { name: "Message folder", exact: true })).toBeVisible();
+  await expect(folderInbox.getByRole("button", { name: "Message workspace", exact: true })).toBeVisible();
   await expect(folderInbox.locator(".rd-inbox-recipient").first()).toContainText("Inbox layout");
   expect(await folderInbox.locator(".rd-inbox-list").evaluate((e) => e.scrollHeight > e.clientHeight && e.scrollWidth <= e.clientWidth)).toBe(true);
   await page.screenshot({ path: "/tmp/duckterm-inbox-layout-folder.png" });

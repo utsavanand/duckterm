@@ -6,7 +6,7 @@ import re
 import tempfile
 from dataclasses import dataclass
 from typing import Literal
-from urllib.parse import urlsplit
+from urllib.parse import unquote, urlsplit
 
 from duckterm.helpers import instance
 
@@ -69,7 +69,7 @@ PRESETS: dict[str, EditionConfig] = {edition.name: edition for edition in (LITE,
 # Features still being built. Off in every edition; an instance turns one on by
 # listing it in <home>/flags.json as {"enabled": ["skill_kits"]}. Each flag has
 # a row in docs/feature-flags.md (a test keeps the two in step).
-DEVELOPMENT = frozenset({"skill_kits", "background_rule_suggestions"})
+DEVELOPMENT = frozenset({"skill_kits", "home", "background_rule_suggestions"})
 
 # These operations also serve local repository clones. The handler validates
 # parameters and journal provenance before any restricted read or mutation.
@@ -169,6 +169,8 @@ def request_features(method: str, url: str, body: bytes = b"") -> tuple[str, ...
     paths = [urlsplit(url).path, url]
     if url == "/harnesses" or url.startswith("/harnesses/"):
         return ("skill_kits",)
+    if url == "/kits" or url.startswith("/kits/") or url.startswith("/kits?"):
+        return ("skill_kits",)
     if url.startswith("/sessions/"):
         # Prefix/suffix routes accept slashes inside the captured session key.
         # Check the final operation as well as nested routes such as /memory/*.
@@ -184,6 +186,8 @@ def _path_feature(method: str, path: str, body: bytes) -> str | None:
             return "artifacts"
         if suffix.startswith("memory/"):
             return "context"
+        if suffix.startswith("kits/"):
+            return "skill_kits"
         return "inbox"
     if path.startswith(("/api/v1/collaboration/", "/collaboration/")):
         return "inbox"
@@ -228,6 +232,9 @@ def _path_feature(method: str, path: str, body: bytes) -> str | None:
     }
     if path in exact:
         return exact[path]
+    # The layout handler unquotes its segment, so /layouts/%68ome is Home too.
+    if path.startswith("/layouts/") and unquote(path.removeprefix("/layouts/")) == "home":
+        return "home"
     if path.startswith("/file"):
         return "explorer" if method == "GET" else "file_editing"
     if path == "/fleet/ask":

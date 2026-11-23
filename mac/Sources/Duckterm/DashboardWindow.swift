@@ -299,6 +299,15 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         web?.evaluateJavaScript(js) { result, _ in done?(result) }
     }
 
+    func reportContextPath() async -> String {
+        guard let web else { return "/bugreport/context" }
+        return await withCheckedContinuation { continuation in
+            web.evaluateJavaScript("localStorage.getItem('rd.selectedSession')") { result, _ in
+                continuation.resume(returning: BugReportData.contextPath(selectionJSON: result as? String))
+            }
+        }
+    }
+
     func captureForReport(_ done: @escaping (NSImage?) -> Void) {
         guard let web else { done(nil); return }
         // Capture only our dashboard, before the report UI opens. No desktop capture.

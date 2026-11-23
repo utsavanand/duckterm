@@ -1,0 +1,91 @@
+manifest_version = 1
+name        = "sample-kit"
+description = "One of every component kind, small enough to read in a minute; the kit the installer is tried on"
+version     = "0.1.0"
+author      = "duckterm"
+license     = "MIT"
+conflicts_with = []
+teams = ["teams/feature-squad.toml"]
+
+[options.persona]
+default = "professional"
+choices = ["professional", "sport"]
+
+# knowledge: always → AGENTS.md block; paths → per-path rules; on-demand → reference skill
+[[components]]
+kind = "knowledge"
+path = "knowledge/working-rules.md"
+
+[[components]]
+kind = "knowledge"
+path = "knowledge/api-conventions.md"
+load = { paths = ["src/api/**"] }
+
+[[components]]
+kind = "knowledge"
+path = "knowledge/release-checklist.md"
+load = "on-demand"
+description = "Release checklist: read before tagging or publishing a release"
+
+# tools: one pinned MCP server with a named credential, one CLI with a doctor
+[[components]]
+kind = "tool"
+mcp = { name = "github", command = "npx", args = ["-y", "@modelcontextprotocol/server-github@2025.4.8"], env = { GITHUB_PERSONAL_ACCESS_TOKEN = "$GITHUB_TOKEN" }, doctor = "npx -y @modelcontextprotocol/server-github@2025.4.8 --help" }
+
+[[components]]
+kind = "tool"
+cli = { binary = "gh", doctor = "gh auth status", install_hint = "brew install gh" }
+
+# skills: a user-invoked job with external effects, and a read-only decision
+[[components]]
+kind = "skill"
+path = "skills/raise-pr"
+effects = "external"
+invocation = "user"
+
+[[components]]
+kind = "skill"
+path = "skills/review-diff"
+effects = "read-only"
+inputs  = { diff = "file" }
+outputs = { verdict = { choice = ["approve", "revise", "reject"] }, findings = { file = "docs/reviews/findings.md" } }
+runs_in = { isolated = "reviewer" }
+
+[[components]]
+kind = "agent"
+path = "agents/reviewer.md"
+
+# hooks: a blocking shell guard and a stop-time reminder
+[[components]]
+kind = "hook"
+event = "before_tool"
+match = "shell"
+command = "hooks/block-destructive.sh"
+blocking = true
+timeout = 5
+
+[[components]]
+kind = "hook"
+event = "stop"
+command = "hooks/remind-tests.sh"
+blocking = false
+timeout = 5
+
+[[components]]
+kind = "permission"
+rules = [
+  { tool = "shell", match = "git push*",   decision = "ask" },
+  { tool = "shell", match = "rm -rf *",    decision = "deny" },
+  { tool = "read",  match = "./.env",      decision = "deny" },
+  { tool = "shell", match = "npm test",    decision = "allow" },
+]
+
+[[components]]
+kind = "flow"
+path = "flows/review.json"
+
+[[components]]
+kind = "settings"
+harness = "claude-code"
+path = "harness/claude-code/sport.json"
+when = { persona = "sport" }

@@ -70,10 +70,10 @@ class Manager:
             self.status = status
 
     async def close_listener(self) -> None:
-        if self.bridge is not None:
-            await self.bridge.close()
-            self.bridge = None
+        bridge, self.bridge = self.bridge, None
         self.signature = None
+        if bridge is not None:
+            await bridge.close()
 
     async def tick(self) -> None:
         try:

@@ -311,3 +311,35 @@ def test_snapshot_preserves_logical_wraps_and_captured_grid(tmp_path):
             await orch.stop(key)
 
     asyncio.run(scenario())
+
+
+def test_server_shutdown_detaches_viewers_but_keeps_agent_pane(tmp_path):
+    from duckterm.agents.tmux_stream import close_viewers
+
+    async def scenario():
+        orch = Orchestrator(EventBus())
+        key = await orch.launch(runtime=GenericRuntime("/bin/cat"), cwd=str(tmp_path), test=True)
+        sup = orch.get(key)
+        assert sup is not None and sup._tmux_target is not None
+        feeds = []
+        try:
+            for _ in range(3):
+                feed = sup.subscribe_bytes()
+                feeds.append(feed)
+                await asyncio.wait_for(anext(feed), 5)
+            assert len(tmux._tmux("list-clients")[1].strip().splitlines()) == 3
+            await asyncio.wait_for(close_viewers(), 4)
+            assert tmux._tmux("list-clients")[1].strip() == ""
+            assert tmux.session_exists(sup._tmux_target)
+            assert sup.write_bytes(b"STILL_ALIVE_AFTER_SERVER_SHUTDOWN\n")
+            async with asyncio.timeout(5):
+                while "STILL_ALIVE_AFTER_SERVER_SHUTDOWN" not in tmux.capture_pane(
+                    sup._tmux_target
+                ):
+                    await asyncio.sleep(0.01)
+        finally:
+            for feed in feeds:
+                await feed.aclose()
+            await orch.stop(key)
+
+    asyncio.run(scenario())

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, OracleExchange } from "./api";
+import { api, FolderMessagePlan, KitTeam, OracleExchange } from "./api";
 import { FolderRecipient, FolderRecipientPicker } from "./FolderRecipientPicker";
 import { Modal } from "./ui";
 import { ArtifactsView } from "./ArtifactsView";
@@ -21,6 +21,19 @@ const TAB_FEATURES: Record<Tab, Feature> = { overview: "overview", chat: "folder
 // Folder panels are ordinary internal components; sessions remain in the tree.
 export function FolderView({ folder, ...actions }: { folder: string } & FolderActions) {
   const [details, setDetails] = useState(() => window.innerWidth >= 1250);
+  const [team, setTeam] = useState<KitTeam | null>(null);
+  const { has } = useEdition();
+  useEffect(() => {
+    if (!has("skill_kits")) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const d = await api.kitsTeams();
+        if (!cancelled) setTeam(d.teams.find((t) => t.folder === folder) ?? null);
+      } catch { /* no teams yet, or an edition without kits */ }
+    })();
+    return () => { cancelled = true; };
+  }, [folder, has]);
   useEffect(() => {
     const media = window.matchMedia("(max-width: 1249px)");
     const collapse = () => { if (media.matches) setDetails(false); };
@@ -30,13 +43,13 @@ export function FolderView({ folder, ...actions }: { folder: string } & FolderAc
   const [review, setReview] = useState<{ repo: string; ref: string; from?: string } | null>(null);
   const openReview = (row: PrRow) => setReview({ repo: row.repo, ref: row.pr ? String(row.pr.number) : row.branch, from: row.session?.name });
   const tabs = useRef<HTMLDivElement>(null);
-  const { has } = useEdition();
   const shown = TABS.filter(name => has(TAB_FEATURES[name]));
   const tab = shown.includes(chosenTab) ? chosenTab : shown.includes("chat") ? "chat" : shown[0];
   const detailsAvailable = has("overview") && tab !== "overview";
-  return <section className={`rd-folder-view rd-folder-with-details${details && detailsAvailable ? " details-open" : ""}`} aria-label={`Folder ${folder}`}>
-    <div className="rd-folder-main"><header className="rd-folder-heading">{detailsAvailable && <button className="rd-btn rd-btn-ghost rd-btn-sm rd-folder-details-toggle" aria-expanded={details} onClick={() => setDetails(!details)}>{details ? "Hide details" : "Details"}</button>}<small>Folder</small><h1>{folder.split("/").pop()}</h1><p>{folder} · Includes subfolders{desktop() ? " · This Mac" : ""}</p></header>
-    <div ref={tabs} className="rd-folder-tabs" role="tablist" aria-label="Folder views" onKeyDown={event => {
+  return <section className={`rd-folder-view rd-folder-with-details${details && detailsAvailable ? " details-open" : ""}`} aria-label={`Workspace ${folder}`}>
+    <div className="rd-folder-main"><header className="rd-folder-heading">{detailsAvailable && <button className="rd-btn rd-btn-ghost rd-btn-sm rd-folder-details-toggle" aria-expanded={details} onClick={() => setDetails(!details)}>{details ? "Hide details" : "Details"}</button>}<small>{team ? "Team" : "Workspace"}</small><h1>{folder.split("/").pop()}</h1><p>{folder}{team ? ` · ${team.team} from ${team.kit}` : ""} · Includes nested workspaces{desktop() ? " · This Mac" : ""}</p></header>
+    {team && <TeamRoles team={team} onNewSession={actions.onNewSession} />}
+    <div ref={tabs} className="rd-folder-tabs" role="tablist" aria-label="Workspace views" onKeyDown={event => {
       if (!shown.length || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
       event.preventDefault();
       const index = shown.indexOf(tab);
@@ -64,7 +77,9 @@ function FolderChat({ folder, active }: { folder: string; active: boolean }) {
   const [recipient, setRecipient] = useState<FolderRecipient | null>(null);
   const [picker, setPicker] = useState<string | null>(null);
   const [reviewing, setReviewing] = useState(false);
+  const [plan, setPlan] = useState<FolderMessagePlan & { question: string; key: string; error?: string } | null>(null);
   const submission = useRef<{ signature: string; key: string }>();
+  const unsent = useRef<{ signature: string; key: string }>();
   const log = useRef<HTMLDivElement>(null);
   const mounted = useRef(false);
   const sending = useRef(false);
@@ -79,7 +94,7 @@ function FolderChat({ folder, active }: { folder: string; active: boolean }) {
     setError("");
     void api.folderChat(folder).then(result => {
       if (!cancelled) { setMessages(result.messages); setLoaded(true); }
-    }).catch((cause: Error) => { if (!cancelled) setError(`Could not load this folder’s conversation: ${cause.message}`); });
+    }).catch((cause: Error) => { if (!cancelled) setError(`Could not load this workspace’s conversation: ${cause.message}`); });
     return () => { cancelled = true; };
   }, [folder, retry]);
   useEffect(() => {
@@ -125,7 +140,14 @@ function FolderChat({ folder, active }: { folder: string; active: boolean }) {
         request_key: submission.current.key, recipients: target.recipients.filter(r => r.eligible).map(r => r.session_id),
       }) : await api.fleetAsk(value, folder, answerOnly ? undefined : submission.current.key);
       if (assign) window.dispatchEvent(new Event("folder-tasks-refresh"));
-      if (mounted.current) setMessages(previous => result.exchange.dispatch && previous.some(m => m.dispatch?.request_key === result.exchange.dispatch?.request_key) ? previous : [...previous, result.exchange]);
+      if ("plan" in result) {
+        // Asking again after Cancel yields the same plan; reusing its key means
+        // a send whose response was lost cannot be delivered a second time.
+        const { identity, target, text, recipients } = result.plan;
+        const signature = JSON.stringify([identity, target, text, recipients.map(r => r.session_id)]);
+        if (unsent.current?.signature !== signature) unsent.current = { signature, key: crypto.randomUUID() };
+        if (mounted.current) setPlan({ ...result.plan, question: value, key: unsent.current.key });
+      } else if (mounted.current) append(result.exchange);
       submission.current = undefined;
     } catch (cause) {
       if (mounted.current) { setError((cause as Error).message); setQuestion(current => current || value); }
@@ -134,32 +156,56 @@ function FolderChat({ folder, active }: { folder: string; active: boolean }) {
       if (mounted.current) { setPending(null); input.current?.focus(); }
     }
   }
+  function append(exchange: OracleExchange) {
+    setMessages(previous => exchange.dispatch && previous.some(m => m.dispatch?.request_key === exchange.dispatch?.request_key) ? previous : [...previous, exchange]);
+  }
+  async function confirmPlan() {
+    if (!plan || sending.current) return;
+    sending.current = true;
+    setPending(plan.text);
+    try {
+      const result = await api.folderDispatch(folder, { identity: plan.identity, target: plan.target, text: plan.text, request_key: plan.key, recipients: plan.recipients.map(r => r.session_id) });
+      unsent.current = undefined;
+      if (mounted.current) { append(result.exchange); setPlan(null); }
+    } catch (cause) {
+      if (mounted.current) setPlan(current => current && { ...current, error: (cause as Error).message });
+    } finally {
+      sending.current = false;
+      if (mounted.current) setPending(null);
+    }
+  }
+  function cancelPlan() {
+    if (sending.current) return;
+    if (plan) setQuestion(current => current || plan.question);
+    setPlan(null);
+    input.current?.focus();
+  }
   return <div className="rd-folder-chat">
-    <div className="rd-folder-chat-heading"><h2>Folder chat</h2><span>Ask or message a session</span></div>
-    <p className="rd-folder-intro">Answers from {folder} and its subfolders{desktop() ? " on this Mac" : ""}.</p>
-    <div ref={log} className="rd-folder-conversation" aria-live="polite" aria-label="Folder conversation">
+    <div className="rd-folder-chat-heading"><h2>Workspace chat</h2><span>Ask or message a session</span></div>
+    <p className="rd-folder-intro">Answers from {folder} and its nested workspaces{desktop() ? " on this Mac" : ""}.</p>
+    <div ref={log} className="rd-folder-conversation" aria-live="polite" aria-label="Workspace conversation">
       {!loaded && !error && <p role="status">Loading conversation…</p>}
-      {loaded && messages.length === 0 && !pending && <p className="rd-folder-intro">Ask what needs your attention or what the sessions in this folder are working on.</p>}
-      {messages.map((message, index) => <div className="rd-folder-exchange" key={`${message.at}-${index}`}><div className="rd-folder-question"><small>You{message.dispatch?.assigned ? " · Assigned" : ""}{message.dispatch ? ` → ${message.dispatch.label}` : ""}</small><p>{message.q}</p></div>{message.dispatch ? <div className="rd-folder-delivery">{message.dispatch.recipients.map(r => <div key={r.message_id}><small>{r.name} · {({ queued: "Queued in inbox", accepted: "Accepted", read: "Read", answered: "Answered", declined: "Declined", expired: "Expired", cancelled: "Cancelled", blocked: "Access changed" })[r.status]}</small>{r.answer && <div className="rd-folder-answer"><small>{r.name} · Reply</small><div dangerouslySetInnerHTML={{ __html: html(r.answer) }} /></div>}</div>)}</div> : <div className="rd-folder-answer"><small>Folder answer</small><div dangerouslySetInnerHTML={{ __html: html(message.a) }} /></div>}</div>)}
-      {pending !== null && <div className="rd-folder-exchange"><div className="rd-folder-question"><small>You</small><p>{pending}</p></div><p role="status">{recipient ? "Queuing your message…" : "Reading this folder’s sessions…"}</p></div>}
+      {loaded && messages.length === 0 && !pending && <p className="rd-folder-intro">Ask what needs your attention or what the sessions in this workspace are working on.</p>}
+      {messages.map((message, index) => <div className="rd-folder-exchange" key={`${message.at}-${index}`}><div className="rd-folder-question"><small>You{message.dispatch?.assigned ? " · Assigned" : ""}{message.dispatch ? ` → ${message.dispatch.label}` : ""}</small><p>{message.q}</p></div>{message.dispatch ? <div className="rd-folder-delivery">{message.dispatch.recipients.map(r => <div key={r.message_id}><small>{r.name} · {({ queued: "Queued in inbox", accepted: "Accepted", read: "Read", answered: "Answered", declined: "Declined", expired: "Expired", cancelled: "Cancelled", blocked: "Access changed" })[r.status]}</small>{r.answer && <div className="rd-folder-answer"><small>{r.name} · Reply</small><div dangerouslySetInnerHTML={{ __html: html(r.answer) }} /></div>}</div>)}</div> : <div className="rd-folder-answer"><small>Workspace answer</small><div dangerouslySetInnerHTML={{ __html: html(message.a) }} /></div>}</div>)}
+      {pending !== null && <div className="rd-folder-exchange"><div className="rd-folder-question"><small>You</small><p>{pending}</p></div><p role="status">{recipient || plan ? "Queuing your message…" : "Reading this workspace’s sessions…"}</p></div>}
     </div>
     {error && <div className="rd-folder-error" role="alert">{error}{!loaded && <button className="rd-btn rd-btn-sm" onClick={() => setRetry(n => n + 1)}>Retry</button>}</div>}
-    <div className="rd-folder-suggestions">{["What needs my attention?", "What is this folder working on?"].map(text => <button key={text} disabled={!loaded || pending !== null} onClick={() => void ask(text, true)}>{text}</button>)}</div>
+    <div className="rd-folder-suggestions">{["What needs my attention?", "What is this workspace working on?"].map(text => <button key={text} disabled={!loaded || pending !== null} onClick={() => void ask(text, true)}>{text}</button>)}</div>
     <form className="rd-folder-compose" onSubmit={event => { event.preventDefault(); send(); }}>
-      {recipient && <div className="rd-folder-target"><span>@{recipient.name} · {recipient.kind === "folder" ? "Subfolder" : "Session"}</span><button type="button" aria-label="Remove recipient" disabled={pending !== null} onClick={() => choose(null)}>×</button></div>}
+      {recipient && <div className="rd-folder-target"><span>@{recipient.name} · {recipient.kind === "folder" ? "Nested workspace" : "Session"}</span><button type="button" aria-label="Remove recipient" disabled={pending !== null} onClick={() => choose(null)}>×</button></div>}
       {picker !== null && <FolderRecipientPicker folder={folder} query={picker} onPick={choose} onClose={() => { setPicker(null); input.current?.focus(); }} />}
-      <textarea ref={input} disabled={pending !== null} aria-label="Ask this folder" placeholder="Ask about this folder, or type @ to message a session…" rows={2} maxLength={8000} value={question} onChange={event => { setQuestion(event.target.value); const match = event.target.value.match(/@([^@\n]*)$/); setPicker(match ? match[1] : null); }} onKeyDown={event => {
+      <textarea ref={input} disabled={pending !== null} aria-label="Ask this workspace" placeholder="Ask about this workspace, or type @ to message a session…" rows={2} maxLength={8000} value={question} onChange={event => { setQuestion(event.target.value); const match = event.target.value.match(/@([^@\n]*)$/); setPicker(match ? match[1] : null); }} onKeyDown={event => {
         if (event.key === "ArrowDown" && picker !== null) { event.preventDefault(); document.querySelector<HTMLButtonElement>('#folder-recipient-picker button[role="option"]:not(:disabled)')?.focus(); return; }
         if (event.key === "Escape") { setPicker(null); return; }
         if (picker !== null && event.key === "Enter") { event.preventDefault(); return; }
         if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); send(); }
       }} />
-      <div><span><button type="button" className="rd-folder-mention" aria-label="Choose recipient" disabled={pending !== null} onClick={() => setPicker(picker === null ? "" : null)}> @ </button> {recipient ? recipient.kind === "folder" ? "Broadcast to subfolder" : "Direct message" : "Folder answer"}</span>{recipient?.kind === "session" && <button type="button" className="rd-btn rd-btn-sm" disabled={!loaded || pending !== null || !question.trim()} onClick={() => void ask(question, false, true)}>Assign &amp; send</button>}<button className="rd-btn rd-btn-primary rd-btn-sm" disabled={!loaded || pending !== null || !question.trim()}>{recipient ? recipient.kind === "folder" ? "Review recipients" : `Send to ${recipient.name}` : "Ask"}</button></div>
+      <div><span><button type="button" className="rd-folder-mention" aria-label="Choose recipient" disabled={pending !== null} onClick={() => setPicker(picker === null ? "" : null)}> @ </button> {recipient ? recipient.kind === "folder" ? "Broadcast to nested workspace" : "Direct message" : "Workspace answer"}</span>{recipient?.kind === "session" && <button type="button" className="rd-btn rd-btn-sm" disabled={!loaded || pending !== null || !question.trim()} onClick={() => void ask(question, false, true)}>Assign &amp; send</button>}<button className="rd-btn rd-btn-primary rd-btn-sm" disabled={!loaded || pending !== null || !question.trim()}>{recipient ? recipient.kind === "folder" ? "Review recipients" : `Send to ${recipient.name}` : "Ask"}</button></div>
     </form>
-    <p className="rd-folder-helper">{recipient ? recipient.kind === "folder" ? "Review who receives your message before sending. Replies are optional." : "Send a message, or choose Assign & send to create a task with the same message." : "Ask about this folder, or tell me who to message and what to say. Use @ to choose a recipient."}</p>
+    <p className="rd-folder-helper">{recipient ? recipient.kind === "folder" ? "Review who receives your message before sending. Replies are optional." : "Send a message, or choose Assign & send to create a task with the same message." : "Ask about this workspace, or tell me who to message and what to say. Use @ to choose a recipient."}</p>
     {reviewing && recipient && <Modal title="Review recipients" onClose={() => setReviewing(false)}>
       <section role="dialog" aria-label="Review recipients">
-      <p>Message {recipient.name} and its subfolders.</p>
+      <p>Message {recipient.name} and its nested workspaces.</p>
       <ul>{recipient.recipients.map(r => <li key={r.session_id}>{r.name} · {r.eligible ? r.state : `Skipped: ${r.reason}`}</li>)}</ul>
       <p className="rd-folder-review-text">{question}</p>
       <p>Each recipient receives your inbox message. Replies are optional.</p>
@@ -167,5 +213,39 @@ function FolderChat({ folder, active }: { folder: string; active: boolean }) {
       <button className="rd-btn rd-btn-primary" onClick={() => { setReviewing(false); void ask(); }}>Send to {recipient.recipients.filter(r => r.eligible).length} sessions</button>
       </section>
     </Modal>}
+    {plan && <Modal title="Confirm message" onClose={cancelPlan}>
+      <section role="dialog" aria-label="Confirm message">
+      <p>Nothing has been sent yet. Check who receives this message and its exact wording.</p>
+      <p>To {plan.target.kind === "folder" ? `everyone in ${plan.label}` : plan.label}:</p>
+      <ul>{plan.recipients.map(r => <li key={r.session_id}>{r.name}</li>)}</ul>
+      <p className="rd-folder-review-text">{plan.text}</p>
+      {plan.error && <div className="rd-folder-error" role="alert">{plan.error}</div>}
+      <button className="rd-btn rd-btn-ghost" disabled={pending !== null} onClick={cancelPlan}>Cancel</button>
+      <button className="rd-btn rd-btn-primary" disabled={pending !== null} onClick={() => void confirmPlan()}>Send to {plan.recipients.length === 1 ? plan.recipients[0].name : `${plan.recipients.length} sessions`}</button>
+      </section>
+    </Modal>}
   </div>;
+}
+
+// A team is a workspace with a procedure: one card per role, with the skills
+// the role uses and the rules that bind it. Agents are started into the
+// workspace with New session; matching them to roles by name is next.
+function TeamRoles({ team, onNewSession }: { team: KitTeam; onNewSession?: () => void }) {
+  const rules = (role: string) => team.rules.filter((r) => r.role === role).map((r) => {
+    if (typeof r.review_by === "string") return `reviewed by ${r.review_by}`;
+    if (Array.isArray(r.may_not)) return `may not ${r.may_not.join(", ")}`;
+    return Object.entries(r).filter(([k]) => k !== "role").map(([k, v]) => `${k} ${String(v)}`).join(", ");
+  });
+  return (
+    <section className="rd-team-roles" aria-label="Team roles">
+      {Object.entries(team.roles).map(([role, spec]) => (
+        <div className="rd-team-role" key={role}>
+          <div className="rd-team-role-name">{role}</div>
+          {spec.purpose && <div className="rd-team-role-purpose">{spec.purpose}</div>}
+          <div className="rd-team-role-meta">{[...spec.skills.map((s) => `/${s}`), ...rules(role)].join(" · ")}</div>
+          {onNewSession && <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={onNewSession}>New session as {role}</button>}
+        </div>
+      ))}
+    </section>
+  );
 }

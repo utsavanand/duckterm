@@ -5,6 +5,7 @@ import json
 import pytest
 from tests.runtime.test_session_api import dispatch
 
+from duckterm import editions
 from duckterm.core.relay import Relay
 from duckterm.persistence.history import HistoryStore
 from duckterm.persistence.layouts import defaults
@@ -126,3 +127,37 @@ def test_relay_exposes_existing_urgency_and_approval_class(app):
     status, result = dispatch(app, "GET", "/relay", {"x-duckterm-token": app.token}, b"")
     assert status == 200
     assert [note["urgency"] for note in result["notes"]] == ["approval", "offer", "blocked"]
+
+
+def test_home_layout_is_off_without_the_flag(app, tmp_path):
+    for surface in ["home", "%68ome"]:
+        for method, data in [("GET", None), ("PUT", {"instances": [], "revision": "default"})]:
+            status, body = req(app, method, surface, data)
+            assert status == 403 and body["code"] == "feature_unavailable", (method, surface)
+    assert not (tmp_path / "home-layout.json").exists()
+
+
+def test_home_layout_places_widgets_on_a_grid_in_its_own_file(app, tmp_path):
+    app.edition = editions.EditionConfig("full", editions.FULL.features | {"home"})
+    initial = req(app, "GET", "home")[1]
+    assert [(x["type"], x["params"]) for x in initial["instances"]][:2] == [
+        ("teams", {"x": 0, "y": 0, "w": 3, "h": 2}),
+        ("autopilot", {"x": 0, "y": 2, "w": 3, "h": 2}),
+    ]
+    moved = [dict(x, params=dict(x["params"])) for x in initial["instances"]]
+    moved[0]["params"]["y"] = 9
+    status, saved = req(app, "PUT", "home", {"instances": moved, "revision": "default"})
+    assert status == 200 and saved["instances"][0]["params"]["y"] == 9
+    assert json.loads((tmp_path / "home-layout.json").read_text())["layouts"]["home"] == saved
+    layouts = app.history.layouts.path
+    assert not layouts.exists() or "home" not in layouts.read_text()
+    for params in [
+        {"x": 10, "y": 0, "w": 3, "h": 2},
+        {"x": 0, "y": 0, "w": 0, "h": 2},
+        {"x": 0, "y": 0, "w": 3, "h": 25},
+        {"x": "0", "y": 0, "w": 3, "h": 2},
+        {"x": 0, "y": 0, "w": 3},
+        {},
+    ]:
+        bad = {"instances": [dict(moved[0], params=params)], "revision": saved["revision"]}
+        assert req(app, "PUT", "home", bad)[0] == 400, params
