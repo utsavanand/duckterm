@@ -1,12 +1,12 @@
 """Installer writes are anchored to verified directory descriptors (QA round 4):
 an alias above the project is fine, a hard link is replaced not written through,
 and a parent swapped for a symlink after the plan's check is refused rather than
-followed into .git. The parent-swap test came from QA and stays as written."""
+followed into .git. The three tests came from QA round 4; the swap test now also
+asserts the refusal."""
 
 import os
 
 import pytest
-
 from test_skill_kits import _kit
 
 from duckterm.kits import install, plan
