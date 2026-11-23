@@ -576,7 +576,13 @@ def create_team(body: dict[str, Any]) -> dict[str, Any]:
         "rules": template.get("rules", []),
         "created_at": int(time.time()),
     }
-    _write_private(_team_file(folder), json.dumps(data, indent=2) + "\n")
+    # An exclusive create: two requests for the same name racing past the
+    # check above cannot both write, so a failed creation's recovery removes
+    # only its own record.
+    try:
+        _create_private(_team_file(folder), json.dumps(data, indent=2) + "\n")
+    except FileExistsError:
+        raise KitApiError(409, f"workspace {folder!r} is already a team") from None
     return {"team": data}
 
 
@@ -628,6 +634,15 @@ def _write_private(path: Path, text: str) -> None:
     with os.fdopen(fd, "w") as f:
         f.write(text)
     os.replace(tmp, path)
+
+
+def _create_private(path: Path, text: str) -> None:
+    """A file under the DuckTerm home that must not exist yet: created
+    exclusively, never through a symlink, readable by the owner alone."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+    with os.fdopen(fd, "w") as f:
+        f.write(text)
 
 
 def _save_policies(data: dict[str, dict[str, Any]]) -> None:

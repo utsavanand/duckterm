@@ -15,7 +15,7 @@ type View =
   | { name: "list" }
   | { name: "add" }
   | { name: "kit"; kit: string; fromAdd?: boolean }
-  | { name: "enable"; kit: string; fromAdd?: boolean }
+  | { name: "enable"; kit: string; fromAdd?: boolean; error?: string }
   | { name: "review"; kit: string; fromAdd?: boolean; scope: "all" | "workspaces"; workspaces: string[]; options: Record<string, string>; plans: { workspace: string; project: string; plan: KitPlan }[] }
   | { name: "done"; kit: string; result: KitEnableResult };
 
@@ -137,18 +137,23 @@ export function SkillKitsPage({
     const targets = matching(kit, scope, workspaces);
     if (targets.length === 0) return enable(kit, scope, workspaces, options, false);
     setBusy(true);
-    try {
-      const plans = [];
-      for (const t of targets) {
+    setView({ name: "enable", kit: kit.name, fromAdd });
+    const plans = [];
+    for (const t of targets) {
+      try {
         const out = await api.kitsPlan({ kit: kit.path, project: t.project, harnesses: catalog?.harnesses, options }, sessionKey);
         plans.push({ ...t, plan: out.plan });
+      } catch (e) {
+        // The dry run stops at the first repository the server refuses (one
+        // deleted since its last session, say); the wizard shows which and why
+        // and keeps the choices, so the owner can go back or pick again.
+        setView({ name: "enable", kit: kit.name, fromAdd, error: `${workspaceLabel(t.workspace)} · ${t.project}: ${(e as Error).message}` });
+        setBusy(false);
+        return;
       }
-      setView({ name: "review", kit: kit.name, fromAdd, scope, workspaces, options, plans });
-    } catch (e) {
-      toast(`Review failed: ${(e as Error).message}`, "err");
-    } finally {
-      setBusy(false);
     }
+    setBusy(false);
+    setView({ name: "review", kit: kit.name, fromAdd, scope, workspaces, options, plans });
   }
 
   async function enable(kit: KitEntry, scope: "all" | "workspaces", workspaces: string[], options: Record<string, string>, replace: boolean) {
@@ -264,6 +269,7 @@ export function SkillKitsPage({
             workspaces={catalog?.workspaces ?? []}
             busy={busy}
             fromAdd={!!view.fromAdd}
+            error={view.error}
             onBack={() => setView({ name: "kit", kit: current.name, fromAdd: view.fromAdd })}
             onReview={(scope, workspaces, options) => review(current, scope, workspaces, options, view.fromAdd)}
             needsReview={(scope, workspaces) => matching(current, scope, workspaces).length > 0}
@@ -550,8 +556,8 @@ function KitView({ kit, busy, fromAdd, onEnable, onDisable, onRemove, onVerify, 
   );
 }
 
-function EnableView({ kit, workspaces, busy, fromAdd, onBack, onReview, needsReview }: {
-  kit: KitEntry; workspaces: KitWorkspace[]; busy: boolean; fromAdd: boolean; onBack: () => void;
+function EnableView({ kit, workspaces, busy, fromAdd, error, onBack, onReview, needsReview }: {
+  kit: KitEntry; workspaces: KitWorkspace[]; busy: boolean; fromAdd: boolean; error?: string; onBack: () => void;
   onReview: (scope: "all" | "workspaces", workspaces: string[], options: Record<string, string>) => void;
   needsReview: (scope: "all" | "workspaces", workspaces: string[]) => boolean;
 }) {
@@ -601,6 +607,12 @@ function EnableView({ kit, workspaces, busy, fromAdd, onBack, onReview, needsRev
           <div className="rd-kits-note">{spec.description ?? "A kit option: each choice turns components on or off."}</div>
         </div>
       ))}
+      {error && (
+        <div className="rd-kits-error" role="alert">
+          <strong>The dry run could not be read.</strong> {error}
+          <div className="rd-kits-note" style={{ color: "inherit" }}>Nothing was written. Choose other workspaces and review again, or go back.</div>
+        </div>
+      )}
       <div className="rd-kits-footer">
         <span>{reviewing ? "Repositories known now are installed after a dry run you can read." : ready ? "Nothing to install yet; the choice is kept." : "Choose at least one workspace."}</span>
         <div className="rd-kits-actions">
