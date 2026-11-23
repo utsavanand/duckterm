@@ -106,6 +106,24 @@ def harness_env(token: str) -> dict[str, str]:
     }
 
 
+CREDS_MOUNT = "/run/duckterm/credentials.json"
+
+
+def gateway_args(name: str, src: Path, creds: Path, env: dict[str, str]) -> list[str]:
+    """`docker run` arguments for the gateway. Kept separate so the absence of
+    credentials in them can be checked without docker."""
+    args = [
+        "run", "-d", "--name", name, "--restart", "unless-stopped",
+        "-p", "127.0.0.1::8081",
+        "-v", f"{src}:/src:ro",
+        "--mount", f"type=bind,source={creds},target={CREDS_MOUNT},readonly",
+        "--tmpfs", "/var/log/duckterm",
+    ]  # fmt: skip
+    for key, value in env.items():
+        args += ["-e", f"{key}={value}"]
+    return args
+
+
 @dataclass
 class Gateway:
     """The long-lived container running the model proxy. Its control port is
@@ -115,6 +133,9 @@ class Gateway:
     # Docker picks a free port on 127.0.0.1; read back after start.
     control_port: int = 0
     secret_path: Path = field(default_factory=lambda: instance.home() / "autopilot-control-secret")
+    creds_path: Path = field(
+        default_factory=lambda: instance.home() / "autopilot-gateway-credentials.json"
+    )
 
     def _secret(self) -> str:
         secret = private_read(self.secret_path)
@@ -141,19 +162,18 @@ class Gateway:
         # The proxy is stdlib-only, so the gateway runs this checkout's
         # package from a read-only mount rather than a built image.
         src = Path(duckterm.__file__).resolve().parent.parent
-        env = {"DUCKTERM_PROXY_CONTROL_SECRET": self._secret(), "PYTHONPATH": "/src"}
+        creds = {"DUCKTERM_PROXY_CONTROL_SECRET": self._secret()}
         if anthropic_key:
-            env["ANTHROPIC_API_KEY"] = anthropic_key
+            creds["ANTHROPIC_API_KEY"] = anthropic_key
         if openai_key:
-            env["OPENAI_API_KEY"] = openai_key
+            creds["OPENAI_API_KEY"] = openai_key
         if anthropic_oauth_token:
-            env["CLAUDE_CODE_OAUTH_TOKEN"] = anthropic_oauth_token
-        env.update(upstreams or {})
-        args = ["run", "-d", "--name", self.name, "--restart", "unless-stopped",
-                "-p", "127.0.0.1::8081",
-                "-v", f"{src}:/src:ro", "--tmpfs", "/var/log/duckterm"]  # fmt: skip
-        for key, value in env.items():
-            args += ["-e", f"{key}={value}"]
+            creds["CLAUDE_CODE_OAUTH_TOKEN"] = anthropic_oauth_token
+        # Credentials go in a 0600 file mounted read-only, never `-e`: env
+        # values show in the host's process list and in `docker inspect`.
+        private_write(self.creds_path, json.dumps(creds))
+        env = {"PYTHONPATH": "/src", "DUCKTERM_PROXY_SECRETS": CREDS_MOUNT, **(upstreams or {})}
+        args = gateway_args(self.name, src, self.creds_path, env)
         docker(*args, GATEWAY_IMAGE, "python", "-m", "duckterm.autopilot.model_proxy")
         self._read_port()
         for _ in range(50):

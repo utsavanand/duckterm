@@ -4,7 +4,11 @@ The sandbox never holds a GitHub credential. The server pushes from the run's
 host clone with DuckTerm's GitHub connection, and only ever:
 - the run's own branch (`autopilot/<run-id>`), never a force push;
 - to the autopilot's repository, named here, not the clone's remote config;
-- with hooks off, so nothing in the clone runs on the host.
+- with hooks off, so nothing in the clone runs on the host;
+- never when the run changed CI configuration. A branch push runs the
+  branch's own workflows with the repository's secrets, and a step's writes
+  can be steered by the issue text (prompt injection), so a run must not be
+  able to publish a workflow. Such a run stays on this Mac for a person.
 """
 
 import base64
@@ -20,12 +24,46 @@ from typing import Any
 from duckterm.github_projects import repository_name
 
 BRANCH = re.compile(r"autopilot/[0-9]{8}-[0-9]{6}-[0-9a-f]{4}")
+# Files CI services execute on a push: GitHub Actions, and the common others
+# a repository may also be wired to.
+CI_DIRS = (".github/workflows/", ".github/actions/", ".circleci/", ".buildkite/",
+           ".azure-pipelines/", ".woodpecker/", ".gitlab/ci/")  # fmt: skip
+CI_FILES = frozenset({
+    ".gitlab-ci.yml", ".travis.yml", "azure-pipelines.yml", "Jenkinsfile",
+    "bitbucket-pipelines.yml", ".drone.yml", ".woodpecker.yml", "action.yml", "action.yaml",
+})  # fmt: skip
 
 
-def push(project: Path, repo: str, branch: str, token: str) -> None:
+class PushRefused(ValueError):
+    pass
+
+
+def ci_paths(paths: list[str]) -> list[str]:
+    return [p for p in paths if p.startswith(CI_DIRS) or p in CI_FILES]
+
+
+def changed_paths(project: Path, base: str) -> list[str]:
+    """Every path the run's commits touch, both sides of a rename."""
+    proc = subprocess.run(
+        ["git", "-C", str(project), "-c", "core.hooksPath=/dev/null", "diff", "--name-only",
+         "--no-renames", "-z", f"{base}..HEAD"],
+        capture_output=True, text=True, timeout=60, check=True,
+    )  # fmt: skip
+    return [p for p in proc.stdout.split("\0") if p]
+
+
+def push(project: Path, repo: str, branch: str, token: str, base: str) -> None:
+    """Push the run branch. `base` is the commit the run started from; the
+    run's own changes (base..HEAD) are checked before anything is sent."""
     repository_name(repo)
     if not BRANCH.fullmatch(branch):
-        raise ValueError(f"refusing to push {branch!r}: not an autopilot run branch")
+        raise PushRefused(f"refusing to push {branch!r}: not an autopilot run branch")
+    blocked = ci_paths(changed_paths(project, base))
+    if blocked:
+        raise PushRefused(
+            "the run changed CI configuration (" + ", ".join(blocked[:5]) + "), which would run "
+            "with the repository's secrets; review the branch on this Mac"
+        )
     auth = base64.b64encode(f"x-access-token:{token}".encode()).decode()
     # Authentication stays out of argv, remotes and the clone's config.
     env = {

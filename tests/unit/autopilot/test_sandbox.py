@@ -223,3 +223,27 @@ def test_claude_runs_in_a_sandbox_through_the_proxy_and_nothing_else(world: Any)
         text=True,
     ).stdout.strip()
     assert REAL_KEY not in inspect and exported == "0"
+
+
+def test_gateway_credentials_go_in_a_private_mounted_file_never_in_docker_args(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[tuple[str, ...]] = []
+
+    def docker(*args: str, check: bool = True, **_: object) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        out = "false" if args[0] == "inspect" else "127.0.0.1:55001" if args[0] == "port" else ""
+        return subprocess.CompletedProcess(list(args), 0, out, "")
+
+    monkeypatch.setattr(sandbox, "docker", docker)
+    monkeypatch.setattr(sandbox.Gateway, "_control", lambda self, *a: {})
+    gw = sandbox.Gateway(name="gw", secret_path=tmp_path / "s", creds_path=tmp_path / "c.json")
+    gw.ensure(anthropic_key="sk-ant-SECRET", openai_key=None, anthropic_oauth_token="oauth-SECRET")
+    (run,) = [c for c in calls if c[0] == "run"]
+    flat = " ".join(run)
+    for secret in ("sk-ant-SECRET", "oauth-SECRET", (tmp_path / "s").read_text().strip()):
+        assert secret not in flat
+    assert f"source={tmp_path / 'c.json'},target={sandbox.CREDS_MOUNT},readonly" in flat
+    creds = json.loads((tmp_path / "c.json").read_text())
+    assert creds["CLAUDE_CODE_OAUTH_TOKEN"] == "oauth-SECRET"
+    assert (tmp_path / "c.json").stat().st_mode & 0o077 == 0

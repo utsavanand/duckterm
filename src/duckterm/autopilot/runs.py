@@ -153,7 +153,7 @@ def _publish(
         return
     try:
         token, _ = github_projects.local_token()
-        github_push.push(project, autopilot["repo"], meta["branch"], token)
+        github_push.push(project, autopilot["repo"], meta["branch"], token, base_sha)
         _update(root, pushed=True)
         pr = github_push.open_pull_request(
             autopilot["repo"],
@@ -163,6 +163,8 @@ def _publish(
             token,
         )
         _update(root, pr=pr)
+    except github_push.PushRefused as exc:
+        _update(root, pushed=False, pr_skipped=str(exc))
     except Exception as exc:  # noqa: BLE001 — the run succeeded; record why publishing did not
         _update(root, pr_error=str(exc)[:300])
 

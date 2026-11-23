@@ -68,12 +68,47 @@ _DROP_RESPONSE = frozenset(
 )
 
 
+# The only calls a run may make, by method and path, with the query strings the
+# harnesses send. Everything else (account, key, batch and file endpoints) is
+# refused before it reaches the upstream with the owner's credential: those
+# calls carry no usage, so they would bypass the budget, and what they return
+# could be written into a branch or pull request.
+ALLOWED: dict[tuple[str, str], str] = {
+    ("POST", "/v1/messages"): "anthropic",
+    ("POST", "/v1/messages/count_tokens"): "anthropic",
+    ("POST", "/v1/responses"): "openai",
+}
+ALLOWED_QUERIES = frozenset({"", "beta=true"})
+# Reserved per call until its real usage is known, so parallel calls cannot
+# all pass admit() before any of them is charged.
+DEFAULT_RESERVE_OUTPUT = 8192
+
+
+def allowed(method: str, path: str) -> str | None:
+    """The provider for an allowed call, else None."""
+    route, _, query = path.partition("?")
+    return ALLOWED.get((method, route)) if query in ALLOWED_QUERIES else None
+
+
+def estimate(body: bytes) -> int:
+    """A charge to reserve before the reply: the request's size in tokens
+    (about four bytes each) plus the output it asks for."""
+    try:
+        req = json.loads(body or b"{}")
+    except ValueError:
+        req = {}
+    asked = req.get("max_tokens") or req.get("max_output_tokens") if isinstance(req, dict) else None
+    output = asked if isinstance(asked, int) and asked > 0 else DEFAULT_RESERVE_OUTPUT
+    return len(body) // 4 + output
+
+
 @dataclass
 class Run:
     run_id: str
     budget: int
     expires: float
     used: float = 0
+    reserved: int = 0
     refusal: str | None = None
 
 
@@ -115,6 +150,7 @@ class UsageReader:
         self.model: str | None = None
         self._pending = b""
         self.settled = False
+        self.reserved = 0
         self._json: bytearray | None = None
         self._started = False
 
@@ -200,29 +236,28 @@ class ModelProxy:
         with self._lock:
             return self._runs.get(token)
 
-    def admit(self, token: str) -> tuple[Run | None, str | None]:
+    def admit(self, token: str, reserve: int = 0) -> tuple[Run | None, str | None]:
+        """Let a call through, holding `reserve` against the budget until
+        charge() replaces it with the real spend."""
         with self._lock:
             run = self._runs.get(token)
             if run is None:
                 return None, "unknown_token"
             if time.time() > run.expires:
                 run.refusal = "token_expired"
-            elif run.used >= run.budget:
+            elif run.used + run.reserved >= run.budget:
                 run.refusal = "budget_exhausted"
             else:
+                run.reserved += reserve
                 return run, None
             return run, run.refusal
 
-    def charge(self, run: Run, usage: Usage) -> None:
+    def charge(self, run: Run, usage: Usage, reserved: int = 0) -> None:
         with self._lock:
+            run.reserved -= reserved
             run.used += usage.charge()
 
-    def upstream(self, path: str) -> tuple[str, http.client.HTTPConnection, dict[str, str]]:
-        provider = (
-            "openai"
-            if path.startswith(("/v1/responses", "/v1/chat/", "/v1/models"))
-            else "anthropic"
-        )
+    def upstream(self, provider: str) -> tuple[http.client.HTTPConnection, dict[str, str]]:
         key = self._keys[provider]
         if provider == "openai" and key:
             auth = {"authorization": f"Bearer {key}"}
@@ -234,7 +269,7 @@ class ModelProxy:
             raise LookupError(f"no {provider} credential configured")
         url = self._upstreams[provider]
         cls = http.client.HTTPSConnection if url.scheme == "https" else http.client.HTTPConnection
-        return provider, cls(url.netloc, timeout=UPSTREAM_TIMEOUT), auth
+        return cls(url.netloc, timeout=UPSTREAM_TIMEOUT), auth
 
     def log(self, **fields: Any) -> None:
         line = json.dumps({"ts": round(time.time(), 3), **fields})
@@ -297,18 +332,25 @@ class _Handler(BaseHTTPRequestHandler):
     def _handle(self) -> None:
         length = int(self.headers.get("content-length") or 0)
         body = self.rfile.read(length) if length else b""
-        run, refusal = self.proxy.admit(self._token())
+        provider = allowed(self.command, self.path)
+        if provider is None:
+            run = self.proxy.run(self._token())
+            return self._refuse("path_not_allowed", run)
+        reserve = estimate(body)
+        run, refusal = self.proxy.admit(self._token(), reserve)
         if refusal or run is None:
             return self._refuse(refusal or "unknown_token", run)
         try:
-            provider, conn, auth = self.proxy.upstream(self.path)
+            conn, auth = self.proxy.upstream(provider)
         except LookupError as exc:
+            self.proxy.charge(run, Usage(), reserve)
             return self._refuse(str(exc), run)
         headers = {k.lower(): v for k, v in self.headers.items() if k.lower() not in _DROP_REQUEST}
         if "anthropic-beta" in auth and headers.get("anthropic-beta"):
             auth["anthropic-beta"] = headers["anthropic-beta"] + "," + auth["anthropic-beta"]
         headers.update(auth)
         reader = UsageReader(openai=provider == "openai")
+        reader.reserved = reserve
         status = None
         try:
             try:
@@ -346,7 +388,7 @@ class _Handler(BaseHTTPRequestHandler):
             return
         reader.settled = True
         usage = reader.finish()
-        self.proxy.charge(run, usage)
+        self.proxy.charge(run, usage, reader.reserved)
         self.proxy.log(
             run=run.run_id,
             step=self.headers.get("x-duckterm-step"),
@@ -360,7 +402,7 @@ class _Handler(BaseHTTPRequestHandler):
             cache_write=usage.cache_write,
         )
 
-    do_GET = do_POST = _handle
+    do_GET = do_POST = do_PUT = do_DELETE = do_PATCH = _handle
 
     def log_message(self, *args: Any) -> None:
         pass
@@ -432,16 +474,20 @@ def main() -> None:
     parser.add_argument("--control", default="0.0.0.0:8081")
     parser.add_argument("--log", default="/var/log/duckterm/model-calls.jsonl")
     args = parser.parse_args()
+    # Credentials come from a read-only mounted file, not the container's
+    # environment, so they stay out of `docker inspect` and process lists.
+    creds_path = os.environ.get("DUCKTERM_PROXY_SECRETS")
+    creds = json.loads(Path(creds_path).read_text()) if creds_path else dict(os.environ)
     proxy = ModelProxy(
-        anthropic_key=os.environ.get("ANTHROPIC_API_KEY"),
-        openai_key=os.environ.get("OPENAI_API_KEY"),
+        anthropic_key=creds.get("ANTHROPIC_API_KEY"),
+        openai_key=creds.get("OPENAI_API_KEY"),
         log_path=Path(args.log),
         anthropic_url=os.environ.get("DUCKTERM_ANTHROPIC_URL", ANTHROPIC),
         openai_url=os.environ.get("DUCKTERM_OPENAI_URL", OPENAI),
-        anthropic_oauth_token=os.environ.get("CLAUDE_CODE_OAUTH_TOKEN"),
+        anthropic_oauth_token=creds.get("CLAUDE_CODE_OAUTH_TOKEN"),
     )
     host, port = args.control.rsplit(":", 1)
-    control = proxy.control_server(host, int(port), os.environ["DUCKTERM_PROXY_CONTROL_SECRET"])
+    control = proxy.control_server(host, int(port), creds["DUCKTERM_PROXY_CONTROL_SECRET"])
     threading.Thread(target=control.serve_forever, daemon=True).start()
     host, port = args.listen.rsplit(":", 1)
     proxy.server(host, int(port)).serve_forever()

@@ -1,6 +1,7 @@
 """A successful run's branch is pushed from the host and gets a draft pull
 request; nothing else is pushed, and the token never reaches argv."""
 
+import json
 import subprocess
 import urllib.error
 from pathlib import Path
@@ -16,7 +17,7 @@ BRANCH = "autopilot/20261122-155703-48eb"
 def test_only_a_run_branch_can_be_pushed(tmp_path: Path) -> None:
     for branch in ("main", "autopilot/../main", "autopilot/x", "refs/heads/main"):
         with pytest.raises(ValueError, match="not an autopilot run branch"):
-            github_push.push(tmp_path, "o/r", branch, "tok")
+            github_push.push(tmp_path, "o/r", branch, "tok", "base")
 
 
 def test_push_names_the_repository_and_one_ref_and_keeps_the_token_out_of_argv(
@@ -29,7 +30,8 @@ def test_push_names_the_repository_and_one_ref_and_keeps_the_token_out_of_argv(
         return subprocess.CompletedProcess(argv, 0, "", "")
 
     monkeypatch.setattr(github_push.subprocess, "run", run)
-    github_push.push(tmp_path, "o/r", BRANCH, "secret-token")
+    monkeypatch.setattr(github_push, "changed_paths", lambda project, base: ["src/a.py"])
+    github_push.push(tmp_path, "o/r", BRANCH, "secret-token", "base")
     argv = seen["argv"]
     assert argv[-2:] == ["https://github.com/o/r.git", f"refs/heads/{BRANCH}:refs/heads/{BRANCH}"]
     assert "core.hooksPath=/dev/null" in argv and "--no-verify" in argv
@@ -96,3 +98,91 @@ def test_a_run_that_changed_nothing_opens_no_pull_request(
     monkeypatch.setattr(github_push, "push", lambda *a: pytest.fail("pushed"))
     runs._publish(root, {"repo": "o/r"}, {"id": "r1", "branch": BRANCH}, {}, repo, head, {})
     assert "changed no files" in (root / "autopilot.json").read_text()
+
+
+def _repo_with_change(
+    tmp_path: Path, path: str, rename_from: str | None = None
+) -> tuple[Path, str]:
+    repo = tmp_path / "repo"
+    git = [
+        "git",
+        "-C",
+        str(repo),
+        "-c",
+        "user.name=t",
+        "-c",
+        "user.email=t@t",
+        "-c",
+        "commit.gpgsign=false",
+    ]
+    subprocess.run(["git", "init", "-q", str(repo)], check=True)
+    (repo / "README.md").write_text("x\n")
+    if rename_from:
+        (repo / rename_from).parent.mkdir(parents=True, exist_ok=True)
+        (repo / rename_from).write_text("on: push\n")
+    subprocess.run([*git, "add", "-A"], check=True)
+    subprocess.run([*git, "commit", "-qm", "base"], check=True)
+    base = runs._git_out(repo, "rev-parse", "HEAD")
+    if rename_from:
+        (repo / path).parent.mkdir(parents=True, exist_ok=True)
+        subprocess.run([*git, "mv", rename_from, path], check=True)
+    else:
+        (repo / path).parent.mkdir(parents=True, exist_ok=True)
+        (repo / path).write_text("on: push\njobs: {}\n")
+        subprocess.run([*git, "add", "-A"], check=True)
+    subprocess.run([*git, "commit", "-qm", "step"], check=True)
+    return repo, base
+
+
+@pytest.mark.parametrize(
+    ("path", "rename_from"),
+    [
+        (".github/workflows/exfil.yml", None),
+        (".github/actions/setup/action.yml", None),
+        (".gitlab-ci.yml", None),
+        (".github/workflows/ci.yml", "docs/ci.yml"),  # renamed into place
+        ("docs/old.yml", ".github/workflows/old.yml"),  # renamed away counts too
+    ],
+)
+def test_a_run_that_changed_ci_configuration_is_never_pushed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, path: str, rename_from: str | None
+) -> None:
+    repo, base = _repo_with_change(tmp_path, path, rename_from)
+    sent: list[list[str]] = []
+    real = subprocess.run
+
+    def run(argv: list[str], **kw: Any) -> Any:
+        if "push" in argv:
+            sent.append(argv)
+        return real(argv, **kw)
+
+    monkeypatch.setattr(github_push.subprocess, "run", run)
+    with pytest.raises(github_push.PushRefused, match="CI configuration"):
+        github_push.push(repo, "o/r", BRANCH, "tok", base)
+    assert sent == []
+    # Through a whole publish: recorded on the run, no pull request.
+    monkeypatch.setattr(runs.github_projects, "local_token", lambda: ("tok", {}))
+    monkeypatch.setattr(github_push, "open_pull_request", lambda *a: pytest.fail("opened a PR"))
+    root = tmp_path / "run"
+    runs._write_meta(root, {"id": "r1"})
+    runs._publish(root, {"repo": "o/r"}, {"id": "r1", "branch": BRANCH}, {}, repo, base, {})
+    meta = json.loads((root / "autopilot.json").read_text())
+    assert meta["pushed"] is False and "CI configuration" in meta["pr_skipped"]
+    assert sent == []
+
+
+def test_an_ordinary_push_failure_is_recorded_and_the_run_stays_succeeded(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo, base = _repo_with_change(tmp_path, "src/fix.py")
+    monkeypatch.setattr(runs.github_projects, "local_token", lambda: ("tok", {}))
+
+    def fail(*a: Any) -> None:
+        raise RuntimeError("push to o/r failed: network")
+
+    monkeypatch.setattr(github_push, "push", fail)
+    root = tmp_path / "run"
+    runs._write_meta(root, {"id": "r1", "state": "succeeded"})
+    runs._publish(root, {"repo": "o/r"}, {"id": "r1", "branch": BRANCH}, {}, repo, base, {})
+    meta = json.loads((root / "autopilot.json").read_text())
+    assert meta["state"] == "succeeded" and "network" in meta["pr_error"]

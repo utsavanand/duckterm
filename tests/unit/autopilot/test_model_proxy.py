@@ -10,6 +10,7 @@ from typing import Any
 
 import pytest
 
+from duckterm.autopilot import model_proxy
 from duckterm.autopilot.model_proxy import ModelProxy
 
 ANTHROPIC_KEY = "sk-ant-REAL"
@@ -67,7 +68,7 @@ class Upstream(BaseHTTPRequestHandler):
         self.seen.append(
             {"path": self.path, "headers": {k.lower(): v for k, v in self.headers.items()}}
         )
-        if self.path == "/v1/messages?plain":
+        if self.headers.get("x-test-plain"):
             body = json.dumps(
                 {"model": "claude-x", "usage": {"input_tokens": 70, "output_tokens": 30}}
             ).encode()
@@ -165,7 +166,7 @@ def test_codex_call_uses_bearer_key_and_charges_usage(setup: Any) -> None:
 def test_plain_json_reply_is_charged(setup: Any) -> None:
     proxy, port, _ = setup
     token = proxy.issue("run-1", budget=100_000, ttl=60)
-    assert call(port, "/v1/messages?plain", {"x-api-key": token})[0] == 200
+    assert call(port, "/v1/messages", {"x-api-key": token, "x-test-plain": "1"})[0] == 200
     assert proxy.run(token).used == 100
 
 
@@ -295,3 +296,60 @@ def test_subscription_token_is_sent_as_oauth_bearer_with_the_beta_header(tmp_pat
     assert sent["authorization"] == "Bearer sk-ant-oat-SUBSCRIPTION"
     assert "x-api-key" not in sent
     assert sent["anthropic-beta"] == "fine-grained-tool-streaming-2025-05-14,oauth-2025-04-20"
+
+
+@pytest.mark.parametrize(
+    ("method", "path"),
+    [
+        ("GET", "/api/oauth/profile"),
+        ("POST", "/api/oauth/claude_cli/create_api_key"),
+        ("POST", "/v1/messages/batches"),
+        ("GET", "/v1/files"),
+        ("GET", "/v1/messages"),
+        ("POST", "/v1/messages?anything=else"),
+        ("POST", "/v1/models"),
+    ],
+)
+def test_only_model_calls_reach_the_upstream_with_the_owners_credential(
+    setup: Any, method: str, path: str
+) -> None:
+    proxy, port, seen = setup
+    token = proxy.issue("run-1", budget=100_000, ttl=60)
+    conn = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
+    conn.request(method, path, body=b"{}", headers={"x-api-key": token})
+    resp = conn.getresponse()
+    body = json.loads(resp.read())
+    conn.close()
+    assert resp.status == 403
+    assert body["error"]["message"] == "path_not_allowed"
+    assert seen == []
+    logged = [json.loads(line) for line in proxy._log_path.read_text().splitlines()]
+    assert logged[-1]["path"] == path and logged[-1]["allowed"] is False
+
+
+def test_the_paths_harnesses_use_are_allowed() -> None:
+    assert model_proxy.allowed("POST", "/v1/messages") == "anthropic"
+    assert model_proxy.allowed("POST", "/v1/messages?beta=true") == "anthropic"
+    assert model_proxy.allowed("POST", "/v1/messages/count_tokens?beta=true") == "anthropic"
+    assert model_proxy.allowed("POST", "/v1/responses") == "openai"
+
+
+def test_parallel_calls_hold_a_reservation_so_they_cannot_all_overshoot(tmp_path: Path) -> None:
+    proxy = ModelProxy(
+        anthropic_key="k", openai_key=None, log_path=tmp_path / "l",
+        anthropic_url="http://127.0.0.1:1", openai_url="http://127.0.0.1:1",
+    )  # fmt: skip
+    token = proxy.issue("run-1", budget=8_000, ttl=60)
+    ask = json.dumps({"max_tokens": 4000}).encode()
+    reserve = model_proxy.estimate(ask)
+    assert reserve == len(ask) // 4 + 4000
+    first, _ = proxy.admit(token, reserve)
+    second, _ = proxy.admit(token, reserve)
+    # Two calls in flight hold over 8000; a third would pass if nothing were held.
+    assert proxy.admit(token, reserve)[1] == "budget_exhausted"
+    assert first is not None and second is not None
+    proxy.charge(first, model_proxy.Usage(input=100, output=100), reserve)
+    proxy.charge(second, model_proxy.Usage(input=100, output=100), reserve)
+    run = proxy.run(token)
+    assert run is not None and (run.used, run.reserved) == (400, 0)
+    assert proxy.admit(token, reserve)[1] is None
