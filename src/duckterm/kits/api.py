@@ -12,6 +12,7 @@ import os
 import tempfile
 import threading
 import tomllib
+import urllib.parse
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -614,15 +615,41 @@ def policies() -> dict[str, dict[str, Any]]:
     return data if isinstance(data, dict) else {}
 
 
-def _save_policies(data: dict[str, dict[str, Any]]) -> None:
-    path = _policy_file()
+def _write_private(path: Path, text: str) -> None:
+    """A file under the DuckTerm home: written whole, never through a symlink."""
     path.parent.mkdir(parents=True, exist_ok=True)
     if path.is_symlink():
-        raise KitApiError(500, f"{path} is a symlink; the kit policy is not written through it")
-    fd, tmp = tempfile.mkstemp(prefix=".kit-policy-", dir=path.parent)
+        raise KitApiError(500, f"{path} is a symlink; nothing is written through it")
+    fd, tmp = tempfile.mkstemp(prefix=f".{path.name}-", dir=path.parent)
     with os.fdopen(fd, "w") as f:
-        f.write(json.dumps(data, indent=2, sort_keys=True) + "\n")
+        f.write(text)
     os.replace(tmp, path)
+
+
+def _save_policies(data: dict[str, dict[str, Any]]) -> None:
+    _write_private(_policy_file(), json.dumps(data, indent=2, sort_keys=True) + "\n")
+
+
+def _launch_file(session_key: str) -> Path:
+    name = urllib.parse.quote(session_key, safe="")
+    return _teams_dir().parent / "kits" / "launches" / f"{name}.json"
+
+
+def remember_launch(session_key: str, folder: str) -> None:
+    """DuckTerm launched `session_key` in `folder`. This is the one record of
+    where a session lives that its hooks never touch: the session row's
+    repo_path and cwd follow every hook event, so a `claude` the agent starts
+    in another repository moves them there."""
+    _write_private(_launch_file(session_key), json.dumps({"folder": folder}) + "\n")
+
+
+def launch_folder(session_key: str) -> str | None:
+    try:
+        data = json.loads(_launch_file(session_key).read_text())
+    except (OSError, ValueError):
+        return None
+    folder = data.get("folder") if isinstance(data, dict) else None
+    return str(folder) if folder else None
 
 
 def policy_matches(policy: dict[str, Any] | None, folder: str) -> bool:
@@ -762,19 +789,16 @@ def apply_policies(registry: list[dict[str, Any]], folder: str, project: str) ->
     return done
 
 
-def policy_target(row: dict[str, Any] | None, event: dict[str, Any]) -> str | None:
-    """Where a SessionStart may install enabled kits: the repository the
-    session row named before this event (DuckTerm set it when it launched the
-    session), a git root, not the home folder, and the folder the event says
-    the session is in. The event's own cwd is a hook's word, never a target:
-    a `claude` an agent starts in another folder inherits the session key
-    and reports that folder."""
-    if not row:
+def policy_target(launch: str | None, event: dict[str, Any]) -> str | None:
+    """Where a SessionStart may install enabled kits: the folder DuckTerm
+    launched the session in (`launch_folder`, written by the launcher and by
+    nothing else), a git root, not the home folder, and the folder the event
+    says the session is in. The event's own cwd is a hook's word, never a
+    target: a `claude` an agent starts in another folder inherits the session
+    key and reports that folder, and the session row follows it."""
+    if not launch:
         return None
-    target = str(row.get("worktree_path") or row.get("repo_path") or "")
-    if not target:
-        return None
-    root = Path(target)
+    root = Path(launch)
     if not root.is_dir() or not (root / ".git").exists():
         return None
     resolved = root.resolve()

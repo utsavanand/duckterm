@@ -209,8 +209,10 @@ def main(args: argparse.Namespace) -> int:
 def _server_run(args: argparse.Namespace) -> int | None:
     """Inside a DuckTerm session, a run goes through the server so each step
     shows as a child session; the terminal watches the run file through the
-    session API and prints what it sees. Returns None when there is no
-    session to speak for, so the local runner takes over."""
+    session API and prints what it sees. Returns None only when there is no
+    session at all (no DUCKTERM_SESSION_KEY), so the local runner takes over;
+    with a key set, a missing credential is an error, never a way back to the
+    local runner and its permission flags."""
     import os
     import time
     import urllib.error
@@ -220,23 +222,6 @@ def _server_run(args: argparse.Namespace) -> int | None:
 
     if not os.environ.get("DUCKTERM_SESSION_KEY"):
         return None
-    try:
-        url, token = session_credentials.client_credentials()
-    except ValueError:
-        return None
-    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-
-    def call(route: str, body: dict[str, Any]) -> dict[str, Any]:
-        req = urllib.request.Request(
-            f"{url}/api/v1/session/kits/{route}",
-            data=json.dumps(body).encode(),
-            headers=headers,
-            method="POST",
-        )
-        with urllib.request.urlopen(req, timeout=30) as resp:
-            data = json.loads(resp.read().decode())
-        return data if isinstance(data, dict) else {}
-
     if args.yolo or args.codex_trusted:
         print(
             "duckterm kit: --yolo and --codex-trusted are not available through the DuckTerm"
@@ -251,6 +236,29 @@ def _server_run(args: argparse.Namespace) -> int | None:
             file=sys.stderr,
         )
         return 1
+    try:
+        url, token = session_credentials.client_credentials()
+    except ValueError as exc:
+        print(
+            f"duckterm kit: this is a DuckTerm session but its credential is not available ({exc});"
+            " runs from a session go through the server. Run it from a terminal outside the"
+            " session, or start the session again from DuckTerm",
+            file=sys.stderr,
+        )
+        return 1
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+    def call(route: str, body: dict[str, Any]) -> dict[str, Any]:
+        req = urllib.request.Request(
+            f"{url}/api/v1/session/kits/{route}",
+            data=json.dumps(body).encode(),
+            headers=headers,
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read().decode())
+        return data if isinstance(data, dict) else {}
+
     project = str(Path(args.project).resolve())
     try:
         if args.resume:

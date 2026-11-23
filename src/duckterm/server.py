@@ -2716,11 +2716,16 @@ class Server:
             return 400, {"error": "invalid JSON"}
         if not isinstance(payload, dict):
             return 400, {"error": "body must be an object"}
-        row = self.history.session(key) or {}
-        payload["project"] = row.get("worktree_path") or row.get("cwd") or ""
+        # the folder DuckTerm launched the session in; the row's cwd and
+        # repo_path follow the hooks and would let a child process move it
+        project = kits_api.launch_folder(key)
+        if not project:
+            return 409, {
+                "error": "this session has no launch folder recorded; start it from DuckTerm"
+            }
+        payload["project"] = project
         payload["session"] = key
         tracker = _FlowStepTracker(self, asyncio.get_running_loop())
-        project = payload["project"]
         run_id = str(payload.get("run_id") or "")
         calls = {
             ("POST", "run"): lambda: kits_api.start_run(payload, tracker),
@@ -2802,18 +2807,31 @@ class Server:
             return
         await _write_json(writer, 200, result)
 
+    def _remember_launch(self, key: str, folder: object) -> None:
+        """The launcher is the only writer of where a session lives (kits)."""
+        if not folder or not self.edition.includes("skill_kits"):
+            return
+        from duckterm.kits import api as kits_api
+
+        try:
+            kits_api.remember_launch(key, str(folder))
+        except (OSError, kits_api.KitApiError) as exc:  # never fail a launch over it
+            print(f"[duckterm] launch record for {key}: {exc}", file=sys.stderr)
+
     def _apply_kit_policies(self, event: dict[str, Any], before: dict[str, Any] | None) -> None:
         """A session started: kits enabled for its workspace (or for all) are
-        installed into its repository if missing. `before` is the session row
-        as it stood before this event; the target is the repository DuckTerm
-        launched it in (`kits_api.policy_target`), never the hook's cwd.
-        Registry and workspace are read here, on the store's thread; the
-        file work runs in a thread."""
+        installed into its repository if missing. The target is the folder
+        DuckTerm launched the session in (`kits_api.launch_folder`, written by
+        the launcher only), never the hook's cwd or the row it updates;
+        `before` is the row as it stood before this event, for the workspace.
+        Registry and workspace are read here, on the store's thread; the file
+        work runs in a thread."""
         if not self.edition.includes("skill_kits"):
             return
         from duckterm.kits import api as kits_api
 
-        project = kits_api.policy_target(before, event)
+        key = str(event.get("session_key") or "")
+        project = kits_api.policy_target(kits_api.launch_folder(key), event)
         if not project:
             return
         registry = [dict(r) for r in self.history.harnesses()]
@@ -2949,6 +2967,8 @@ class Server:
                 self.history.set_meta(
                     key, name=name, notes=req.get("notes"), group=req.get("group")
                 )
+            launched = self.history.session(key) or {}
+            self._remember_launch(key, launched.get("worktree_path") or repo_path or cwd)
             await _write_json(writer, 200, {"session_key": key, "opened_in_terminal": False})
             return
 
@@ -3013,6 +3033,7 @@ class Server:
                 "command": command,
             }
         )
+        self._remember_launch(key, run_cwd)
         opened = open_in_terminal(
             str(run_cwd),
             argv,
@@ -3141,6 +3162,7 @@ class Server:
                 "command": shlex.join(argv),
             }
         )
+        self._remember_launch(child_key, str(worktree.path))
         opened = open_in_terminal(
             str(worktree.path),
             argv,

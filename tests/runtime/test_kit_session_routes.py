@@ -1,6 +1,8 @@
 """The session kit routes answer to a session credential: the run goes in the
-session's own folder whatever the body names, permission flags are ignored,
-the session sees only runs it started, and there is no gate to answer."""
+folder DuckTerm launched the session in, whatever the body names and wherever
+its hooks have since moved the row; permission flags are ignored; the session
+sees only runs it started; there is no gate to answer; a session with no
+launch record gets nothing."""
 
 import asyncio
 import json
@@ -10,6 +12,7 @@ from pathlib import Path
 from tests.runtime.test_agents_md import _request
 from tests.runtime.test_harness_suites import KITS_ON
 
+from duckterm.helpers import instance
 from duckterm.kits import api, runner
 from duckterm.persistence.history import HistoryStore
 from duckterm.server import Server
@@ -30,6 +33,7 @@ async def _session_post(port: int, token: str, route: str, payload: dict) -> tup
 def test_a_session_runs_in_its_own_folder_sees_its_own_runs_and_answers_no_gate(
     tmp_path: Path, monkeypatch
 ) -> None:
+    monkeypatch.setattr(instance, "home", lambda: tmp_path / "dthome")
     mine, theirs = tmp_path / "mine", tmp_path / "theirs"
     for folder in (mine, theirs):
         folder.mkdir()
@@ -46,7 +50,7 @@ def test_a_session_runs_in_its_own_folder_sees_its_own_runs_and_answers_no_gate(
     monkeypatch.setenv("PATH", f"{bin_dir}:{os.environ['PATH']}")
     monkeypatch.setattr(runner, "_claude_trusts", lambda project: True)
     store = HistoryStore(tmp_path / "db.sqlite")
-    for key, cwd in (("a", mine), ("b", theirs)):
+    for key, cwd in (("a", mine), ("b", theirs), ("c", theirs)):
         store.record(
             {
                 "_id": key,
@@ -58,8 +62,23 @@ def test_a_session_runs_in_its_own_folder_sees_its_own_runs_and_answers_no_gate(
             }
         )
         store.set_meta(key, name=f"Session {key}", group="work")
+    api.remember_launch("a", str(mine))
+    api.remember_launch("b", str(theirs))
+    # a's hooks since reported another folder (a `claude` the agent started in
+    # theirs): the row moved, the launch record did not
+    store.record(
+        {
+            "_id": "a-moved",
+            "_ts": 2,
+            "event_type": "PostToolUse",
+            "session_key": "a",
+            "cwd": str(theirs),
+            "repo_path": str(theirs),
+        }
+    )
+    assert store.session("a")["cwd"] == str(theirs)
     tokens = {
-        k: store.session_api.enroll(k, {"root": "work", "purpose": "p"})["token"] for k in "ab"
+        k: store.session_api.enroll(k, {"root": "work", "purpose": "p"})["token"] for k in "abc"
     }
 
     async def scenario() -> dict:
@@ -100,6 +119,9 @@ def test_a_session_runs_in_its_own_folder_sees_its_own_runs_and_answers_no_gate(
             out["a_detail"] = await _session_post(
                 port, tokens["a"], "run-detail", {"run_id": run_id}
             )
+            out["c_run"] = await _session_post(
+                port, tokens["c"], "run", {"flow": "sample-kit/review", "harness": "claude-code"}
+            )
         return out
 
     out = asyncio.run(scenario())
@@ -115,3 +137,4 @@ def test_a_session_runs_in_its_own_folder_sees_its_own_runs_and_answers_no_gate(
     assert out["b_detail"][0] == 404
     assert out["a_detail"][0] == 200
     assert out["a_detail"][1]["run"]["state"] == "succeeded", out["a_detail"][1]["run"]
+    assert out["c_run"][0] == 409 and "no launch folder" in out["c_run"][1]["error"]

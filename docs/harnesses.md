@@ -165,7 +165,17 @@ local trial: its harness steps run, its `exec` steps are refused. A gate
 re-hashes what it showed when the answer arrives; a shown file that changed in
 between ends the run (`gate_shown_changed`), because a step's output was
 altered outside the runner. A step reading a file output (`{path, sha256}`)
-checks the hash again before it starts. Step ids match `[a-z0-9_-]{1,64}`
+checks the hash again before it starts. The run file itself is in the
+repository too, so a commit can carry one already past its gate: this machine
+notes the hash of every run file it writes (`<home>/kits/runs/<project
+key>/<run id>`), a run with no note "was not started on this machine", one
+whose file no longer matches "changed outside the runner", and `runs` marks
+such runs `recorded: false` so the Flows tab lists them without a gate or
+resume. A gate showing `workspace.diff` sees the worktree against HEAD with
+new files included (a temporary index after `git add -A`, the runs folder
+excluded) and records the worktree's tree id; the answer re-checks it and the
+next step checks it once more, so a worktree that changed after the owner
+looked fails the run (`workspace_changed`). Step ids match `[a-z0-9_-]{1,64}`
 (they name folders under `.duckterm/runs/`), run and attempt folders are
 refused through a symlink or outside the project, an `exec` file output must
 be a file under its own attempt folder, and a run file that names a flow by
@@ -265,8 +275,19 @@ run` inside a session hands the run to the server this way and watches it
 from the terminal; outside a session it runs locally. The `/<flow>` command
 a flow installs for Claude Code pre-approves exactly `duckterm kit run
 <kit>/<flow>` (no `--gate`, no `--yolo`), with the flow's description as one
-quoted frontmatter line and only identifier input names. Script steps are
-not sessions.
+quoted frontmatter line and only identifier input names; a flow without
+inputs pre-approves the exact command, no prefix. Inside a session (any
+`DUCKTERM_SESSION_KEY`) the CLI refuses `--yolo`, `--codex-trusted` and
+`--gate` before it looks anything up, and a missing session credential is an
+error, never a fall-back to the local runner. Script steps are not sessions.
+
+Where a session lives, for kits, is the folder DuckTerm launched it in:
+the launcher writes `<home>/kits/launches/<session>.json` and nothing else
+does. The session row's `cwd` and `repo_path` follow every hook event, so a
+`claude` an agent starts in another repository moves them; the session kit
+routes and the SessionStart install never read them. A session with no
+launch record (one DuckTerm did not start) gets 409 from the session kit
+routes and no auto-install.
 
 Endpoints: `GET /harnesses`, `POST /harnesses/register {path}`,
 `GET /harnesses/:name/contents`, `DELETE /harnesses/:name`. Registered kits

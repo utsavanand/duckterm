@@ -605,6 +605,44 @@ def test_flow_shortcut_frontmatter_cannot_be_extended_by_the_kit(tmp_path):
     ]
     assert "duckterm kit run flowkit/ship --input topic=<topic>" in body
     assert "bad name" not in body and "../x" not in body
+    # a flow without inputs pre-approves the exact start command, no prefix
+    plain = adapters._flow_shortcut(kit, "ship", {"steps": spec["steps"]}).decode()
+    assert "allowed-tools: Bash(duckterm kit run flowkit/ship)" in plain
+
+
+def test_inside_a_session_the_kit_cli_never_falls_back_to_the_local_runner(tmp_path, monkeypatch):
+    """With DUCKTERM_SESSION_KEY set, --yolo, --codex-trusted and --gate are
+    refused before anything is looked up, and a missing credential is an
+    error: the local runner, which honours those flags, is not a fallback."""
+    import argparse
+
+    from duckterm.kits import cli as kit_cli
+
+    monkeypatch.setenv("DUCKTERM_SESSION_KEY", "sess-x")
+    monkeypatch.setenv("DUCKTERM_SESSION_TOKEN_FILE", str(tmp_path / "missing-token"))
+    project = tmp_path / "proj"
+    project.mkdir()
+
+    def ns(**over):
+        base = {
+            "project": str(project),
+            "flow": "sample-kit/review",
+            "harness": None,
+            "input": [],
+            "resume": None,
+            "gate": None,
+            "yolo": False,
+            "codex_trusted": False,
+        }
+        return argparse.Namespace(**{**base, **over})
+
+    assert kit_cli._server_run(ns(yolo=True)) == 1
+    assert kit_cli._server_run(ns(codex_trusted=True)) == 1
+    assert kit_cli._server_run(ns(flow=None, resume="r-1", gate=["g", "approve"])) == 1
+    assert kit_cli._server_run(ns()) == 1  # key set, credential missing: refused, not local
+    assert not (project / ".duckterm").exists()
+    monkeypatch.delenv("DUCKTERM_SESSION_KEY")
+    assert kit_cli._server_run(ns()) is None  # no session at all: the local runner decides
 
 
 def test_flow_shortcut_is_not_written_for_harnesses_without_commands(tmp_path):

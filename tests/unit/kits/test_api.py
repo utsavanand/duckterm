@@ -367,7 +367,10 @@ def test_the_kit_policy_file_is_never_written_through_a_symlink(tmp_path, monkey
     assert victim.read_text() == "{}"
 
 
-def test_policy_target_is_the_launched_repository_never_the_hooks_cwd(tmp_path, monkeypatch):
+def test_policy_target_is_the_launch_folder_never_the_hooks_cwd(tmp_path, monkeypatch):
+    from duckterm.helpers import instance
+
+    monkeypatch.setattr(instance, "home", lambda: tmp_path / "dthome")
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))
@@ -376,24 +379,26 @@ def test_policy_target_is_the_launched_repository_never_the_hooks_cwd(tmp_path, 
     (repo / "src").mkdir()
     plain = tmp_path / "plain"
     plain.mkdir()
-    row = {"repo_path": str(repo), "grp": "team"}
+    # the launcher is the only writer of where a session lives
+    api.remember_launch("s", str(repo))
+    assert api.launch_folder("s") == str(repo)
+    assert api.launch_folder("never-launched") is None
+    launch = api.launch_folder("s")
     assert api.policy_target(None, {"cwd": str(repo)}) is None
-    assert api.policy_target(row, {"cwd": str(repo / "src")}) == str(repo.resolve())
-    assert api.policy_target(row, {}) == str(repo.resolve())
+    assert api.policy_target(launch, {"cwd": str(repo / "src")}) == str(repo.resolve())
+    assert api.policy_target(launch, {}) == str(repo.resolve())
     # a `claude` the agent started elsewhere reports the session key with its own cwd
-    assert api.policy_target(row, {"cwd": str(plain)}) is None
-    # the row names no repository, a folder that is not a git root, or the home folder
-    assert api.policy_target({"cwd": str(repo)}, {"cwd": str(repo)}) is None
-    assert api.policy_target({"repo_path": str(plain)}, {}) is None
+    assert api.policy_target(launch, {"cwd": str(plain)}) is None
+    # a folder that is not a git root, the home folder, or a folder holding it
+    assert api.policy_target(str(plain), {}) is None
     (home / ".git").mkdir()
-    assert api.policy_target({"repo_path": str(home)}, {}) is None
-    assert api.policy_target({"repo_path": str(tmp_path)}, {}) is None  # holds the home folder
-    # a worktree (its .git is a file) wins over the repository it belongs to
+    assert api.policy_target(str(home), {}) is None
+    assert api.policy_target(str(tmp_path), {}) is None
+    # a worktree (its .git is a file) is a launch folder too
     wt = tmp_path / "wt"
     wt.mkdir()
     (wt / ".git").write_text("gitdir: elsewhere\n")
-    both = {"repo_path": str(repo), "worktree_path": str(wt)}
-    assert api.policy_target(both, {"cwd": str(wt)}) == str(wt.resolve())
+    assert api.policy_target(str(wt), {"cwd": str(wt)}) == str(wt.resolve())
 
 
 def test_http_runs_take_no_permission_flags_and_only_installed_flows(tmp_path, monkeypatch):

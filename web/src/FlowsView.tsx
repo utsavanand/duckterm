@@ -94,7 +94,10 @@ function RunBox({ summary, project, context, mine, open, onChange }: { summary: 
 
   const [kit, flow] = summary.flow.split("/");
   const inputs = Object.entries(summary.inputs ?? {}).map(([k, v]) => `${k}="${v}"`).join(" ");
-  const gate = detail?.run.gates.find((g) => g.response === null) ?? null;
+  // a run file this machine did not write (a clone's, a commit's) is shown but
+  // offers no gate: the server refuses to resume it, so there is nothing to answer
+  const foreign = summary.recorded === false;
+  const gate = foreign ? null : (detail?.run.gates.find((g) => g.response === null) ?? null);
   const attemptsOf = (id: string) => (detail?.run.attempts ?? []).filter((a) => a.step === id);
   const stepState = (id: string): { text: string; tone: string } => {
     const atts = attemptsOf(id);
@@ -112,6 +115,7 @@ function RunBox({ summary, project, context, mine, open, onChange }: { summary: 
       <summary>
         <div>
           <strong>{flow}</strong> <span className="rd-kits-mono" style={{ color: "var(--text-soft)" }}>{kit} · {summary.run_id}</span>
+          {foreign && <span className="rd-kits-sub"> · not started on this machine</span>}
           <div className="rd-kits-sub">{ago(summary.started_at)} · <span className="rd-kits-mono">/{flow}{inputs ? ` ${inputs}` : ""}</span>{summary.current ? ` · step ${summary.current.step}` : ""}{!mine && summary.session ? " · another session" : ""}</div>
         </div>
         <span className={`rd-kit-pill ${tone(summary.state)}`}>{label(summary.state)}</span>

@@ -505,7 +505,7 @@ export interface KitInstalled {
   details: Record<string, KitDetail[]>;
 }
 export interface KitDetail { name: string; description?: string; effects?: string; invocation?: string; outputs?: string[]; model?: string; tools?: string[]; load?: string; lines?: number; event?: string; match?: string; blocking?: boolean; timeout?: number; rules?: { tool: string; match: string; decision: string }[]; inputs?: string[]; steps?: { id: string; kind: string }[]; trigger?: string | null; harness?: string; keys?: string[]; form?: string }
-export interface KitRunSummary { run_id: string; flow: string; state: string; started_at: number; updated_at?: number; current: { step: string; attempt: number } | null; failure: { step: string; attempt: number; reason: string } | null; inputs?: Record<string, string>; session?: string | null; steps_done?: number }
+export interface KitRunSummary { run_id: string; flow: string; state: string; started_at: number; updated_at?: number; current: { step: string; attempt: number } | null; failure: { step: string; attempt: number; reason: string } | null; inputs?: Record<string, string>; session?: string | null; steps_done?: number; recorded?: boolean }
 export interface KitRun extends KitRunSummary {
   harness: string; executor: string;
   attempts: { step: string; attempt: number; kind: string; status: string; choice: string | null; reason: string; outputs: Record<string, unknown> }[];

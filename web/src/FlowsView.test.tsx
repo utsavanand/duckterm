@@ -33,6 +33,16 @@ it("lists this session's runs with their steps and answers a gate under its step
   await waitFor(() => expect(api.kitsGate).toHaveBeenCalledWith("/ws/duckterm", "r-1", "signoff", "approve", "s1"));
 });
 
+it("shows a run file this machine did not write without a gate to answer", async () => {
+  vi.mocked(api.kitsRuns).mockResolvedValue({ runs: [{ ...waiting, recorded: false }] });
+  vi.mocked(api.kitsRunDetail).mockResolvedValue({ run, steps });
+  render(<FlowsView project="/ws/duckterm" sessionKey="s1" context="s1" />);
+  expect(await screen.findByText("feature")).toBeVisible();
+  expect(screen.getByText(/not started on this machine/)).toBeVisible();
+  await waitFor(() => expect(api.kitsRunDetail).toHaveBeenCalled());
+  expect(screen.queryByRole("button", { name: "approve" })).toBeNull();
+});
+
 it("says so when no flow has run", async () => {
   vi.mocked(api.kitsRuns).mockResolvedValue({ runs: [] });
   render(<FlowsView project="/ws/duckterm" sessionKey="s1" />);

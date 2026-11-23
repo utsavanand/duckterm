@@ -927,7 +927,9 @@ def _flow_shortcut(kit: m.Kit, flow: str, spec: dict[str, Any]) -> bytes:
     lines = [
         "---",
         f"description: {json.dumps(desc)}",
-        f"allowed-tools: Bash({start}:*)",  # this flow's start only; no --gate, no --yolo
+        # this flow's start only, never --gate or --yolo: exact when the flow takes
+        # no inputs, a prefix (for the --input pairs) when it does
+        f"allowed-tools: Bash({start}{':*' if inputs else ''})",
         "---",
         f"Start the `{kit.name}/{flow}` flow of the {kit.name} skill kit from this session:",
         "",
