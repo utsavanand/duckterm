@@ -48,11 +48,13 @@ def test_tool_only_output_is_not_owner_or_assistant_text(memory_rig, runtime):
     row = loaded["records"][0]
     assert row["id"] == "0" and row["role"] == "tool" and row["text"] == text
     assert loaded["version"] == hashlib.sha256(path.read_bytes()).hexdigest()
-    retained = memory_sources.directory("agent") / (loaded["snapshot"] + ".jsonl")
-    assert retained.read_bytes() == path.read_bytes()
+    assert (memory_sources.directory("agent") / (loaded["snapshot"] + ".records")).is_file()
     path.unlink()
     assert (
-        memory_sources.read_native("agent", {**source, "snapshot": loaded["snapshot"]})["records"]
+        memory_sources.read_native(
+            "agent",
+            {**source, "snapshot": loaded["snapshot"], "records_sha256": loaded["records_sha256"]},
+        )["records"]
         == loaded["records"]
     )
 

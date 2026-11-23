@@ -12,9 +12,9 @@ from duckterm.handoff_review import handoff_brief
 @pytest.mark.parametrize(
     "name,digest",
     [
-        ("digest_write", "62f5b3ce360f57d118861c7abd9c4acca467fbc6cc4253ea5c879b665b383b79"),
+        ("digest_write", "7eedb88eae4cacaae811c946a7d63e638ee58e7ed641c9a184649dbb8c805073"),
         ("digest_validate", "e06fffb0b69efe7fd4206e2f7237a975898e9f03267963254ae326a3744352f7"),
-        ("span_write", "e80c51a8f7d984775eabec5d1cc6a1c723d6ec2fdcbdcb71e1418444045f12c8"),
+        ("span_write", "e0a2bbd7261e11638ca9e725367a84c2c5e05a64a8e79a50db0566f040672de5"),
         ("reconcile", "ede97e0761dc4b910ae138b178ecf500b074bebd23000f1b95990e319f404e2d"),
     ],
 )

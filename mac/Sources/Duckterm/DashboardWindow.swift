@@ -34,6 +34,7 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
 
     var onLaunchRequest: ((String, String, [String: Any]) async throws -> Any)?
     var onRuntimeSetupRequest: ((String, [String: Any], @escaping () -> Bool) async throws -> Any)?
+    var onAppUpdateRequest: ((String) async throws -> [String: Any])?
     var canSetUpAgents = false
     var agentSetupState: [String: Any]?
     private var pageGeneration = 0
@@ -42,7 +43,7 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         var state: [String: Any] = [
             "currentTarget": desktopTarget,
             "testBuild": AppIdentity.isTest,
-            "canCollaborate": true, "canReportBug": true,
+            "canCollaborate": true, "canReportBug": true, "canUpdateApp": true,
             "canApprove": ApprovalSigner.available,
             "targets": [["id": "local", "name": "This Mac"]] + desktopHosts.map {
                 ["id": $0.target, "name": "Remote — \($0.name)"]
@@ -66,6 +67,7 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
         config.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "launchRequest")
         config.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "approval")
         config.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "runtimeSetup")
+        config.userContentController.addScriptMessageHandler(self, contentWorld: .page, name: "appUpdate")
     }
 
     func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
@@ -103,6 +105,23 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
                                didReceive message: WKScriptMessage,
                                replyHandler: @escaping (Any?, String?) -> Void) {
         let origin = message.frameInfo.securityOrigin
+        if message.name == "appUpdate" {
+            guard RuntimeSetupAccess.allows(expected: url, localPort: AppIdentity.localPort,
+                  target: desktopTarget, enabled: true, currentWebView: message.webView === web,
+                  mainFrame: message.frameInfo.isMainFrame, scheme: origin.protocol, host: origin.host, port: origin.port),
+                  let body = message.body as? [String: Any], Set(body.keys) == ["operation"],
+                  let operation = body["operation"] as? String,
+                  ["status", "check", "install", "cancel"].contains(operation),
+                  operation != "install" || (NSApp.isActive && window?.isKeyWindow == true),
+                  let handler = onAppUpdateRequest else {
+                replyHandler(nil, "Updates are available in the local DuckTerm Mac app."); return
+            }
+            Task { @MainActor in
+                do { replyHandler(try await handler(operation), nil) }
+                catch { replyHandler(nil, "The update action could not complete.") }
+            }
+            return
+        }
         if message.name == "runtimeSetup" {
             runtimeSetupRequest(message, origin: origin, replyHandler: replyHandler)
             return

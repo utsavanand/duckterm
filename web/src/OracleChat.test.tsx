@@ -133,7 +133,7 @@ it("turns an always sentence into a proposed rule, creates it on confirm, and st
   await act(async () => { fireEvent.keyDown(box, { key: "Enter" }); });
   expect(api.proposeRule).toHaveBeenCalledWith("Always approve pytest in Duckterm");
   expect(api.fleetAsk).not.toHaveBeenCalled();
-  expect(screen.getByText("Duckterm folder")).toBeVisible();
+  expect(screen.getByText("Duckterm workspace")).toBeVisible();
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Create rule" })); });
   expect(api.createRule).toHaveBeenCalledWith(rule);
   expect(screen.getByText(/Created R1: Approve pytest in Duckterm\./)).toBeVisible();

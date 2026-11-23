@@ -115,8 +115,11 @@ def test_inventory_and_local_override_survive_restart(isolated):
         try:
             server = Server(history=history, edition=editions.FULL)
             code, inventory = request(server, "GET", "/feature-flags")
-            assert code == 200 and len(inventory["flags"]) == 6
-            assert all(f["enabled"] and not f["default"] for f in inventory["flags"])
+            assert code == 200 and len(inventory["flags"]) == 8
+            assert all(
+                f["enabled"] == (f["id"] in release_features.FLAGS) and not f["default"]
+                for f in inventory["flags"]
+            )
             assert request(server, "GET", "/backup")[0] == 200
         finally:
             history.close()
@@ -204,24 +207,49 @@ def test_disabled_errors_distinguish_flags_from_edition(isolated, edition):
 
 @pytest.mark.parametrize("enabled", [False, True])
 def test_optional_cli_gate_uses_release_flags_over_legacy(isolated, monkeypatch, capsys, enabled):
-    # The kit parser/handler is pending in PR 420. Exercise main's real admission
-    # path with its future parser result, without running an installer.
-    from argparse import Namespace
+    from pathlib import Path
 
     from duckterm import cli
 
     monkeypatch.delenv("DUCKTERM_DESKTOP_PROFILE", raising=False)
+    monkeypatch.delenv("DUCKTERM_INSTANCE", raising=False)
     monkeypatch.setenv("DUCKTERM_EDITION", "full")
     (isolated / "flags.json").write_text(json.dumps({"enabled": [] if enabled else ["skill_kits"]}))
     configure(isolated, skill_kits=enabled)
-    parser = Mock()
-    parser.parse_args.return_value = Namespace(command="kit")
-    monkeypatch.setattr(cli, "build_parser", lambda: parser)
-    assert cli.main([]) == 1
+    sample = Path(__file__).resolve().parents[2] / "examples/skill-kits/sample-kit"
+    assert cli.main(["kit", "validate", str(sample)]) == (0 if enabled else 1)
     out = capsys.readouterr()
     if enabled:
-        assert "not implemented yet" in out.out + out.err
-        assert "disabled" not in out.err
+        assert "13 components" in out.out
+        assert not out.err
     else:
         assert "skill_kits is disabled by its feature flag" in out.err
         assert not out.out
+
+
+@pytest.mark.parametrize("preset", [editions.LITE, editions.CODE, editions.FULL])
+@pytest.mark.parametrize("release", [None, {}, {"skill_kits": False}, {"skill_kits": True}])
+def test_development_flags_survive_release_config_without_duplicate_rows(isolated, preset, release):
+    (isolated / "flags.json").write_text(json.dumps({"enabled": sorted(editions.DEVELOPMENT)}))
+    if release is not None:
+        configure(isolated, **release)
+    values, error = release_features.overrides()
+    effective = release_features.apply(editions._with_flags(preset), values)
+    assert effective.includes("home")
+    assert effective.includes("background_rule_suggestions")
+    assert effective.includes("skill_kits") == (release is None or release.get("skill_kits", False))
+    rows = release_features.inventory(effective, values, error)["flags"]
+    ids = [row["id"] for row in rows]
+    assert len(ids) == len(set(ids))
+    assert set(ids) == editions.DEVELOPMENT | release_features.FLAGS.keys()
+    assert all(row["enabled"] == effective.includes(row["id"]) for row in rows)
+    assert editions.request_features("GET", "/layouts/home") == ("home",)
+
+
+def test_flag_document_has_one_row_per_effective_flag():
+    from pathlib import Path
+
+    doc = Path(__file__).resolve().parents[2] / "docs/feature-flags.md"
+    text = doc.read_text()
+    for flag in editions.DEVELOPMENT | release_features.FLAGS.keys():
+        assert text.count(f"| `{flag}` |") == 1

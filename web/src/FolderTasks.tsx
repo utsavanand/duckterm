@@ -35,7 +35,7 @@ export function FolderTasks({ folder, onOpen }: { folder?: string; onOpen: (key:
   return <div className="rd-folder-tasks">
     {tasks && <div className="rd-task-counts"><span><strong>{scoped.filter(t => t.status === "in_progress").length}</strong> in progress</span><span><strong>{scoped.filter(t => t.status === "parked").length}</strong> parked</span></div>}
     <p>In progress first · oldest started first</p>
-    {!folder && <select aria-label="Task folder" value={selectedFolder} onChange={e => setSelectedFolder(e.target.value)}><option value="">All folders</option>{[...new Set((tasks ?? []).map(t => t.folder))].sort().map(f => <option key={f}>{f}</option>)}</select>}
+    {!folder && <select aria-label="Task workspace" value={selectedFolder} onChange={e => setSelectedFolder(e.target.value)}><option value="">All workspaces</option>{[...new Set((tasks ?? []).map(t => t.folder))].sort().map(f => <option key={f}>{f}</option>)}</select>}
     <select aria-label="Filter tasks" value={filter} onChange={e => setFilter(e.target.value)}><option value="open">In progress + parked</option><option value="in_progress">In progress</option><option value="parked">Parked</option><option value="done">Done</option><option value="all">All tasks</option></select>
     {error && <p role="alert">{error}{tasks && " · Showing last loaded tasks."} <button onClick={() => setRetry(n => n + 1)}>Retry</button></p>}
     {!tasks && !error && <p role="status">Loading tasks…</p>}

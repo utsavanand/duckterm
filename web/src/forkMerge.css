@@ -18,3 +18,5 @@
 @media(max-width:600px) { .rd-merge-label { display: block; } .rd-merge-label small { display: block; } .rd-merge-review footer button { flex: 1; } }
 
 @media(max-width:600px) { .rd-merge-review textarea { min-height: 140px; } .rd-merge-review p { margin: 8px 0; } }
+
+.rd-merge-memory h3 { font-size: 0.8125rem; margin: 12px 0 6px; }

@@ -14,7 +14,7 @@ describe("teams", () => {
       agent({ key: "c", group: "Nourish" }),
       agent({ key: "d" }),
     ]);
-    expect(t.map((x) => [x.name, x.agents.length])).toEqual([["Duckterm", 2], ["No folder", 1], ["Nourish", 1]]);
+    expect(t.map((x) => [x.name, x.agents.length])).toEqual([["Duckterm", 2], ["No workspace", 1], ["Nourish", 1]]);
   });
 });
 

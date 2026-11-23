@@ -120,7 +120,7 @@ export function HeaderMenus({ theme, onTheme, density, onDensity, notifyOn, onNo
         buttons[index]?.focus();
       }}>
         <button className="rd-header-menu-item" onClick={() => action("launch")}>New session</button>
-        <button className="rd-header-menu-item" onClick={() => action("folder")}>New folder</button>
+        <button className="rd-header-menu-item" onClick={() => action("folder")}>New workspace</button>
       </section>}
     </div>
   </div>;

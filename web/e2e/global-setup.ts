@@ -43,8 +43,8 @@ export default async function globalSetup() {
 
   const home = mkdtempSync(join(runRoot, "state-"));
   // Development flags are off for everyone by default; the e2e server turns
-  // them all on so flagged surfaces stay covered until they ship.
-  writeFileSync(join(home, "flags.json"), JSON.stringify({ enabled: DEVELOPMENT }));
+  // them on except Home, which replaces the starting page for these tests.
+  writeFileSync(join(home, "flags.json"), JSON.stringify({ enabled: DEVELOPMENT.filter(flag => flag !== "home") }));
 
   // Existing integration workflows deliberately exercise opt-in features.
   // The separate default-off run passes an empty list and tests real defaults.

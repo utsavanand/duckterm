@@ -56,7 +56,21 @@ def test_kit_routes_belong_to_the_skill_kits_flag():
     assert "skill_kits" not in editions.request_features("GET", "/sessions")
 
 
+def test_home_layout_belongs_to_the_home_flag():
+    assert editions.request_features("GET", "/layouts/home") == ("home",)
+    assert editions.request_features("PUT", "/layouts/home") == ("home",)
+    assert editions.request_features("PUT", "/layouts/%68ome") == ("home",)
+    assert editions.request_features("GET", "/layouts/oracle") == ()
+
+
 def test_every_flag_has_a_row_in_the_feature_flags_doc():
     text = DOC.read_text()
     for flag in editions.DEVELOPMENT:
         assert f"| `{flag}` |" in text, f"{flag} needs a row in {DOC.name}"
+
+
+def test_background_rule_capture_requires_explicit_flag(home):
+    assert not editions.configured().includes("background_rule_suggestions")
+    (home / "flags.json").write_text('{"enabled": ["background_rule_suggestions"]}')
+    assert editions.configured().includes("background_rule_suggestions")
+    assert editions.request_features("POST", "/agents-md/suggest") == ("rule_suggestions",)

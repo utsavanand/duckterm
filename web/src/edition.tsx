@@ -8,7 +8,8 @@ export type Feature =
   | "explorer" | "file_editing" | "git_changes" | "inbox" | "folder_chat" | "checkpoints"
   | "summaries" | "context" | "handoff" | "connectors" | "oracle" | "remote_workspaces"
   | "artifacts" | "pr_review" | "overview" | "rule_suggestions"
-  | "cross_computer_collaboration" | "skill_kits" | "harness_management" | "byok" | "byoc" | "backup";
+  | "cross_computer_collaboration" | "skill_kits" | "harness_management" | "byok" | "byoc" | "backup"
+  | "home" | "background_rule_suggestions";
 
 export type EditionState =
   | { status: "loading" }

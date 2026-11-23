@@ -29,7 +29,7 @@ Claude/Codex sessions and their existing sign-in continue to work.
 | Flag | Controls hidden and operations blocked while off |
 |------|--------------------------------------------------|
 | `cross_computer_collaboration` | Cross-computer collaboration setup and exchange. Local inbox remains available. |
-| `skill_kits` | Skill-kit management, installation and removal. |
+| `skill_kits` | Skill-kit management, installation and removal; `/harnesses` routes and `duckterm kit` validate/plan/install/verify/uninstall. |
 | `harness_management` | Harness installation and setup. Existing local harnesses remain usable. |
 | `byok` | API-key configuration and use, including deleting a saved key. Existing keys are retained; enable the flag to remove one through DuckTerm. |
 | `byoc` | Cloud/remote workspace management, including native Mac Settings controls. Available only in Full even when opted in. |
@@ -52,11 +52,17 @@ skill-kit opt-in; it does not enable any other release switch. An explicit false
 or an omitted switch in `feature-flags.json` disables it. No configuration is
 rewritten during this compatibility read.
 
+The inventory includes both release and development switches, once each.
+`home` and `background_rule_suggestions` still use `flags.json`; creating a
+release configuration does not disable or enable those separate switches.
+Skill kits remain experimental, but their row is listed only above.
+
 ## In development
 
 | Flag | What it gates | Since | Ships when |
 |------|---------------|-------|------------|
-| `skill_kits` | Settings → Skill kits (add a kit by folder, view its contents, remove it), the `/harnesses` routes, and the session panel's "Skill kit" row. Being built against the Skill Kit Specification (draft 8). | 2026-11-16 | The specification is approved and the install wizard is built. Owner's call. |
+| `home` | The Home page: the first page the dashboard opens on, a 12-column grid of movable widgets (Ask Oracle chat, Teams, Autopilot, pull requests, usage, Needs you), and `GET`/`PUT /layouts/home`. Layout is saved in `home-layout.json`. The Control Tower stays until Home replaces it. | 2026-11-19 | Owner has used it on real data, Autopilot has a backend to open, and the Control Tower is folded in. Owner's call. |
+| `background_rule_suggestions` | Reconcile original observations after checkpoints in Code/Full. Off by default; pending proposals and capture fingerprints stay in DuckTerm home under `rule-reviews/`, keyed by canonical directory path. The manual Suggest button is independent. | 2026-11-21 | Security and QA approve background capture. Owner’s call. |
 
 ## Graduated
 

@@ -104,6 +104,20 @@ def inventory(
                 "reason": error or reason,
             }
         )
+    from duckterm.editions import DEVELOPMENT
+
+    # Development-only switches retain flags.json semantics. skill_kits is
+    # already represented above with the release file's precedence.
+    for key in sorted(DEVELOPMENT - FLAGS.keys()):
+        rows.append(
+            {
+                "id": key,
+                "name": key.replace("_", " ").capitalize(),
+                "default": False,
+                "enabled": edition.includes(key),
+                "reason": "Development opt-in" if edition.includes(key) else "Development default",
+            }
+        )
     return {"restart_required": True, "flags": rows}
 
 

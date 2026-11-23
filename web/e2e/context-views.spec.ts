@@ -6,7 +6,8 @@ test("context tabs keep connectors reachable, preserve notes and follow the sele
   const key = await seedSession(`context-views-${Date.now()}`, { name: "Panel reviewer", runtime: "codex", test: true });
   await apiPatch(`/sessions/${key}`, { summary: "A populated session with enough detail to previously squeeze the connector list out of view. ".repeat(30) });
   try {
-    await page.route("**/connectors", route => route.fulfill({ json: { connectors: Array.from({ length: 6 }, (_, i) => ({ name: `local-${i}`, title: `Local connector ${i + 1}`, enabled: true, description: "Repository tools and account details. ".repeat(5), identity: "Local test account", managed: true })) } }));
+    // Enough rows to overflow the pane whatever a single row renders.
+    await page.route("**/connectors", route => route.fulfill({ json: { connectors: Array.from({ length: 24 }, (_, i) => ({ name: `local-${i}`, title: `Local connector ${i + 1}`, enabled: true, description: "Repository tools and account details. ".repeat(5), identity: "Local test account", managed: true })) } }));
     await page.addInitScript(() => {
       window.__rubbertermDesktop = { currentTarget: "local", targets: [{ id: "local", name: "This Mac" }, { id: "build", name: "Remote — Build server" }] };
       window.webkit = { messageHandlers: { launchRequest: { postMessage: async (message: unknown) => {
