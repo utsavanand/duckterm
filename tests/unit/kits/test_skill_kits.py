@@ -104,7 +104,7 @@ path = "flows/loop.json"
     assert any("env TOKEN must be a named variable" in m for m in messages)
     assert any("event must be one of" in m for m in messages)
     assert any("command 'hooks/missing.sh' does not exist" in m for m in messages)
-    assert any("route back to 'a' needs `max_loops`" in m for m in messages)
+    assert any("edge back to 'a' needs `max_loops`" in m for m in messages)
 
 
 def test_legacy_manifest_loads_with_no_components_and_a_rename_warning(tmp_path):
@@ -417,3 +417,82 @@ def test_kit_cli_is_behind_the_skill_kits_flag(tmp_path, monkeypatch, capsys):
     assert cli.main(["kit", "uninstall", "sample-kit", "--project", str(project)]) == 0
     assert "removed" in capsys.readouterr().out
     assert not (project / plan.RECORD).exists()
+
+
+def test_when_may_name_several_choices(tmp_path):
+    kit = _tiny_kit(
+        tmp_path,
+        """
+manifest_version = 1
+name = "whenkit"
+description = "when lists"
+version = "1.0.0"
+
+[options.persona]
+default = "a"
+choices = ["a", "b", "c"]
+
+[[components]]
+kind = "knowledge"
+path = "knowledge/notes.md"
+when = { persona = ["a", "b"] }
+
+[[components]]
+kind = "knowledge"
+path = "knowledge/other.md"
+when = { persona = ["a", "zzz"] }
+""",
+        {"knowledge/notes.md": "# notes\n", "knowledge/other.md": "# other\n"},
+    )
+    notes, other = kit.components
+    assert notes.applies("claude-code", {"persona": "a"})
+    assert notes.applies("claude-code", {"persona": "b"})
+    assert not notes.applies("claude-code", {"persona": "c"})
+    messages = [str(f) for f in validate.validate(kit)]
+    assert any("when.persona='zzz' is not a choice" in m for m in messages)
+    inactive = _statuses(
+        plan.build(kit, tmp_path / "p", ["claude-code"], {"persona": "c"}),
+        "whenkit/knowledge/notes",
+    )
+    assert inactive == {"claude-code": "not applicable"}
+
+
+def test_hooks_and_permissions_behind_an_option_install_when_it_is_chosen(tmp_path):
+    kit = _tiny_kit(
+        tmp_path,
+        """
+manifest_version = 1
+name = "optkit"
+description = "hooks and permissions behind an option"
+version = "1.0.0"
+
+[options.persona]
+default = "pro"
+choices = ["pro", "sport"]
+
+[[components]]
+kind = "hook"
+name = "guard"
+event = "before_tool"
+match = "shell"
+command = "hooks/guard.sh"
+blocking = true
+timeout = 5
+when = { persona = ["pro"] }
+
+[[components]]
+kind = "permission"
+name = "rules_pro"
+when = { persona = "pro" }
+rules = [ { tool = "shell", match = "rm -rf *", decision = "deny" } ]
+""",
+        {"hooks/guard.sh": "#!/bin/sh\nexit 0\n"},
+    )
+    (kit.root / "hooks" / "guard.sh").chmod(0o755)
+    pro = plan.build(kit, tmp_path / "p", ["claude-code"], {"persona": "pro"})
+    assert _statuses(pro, "optkit/hook/guard") == {"claude-code": "installed"}
+    assert _statuses(pro, "optkit/permission/rules_pro") == {"claude-code": "installed"}
+    assert any(p.path == ".claude/hooks/optkit/guard.sh" for p in pro.files())
+    sport = plan.build(kit, tmp_path / "p", ["claude-code"], {"persona": "sport"})
+    assert _statuses(sport, "optkit/hook/guard") == {"claude-code": "not applicable"}
+    assert not any("optkit/guard.sh" in p.path for p in sport.files())

@@ -38,9 +38,11 @@ Skill kits are behind the `skill_kits` development flag: the Settings item,
 the `/harnesses` routes and the "Skill kit" row exist only on an instance that
 has turned the flag on. See [feature-flags.md](feature-flags.md).
 
-Duckterm never runs a kit's own script (owner decision 2026-10-04). A kit is
+Installing never runs a kit's own script (owner decision 2026-10-04). A kit is
 installed declaratively: the manifest lists components, and the installer
 writes each one where the chosen harness reads it, or reports why it cannot.
+The one place a kit script runs is a flow's `exec` step, at run time, and only
+a script the install on this machine recorded (see Flows and the runner).
 The format is the Skill Kit Specification (`docs/specs/skill-kit-protocol-spec.md`
 on the spec branch); `examples/skill-kits/sample-kit` holds one of every
 component kind and is the kit the installer is tried on.
@@ -78,6 +80,9 @@ duckterm kit plan     <kit> --project . --harness claude-code --harness codex
 duckterm kit install  <kit> --project . [--harness …] [--option persona=sport] [--replace]
 duckterm kit verify   --project .                # every recorded file against its hash
 duckterm kit uninstall <name> --project .        # exactly what the record says, nothing else
+duckterm kit run <kit>/<flow> --project . [--harness claude-code|codex] [--input name=value]
+duckterm kit run --resume <run-id> [--gate <step> approve|reject]
+duckterm kit runs --project .                    # every run recorded here
 ```
 
 `plan` prints one row per component and one status per harness: *installed*,
@@ -132,6 +137,69 @@ segment (`[a-z0-9_-]`),
 and a kit's own sources must be real files under the kit root; a symlink
 anywhere on the way fails `validate`. Uninstall prunes only the directories
 the install created.
+
+**Flows and the runner.** `duckterm kit run <kit>/<flow>` runs an installed
+flow (spec §3.7, Part III). Install writes the flow file under
+`.duckterm/flows/<kit>/`, a `skills.json` beside it with every skill's declared
+outputs and effects and the hash of every script a flow `exec`s, and those
+scripts. Each `run`/`decide` step is a fresh non-interactive harness process
+(`claude -p --output-format json --json-schema …`, or `codex exec
+--output-schema …`); the runner asks for a typed result and validates it
+itself, retrying an invalid one twice with the error. A step is judged by its
+exit code first, never by the harness's own status field. `gate` pauses the
+run (exit 3) until `--resume … --gate <step> <answer>`; `parallel` runs
+read-only steps together; `wait` polls CI or review on the branch head through
+`gh` until pass, fail or its timeout; `exec` runs a kit script with the step's
+inputs as JSON on stdin and reads a typed result from its last stdout line.
+`next` sends a step somewhere other than the next in the list; any edge
+pointing backwards carries `max_loops`. Copilot and OpenCode steps are refused
+with the reason; Codex steps of a kit with hooks need `--codex-trusted`.
+
+What the runner believes. The flow file, `skills.json` and the scripts sit in
+the repository, so a clone or a pulled commit can rewrite all three together.
+The runner reads them only when each still hashes as the install record under
+`DUCKTERM_HOME/kits/records` says this machine wrote it; a project never
+installed here is refused with "run `duckterm kit install`", which shows the
+plan first. A flow named by path (`duckterm kit run path/to/flow.json`) is a
+local trial: its harness steps run, its `exec` steps are refused. A gate
+re-hashes what it showed when the answer arrives; a shown file that changed in
+between ends the run (`gate_shown_changed`), because a step's output was
+altered outside the runner. A step reading a file output (`{path, sha256}`)
+checks the hash again before it starts. Step ids match `[a-z0-9_-]{1,64}`
+(they name folders under `.duckterm/runs/`), run and attempt folders are
+refused through a symlink or outside the project, an `exec` file output must
+be a file under its own attempt folder, and a run file that names a flow by
+path does not resume.
+
+Run state is `.duckterm/runs/<run-id>/run.json`: `run_id`, `flow`
+(`<kit>/<name>`), `flow_hash`, `kit`, `harness`, `inputs`, `executor` (`local`;
+autopilot adds `executor_state`), `state` (`running` · `waiting_gate` ·
+`succeeded` · `failed`), `current` {step, attempt}, `steps_taken`, `loops`
+(back-edges taken per step), `attempts` (one record per attempt: step, attempt,
+kind, harness, status `started` · `completed` · `invalid` · `failed` ·
+`abandoned`, started_at, finished_at, exit, inputs_sha256, choice, reason,
+outputs {name: value | {path, sha256}}), `gates` (step, visit, question, show,
+shown_sha256, choices, asked_at, response) and `failure` {step, attempt,
+reason}. Each attempt owns `.duckterm/runs/<run-id>/<step>/<attempt>/`, where
+its file outputs and `workspace.diff` land; a stale file elsewhere is never
+taken for this attempt's work. A run holds a `lock` file while it is driven,
+is written atomically after every change, and resumes only at a step
+boundary: a started attempt without a receipt is rerun when read-only,
+and ends the run as `outcome_unknown` when it changed the workspace or acted
+outside it. A flow file that changed since the run started refuses to resume.
+
+The executor seam (`runner.Executor`): `run_process(argv, cwd, env, stdin,
+timeout)` runs the step's process (locally a subprocess in the project;
+autopilot wraps the same argv in `docker exec` with its proxy env),
+`after_step(run, attempt)` runs after a valid attempt and before its receipt
+is written (autopilot commits and pushes the run branch there, so a receipt
+always means the work is where the next attempt will find it), `check`
+answers `wait` steps, and `harness_ready(harness, project, hooks, limits)`
+says why a harness cannot run a step, or None: the host answers for a local
+run (binary on PATH, Claude Code workspace trust, `--codex-trusted`), a
+sandbox executor answers from inside the sandbox, where the harness and its
+trust record actually live. The runner itself checks only that the step's
+skill is installed in the project.
 
 The dashboard's **Skill kits** dialog still only lists kits by folder path and
 shows their contents; the install wizard on top of `plan`/`install` is next.

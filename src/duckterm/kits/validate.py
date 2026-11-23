@@ -4,6 +4,7 @@ nothing the kit ships is executed (§III.3)."""
 from __future__ import annotations
 
 import json
+import os
 import re
 import tomllib
 from collections.abc import Callable
@@ -101,12 +102,14 @@ def validate(kit: m.Kit) -> list[Finding]:
             for h in only:
                 if h not in m.HARNESSES:
                     err(cid, f"only.harness names unknown harness {h!r}")
-        for opt, choice in c.when.items():
+        for opt, choices in c.when.items():
             option = kit.options.get(opt)
             if option is None:
                 err(cid, f"when.{opt}: no such option")
-            elif choice not in (option.get("choices") or []):
-                err(cid, f"when.{opt}={choice!r} is not a choice of that option")
+                continue
+            for choice in choices:
+                if choice not in (option.get("choices") or []):
+                    err(cid, f"when.{opt}={choice!r} is not a choice of that option")
         if not m.COMPONENT_RE.match(c.name):
             err(cid, f"name {c.name!r} must match [a-z0-9_-], 1-64 chars; it becomes a path")
             continue
@@ -137,7 +140,7 @@ def validate(kit: m.Kit) -> list[Finding]:
         elif c.kind == "permission":
             _check_permission(c, cid, err, warn)
         elif c.kind == "flow":
-            _check_flow(kit, c, cid, err, skills)
+            _check_flow(kit, c, cid, err, warn, skills)
         elif c.kind == "settings":
             if c.fields.get("harness") not in m.HARNESSES:
                 err(cid, "settings needs `harness` naming one harness")
@@ -336,7 +339,12 @@ def _check_permission(c: m.Component, cid: str, err: Report, warn: Report) -> No
 
 
 def _check_flow(
-    kit: m.Kit, c: m.Component, cid: str, err: Report, skills: dict[str, m.Component]
+    kit: m.Kit,
+    c: m.Component,
+    cid: str,
+    err: Report,
+    warn: Report,
+    skills: dict[str, m.Component],
 ) -> None:
     if not c.path:
         err(cid, "flow needs `path`")
@@ -351,19 +359,50 @@ def _check_flow(
         err(cid, "flow needs a non-empty `steps` list")
         return
     ids = [str(s.get("id")) for s in steps if isinstance(s, dict)]
-    if len(set(ids)) != len(ids):
+    members = [
+        (i, str(sub.get("id")))
+        for i, s in enumerate(steps)
+        if isinstance(s, dict) and isinstance(s.get("parallel"), list)
+        for sub in s["parallel"]
+        if isinstance(sub, dict)
+    ]
+    if len(set(ids) | {m for _, m in members}) != len(ids) + len(members):
         err(cid, "step ids must be unique")
+    # a parallel member sits at its group's position: a later step may read it
     order = {sid: i for i, sid in enumerate(ids)}
+    order.update({m: i for i, m in members})
     targets = set(ids) | {"end", "fail"}
     for s in steps:
         if not isinstance(s, dict):
             continue
         sid = str(s.get("id"))
-        kinds = [k for k in ("run", "decide", "gate", "parallel") if k in s]
+        if not m.STEP_ID_RE.match(sid):
+            err(cid, f"step {sid!r}: id must match {m.STEP_ID_RE.pattern} (it names a folder)")
+            continue
+        kinds = [k for k in ("run", "decide", "gate", "parallel", "wait", "exec") if k in s]
         if len(kinds) != 1:
-            err(cid, f"step {sid}: exactly one of run / decide / gate / parallel")
+            err(cid, f"step {sid}: exactly one of run / decide / gate / parallel / wait / exec")
             continue
         kind = kinds[0]
+        if kind == "exec":
+            problem = _outside(kit, str(s["exec"]))
+            if problem:
+                err(cid, f"step {sid}: exec {s['exec']!r} {problem}")
+            elif not os.access(kit.root / str(s["exec"]), os.X_OK):
+                err(cid, f"step {sid}: exec {s['exec']!r} is not executable")
+            if s.get("effects", "read-only") not in ("read-only", "workspace", "external"):
+                err(cid, f"step {sid}: effects must be read-only, workspace or external")
+            if not isinstance(s.get("args", []), list):
+                err(cid, f"step {sid}: args must be a list")
+        if kind == "wait":
+            spec = s["wait"] if isinstance(s["wait"], dict) else {}
+            if spec.get("check") not in ("ci", "review"):
+                err(cid, f"step {sid}: wait.check must be ci or review")
+            if "timeout" not in s:
+                err(cid, f"step {sid}: wait needs `timeout`")
+            for outcome in ("pass", "fail", "timeout"):
+                if outcome not in (s.get("routes") or {}):
+                    err(cid, f"step {sid}: wait must route {outcome!r}")
         if kind in ("run", "decide"):
             skill = skills.get(str(s[kind]))
             if skill is None:
@@ -373,29 +412,50 @@ def _check_flow(
         if kind == "parallel":
             subs = s["parallel"] if isinstance(s["parallel"], list) else []
             for sub in subs:
+                mid = str(sub.get("id"))
+                if not m.STEP_ID_RE.match(mid):
+                    err(cid, f"step {sid}: member id {mid!r} must match {m.STEP_ID_RE.pattern}")
                 skill = skills.get(str(sub.get("run") or sub.get("decide")))
                 if skill is None or skill.fields.get("effects", "workspace") != "read-only":
                     err(cid, f"step {sid}: parallel steps must run read-only skills")
         routes = s.get("routes")
-        if kind in ("decide", "gate") and routes is not None:
+        edges: list[Any] = []
+        if routes is not None:
             if not isinstance(routes, dict):
                 err(cid, f"step {sid}: routes must be a table")
                 continue
-            if kind == "decide" and "default" not in s:
-                err(cid, f"step {sid}: decide needs `default`")
-            back = [t for t in routes.values() if t in order and order[str(t)] <= order.get(sid, 0)]
-            if back and not isinstance(s.get("max_loops"), int):
-                err(cid, f"step {sid}: a route back to {back[0]!r} needs `max_loops`")
-            for target in routes.values():
-                if str(target) not in targets:
-                    err(cid, f"step {sid}: route to unknown step {target!r}")
+            if kind in ("run", "parallel"):
+                err(cid, f"step {sid}: {kind} steps do not route; use `next`")
+            if kind in ("decide", "exec") and "default" not in s:
+                err(cid, f"step {sid}: {kind} with routes needs `default`")
+            edges = list(routes.values())
+        if s.get("next") is not None:
+            if routes is not None:
+                err(cid, f"step {sid}: `next` and `routes` cannot both be set")
+            edges.append(s["next"])
+        back = [t for t in edges if t in order and order[str(t)] <= order.get(sid, 0)]
+        if back and not isinstance(s.get("max_loops"), int):
+            err(cid, f"step {sid}: an edge back to {back[0]!r} needs `max_loops`")
+        if not back and "max_loops" in s:
+            warn(cid, f"step {sid}: max_loops without an edge back")
+        for target in edges:
+            if str(target) not in targets:
+                err(cid, f"step {sid}: edge to unknown step {target!r}")
         for ref in _refs(s.get("with")):
+            optional = ref.endswith("?")
+            ref = ref[:-1] if optional else ref
             if ref.startswith("steps."):
                 parts = ref.split(".")
-                if len(parts) < 4 or parts[1] not in order or parts[2] != "outputs":
+                if len(parts) != 4 or parts[1] not in order or parts[2] != "outputs":
                     err(cid, f"step {sid}: unresolvable reference {ref!r}")
-            elif not ref.startswith(("inputs.", "workspace.")):
-                err(cid, f"step {sid}: reference {ref!r} must start with steps./inputs./workspace.")
+                elif not optional and order[parts[1]] >= order.get(sid, 0):
+                    err(cid, f"step {sid}: reference {ref!r} may not have run yet; add `?`")
+            elif ref != "workspace.diff" and not ref.startswith("inputs."):
+                err(
+                    cid,
+                    f"step {sid}: reference {ref!r} must be steps.<id>.outputs.<name>, "
+                    "inputs.<name> or workspace.diff",
+                )
 
 
 def _has_choice(skill: m.Component) -> bool:

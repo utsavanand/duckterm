@@ -237,16 +237,17 @@ def build(
 def _why_inactive(c: m.Component, chosen: list[str], opts: dict[str, str]) -> str:
     if c.only_harness and not set(c.only_harness) & set(chosen):
         return f"only for {', '.join(c.only_harness)}"
-    return "option " + ", ".join(f"{k}={v}" for k, v in c.when.items()) + " not chosen"
+    return "option " + ", ".join(f"{k}={'|'.join(v)}" for k, v in c.when.items()) + " not chosen"
 
 
 def _dedupe(placements: list[adapters.Placement]) -> list[adapters.Placement]:
-    """One shim per kit directory, one CLAUDE.md import, one copy per path."""
+    """One write per path: the shim, a kit's skills.json and exec scripts are
+    placed once per component that needs them and kept once."""
     seen: set[tuple[str, str]] = set()
     out = []
     for p in placements:
         key = (p.op, p.path) if p.op in ("write", "copy-tree", "claude-import") and p.path else None
-        if key and p.op != "write" or key and p.path.endswith(adapters.SHIM_NAME):
+        if key:
             if key in seen:
                 continue
             seen.add(key)
