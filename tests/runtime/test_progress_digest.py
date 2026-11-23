@@ -370,7 +370,9 @@ def test_checkpoint_refresh_captures_rules_across_thread_boundary(
                 assert not state["proposals"]
                 expected = "owner-save" if capture_result == "stale" else ""
                 assert state["capture_fingerprint"] == expected
-                assert "rule capture failed: ValueError" in capsys.readouterr().err
+                stderr = capsys.readouterr().err
+                assert "rule capture failed: ValueError" in stderr
+                assert "Preserve checks." not in stderr
             assert server.history.session(key)["progress"]
             assert (workdir / ".duckterm-rules.json").read_bytes() == before
             assert (workdir / "AGENTS.md").read_bytes() == markdown
