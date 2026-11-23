@@ -1,3 +1,23 @@
+## 2026-11-22 — One flag gated two unrelated things, in three places
+
+Disable on the GitHub connector blanked the pull request view and the
+repository browser, both of which told the owner to enable a connector they
+had just turned off on purpose. review/github.py and github_projects.py each
+read connectors.policy("github")["enabled"] before fetching the credential.
+
+That flag means "agents may use this". Duckterm reading the owner's own token
+for its own features is the other door, and it never needed the flag. A test
+had frozen the wrong behaviour in place -- it asserted the browser refuses
+when the flag is off -- so the bug was protected rather than caught.
+
+The lesson is about tests, not the gate. A test that encodes a behaviour makes
+that behaviour expensive to change, which is the point, but it means an
+incorrect test defends an incorrect product. When the owner's decision changed
+the test had to be inverted, not deleted: the credential check next to it was
+still right, and deleting the whole test would have dropped that too. Both new
+tests were mutation-checked by restoring the gates; each failed, and the
+credential tests kept passing, which is what proves they test different things.
+
 ## 2026-11-17 — Installer handoff lost terminal input
 
 The setup helper allocated a PTY, but piped the downloaded installer into its

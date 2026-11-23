@@ -62,14 +62,27 @@ def test_catalog_uses_selected_authorization_and_explicit_pagination(monkeypatch
     }
 
 
-def test_disabled_connector_does_not_fall_back_to_cli_login(monkeypatch):
+def test_withdrawing_from_agents_leaves_the_repository_browser_working(monkeypatch):
+    """Off means off for agents only -- Duckterm keeps using the credential.
+
+    The policy flag used to gate this too, so Disable blanked the repository
+    browser and told the owner to enable a connector they had just turned off
+    on purpose. One flag was standing for two independent decisions.
+    """
     from duckterm import connectors
 
-    monkeypatch.setattr(connectors, "policy", lambda _: {"enabled": False})
-    monkeypatch.setattr(
-        connectors, "github_token", lambda _: pytest.fail("disabled credential read")
-    )
-    with pytest.raises(ValueError, match="Enable"):
+    monkeypatch.setattr(connectors, "policy", lambda _: {"enabled": False, "source": "gh-cli"})
+    monkeypatch.setattr(connectors, "github_token", lambda _: ("ghp_owner", "gh-cli"))
+    assert g.local_token() == ("ghp_owner", {"enabled": False, "source": "gh-cli"})
+
+
+def test_repository_browser_still_needs_a_credential(monkeypatch):
+    """Dropping the policy gate must not drop the credential check with it."""
+    from duckterm import connectors
+
+    monkeypatch.setattr(connectors, "policy", lambda _: {"enabled": True, "source": "gh-cli"})
+    monkeypatch.setattr(connectors, "github_token", lambda _: None)
+    with pytest.raises(ValueError, match="Reconnect"):
         g.local_token()
 
 
