@@ -1,3 +1,11 @@
+## 2026-11-19 — Quote text alone cannot identify its source message
+
+A saved comment highlighted matching text in every later reply because it stored
+only the selected words. Preserve the stable source message key with each new
+comment and validate that source before saving. Keep old text-only comments
+readable, but do not guess when multiple messages match. Verify both the original
+highlight after reload and the absence of highlights on later repeated text.
+
 ## 2026-11-19 — Bug reports omitted the harness version needed to diagnose compatibility
 
 ## 2026-11-19 — Bug reports omitted the affected running session
