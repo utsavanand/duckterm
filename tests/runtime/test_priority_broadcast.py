@@ -222,7 +222,7 @@ def test_a_nudge_that_did_not_submit_is_not_delivered(scenario, monkeypatch, out
         lambda key: FakeSupervisor(CLAUDE_EMPTY) if key == "claude" else None,
     )
 
-    async def not_submitted(key, text):
+    async def not_submitted(key, text, **_kw):
         return outcome
 
     monkeypatch.setattr(server, "_submit_prompt", not_submitted)
@@ -416,7 +416,7 @@ def test_merge_delivered_follows_the_idle_reminders_result(scenario, monkeypatch
         lambda key: FakeSupervisor(CLAUDE_EMPTY) if key == "claude" else None,
     )
 
-    async def submit(key, text):
+    async def submit(key, text, **_kw):
         return outcome
 
     monkeypatch.setattr(server, "_submit_prompt", submit)
@@ -452,7 +452,7 @@ def test_a_summary_cancelled_while_oracle_pastes_is_not_delivered(scenario, monk
         lambda key: FakeSupervisor(CLAUDE_EMPTY) if key == "claude" else None,
     )
 
-    async def cancelled_mid_paste(key, text):
+    async def cancelled_mid_paste(key, text, **_kw):
         history.session_api.cancel_broadcast("merge:peer:1")
         return "submitted"
 

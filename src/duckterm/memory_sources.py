@@ -1,4 +1,4 @@
-"""Read exact native conversations; retained bytes live with existing checkpoints."""
+"""Read exact native conversations; retained records live with existing checkpoints."""
 
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import json
 import os
 import re
 import tempfile
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -22,7 +23,15 @@ MAX_TEXT_BYTES = 64 * 1024 * 1024
 # Codex compaction metadata can exceed 8 MiB even with little parsed text.
 # Bound each JSON allocation independently of the accumulated text budget.
 MAX_LINE_BYTES = 16 * 1024 * 1024
+# Top-level type only: Codex writes {"timestamp":…,["ordinal":…,]"type":"compacted",…}.
+# Leading fields must be scalars, so a "type" nested in an object never matches.
+COMPACTED = re.compile(rb'\{(?:\s*"\w+"\s*:\s*(?:"[^"\\]*"|-?\d+)\s*,)*\s*"type"\s*:\s*"compacted"')
 NORMALIZATION = "native-blocks-v2"
+# A retained version keeps the extracted records, not the native bytes: raw files
+# carry metadata, hidden reasoning and Codex compaction copies (a 521 MB rollout
+# held 1.15 MB of text). The version is still the digest of the native bytes, so
+# evidence handles stay the same; the records carry their own digest.
+RECORDS_FORMAT = "records-v1"
 
 
 def directory(key: str) -> Path:
@@ -120,13 +129,152 @@ def snapshot_file(key: str, snapshot: str) -> tuple[Path, int | None]:
     raise APIError(409, "Retained conversation reference cycle")
 
 
-def _replace_with_pointer(
-    key: str, source: dict[str, Any], version: str, prefixes: dict[int, str]
-) -> None:
-    """Keep one whole copy per conversation: point the previous copy at this one."""
+def _record_line(record: dict[str, Any]) -> bytes:
+    # Most messages have no tool blocks, so their summary text is the text itself.
+    stored = {k: v for k, v in record.items() if not (k == "summary_text" and v == record["text"])}
+    return (json.dumps(stored, ensure_ascii=False, separators=(",", ":")) + "\n").encode()
+
+
+def _records_file(key: str, snapshot: str) -> tuple[Path, dict[str, Any] | None] | None:
+    """A version's records copy and, when it is a prefix of a newer one, its pointer.
+
+    None means the version was retained as native bytes (before records-v1).
+    """
+    root = directory(key)
+    path = root / (snapshot + ".records")
+    if path.exists() or path.is_symlink():
+        return path, None
+    try:
+        value = json.loads((root / (snapshot + ".records-prefix")).read_text())
+    except FileNotFoundError:
+        return None
+    except (OSError, ValueError) as exc:
+        raise APIError(409, "Retained conversation is unavailable") from exc
+    if (
+        not isinstance(value, dict)
+        or not isinstance(value.get("of"), str)
+        or not re.fullmatch(r"[a-f0-9]{64}", value["of"])
+        or not isinstance(value.get("sha256"), str)
+        or any(
+            type(value.get(field)) is not int or value[field] < 0
+            for field in ("records", "bytes", "unprocessed_attachments")
+        )
+    ):
+        raise APIError(409, "Invalid retained conversation reference")
+    return root / (value["of"] + ".records"), value
+
+
+def _read_records(key: str, snapshot: str, bound: Any) -> dict[str, Any] | None:
+    """Read a version's records, checked against the digest its reference holds.
+
+    The file's own checksum only catches damage: anyone who can rewrite the file
+    can rewrite that too. The reference saved in the database binds the content.
+    A reference from before records-v1 has no digest; it reads the raw copy it
+    was made against, verified by the native digest, even when the same version
+    was later saved again as records.
+    """
+    found = _records_file(key, snapshot) if bound is not None else None
+    if found is None:
+        return None
+    path, pointer = found
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        with os.fdopen(fd, "rb") as stream:
+            if os.fstat(stream.fileno()).st_size > 4 * MAX_TEXT_BYTES:
+                raise APIError(413, "Conversation text exceeds the current read bound")
+            header, *lines = stream.readlines()
+            meta = json.loads(header)
+    except (OSError, ValueError) as exc:
+        raise APIError(409, "Retained conversation is unavailable") from exc
+    if (
+        not isinstance(meta, dict)
+        or meta.get("format") != RECORDS_FORMAT
+        or meta.get("version") != (snapshot if pointer is None else pointer["of"])
+    ):
+        raise APIError(409, "Retained conversation checksum does not match")
+    count, digest = (
+        (meta["records"], meta["sha256"])
+        if pointer is None
+        else (pointer["records"], pointer["sha256"])
+    )
+    if (
+        (len(lines) != count if pointer is None else len(lines) < count)
+        or hashlib.sha256(b"".join(lines[:count])).hexdigest() != digest
+        or digest != bound
+    ):
+        raise APIError(409, "Retained conversation checksum does not match")
+    records = []
+    for line in lines[:count]:
+        try:
+            record = json.loads(line)
+        except ValueError as exc:
+            raise APIError(409, "Retained conversation has an unreadable record") from exc
+        if not isinstance(record, dict) or not all(
+            isinstance(record.get(field), str) for field in ("id", "role", "text")
+        ):
+            raise APIError(409, "Retained conversation has an unreadable record")
+        record.setdefault("summary_text", record["text"])
+        records.append(record)
+    sizes = meta if pointer is None else pointer
+    return {
+        "path": path,
+        "records": records,
+        "records_sha256": digest,
+        "bytes": sizes["bytes"],
+        "unprocessed_attachments": sizes["unprocessed_attachments"],
+        "normalization": meta["normalization"],
+    }
+
+
+def retained_path(key: str, snapshot: str, bound: str | None) -> Path:
+    """The file a retained version is read from, for cache fences.
+
+    Chosen exactly as _read_records does: a reference without a records digest
+    reads the raw copy even when the version was later also saved as records.
+    """
+    found = _records_file(key, snapshot) if bound is not None else None
+    return found[0] if found is not None else snapshot_file(key, snapshot)[0]
+
+
+def _retain_records(
+    key: str,
+    source: dict[str, Any],
+    version: str,
+    size: int,
+    attachments: int,
+    records: list[dict[str, Any]],
+    prefixes: dict[int, str],
+) -> str:
+    """Write one version's records and return their digest for the reference.
+
+    Keeps one whole copy per growing conversation.
+    """
     import fcntl
 
     root = directory(key)
+    lines = [_record_line(record) for record in records]
+    meta = {
+        "format": RECORDS_FORMAT,
+        "version": version,
+        "bytes": size,
+        "unprocessed_attachments": attachments,
+        "normalization": NORMALIZATION,
+        "records": len(lines),
+        "sha256": hashlib.sha256(b"".join(lines)).hexdigest(),
+    }
+    destination = root / (version + ".records")
+    if destination.is_symlink():
+        raise APIError(409, "Retained conversation must not be a symbolic link")
+    fd, name = tempfile.mkstemp(prefix=".capture-", dir=root)
+    try:
+        with os.fdopen(fd, "wb") as output:
+            output.write((json.dumps(meta) + "\n").encode())
+            output.writelines(lines)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(name, destination)
+    finally:
+        Path(name).unlink(missing_ok=True)
     identity = source["runtime"] + ":" + source["native_id"]
     with (root / "latest.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
@@ -136,31 +284,63 @@ def _replace_with_pointer(
         except (OSError, ValueError):
             index = {}
         previous = index.get(identity)
+        # Raw-byte versions from before records-v1 are left as they are.
         if (
             isinstance(previous, dict)
+            and previous.get("format") == RECORDS_FORMAT
             and previous.get("digest") != version
             and prefixes.get(previous.get("bytes", -1)) == previous.get("digest")
         ):
-            old = root / (previous["digest"] + ".jsonl")
-            pointer = old.with_suffix(".prefix")
-            private_write(pointer, json.dumps({"of": version, "bytes": previous["bytes"]}))
-            # Re-aim older pointers at the whole copy, so every version is one
-            # hop away; otherwise a year of checkpoints is a chain of thousands.
-            # Each rewrite is atomic and either target still reads correctly.
-            for other in root.glob("*.prefix"):
-                try:
-                    value = json.loads(other.read_text())
-                except (OSError, ValueError):
-                    continue
-                if isinstance(value, dict) and value.get("of") == previous["digest"]:
-                    private_write(other, json.dumps({**value, "of": version}))
-            # The pointers exist before the copy goes, so a reader always finds one.
-            old.unlink(missing_ok=True)
-        index[identity] = {"digest": version, "bytes": max(prefixes) if prefixes else 0}
+            old = root / (previous["digest"] + ".records")
+            count = previous["records"]
+            digest = hashlib.sha256(b"".join(lines[:count])).hexdigest()
+            try:
+                with old.open("rb") as stream:
+                    same = json.loads(stream.readline()).get("sha256") == digest
+            except (OSError, ValueError):
+                same = False
+            if same:
+                pointer = {
+                    "of": version,
+                    "records": count,
+                    "sha256": digest,
+                    "bytes": previous["bytes"],
+                    "unprocessed_attachments": previous["unprocessed_attachments"],
+                }
+                private_write(old.with_suffix(".records-prefix"), json.dumps(pointer))
+                # Re-aim older pointers at the whole copy, so every version is one
+                # hop away; their counts and digests hold because it extends theirs.
+                for other in root.glob("*.records-prefix"):
+                    try:
+                        value = json.loads(other.read_text())
+                    except (OSError, ValueError):
+                        continue
+                    if isinstance(value, dict) and value.get("of") == previous["digest"]:
+                        private_write(other, json.dumps({**value, "of": version}))
+                # The pointers exist before the copy goes, so a reader always finds one.
+                old.unlink(missing_ok=True)
+        index[identity] = {
+            "format": RECORDS_FORMAT,
+            "digest": version,
+            "bytes": size,
+            "records": len(lines),
+            "unprocessed_attachments": attachments,
+        }
         fd, name = tempfile.mkstemp(prefix=".latest-", dir=root)
         with os.fdopen(fd, "w") as stream:
             json.dump(index, stream)
         os.replace(name, index_path)
+    return str(meta["sha256"])
+
+
+def _timestamp(value: Any) -> int | None:
+    """A native line's ISO-8601 timestamp in epoch ms; None when absent or unreadable."""
+    if not isinstance(value, str):
+        return None
+    try:
+        return int(datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp() * 1000)
+    except ValueError:
+        return None
 
 
 def read_native(key: str, source: dict[str, Any], *, retain: bool = False) -> dict[str, Any]:
@@ -170,6 +350,20 @@ def read_native(key: str, source: dict[str, Any], *, retain: bool = False) -> di
     if snapshot is not None:
         if not isinstance(snapshot, str) or not re.fullmatch(r"[a-f0-9]{64}", snapshot):
             raise APIError(409, "Invalid retained conversation reference")
+        stored = _read_records(key, snapshot, source.get("records_sha256"))
+        if stored is not None:
+            return {
+                **source,
+                "version": snapshot,
+                "path": str(stored["path"]),
+                "fence": None,
+                "records": stored["records"],
+                "records_sha256": stored["records_sha256"],
+                "bytes": stored["bytes"],
+                "unprocessed_attachments": stored["unprocessed_attachments"],
+                "coverage": "parsed_text_and_tool_records",
+                "normalization": stored["normalization"],
+            }
         path, limit = snapshot_file(key, snapshot)
     else:
         path, limit = native_path(source), None
@@ -184,19 +378,14 @@ def read_native(key: str, source: dict[str, Any], *, retain: bool = False) -> di
         from duckterm.runtimes.codex import _parse_message_lines as parser
     else:
         raise APIError(409, "Memory reader is unavailable for this harness")
-    temporary = None
-    output = None
-    if retain and snapshot is None:
-        fd, name = tempfile.mkstemp(prefix=".capture-", dir=directory(key))
-        temporary = Path(name)
-        output = os.fdopen(fd, "wb")
+    retaining = retain and snapshot is None
     records = []
     digest = hashlib.sha256()
     size = text_size = attachments = 0
     end = before[2] if limit is None else min(limit, before[2])
     # Digests at line boundaries let a retained copy prove an older one is its prefix.
     previous_sizes: set[int] = set()
-    if output is not None:
+    if retaining:
         try:
             latest = json.loads((directory(key) / "latest.json").read_text())
             entry = latest.get(source["runtime"] + ":" + source["native_id"], {})
@@ -221,12 +410,26 @@ def read_native(key: str, source: dict[str, Any], *, retain: bool = False) -> di
             while size < end and (raw := stream.readline(min(MAX_LINE_BYTES + 1, end - size))):
                 size += len(raw)
                 if len(raw) > MAX_LINE_BYTES:
-                    raise APIError(413, "Conversation record exceeds the current read bound")
+                    if source["runtime"] != "codex" or not COMPACTED.match(raw[:512]):
+                        raise APIError(413, "Conversation record exceeds the current read bound")
+                    # Codex's compaction copy of the conversation is never parsed;
+                    # stream it through the hash in bounded chunks. Lines of
+                    # 16-23 MB made a 1.5 GB ui-dev history unreadable (2026-11-17).
+                    while True:
+                        digest.update(raw)
+                        if raw.endswith(b"\n") or size >= end:
+                            break
+                        raw = stream.readline(min(MAX_LINE_BYTES + 1, end - size))
+                        if not raw:
+                            break
+                        size += len(raw)
+                    if size in previous_sizes:
+                        prefixes[size] = digest.hexdigest()
+                    index += 1
+                    continue
                 digest.update(raw)
                 if size in previous_sizes:
                     prefixes[size] = digest.hexdigest()
-                if output is not None:
-                    output.write(raw)
                 if not raw.strip():
                     index += 1
                     continue
@@ -314,6 +517,9 @@ def read_native(key: str, source: dict[str, Any], *, retain: bool = False) -> di
                                     else message["role"]
                                 ),
                                 "text": text,
+                                # When the harness wrote it, in ms; automatic
+                                # checkpoints skip messages written while off.
+                                "at": _timestamp(obj.get("timestamp")),
                                 "summary_text": flatten(
                                     {
                                         "blocks": [
@@ -339,19 +545,11 @@ def read_native(key: str, source: dict[str, Any], *, retain: bool = False) -> di
         version = digest.hexdigest()
         if snapshot is not None and version != snapshot:
             raise APIError(409, "Retained conversation checksum does not match")
-        if output is not None:
-            output.flush()
-            os.fsync(output.fileno())
-            output.close()
-            output = None
-            destination = directory(key) / (version + ".jsonl")
-            if destination.is_symlink():
-                raise APIError(409, "Retained conversation must not be a symbolic link")
-            assert temporary is not None
-            os.replace(temporary, destination)
-            temporary = None
-            prefixes[size] = version
-            _replace_with_pointer(key, source, version, prefixes)
+        bound = (
+            _retain_records(key, source, version, size, attachments, records, prefixes)
+            if retaining
+            else None
+        )
         return {
             **source,
             "version": version,
@@ -364,12 +562,7 @@ def read_native(key: str, source: dict[str, Any], *, retain: bool = False) -> di
             "unprocessed_attachments": attachments,
             "coverage": "parsed_text_and_tool_records",
             "normalization": NORMALIZATION,
-            **({"snapshot": version} if retain else {}),
+            **({"snapshot": version, "records_sha256": bound} if retaining else {}),
         }
     except OSError as exc:
         raise APIError(409, "Conversation could not be read or retained") from exc
-    finally:
-        if output is not None:
-            output.close()
-        if temporary is not None:
-            temporary.unlink(missing_ok=True)

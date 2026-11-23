@@ -185,3 +185,76 @@ def test_agents_md_refuses_paths_outside_home(tmp_path: Path) -> None:
     write_status, read_status = asyncio.run(scenario())
     assert write_status == 400
     assert read_status == 400
+
+
+def test_handwritten_file_and_symlinks_are_protected_over_http(tmp_path, monkeypatch):
+    monkeypatch.setenv("DUCKTERM_HOME", str(tmp_path / "home"))
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    original = "Handwritten instruction.\n"
+    (repo / "AGENTS.md").write_text(original)
+
+    async def scenario():
+        store = HistoryStore(tmp_path / "db.sqlite")
+        server = Server(history=store)
+        srv = await asyncio.start_server(server.handle, "127.0.0.1", 0)
+        port = srv.sockets[0].getsockname()[1]
+
+        async def request(method, url, data=None):
+            payload = json.dumps(data or {}).encode()
+            return await _request(
+                port,
+                (
+                    f"{method} {url} HTTP/1.1\r\nHost: localhost\r\n"
+                    f"X-Duckterm-Token: {server.token}\r\nContent-Length: {len(payload)}\r\n\r\n"
+                ).encode()
+                + payload,
+            )
+
+        try:
+            async with srv:
+                payload = {
+                    "dir": str(repo),
+                    "rules": [
+                        {"id": "new", "text": "New reviewed instruction.", "status": "active"}
+                    ],
+                }
+                status, _ = await request("POST", "/agents-md", payload)
+                assert status == 409
+                assert (repo / "AGENTS.md").read_text() == original
+                status, state = await request("GET", f"/agents-md?dir={repo}")
+                assert status == 200 and state["drift"]
+                status, _ = await request(
+                    "POST",
+                    "/agents-md",
+                    {
+                        **payload,
+                        "version": state["version"],
+                        "reconcile_drift": True,
+                    },
+                )
+                assert status == 200
+                assert next(repo.glob("AGENTS.md.before-*")).read_text() == original
+                # No endpoint may follow either source symlink, even inside home.
+                for name in ("AGENTS.md", ".duckterm-rules.json"):
+                    target = tmp_path / "secret"
+                    target.write_text("DO NOT DISCLOSE")
+                    path = repo / name
+                    before = path.read_bytes()
+                    path.unlink()
+                    path.symlink_to(target)
+                    for method, url, data in (
+                        ("GET", f"/agents-md?dir={repo}", None),
+                        ("POST", "/agents-md", {**payload, "reconcile_drift": True}),
+                        ("POST", "/agents-md/suggest", {"dir": str(repo)}),
+                    ):
+                        status, response = await request(method, url, data)
+                        assert status == 400
+                        assert "DO NOT DISCLOSE" not in json.dumps(response)
+                    assert target.read_text() == "DO NOT DISCLOSE"
+                    path.unlink()
+                    path.write_bytes(before)
+        finally:
+            store.close()
+
+    asyncio.run(scenario())

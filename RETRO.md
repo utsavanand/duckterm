@@ -11,6 +11,458 @@ Keep sanitized versions and explicit probe failures in the same redacted item
 the Mac app exports, and test the native diagnostics.txt output. Label these as
 installed versions at report time, not proof of the version in an existing session.
 
+## 2026-11-22 — I verified three suites and called a PR green with five
+
+Removing Railway and Porkbun from connectors.py broke two CI jobs I never ran.
+mypy failed on connector_broker.py calling the deleted porkbun_keys_valid, and
+Playwright failed on three connectors-panel tests written against the old
+panel. I had run pytest, the connector runtime tests and vitest, seen green,
+and reported the PR as ready pending a screenshot review.
+
+Two separate causes, both mine. I did not know web/e2e existed, because I
+searched for the panel's tests where I was already working (web/src) and found
+Connectors.test.tsx, which looked like the answer. And I skipped the broker on
+purpose to avoid conflicting with #432 -- but deleting a function and leaving
+its only caller is not avoiding a conflict, it is shipping a broken build.
+Once NAMES was ("github",) the porkbun and railway branches were unreachable
+by construction, so removing them was part of the same change, not a separate
+one.
+
+Three things to carry forward. Run scripts/gate.sh bare, which runs all five
+suites, rather than assembling my own subset and calling the result green --
+the subset is exactly where the blind spot lives. Pin tool versions before
+drawing conclusions from them: unpinned mypy 1.19.1 and ruff 0.17.6 invented
+six errors and fourteen reformats in files I had never touched, and I reported
+those as main's problem before noticing pyproject pins 1.13.0 and 0.8.4. And
+when deleting a symbol, grep the whole tree for its callers before deciding
+which files are in scope.
+
+One more, about reading evidence: a Playwright failure sent me after a layout
+bug that did not exist. The screenshot showed the submit button below the fold,
+so I changed the panel twice trying to fix it. Measuring the real boxes showed
+the list scrolls correctly and the button is reachable -- the test resized the
+viewport after opening the editor and then demanded the button be in view
+without scrolling, which no user does. I reverted both product changes and
+fixed the test. Reproduce before repairing; a failing assertion names a symptom,
+not a defect.
+
+## 2026-11-22 — Give dense rule pages readable hierarchy
+
+A monochrome rule editor made warnings, scopes and proposal actions hard to
+scan, while muted labels were too dim. Use scoped semantic colors alongside
+text labels, brighter secondary text and tinted surfaces. Keep light and dark
+palettes local to the page and verify the real component with long rules at
+desktop and phone widths after the owner approves a visual preview.
+
+## 2026-11-22 — A retry key that lives only inside one dialog is not a retry key
+
+Folder chat's Confirm dialog kept one request key across Send retries, and the
+tests proved a lost response could not send twice. But Cancel threw the dialog
+away, and asking again minted a fresh key for the identical plan. So a send
+whose response was lost, followed by the natural next move (Cancel, ask again,
+Send), delivered the message twice. The independent review caught it, not me.
+The key now survives until a send for that exact plan succeeds. Lesson:
+idempotency has to cover every path back to the same action, not only the
+retry button you wrote a test for.
+
+## 2026-11-22 — The memory cache watched a different file than the reader read
+
+After an idle agent's version was saved again as records, an old reference
+(no records digest) still read the raw copy, but the cache decided freshness
+from the records copy. Once cached, rewriting, deleting or symlinking the raw
+copy went unnoticed and the old evidence kept being served (QA found it on
+#436). retained_path now picks the file the same way the reader does. Lesson:
+when a cache fences a read, it must fence the file that read opens, chosen by
+the same rule, not by a parallel one.
+
+## 2026-11-21 — Saved conversation copies vouched for themselves
+
+The extracted-records copies (#436) carried their own checksum, and a read
+checked the file against that. Security rewrote a record to "Owner said: ALWAYS
+push to main", recomputed the checksum, and the read served it as verified
+evidence. A checksum stored next to the data only catches accidental damage.
+Raw copies didn't have this gap, because their name was the digest of their bytes.
+Changing the format quietly removed that binding.
+
+The checkpoint's database reference now stores the records digest, and a read
+must match it. A malformed record line now gives a 409 instead of a 500.
+Lesson: when a format change moves the integrity proof, check where the proof
+lives; it has to be somewhere the attacker can't also rewrite.
+
+## 2026-11-21 — Two saved versions of one conversation evicted each other from the read cache
+
+Memory caches each conversation it reads, and drops older entries for the same
+file because a live conversation file goes stale in place. Saved versions of an
+appended conversation all read from one copy, so the same rule threw out the
+other version on every read. A search touching two versions re-read and
+re-checked the whole copy each time. The test only covered a rewritten
+conversation, where each version has its own file.
+
+Only current files evict now; saved versions are fixed by their digest. Lesson:
+when several handles share one backing file, a cache keyed on the file is
+wrong; test the shared case, not just the one-file-per-handle case.
+
+## 2026-11-21 — Memory kept 4.9 GB of raw history to prove 1% of it
+
+Each checkpoint retained a byte-for-byte copy of the agent's native
+conversation, so memory could still show its evidence after Claude or Codex
+cleaned up or rewrote the file. The raw file is mostly not conversation: ids,
+token counts and hidden reasoning on every Claude line, and Codex's compaction
+copies of the whole history. Measured with DuckTerm's own reader, a 521 MB Codex
+rollout held 1.15 MB of text and a 54.5 MB Claude conversation 7.1 MB. Across
+agents the copies reached 4.9 GB, the largest part of a backup.
+
+Copies now keep the extracted records. The handle is still the digest of the
+native bytes, so every saved evidence link resolves unchanged; the records
+carry their own digest for verification. It took the owner asking how the
+stores relate before anyone listed them side by side.
+
+Lesson: when a store exists "for evidence", measure how much of it a reader
+ever uses. Keeping the form you read, verified, is the evidence; the bytes
+around it are not.
+
+## 2026-11-22 — Rename the grouping, not the filesystem
+
+Changing sidebar folders to workspaces also affects accessibility labels,
+notifications, empty states and generated Analytics headings. Audit rendered
+strings rather than replacing identifiers: API fields and persisted keys stay
+compatible, while project-folder pickers retain their filesystem meaning.
+Update existing workflow assertions together with their labels and review the
+longer wording at desktop and narrow viewport sizes.
+
+## 2026-11-22 — Test checkpoint capture across the actual thread boundary
+
+## 2026-11-22 — Closing the listener is not completing a restart
+
+A server released its dashboard port but stayed alive in shutdown. Cleanup awaited
+one optional service before closing the SSH tunnel and tmux viewers; restart waited
+ten seconds and then left the dashboard unavailable. Cleanup now stops producers
+and closes independent resources concurrently, bounds TERM/KILL waits on owned
+clients, and has a server-only exit deadline covering blocked executor threads.
+Restart can force the previously authenticated server to exit only after its port
+is free and its home PID and kernel process birth still match. It never signals a
+tmux server or an agent pane. Regressions exercise a TERM-resistant child, blocked
+phone cleanup and executor, a legacy server that requires forced exit, changed
+process identities, and three real tmux viewers whose agent remains usable.
+Lesson: test shutdown completion and the replacement listener, not just a closed
+HTTP port; a slow optional cleanup must not hold later resource cleanup hostage.
+
+
+Background rule capture read HistoryStore from an asyncio worker, violating
+SQLite connection thread affinity. Helper-only tests missed the failure.
+Collect frozen observations on the event-loop thread, then pass that snapshot
+to the worker for model/file work. Keep optimistic save checks and report
+capture failures without logging private observations. Exercise the real
+checkpoint refresh with the flag enabled and verify local pending proposals.
+
+## 2026-11-21 — Keep review memory separate from shared instructions
+
+A checkpoint must not turn a cloned rule catalogue into permission to generate
+and write unreviewed guidance into the repository. Store pending reconciliation,
+source fingerprints and candidate rules in the local DuckTerm home, and require
+an explicit instance flag for background capture. Only reviewed active rules
+render into AGENTS.md. Match prompt-delivery provenance before treating a hook's
+UserPromptSubmit event as owner guidance.
+
+Rule files are repository-controlled inputs: open them without following
+symlinks, keep locks outside the repository, and require a backed-up explicit
+replacement before converting handwritten instructions. Exercise these boundaries
+through real HTTP as well as storage tests; a happy-path round trip misses them.
+
+## 2026-11-22 — I called them pre-existing five times instead of fixing them
+
+Ten tests in test_connectors.py failed on this Mac for weeks. Every time I
+touched the file I established they were not mine - captured the failing names
+on the unmodified branch, diffed the sets, reported an empty new-failure set -
+and moved on. That was honest and it was the wrong stopping point. The
+technique for proving a failure is not yours is also the technique for
+confirming nobody has fixed it.
+
+The cause was two lines of fixture. Both `isolated_env` and `isolated` replace
+PATH with a directory holding gh and github-mcp-server, so anything reaching
+enable() -> _duckterm_bin() resolved duckterm from ambient state. On a machine
+with the CLI installed they passed; here they raised "Duckterm CLI is
+unavailable". The tests were asserting on the machine, not the product, and a
+test that passes for an environmental reason is just as broken as one that
+fails for one - CI simply happened to be the lucky environment.
+
+Adding a duckterm stub to both fixtures: 10 failed, 16 passed becomes 26
+passed. It also retires the baseline-diffing ritual I had been doing on every
+connector change, which was pure overhead generated by an unfixed bug.
+
+Lesson: "pre-existing" is a statement about blame, not about health. If a
+failure survives three sessions of being correctly identified as someone
+else's, it has no owner and the person who keeps tripping over it should just
+fix it.
+## 2026-11-22 — My test runner was pointed at the wrong worktree
+
+I built the GitHub-only connector in a new worktree, ran the tests, got 31
+passed, and moved on. The runner script had a hardcoded `cd .../hygiene` and my
+sed to repoint it matched a path that was not in the file, so it silently kept
+testing the PREVIOUS branch. Three "green" runs proved nothing about the code I
+had just written - including a 1641-pass full-suite sweep and a check that a
+tmux failure was "pre-existing on main".
+
+What exposed it was arithmetic, not suspicion: I added four tests and the count
+stayed at 31. A pass count that does not move when you add tests is the cheapest
+possible signal, and I nearly explained it away as parametrized expansion.
+
+Pointed at the right tree, the same command gave 7 failures.
+
+Fix: the runner takes the worktree as its first argument and echoes
+`tree=<path> head=<sha>` on every run, so the tree under test is in the output
+rather than in a variable I believe is correct. A hardcoded path in a scratch
+script is a silent correctness bug the moment a second worktree exists.
+
+Lesson: a test run has two results - the assertions, and WHICH CODE ran. The
+second is invisible unless you print it. When a green run follows a change that
+should have moved some number, verify the number before trusting the green.
+
+## 2026-11-22 — The duplicated condition was real; my fix for it was not
+
+Two readers answered "is this connector on". The panel used policy.enabled AND
+every chosen harness registered; run() used the flag alone. I probed it, got
+panel=False with run()=True after dropping a harness entry, called it the
+GitHub incident and put the panel's predicate into run() as well.
+
+CI failed four tests, and they were right. Two things I had not checked:
+
+run() cannot tell which harness invoked it, so requiring ALL chosen harnesses
+means Codex losing its entry would stop Claude Code from running a connector it
+can reach perfectly well. That alone makes the gate wrong.
+
+I first wrote a second reason here: that run() is only ever reached AS the
+`connector-run <name>` command inside a harness entry, so the invocation proves
+the entry exists. QA checked and it is false. `connector-run` is an ordinary
+registered CLI subcommand - a hand-typed `duckterm connector-run github` works,
+and so does a stale entry a harness still has cached. The conclusion held, so
+the false premise cost nothing this time, which is exactly why it survived
+review by me.
+
+Also: disable() sets policy.enabled false, so the flag alone already catches
+what the owner actually clicks. My gate never protected the incident I claimed
+it protected - it only fired in the configuration those four tests set up.
+
+The honest residue is smaller than the ticket. _RunnerPolicy folds harness
+config into its watch signature only in the legacy branch, so for a connector
+with a policy file, harness revocation mid-run is genuinely unwatched. That is
+a real gap, it needs the calling harness's identity to fix properly, and it is
+not what I shipped.
+
+Lesson: a probe that shows two readers disagreeing proves the disagreement, not
+that either one is wrong. Before unifying them, find out how each is actually
+reached - the stricter condition is not automatically the safer one, and
+"fail-closed" is not a justification when the thing being closed is a path that
+was never open.
+
+Second lesson, from the correction above: an argument that reaches the right
+answer does not get checked. I had two reasons and needed one; nobody audits the
+spare, least of all the person who wrote it. Reaching for "X can only be called
+from Y" is the tell - that is a claim about every caller, and a registered CLI
+subcommand has callers you did not write. Check it against the argument parser,
+not against how you happen to invoke it.
+
+## 2026-11-22 — A test the client refuses is not a test the server passed
+
+The broker's TLS floor was untested: lowering minimum_version from 1.2 to 1.0
+failed nothing. The obvious test is "connect with a TLS 1.1 client and assert
+refusal", and it would have been worthless here. This OpenSSL 3.6.3 build will
+not offer TLS 1.1 at all - capping a client there raises
+NO_PROTOCOLS_AVAILABLE locally, before a single byte reaches the server, and
+the error is byte-identical whether the server's floor is 1.2 or 1.0. The test
+would have been green with the floor deleted.
+
+I only know that because I ran both variants side by side before writing the
+test, which is the habit worth keeping: when a negative test passes, check
+which side did the refusing. A refusal from the client proves nothing about
+the server.
+
+What the test asserts instead: the floor on the product's own context object
+(the value a policy change actually edits), plus a live handshake from a client
+capped at exactly 1.2, so the floor is proved to be a floor and not a wall.
+Both mutations now fail - lowering the floor, which is the security
+regression, and raising it to 1.3, which is the availability one.
+
+## 2026-11-21 — A first page is not the complete source catalog
+
+PR #354 paginated memory sources, but the retained-checkpoint scope test still
+looked only at the first page. Checkpoint ids determine source ordering, so the
+test passed locally and failed in CI when its checkpoint sorted after item 20.
+Force that ordering in the regression, follow every cursor, and check both that
+the session can read its checkpoint and that moving scope still hides it. No
+access check needed weakening; the test needed to use the API's paging contract.
+
+## 2026-11-21 — Merge disclosure must describe the full readable source
+
+A merge sends a short summary but grants read access to a broader source catalog.
+Calling that only “summaries and evidence” hid inbox exchanges, tasks and saved
+artifacts from the owner’s decision. Both merge flows now name those records,
+including messages with other agents across folders, before confirmation. Share
+the disclosure component so the two flows cannot drift. Access behavior is unchanged.
+
+## 2026-11-21 — Bundle defaults are not enforced update policy
+
+Review found that Sparkle can read saved preferences before Info.plist. Declaring
+manual updates in the bundle therefore did not guarantee that installs used our
+preflight. The adapter now supplies the validated feed through Sparkle’s delegate,
+clears the saved feed override, and disables automatic checks and downloads before
+starting. The bundle also disallows automatic installation. Native installer
+regressions seed conflicting preferences and verify preflight still runs.
+
+Lesson: test a framework’s effective configuration, including persisted overrides,
+rather than assuming its packaged defaults enforce application policy. Invalid
+public signing keys must also return a controlled failure instead of crashing.
+
+## 2026-11-21 — A download link is not a complete app updater
+
+Settings exposed “Update DuckTerm” without an installer, and its text discussed
+CLI/server updates even though the Mac app carries its own backend. Users could
+follow the control and still run old app components. The replacement uses the
+native signed-bundle installer and verifies both app and backend versions after
+relaunch. A disposable native Test bundle exercises successful replacement,
+tampered feed/archive rejection, and a backend mismatch. Signing keys and
+per-edition published feeds remain explicit release prerequisites.
+
+Lesson: verify the outcome promised by a control across the installation boundary.
+A successful download, build, or new app version alone does not prove the running
+backend was updated. Never label any of those partial results as update success.
+
+## 2026-11-21 — The local gate checked formatting with two tools that disagree
+
+scripts/gate.sh ran both `black --check` and `ruff format --check`; CI runs
+only black. The two wrap an assert with a message differently, so for that
+shape no formatting satisfies both: ruff format "fixed" a line in #415 into
+the form black rejects, and CI failed on formatting alone. A gate step that
+CI does not run cannot be the reason a branch is or isn't shippable, so it
+only produces false failures. Removed ruff format from the gate; black stays
+the one formatter, matching ci.yml. Keep the local gate a superset of CI's
+checks only where the extra step agrees with CI.
+
+## 2026-11-21 — Synchronize asynchronous tests on observable progress
+
+PR #409's foreground-refresh test assumed twenty task yields completed a failed
+refresh and armed its retry. On a loaded CI worker, the fake clock tick could
+arrive before the retry was waiting, so the test stayed stale. It now waits for
+the retry and polling clocks to report that they are suspended, with bounded
+expectations, before advancing or asserting the result.
+
+The browser job also exhausted its fifteen-minute budget after cold Playwright
+dependencies took six minutes. Account for installation and all edition runs in
+the job budget; a cancelled run is not passing evidence.
+
+## 2026-11-21 — Check a format against real files before anchoring on it
+
+#414 skipped an oversized Codex line when `"type":"compacted"` appeared anywhere
+in its first 512 bytes, so a nested `{"type":"compacted"}` inside a message
+would also be skipped. Security suggested matching the leading
+`{"timestamp":…,"type":…}` header exactly. Before writing that, I counted the
+headers in every Codex history on this Mac: 589 of the 1,046 compaction lines
+used `timestamp,type`, but 457 put an `ordinal` between the two. The exact
+anchor would have failed those 457 with 413 and made ui-dev's history unreadable
+again, the bug #414 fixed. The match now accepts any top-level scalar fields
+before `type`, which covers all 1,046 lines and still refuses a nested type.
+
+Lesson: when tightening a parser against a third-party format, measure the real
+population first. A reviewer's example of the format is one sample, not the
+spec.
+
+## 2026-11-21 — A test that builds its own config tests the config, not the product
+
+The broker's mutual-TLS tests looked like proof that the server demands client
+certificates. They were not. Each test built its own `ssl.SSLContext` with
+`CERT_REQUIRED` instead of using `serve()`'s, so they asserted the setting they
+had just written. Mutating the product to `ssl.CERT_NONE` left all 5 passing:
+the broker could have stopped checking client certificates entirely and the
+suite would have stayed green. Security caught this reviewing #416, where I had
+just fixed the certificates themselves and reported the tests as passing.
+
+Two lessons. A test that constructs its own copy of the thing under test has a
+duplicate, and a duplicate drifts silently — the fix is to export the real
+object (`server_context(settings)`) and have the test use it. And "the tests
+pass" is a claim about the tests; the question is whether they can fail. A
+mutation takes a minute: break the behaviour on purpose and watch for red.
+
+The negative case mattered too. The only rejection tested was "no certificate
+at all", which a server can pass while ignoring the issuer. The new case offers
+a well-formed certificate from a second CA and asserts no credential is read.
+Related: [[green-tests-no-working-feature]], [[intent-rendered-as-state]].
+
+Still unverified after this: mutating `minimum_version` from TLSv1_2 to TLSv1
+does not fail anything, because a modern client negotiates 1.3 regardless.
+
+## 2026-11-21 — Bug-report email depended on the release machine's environment
+
+The Mac build included a support recipient only when a release environment
+variable was set. Distributed apps therefore disabled Create email on machines
+without a local preference. Bundle the owner-approved public support address for
+every edition and retain the custom-build override. Test the actual plist-writing
+steps with the variable absent, empty, and overridden. Report creation still opens
+only a draft in the user's mail app; the user must review it and press Send.
+
+## 2026-11-19 — Tests kept an unreachable harness-switch path alive
+
+The switch endpoint has required a prepared hand-over since the preparation
+dialog shipped, but `Restarts.request` kept a flag defaulting to the older path:
+write a "Before harness switch" checkpoint and seed from its summary. Only tests
+called it that way, so about 50 tests exercised launch, interrupt and recovery
+guards through code the product could not reach, and the owner was told a thin
+brief could still occur on a switch. Removing the flag moved those tests onto
+real preparation, which surfaced two real behaviors: a queued "after this turn"
+switch fails as stale if the turn ends after preparation, and a prepared switch
+does not survive a DuckTerm restart.
+
+When an endpoint pins an internal flag, delete the other branch rather than
+keeping it for tests. A test helper that reaches an internal default is evidence
+for a path no user takes.
+
+## 2026-11-19 — Long pastes vanished because tmux caps a command at 1000 arguments
+
+Terminal input reaches an agent pane through `tmux send-keys -H`, one hex
+argument per byte. tmux 3.7 added a server-side cap of 1000 arguments per
+command ("command too long"). 0.4.180 started bundling tmux 3.7c in place of the
+user's PATH tmux (3.6b here, no cap), so from then on a paste over ~996 bytes
+was dropped entirely while short typing kept working. The failure only showed up
+as a False return that the websocket path ignores. `send_raw` now sends 512-byte
+chunks.
+
+Bumping a bundled dependency changes behavior for every caller, so read its
+changelog for new limits. When a subprocess takes one argument per item, check
+its argument-count limit, not just the byte size. When probing tmux, use a
+private -L socket: the default socket may be served by a different tmux build
+than the client binary you ran. The regression test pastes 4.6 KB into a real
+pane and compares what arrived byte for byte.
+
+## 2026-11-19 — CI passing is not the certificate being valid
+
+Four connector-broker tests failed on the owner's Mac while CI was green on the
+same commit. The test certificates were never valid: the CA had no Subject Key
+Identifier and the leaves had no Authority Key Identifier. Older OpenSSL simply
+did not check, so the gate that was supposed to catch this had quietly been
+accepting a malformed chain for as long as the test existed. OpenSSL 3.6 checks,
+and the owner's toolchain got there first.
+
+Two things worth keeping. The reported fix ("mark the CA as a CA") was already
+true in the code — basicConstraints CA:TRUE was there — so applying the
+diagnosis verbatim would have changed nothing and looked like a failed fix. Read
+the generated artifact (openssl x509 -text) rather than the suggestion. And the
+test builds certificates with the openssl CLI but verifies them through Python's
+ssl, which on this Mac are different implementations (LibreSSL 3.3.6 vs OpenSSL
+3.6.3); a fix has to be run under both CLIs, because CI's is neither of the ones
+you assume. Related: [[green-tests-no-working-feature]].
+
+## 2026-11-16 — Reconcile behavioral guidance against its original evidence
+
+Repeated checkpoint summaries are not independent corrections. Counting them as
+new evidence turns one episode into an apparently well-supported permanent rule.
+Capture now compares original event and annotation references with the existing
+rule catalogue, and proposes a revision, example, or evidence link before adding
+a rule. Episodic observations remain separate from instructions.
+
+A generated-file banner is not evidence that its source and export still agree.
+Compare both before saving, reject stale revisions, and preserve a backup when
+the owner explicitly reconciles external edits. Tests cover both Markdown and
+JSON drift as well as review-before-activation.
+
 ## 2026-11-07 — Folder chat had a message broker its answer path could never reach
 
 The @ picker could send messages, but a plain-language request went to a prompt

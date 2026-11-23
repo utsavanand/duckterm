@@ -27,7 +27,7 @@ export function FolderRecipientPicker({ folder, query, onPick, onClose }: {
     ...data.sessions.map(session => ({ identity: data.identity, kind: "session" as const, id: session.session_id, name: session.name, recipients: [session] })),
     ...data.folders.map(child => ({ identity: data.identity, kind: "folder" as const, id: child.path, name: child.name, recipients: child.recipients })),
   ].filter(item => item.name.toLocaleLowerCase().includes(query.toLocaleLowerCase())) : [];
-  return <div className="rd-folder-picker" id="folder-recipient-picker" ref={box} role="listbox" aria-label="Sessions and subfolders" onKeyDown={event => {
+  return <div className="rd-folder-picker" id="folder-recipient-picker" ref={box} role="listbox" aria-label="Sessions and nested workspaces" onKeyDown={event => {
     if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); onClose(); }
     if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(event.key)) return;
     event.preventDefault();
@@ -36,15 +36,15 @@ export function FolderRecipientPicker({ folder, query, onPick, onClose }: {
     const next = event.key === "Home" ? 0 : event.key === "End" ? buttons.length - 1 : (index + (event.key === "ArrowDown" ? 1 : -1) + buttons.length) % buttons.length;
     buttons[next]?.focus();
   }}>
-    <div className="rd-folder-picker-label">{folder} · Sessions and subfolders</div>
+    <div className="rd-folder-picker-label">{folder} · Sessions and nested workspaces</div>
     {!data && !error && <p role="status">Loading recipients…</p>}
     {error && <p role="alert">{error} <button type="button" onClick={() => setRetry(n => n + 1)}>Retry</button></p>}
-    {data && options.length === 0 && <p>No matches in this folder.</p>}
+    {data && options.length === 0 && <p>No matches in this workspace.</p>}
     {options.map(option => {
       const eligible = option.recipients.filter(r => r.eligible).length;
       return <button key={`${option.kind}:${option.id}`} type="button" role="option" aria-selected="false" disabled={!eligible} onClick={() => onPick(option)}>
         <span aria-hidden="true">{option.kind === "folder" ? "▸" : "🦆"}</span>
-        <span className="rd-folder-pick-copy"><strong>{option.name}</strong><small>{option.kind === "folder" ? "Subfolder · Review recipients before sending" : option.recipients[0].eligible ? "Session · Reply requested" : option.recipients[0].reason}</small></span>
+        <span className="rd-folder-pick-copy"><strong>{option.name}</strong><small>{option.kind === "folder" ? "Nested workspace · Review recipients before sending" : option.recipients[0].eligible ? "Session · Reply requested" : option.recipients[0].reason}</small></span>
         <span>{option.kind === "folder" ? `${eligible} ${eligible === 1 ? "session" : "sessions"}` : option.recipients[0].state}</span>
       </button>;
     })}

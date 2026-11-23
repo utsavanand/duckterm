@@ -25,7 +25,9 @@ do not keep anyone out.
 
 | Flag | What it gates | Since | Ships when |
 |------|---------------|-------|------------|
-| `skill_kits` | Settings → Skill kits (add a kit by folder, view its contents, remove it), the `/harnesses` routes, and the session panel's "Skill kit" row. Being built against the Skill Kit Specification (draft 8). | 2026-11-16 | The specification is approved and the install wizard is built. Owner's call. |
+| `skill_kits` | Settings → Skill kits (add a kit by folder, view its contents, remove it), the `/harnesses` routes, the session panel's "Skill kit" row, and the `duckterm kit` CLI (validate, plan, install, verify, uninstall). Being built against the Skill Kit Specification (draft 9). | 2026-11-16 | The install wizard is built on `plan`/`install` and the owner has run a kit end to end. Owner's call. |
+| `home` | The Home page: the first page the dashboard opens on, a 12-column grid of movable widgets (Ask Oracle chat, Teams, Autopilot, pull requests, usage, Needs you), and `GET`/`PUT /layouts/home`. Layout is saved in `home-layout.json`. The Control Tower stays until Home replaces it. | 2026-11-19 | Owner has used it on real data, Autopilot has a backend to open, and the Control Tower is folded in. Owner's call. |
+| `background_rule_suggestions` | Reconcile original observations after checkpoints in Code/Full. Off by default; pending proposals and capture fingerprints stay in DuckTerm home under `rule-reviews/`, keyed by canonical directory path. The manual Suggest button is independent. | 2026-11-21 | Security and QA approve background capture. Owner’s call. |
 
 ## Graduated
 

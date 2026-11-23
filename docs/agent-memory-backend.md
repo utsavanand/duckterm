@@ -10,7 +10,7 @@ Original conversation messages and event records are evidence. Session cards, ta
 
 The database schema is unchanged. Summary revisions and folds use existing digest storage. Typed relationships and explicit claim lifecycle changes use existing links. The retrieval index is a disposable SQLite FTS5 index, not a second source of truth. There is no vector database or separate property-graph service.
 
-Checkpoints retain native JSONL snapshots in the session's private checkpoint directory. A retained prefix remains readable after native cleanup, but cannot certify newer unavailable history. These memory snapshots and indexes are local-only and excluded from the existing backup selection. Project-file backup and native transcript backup are separate features. Session deletion removes its snapshots and index; removing a checkpoint reference revokes access to that retained version. No automatic destructive retention or bulk artifact relabelling is enabled by this candidate.
+Checkpoints retain the extracted records of a native conversation (messages, tool calls and tool output, without the harness's metadata, hidden reasoning or compaction copies) in the session's private checkpoint directory. A retained version keeps the digest of the native bytes as its handle. The checkpoint's database reference also stores the digest of its records, and a read is refused unless the copy matches it, so rewriting the copy and its own checksum is detected; versions retained as native JSONL before this format remain readable. A retained prefix remains readable after native cleanup, but cannot certify newer unavailable history. These memory snapshots and indexes are local-only and excluded from the existing backup selection. Project-file backup and native transcript backup are separate features. Session deletion removes its snapshots and index; removing a checkpoint reference revokes access to that retained version. No automatic destructive retention or bulk artifact relabelling is enabled by this candidate.
 
 ## Manual checkpoints and independent summaries
 
@@ -56,7 +56,67 @@ duckterm memory claim --file lifecycle-change.json
 
 A source handle includes its version, never an arbitrary filesystem path. Search results identify an exact record; reads return a character-based pagination offset. Related reads follow evidenced links. Write tools validate the caller, relation, evidence, current versions and session scope. They do not replace original history.
 
-Retrieval remains scoped to the calling session and currently permitted work records. Source versions, grants and credentials are rechecked before returning. Native reads stream the captured file prefix rather than imposing the former 512 MiB whole-file ceiling. Each JSONL line is limited to 16 MiB, and normalized text is limited to 64 MiB per source. Exceeding a bound reports unavailable coverage. Native reads/indexing run outside the event loop; a corrupt derived index can be rebuilt.
+Retrieval defaults to the calling session and currently permitted work records. Source versions, grants and credentials are rechecked before returning. Native reads stream the captured file prefix rather than imposing the former 512 MiB whole-file ceiling. Each JSONL line is limited to 16 MiB, and normalized text is limited to 64 MiB per source. Exceeding a bound reports unavailable coverage. Native reads/indexing run outside the event loop; a corrupt derived index can be rebuilt.
+
+### Linked session memory
+
+A parent may read its direct child's saved memory while both belong to the same
+shared root. An owner-reviewed merge can also grant its destination read access
+to the source. The receiving agent uses its own credential; it never borrows the
+source's credential. These links allow reads, not edits, and do not grant access
+to unrelated sessions or transitively to every session that a source can read.
+
+```sh
+duckterm memory sessions --limit 20
+duckterm memory sources --session SOURCE_SESSION --kind revision --limit 20
+duckterm memory sources --session SOURCE_SESSION --kind revision --cursor NEXT_CURSOR
+duckterm memory read SOURCE_HANDLE --session SOURCE_SESSION --record summary
+duckterm memory related SOURCE_HANDLE --session SOURCE_SESSION
+duckterm memory search "why this decision" --session SOURCE_SESSION
+```
+
+Follow `next_cursor` to list more links or sources. A merge receipt identifies the
+source session and the saved summary revision at review; the reviewed handoff
+text remains in the receipt even if the owner edited it. Later source revisions
+are separately discoverable through `sources`. Closing or archiving the source
+does not delete its revisions or evidence. A retained merge link reports an
+explicit unavailable result after permanent source deletion. Changing either
+session's sharing root invalidates the saved merge grant. Authorization is
+checked again after an awaited read, so a move during retrieval cannot return
+content under a stale grant.
+
+This implementation uses the existing parent pointer, fork-merge rows and
+`digest_items` store. New merge links use the `session_memory_link_v1` bucket on
+the **destination**, retaining a pointer after source deletion without copying
+the source's memory. The general merge's inbox message, appended notes, receipt
+and grant commit in one transaction. Fork merges retain their existing durable
+intent and crash-recovery flow, now including a revision reference. Old general
+merge receipts do not retroactively grant access to private history.
+
+Fork previews expose `memory.summaryRevision`. New clients send this value as
+`summaryRevision` with the reviewed merge request; if the source revision has
+changed, the server requires another review. Legacy fork clients do not identify
+the revision behind their edited text, so their receipt leaves that reference
+empty rather than attributing it to a newer summary.
+
+The general merge request accepts explicit `memory:true` and `closeSource:true`
+choices; closing requires the memory link. Older clients omit both and retain
+their existing behavior. Close-after-merge waits for a verified turn end and an
+empty draft, then rechecks session identity and activity before stopping its
+owned terminal. An already terminated terminal can finish closure without being
+restarted. The existing lifecycle sweep retries pending closure after service
+restart. Status reads report `sourceClosed` and `closeState:pending|closed`; the
+send/retry response can explain a deferral such as `draft_not_empty` or
+`memory_unavailable`. Inbox delivery and successful code integration remain
+separate outcomes. A summary sent while a turn is running describes the reviewed
+state; the source link is how the destination retrieves later saved work.
+
+The reviewed merge UI sends a durable memory link and close intent for both merge
+paths. The result and Timeline open the existing Memory reader at the receipt's
+exact source revision, with other revisions still browsable. This reader disables
+checkpoint creation/cancellation. A pending close is never described as completed.
+Old receipts without memory pointers remain visible without inventing a reference;
+clients refuse new merges against backends that lack the memory-link contract.
 
 The owner opens Memory through **Read saved memory** in the right panel. Current memory assembles published spans, including earlier claims; selecting a revision reads that historical span separately. Expanding evidence performs an exact original-record read. Opening Memory never calls a summary provider. Missing or revoked evidence is withheld instead of returning cached text.
 

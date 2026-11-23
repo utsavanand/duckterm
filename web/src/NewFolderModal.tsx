@@ -21,13 +21,13 @@ export function NewFolderModal({
     const trimmed = name.trim();
     if (!trimmed) return;
     if (existing.includes(trimmed)) {
-      toast(`Folder "${trimmed}" already exists`, "err");
+      toast(`Workspace "${trimmed}" already exists`, "err");
       return;
     }
     setBusy(true);
     try {
       const result = await api.createFolder(trimmed);
-      toast(result.pending ? "Folder creation pending sync. Open Settings → Collaboration to review." : `Created folder ${trimmed}`);
+      toast(result.pending ? "Workspace creation pending sync. Open Settings → Collaboration to review." : `Created workspace ${trimmed}`);
       onCreated();
     } catch (e) {
       toast(`Create failed: ${(e as Error).message}`, "err");
@@ -37,8 +37,8 @@ export function NewFolderModal({
   }
 
   return (
-    <Modal title="New folder" onClose={onClose}>
-      <Field label="Folder name">
+    <Modal title="New workspace" onClose={onClose}>
+      <Field label="Workspace name">
         <input
           autoFocus
           style={inputStyle}
@@ -49,7 +49,7 @@ export function NewFolderModal({
         />
       </Field>
       <p className="rd-modal-hint">
-        Then drag sessions onto this folder in the left panel to organize them.
+        Then drag sessions onto this workspace in the left panel to organize them.
       </p>
       <div
         style={{
@@ -63,7 +63,7 @@ export function NewFolderModal({
           Cancel
         </Button>
         <Button onClick={create} disabled={busy || !name.trim()}>
-          {busy ? "Creating…" : "Create folder"}
+          {busy ? "Creating…" : "Create workspace"}
         </Button>
       </div>
     </Modal>

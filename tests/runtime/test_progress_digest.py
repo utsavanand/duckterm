@@ -155,84 +155,230 @@ def test_stop_and_exit_do_not_schedule_refresh(fake_summarizer: Path, monkeypatc
         server.history.close()
 
 
-def test_digest_bridge_files_recurring_learnings_as_candidates(
+def test_digest_bridge_reconciles_original_sources_without_installing_rules(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """A user_learning archived in >=3 sessions of one folder becomes a
-    candidate rule in that folder's rule set — but only when the folder
-    already adopted the typed format (rules.json exists)."""
+    from tests.runtime.test_agents_md_suggest import _new
+
+    from duckterm.llm.summarizer import Summary
+
     monkeypatch.setenv("DUCKTERM_HOME", str(tmp_path / "home"))
     server = _server()
     workdir = tmp_path / "proj"
     workdir.mkdir()
-    now = 1
-    for i in range(3):
-        key = f"s{i}"
+    try:
         server.bus.publish(
-            {"event_type": "SessionStart", "session_key": key, "cwd": str(workdir), "_ts": now}
-        )
-        server.history.set_state(key, "idle")
-        server.digests.merge(
-            key,
-            [{"bucket": "user_learnings", "text": "Prefers merge over rebase."}],
-            [],
-            now,
-        )
-    row = server.history.session("s0")
-    assert row is not None
-
-    # No rules.json yet -> the bridge must not create files in the folder.
-    server._file_digest_candidates(row)
-    assert not (workdir / ".duckterm-rules.json").exists()
-    assert not (workdir / "AGENTS.md").exists()
-
-    # Folder opts in (empty rule set) -> the recurring learning is filed.
-    (workdir / ".duckterm-rules.json").write_text('{"rules": []}')
-    server._file_digest_candidates(row)
-    rules = json.loads((workdir / ".duckterm-rules.json").read_text())["rules"]
-    assert [(r["id"], r["status"], r["source"], r["evidence"]) for r in rules] == [
-        ("prefers-merge-over-rebase", "candidate", "digest", 3)
-    ]
-    # Candidates never render into AGENTS.md.
-    assert "Prefers merge" not in (workdir / "AGENTS.md").read_text()
-
-    # Re-running with unchanged evidence must not rewrite or duplicate.
-    server._file_digest_candidates(row)
-    again = json.loads((workdir / ".duckterm-rules.json").read_text())["rules"]
-    assert len(again) == 1
-
-
-def test_digest_bridge_respects_rejected_tombstone(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    monkeypatch.setenv("DUCKTERM_HOME", str(tmp_path / "home"))
-    server = _server()
-    workdir = tmp_path / "proj"
-    workdir.mkdir()
-    (workdir / ".duckterm-rules.json").write_text(
-        json.dumps(
             {
-                "rules": [
-                    {
-                        "id": "prefers-merge-over-rebase",
-                        "text": "Prefers merge over rebase.",
-                        "status": "rejected",
-                    }
-                ]
+                "event_type": "SessionStart",
+                "session_key": "capture",
+                "test": True,
+                "cwd": str(workdir),
+                "_id": "start",
+                "_ts": 1,
             }
         )
-    )
-    for i in range(3):
-        key = f"s{i}"
         server.bus.publish(
-            {"event_type": "SessionStart", "session_key": key, "cwd": str(workdir), "_ts": 1}
+            {
+                "event_type": "UserPromptSubmit",
+                "session_key": "capture",
+                "prompt": "Always preserve test exit codes.",
+                "_id": "original",
+                "_ts": 2,
+            }
         )
-        server.digests.merge(
-            key, [{"bucket": "user_learnings", "text": "Prefers merge over rebase."}], [], 1
+        row = server.history.session("capture")
+        assert row is not None
+        calls = []
+        original_ref = server._corrections_for_dir(str(workdir))[0].ref
+
+        def fake(prompt: str, **_kw) -> Summary:
+            calls.append(prompt)
+            return Summary(
+                text=json.dumps(
+                    {
+                        "decisions": [
+                            _new(
+                                "Exit codes",
+                                "Preserve test exit codes.",
+                                original_ref,
+                            )
+                        ]
+                    }
+                ),
+                backend="test",
+            )
+
+        monkeypatch.setattr("duckterm.llm.suggest.summarize", fake)
+        asyncio.run(server._refresh_rule_candidates(row))
+        assert not calls  # no typed-rule opt-in
+        (workdir / ".duckterm-rules.json").write_text('{"rules": []}')
+        asyncio.run(server._refresh_rule_candidates(row))
+        assert not calls  # a cloned rules file does not enable background capture
+        from duckterm import editions
+        from duckterm.core.agents_rules import read_catalog
+
+        server.edition = editions.EditionConfig(
+            "full", editions.FULL.features | {"background_rule_suggestions"}
         )
-    row = server.history.session("s0")
-    assert row is not None
-    server._file_digest_candidates(row)
-    rules = json.loads((workdir / ".duckterm-rules.json").read_text())["rules"]
-    assert len(rules) == 1
-    assert rules[0]["status"] == "rejected"  # not resurrected
+        asyncio.run(server._refresh_rule_candidates(row))
+        assert json.loads((workdir / ".duckterm-rules.json").read_text()) == {"rules": []}
+        state = read_catalog(workdir)
+        assert state["rules"] == []
+        assert state["proposals"][0]["action"] == "create_rule"
+        assert state["proposals"][0]["status"] == "pending"
+        assert not (workdir / "AGENTS.md").exists()
+        asyncio.run(server._refresh_rule_candidates(row))
+        assert len(calls) == 1  # same source cannot count again
+    finally:
+        server.history.purge_test_sessions()
+        server.history.close()
+
+
+def test_repeated_digest_strings_are_not_original_evidence(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("DUCKTERM_HOME", str(tmp_path / "home"))
+    server = _server()
+    from duckterm import editions
+
+    server.edition = editions.EditionConfig(
+        "full", editions.FULL.features | {"background_rule_suggestions"}
+    )
+    workdir = tmp_path / "proj"
+    workdir.mkdir()
+    (workdir / ".duckterm-rules.json").write_text('{"rules": []}')
+
+    def unexpected(_prompt: str):
+        raise AssertionError("A copied summary must not become original evidence")
+
+    monkeypatch.setattr("duckterm.llm.suggest.summarize", unexpected)
+    try:
+        for i in range(3):
+            key = f"copy-{i}"
+            server.bus.publish(
+                {
+                    "event_type": "SessionStart",
+                    "session_key": key,
+                    "test": True,
+                    "cwd": str(workdir),
+                    "_ts": 1,
+                }
+            )
+            server.digests.merge(
+                key, [{"bucket": "user_learnings", "text": "Prefers merge."}], [], 1
+            )
+        row = server.history.session("copy-0")
+        assert row is not None
+        asyncio.run(server._refresh_rule_candidates(row))
+        assert json.loads((workdir / ".duckterm-rules.json").read_text()) == {"rules": []}
+    finally:
+        server.history.purge_test_sessions()
+        server.history.close()
+
+
+@pytest.mark.parametrize("capture_result", ["proposal", "invalid", "stale"])
+def test_checkpoint_refresh_captures_rules_across_thread_boundary(
+    fake_summarizer: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    capture_result: str,
+) -> None:
+    import threading
+
+    from tests.runtime.test_agents_md_suggest import _new
+
+    from duckterm import editions
+    from duckterm.core.agents_rules import read_catalog, save_rules
+    from duckterm.llm.summarizer import Summary
+    from duckterm.runtimes.generic import GenericRuntime
+
+    workdir = tmp_path / "project"
+    workdir.mkdir()
+    save_rules(workdir, [])
+    before = (workdir / ".duckterm-rules.json").read_bytes()
+    markdown = (workdir / "AGENTS.md").read_bytes()
+    owner_thread = threading.get_ident()
+    model_threads: list[int] = []
+    original_ref = ""
+
+    def suggest(prompt: str, **_kw) -> Summary:
+        model_threads.append(threading.get_ident())
+        assert "Preserve checks." in prompt
+        if capture_result == "stale":
+            # Simulate an owner save while the model is working. Its state must win.
+            save_rules(workdir, [], capture_fingerprint="owner-save", render=False)
+        return Summary(
+            text=(
+                "not valid JSON"
+                if capture_result == "invalid"
+                else json.dumps({"decisions": [_new("Checks", "Preserve checks.", original_ref)]})
+            ),
+            backend="test",
+        )
+
+    monkeypatch.setattr("duckterm.llm.suggest.summarize", suggest)
+
+    async def scenario() -> None:
+        nonlocal original_ref
+        server = _server()
+        key = "checkpoint-rule-capture"
+        try:
+            server.bus.publish(
+                {
+                    "event_type": "SessionStart",
+                    "session_key": key,
+                    "cwd": str(workdir),
+                    "test": True,
+                }
+            )
+            event = server.bus.publish(
+                {
+                    "event_type": "UserPromptSubmit",
+                    "session_key": key,
+                    "prompt": "Preserve checks.",
+                }
+            )
+            original_ref = f"event:{event['_id']}"
+            await server.orchestrator.launch(
+                runtime=GenericRuntime("sh -c 'echo CHECKPOINT; exec cat'"),
+                cwd=str(workdir),
+                session_key=key,
+                test=True,
+            )
+            await asyncio.sleep(0.3)
+            await server._refresh_progress(key)
+            assert server.history.session(key)["progress"]
+            assert not model_threads
+            home = tmp_path / "home"
+            (home / "flags.json").write_text(
+                json.dumps({"enabled": ["background_rule_suggestions"]})
+            )
+            server.edition = editions.configured()
+            await server._refresh_progress(key)
+            assert len(model_threads) == 1
+            assert model_threads[0] != owner_thread
+            state = read_catalog(workdir)
+            if capture_result == "proposal":
+                assert state["proposals"][0]["status"] == "pending"
+                assert state["proposals"][0]["action"] == "create_rule"
+                assert state["capture_fingerprint"]
+                # Repeating the checkpoint cannot count the same evidence again.
+                await server._refresh_progress(key)
+                assert len(model_threads) == 1
+            else:
+                assert not state["proposals"]
+                expected = "owner-save" if capture_result == "stale" else ""
+                assert state["capture_fingerprint"] == expected
+                stderr = capsys.readouterr().err
+                assert "rule capture failed: ValueError" in stderr
+                assert "Preserve checks." not in stderr
+            assert server.history.session(key)["progress"]
+            assert (workdir / ".duckterm-rules.json").read_bytes() == before
+            assert (workdir / "AGENTS.md").read_bytes() == markdown
+        finally:
+            await server.orchestrator.stop(key)
+            server.history.purge_test_sessions()
+            server.history.close()
+
+    asyncio.run(scenario())

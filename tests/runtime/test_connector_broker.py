@@ -1,6 +1,7 @@
 """Real TLS/stdio relay: no client cert, no tools; disable cuts an active stream."""
 
 import asyncio
+import contextlib
 import json
 import os
 import shutil
@@ -46,6 +47,12 @@ def certificates(path: Path) -> None:
         "basicConstraints=critical,CA:TRUE",
         "-addext",
         "keyUsage=critical,keyCertSign,cRLSign",
+        # OpenSSL 3.6 rejects a chain whose leaf has no Authority Key
+        # Identifier, and that extension is derived from the issuer's Subject
+        # Key Identifier, so the CA has to carry one for the leaves to be
+        # verifiable.
+        "-addext",
+        "subjectKeyIdentifier=hash",
     )
     for name in ("server", "workspace"):
         openssl(
@@ -60,7 +67,11 @@ def certificates(path: Path) -> None:
             "-subj",
             "/CN=" + name,
         )
-        (path / "ext").write_text(f"subjectAltName=DNS:{name}\n")
+        (path / "ext").write_text(
+            f"subjectAltName=DNS:{name}\n"
+            "subjectKeyIdentifier=hash\n"
+            "authorityKeyIdentifier=keyid:always\n"
+        )
         openssl(
             "x509",
             "-req",
@@ -80,6 +91,74 @@ def certificates(path: Path) -> None:
         )
 
 
+def foreign_client_certificate(path: Path) -> None:
+    """A well-formed client certificate from a CA the broker does not trust.
+
+    Distinct from offering no certificate at all: this one is valid in every
+    respect except its issuer, so it catches a server that checks a chain's
+    shape without checking who signed it.
+    """
+
+    def openssl(*args: str) -> None:
+        subprocess.run(["openssl", *args], cwd=path, check=True, capture_output=True)
+
+    openssl(
+        "req",
+        "-x509",
+        "-newkey",
+        "rsa:2048",
+        "-nodes",
+        "-keyout",
+        "other-ca.key",
+        "-out",
+        "other-ca.crt",
+        "-days",
+        "1",
+        "-subj",
+        "/CN=Other CA",
+        "-addext",
+        "basicConstraints=critical,CA:TRUE",
+        "-addext",
+        "keyUsage=critical,keyCertSign,cRLSign",
+        "-addext",
+        "subjectKeyIdentifier=hash",
+    )
+    openssl(
+        "req",
+        "-newkey",
+        "rsa:2048",
+        "-nodes",
+        "-keyout",
+        "intruder.key",
+        "-out",
+        "intruder.csr",
+        "-subj",
+        "/CN=workspace",
+    )
+    (path / "other-ext").write_text(
+        "subjectAltName=DNS:workspace\n"
+        "subjectKeyIdentifier=hash\n"
+        "authorityKeyIdentifier=keyid:always\n"
+    )
+    openssl(
+        "x509",
+        "-req",
+        "-in",
+        "intruder.csr",
+        "-CA",
+        "other-ca.crt",
+        "-CAkey",
+        "other-ca.key",
+        "-CAcreateserial",
+        "-out",
+        "intruder.crt",
+        "-days",
+        "1",
+        "-extfile",
+        "other-ext",
+    )
+
+
 @pytest.mark.skipif(not shutil.which("openssl"), reason="TLS test needs openssl")
 @pytest.mark.parametrize("protocol", ["github", "github-projects"])
 def test_certificate_required_and_disable_closes_stdio(
@@ -94,7 +173,6 @@ def test_certificate_required_and_disable_closes_stdio(
                 "enabled": True,
                 "reference": "projects/test/secrets/github/versions/1",
                 "identity": "test-user",
-                "write_access": False,
             }
         },
     }
@@ -104,7 +182,7 @@ def test_certificate_required_and_disable_closes_stdio(
     monkeypatch.setattr(
         connector_broker,
         "command",
-        lambda name, cred, write: ([sys.executable, str(fake)], dict(os.environ)),
+        lambda name, cred: ([sys.executable, str(fake)], dict(os.environ)),
     )
     worker_directories = []
     real_spawn = asyncio.create_subprocess_exec
@@ -128,10 +206,15 @@ def test_certificate_required_and_disable_closes_stdio(
     broker = connector_broker.Broker(config, store)
 
     async def scenario() -> None:
-        tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        tls.load_cert_chain(tmp_path / "server.crt", tmp_path / "server.key")
-        tls.load_verify_locations(tmp_path / "ca.crt")
-        tls.verify_mode = ssl.CERT_REQUIRED
+        # The broker's own context, not a copy: weakening serve()'s TLS policy
+        # has to fail these tests.
+        tls = connector_broker.server_context(
+            {
+                "certificate": tmp_path / "server.crt",
+                "private_key": tmp_path / "server.key",
+                "client_ca": tmp_path / "ca.crt",
+            }
+        )
         server = await asyncio.start_server(broker.handle, "127.0.0.1", 0, ssl=tls)
         port = server.sockets[0].getsockname()[1]
         client = ssl.create_default_context(cafile=str(tmp_path / "ca.crt"))
@@ -190,18 +273,18 @@ def test_two_agents_reuse_one_provider_and_workspace_revocation_closes_both(
     certificates(tmp_path)
     config = tmp_path / "config.json"
     settings = {
-        "workspaces": {"workspace": ["porkbun"]},
-        "connectors": {"porkbun": {"enabled": True, "reference": "shared-porkbun"}},
+        "workspaces": {"workspace": ["github"]},
+        "connectors": {"github": {"enabled": True, "reference": "shared-github"}},
     }
     config.write_text(json.dumps(settings))
 
     class Store:
         def read(self, reference):
-            assert reference == "shared-porkbun"
+            assert reference == "shared-github"
             return {"token": "only-on-broker"}
 
-    def provider(name, credential, write):
-        assert name == "porkbun" and credential == {"token": "only-on-broker"}
+    def provider(name, credential):
+        assert name == "github" and credential == {"token": "only-on-broker"}
         return (
             [
                 sys.executable,
@@ -216,10 +299,15 @@ def test_two_agents_reuse_one_provider_and_workspace_revocation_closes_both(
     broker = connector_broker.Broker(config, Store())
 
     async def scenario():
-        tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        tls.load_cert_chain(tmp_path / "server.crt", tmp_path / "server.key")
-        tls.load_verify_locations(tmp_path / "ca.crt")
-        tls.verify_mode = ssl.CERT_REQUIRED
+        # The broker's own context, not a copy: weakening serve()'s TLS policy
+        # has to fail these tests.
+        tls = connector_broker.server_context(
+            {
+                "certificate": tmp_path / "server.crt",
+                "private_key": tmp_path / "server.key",
+                "client_ca": tmp_path / "ca.crt",
+            }
+        )
         server = await asyncio.start_server(broker.handle, "127.0.0.1", 0, ssl=tls)
         client = ssl.create_default_context(cafile=str(tmp_path / "ca.crt"))
         client.load_cert_chain(tmp_path / "workspace.crt", tmp_path / "workspace.key")
@@ -233,7 +321,7 @@ def test_two_agents_reuse_one_provider_and_workspace_revocation_closes_both(
                     server_hostname="server",
                 )
                 streams.append((reader, writer))
-                writer.write(b'{"name":"porkbun"}\n')
+                writer.write(b'{"name":"github"}\n')
                 await writer.drain()
                 assert json.loads(await asyncio.wait_for(reader.readline(), 3)) == {"ready": True}
                 request = (
@@ -354,10 +442,15 @@ def test_rotation_outage_and_restart_close_old_streams(tmp_path, monkeypatch):
     )
 
     async def scenario():
-        tls = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
-        tls.load_cert_chain(tmp_path / "server.crt", tmp_path / "server.key")
-        tls.load_verify_locations(tmp_path / "ca.crt")
-        tls.verify_mode = ssl.CERT_REQUIRED
+        # The broker's own context, not a copy: weakening serve()'s TLS policy
+        # has to fail these tests.
+        tls = connector_broker.server_context(
+            {
+                "certificate": tmp_path / "server.crt",
+                "private_key": tmp_path / "server.key",
+                "client_ca": tmp_path / "ca.crt",
+            }
+        )
         client = ssl.create_default_context(cafile=str(tmp_path / "ca.crt"))
         client.load_cert_chain(tmp_path / "workspace.crt", tmp_path / "workspace.key")
         broker = connector_broker.Broker(config, store)
@@ -407,5 +500,147 @@ def test_rotation_outage_and_restart_close_old_streams(tmp_path, monkeypatch):
             listener.close()
             await listener.wait_closed()
             await asyncio.sleep(0.3)
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.skipif(not shutil.which("openssl"), reason="TLS test needs openssl")
+def test_client_certificate_from_another_ca_is_refused_and_reads_no_secret(
+    tmp_path: Path, monkeypatch
+) -> None:
+    """A valid certificate signed by the wrong CA must not open a stream."""
+    certificates(tmp_path)
+    foreign_client_certificate(tmp_path)
+    config = tmp_path / "config.json"
+    settings = {
+        "workspaces": {"workspace": ["github"]},
+        "connectors": {
+            "github": {
+                "enabled": True,
+                "reference": "projects/test/secrets/github/versions/1",
+                "identity": "test-user",
+            }
+        },
+    }
+    config.write_text(json.dumps(settings))
+    fake = tmp_path / "fake.py"
+    fake.write_text("import sys\nfor line in sys.stdin:\n print(line.rstrip(), flush=True)\n")
+    monkeypatch.setattr(
+        connector_broker,
+        "command",
+        lambda name, cred: ([sys.executable, str(fake)], dict(os.environ)),
+    )
+    store = FakeStore()
+    broker = connector_broker.Broker(config, store)
+
+    async def scenario() -> None:
+        tls = connector_broker.server_context(
+            {
+                "certificate": tmp_path / "server.crt",
+                "private_key": tmp_path / "server.key",
+                "client_ca": tmp_path / "ca.crt",
+            }
+        )
+        server = await asyncio.start_server(broker.handle, "127.0.0.1", 0, ssl=tls)
+        port = server.sockets[0].getsockname()[1]
+        try:
+            client = ssl.create_default_context(cafile=str(tmp_path / "ca.crt"))
+            client.load_cert_chain(tmp_path / "intruder.crt", tmp_path / "intruder.key")
+            # TLS 1.3 may return from connect before the peer's rejection arrives.
+            try:
+                reader, writer = await asyncio.open_connection(
+                    "127.0.0.1", port, ssl=client, server_hostname="server"
+                )
+                writer.write(b'{"name":"github"}\n')
+                await writer.drain()
+                assert await asyncio.wait_for(reader.read(), 3) == b""
+                writer.close()
+                with contextlib.suppress(ssl.SSLError, ConnectionError):
+                    await writer.wait_closed()
+            except (ssl.SSLError, ConnectionError):
+                pass
+            # The refusal must happen before any credential is fetched.
+            assert store.reads == []
+            assert broker.active == 0
+        finally:
+            server.close()
+            await server.wait_closed()
+
+    asyncio.run(scenario())
+
+
+@pytest.mark.skipif(not shutil.which("openssl"), reason="TLS test needs openssl")
+def test_broker_refuses_tls_below_its_floor_and_serves_at_it(tmp_path: Path, monkeypatch) -> None:
+    """The broker's TLS floor is TLS 1.2, and a sub-floor client gets nothing.
+
+    Two halves, because neither alone is enough. The floor is asserted on the
+    product's own context object, which is what a change lowering the policy
+    actually edits. The handshake then proves the floor is a floor rather than
+    a wall: a client capped at exactly 1.2 still gets served, so raising the
+    minimum past the version real agents negotiate would fail here too.
+
+    A client capped *below* the floor cannot be used to prove the server
+    enforces it. This OpenSSL build refuses to offer TLS 1.1 at all -- it
+    raises NO_PROTOCOLS_AVAILABLE locally, with the same error whether the
+    server's minimum is 1.2 or 1.0 -- so such a test would pass with the floor
+    deleted. That is why the sub-floor half is an assertion on the policy and
+    not a connection attempt.
+    """
+    certificates(tmp_path)
+    config = tmp_path / "config.json"
+    settings = {
+        "workspaces": {"workspace": ["github"]},
+        "connectors": {
+            "github": {
+                "enabled": True,
+                "reference": "projects/test/secrets/github/versions/1",
+                "identity": "test-user",
+            }
+        },
+    }
+    config.write_text(json.dumps(settings))
+    fake = tmp_path / "fake.py"
+    fake.write_text("import sys\nfor line in sys.stdin:\n print(line.rstrip(), flush=True)\n")
+    monkeypatch.setattr(
+        connector_broker,
+        "command",
+        lambda name, cred: ([sys.executable, str(fake)], dict(os.environ)),
+    )
+    store = FakeStore()
+    broker = connector_broker.Broker(config, store)
+
+    tls = connector_broker.server_context(
+        {
+            "certificate": tmp_path / "server.crt",
+            "private_key": tmp_path / "server.key",
+            "client_ca": tmp_path / "ca.crt",
+        }
+    )
+    # Anything below 1.2 is refused by policy. Lowering the product's floor
+    # changes this value, which is the mutation this assertion exists to catch.
+    assert tls.minimum_version is ssl.TLSVersion.TLSv1_2
+    assert ssl.TLSVersion.TLSv1_2 > ssl.TLSVersion.TLSv1_1
+
+    async def scenario() -> None:
+        server = await asyncio.start_server(broker.handle, "127.0.0.1", 0, ssl=tls)
+        port = server.sockets[0].getsockname()[1]
+        try:
+            client = ssl.create_default_context(cafile=str(tmp_path / "ca.crt"))
+            client.load_cert_chain(tmp_path / "workspace.crt", tmp_path / "workspace.key")
+            # Exactly at the floor: no 1.3 fallback hiding a broken minimum.
+            client.maximum_version = ssl.TLSVersion.TLSv1_2
+            reader, writer = await asyncio.open_connection(
+                "127.0.0.1", port, ssl=client, server_hostname="server"
+            )
+            assert writer.get_extra_info("ssl_object").version() == "TLSv1.2"
+            writer.write(b'{"name":"github"}\n')
+            await writer.drain()
+            assert json.loads(await asyncio.wait_for(reader.readline(), 3)) == {"ready": True}
+            writer.close()
+            with contextlib.suppress(ssl.SSLError, ConnectionError):
+                await writer.wait_closed()
+        finally:
+            server.close()
+            await server.wait_closed()
 
     asyncio.run(scenario())

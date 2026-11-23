@@ -1,6 +1,6 @@
 """Connectors: credential resolution order, secret store hygiene, and
 enable/disable writing (and cleaning) BOTH harness configs. CLI dependencies
-(gh, railway) are stub scripts on a controlled PATH — no network, no keychain
+(gh, github-mcp-server) are stub scripts on a controlled PATH — no network, no keychain
 (DUCKTERM_NO_KEYCHAIN routes secrets to the 0600 file store)."""
 
 import json
@@ -13,6 +13,10 @@ import pytest
 
 from duckterm import connectors
 
+# Captured before isolated_env (autouse) replaces it, for the one test that
+# must exercise the real network path.
+_REAL_GITHUB_IDENTITY = connectors.github_identity
+
 
 @pytest.fixture(autouse=True)
 def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
@@ -22,6 +26,13 @@ def isolated_env(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
     monkeypatch.setenv("PATH", str(bin_dir))
+    # PATH is replaced wholesale above, so enable() cannot find the real CLI.
+    # _duckterm_bin() raises without it and the test fails on the environment
+    # rather than on what it is checking -- which made 10 of these depend on
+    # whether a duckterm binary happened to be installed on the machine.
+    duckterm = bin_dir / "duckterm"
+    duckterm.write_text("#!/bin/sh\nexit 0\n")
+    duckterm.chmod(0o755)
     monkeypatch.setattr(connectors, "github_identity", lambda token: "test-user")
     return bin_dir
 
@@ -106,24 +117,6 @@ def test_github_enable_rejects_bad_token_before_storing(
     assert connectors.load_secret("github") == "ghp_existing"  # good token not overwritten
 
 
-def test_railway_enable_requires_login_and_uses_cli_mcp(isolated_env: Path, tmp_path: Path) -> None:
-    home = tmp_path / "home"
-    home.mkdir()
-    with pytest.raises(RuntimeError, match="not installed"):
-        connectors.enable("railway", source="railway-cli", home=home)
-
-    _stub(isolated_env, "railway", "exit 1")  # installed, logged out
-    with pytest.raises(RuntimeError, match="railway login"):
-        connectors.enable("railway", source="railway-cli", home=home)
-
-    _stub(isolated_env, "railway", "exit 0")  # logged in
-    result = connectors.enable("railway", source="railway-cli", home=home)
-    claude = json.loads((home / ".claude.json").read_text())
-    assert claude["mcpServers"]["railway"]["args"] == ["connector-run", "railway"]
-    assert result["enabled"] is True
-    assert result["credential"] == "railway-cli"
-
-
 def test_disable_removes_configs_and_retains_authorization(
     isolated_env: Path, tmp_path: Path
 ) -> None:
@@ -153,7 +146,11 @@ def test_status_is_local_only_and_reports_gaps(isolated_env: Path, tmp_path: Pat
     by_name = {r["name"]: r for r in rows}
     assert by_name["github"]["ready"] is False  # no cred, no server runner
     assert by_name["github"]["enabled"] is False
-    assert by_name["railway"]["detail"] == "Railway CLI not installed"
+    assert list(by_name) == ["github"]
+    # The gap is named, so Connect cannot look like it worked while agents get
+    # nothing: there is no github-mcp-server and no docker on the stub PATH.
+    assert by_name["github"]["runner_ready"] is False
+    assert "github-mcp-server" in str(by_name["github"]["detail"])
 
 
 def test_unknown_connector_raises() -> None:
@@ -161,48 +158,6 @@ def test_unknown_connector_raises() -> None:
         connectors.enable("gitlab")
     with pytest.raises(ValueError):
         connectors.disable("gitlab")
-
-
-def test_porkbun_enable_needs_both_keys_and_validates(
-    isolated_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _stub(isolated_env, "uvx", "exit 0")
-    home = tmp_path / "home"
-    home.mkdir()
-
-    with pytest.raises(RuntimeError, match="API key AND secret"):
-        connectors.enable("porkbun", home=home)
-
-    monkeypatch.setattr(connectors, "porkbun_keys_valid", lambda t, s: False)
-    with pytest.raises(RuntimeError, match="rejected"):
-        connectors.enable("porkbun", token="pk1_x", secret="sk1_y", home=home)
-    assert connectors.load_secret("porkbun") is None  # bad keys not persisted
-
-    monkeypatch.setattr(connectors, "porkbun_keys_valid", lambda t, s: True)
-    result = connectors.enable("porkbun", token="pk1_x", secret="sk1_y", home=home)
-    assert result["enabled"] is True
-    assert result["credential"] == "stored"
-    claude = json.loads((home / ".claude.json").read_text())
-    entry = claude["mcpServers"]["porkbun"]
-    assert entry["args"] == ["connector-run", "porkbun"]
-    assert "pk1_" not in json.dumps(claude)  # keys never land in the config
-    assert "sk1_" not in json.dumps(claude)
-
-
-def test_porkbun_forget_clears_both_secrets(
-    isolated_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _stub(isolated_env, "uvx", "exit 0")
-    monkeypatch.setattr(connectors, "porkbun_keys_valid", lambda t, s: True)
-    home = tmp_path / "home"
-    home.mkdir()
-    connectors.enable("porkbun", token="pk1_x", secret="sk1_y", home=home)
-
-    result = connectors.forget("porkbun", home=home)
-
-    assert result["enabled"] is False
-    assert connectors.load_secret("porkbun") is None
-    assert connectors.load_secret("porkbun-secret") is None
 
 
 def test_selected_source_never_falls_back(isolated_env: Path) -> None:
@@ -219,24 +174,6 @@ def test_hosted_machine_refuses_local_secret_storage(monkeypatch: pytest.MonkeyP
     assert not connectors._secret_file("github").exists()
 
 
-def test_porkbun_write_opt_in_overrides_ambient_environment(
-    isolated_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    _stub(isolated_env, "uvx", "exit 0")
-    monkeypatch.setattr(connectors, "porkbun_keys_valid", lambda t, s: True)
-    monkeypatch.setenv("PORKBUN_GET_MUDDY", "true")
-    home = tmp_path / "home"
-    home.mkdir()
-    result = connectors.enable("porkbun", "pk-test", "sk-test", home=home)
-    assert result["write_access"] is False
-    argv, env = connectors.server_command("porkbun", connectors.policy("porkbun"))
-    assert "--get-muddy" not in argv
-    assert env["PORKBUN_GET_MUDDY"] == "false"
-    connectors.enable("porkbun", home=home, write_access=True)
-    argv, _ = connectors.server_command("porkbun", connectors.policy("porkbun"))
-    assert "--get-muddy" in argv
-
-
 def test_offline_validation_does_not_claim_verified_identity(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -244,9 +181,14 @@ def test_offline_validation_does_not_claim_verified_identity(
         raise OSError("network unavailable")
 
     monkeypatch.setattr(connectors.urllib.request, "urlopen", offline)
-    # Restore the real validator because the fixture stubs GitHub's network.
+    # isolated_env is autouse and stubs github_identity for every test in this
+    # file, so restore the real one or this asserts on the stub.
+    monkeypatch.setattr(connectors, "github_identity", _REAL_GITHUB_IDENTITY)
+    # A failed lookup must not be reported as a verified identity, and must not
+    # be reported as a rejected credential either -- the token may be perfectly
+    # good and the network merely down.
     with pytest.raises(RuntimeError, match="Cannot verify"):
-        connectors.porkbun_keys_valid("pk", "sk")
+        connectors.github_identity("ghp_whatever")
 
 
 def _fake_mcp(path: Path, body: str) -> None:
@@ -283,11 +225,11 @@ def test_verify_surfaces_the_servers_own_error_when_it_cannot_start(
     isolated_env: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     server = tmp_path / "server"
-    _fake_mcp(server, "sys.stderr.write('uvx not found\\n')\nraise SystemExit(1)")
+    _fake_mcp(server, "sys.stderr.write('github-mcp-server not found\\n')\nraise SystemExit(1)")
     monkeypatch.setattr(connectors, "_duckterm_bin", lambda: str(server))
-    result = connectors.verify("porkbun")
+    result = connectors.verify("github")
     assert result["ok"] is False and result["tools"] == 0
-    assert "uvx not found" in str(result["detail"])
+    assert "github-mcp-server not found" in str(result["detail"])
 
 
 def test_verify_does_not_hang_on_a_server_that_never_answers(
@@ -380,3 +322,129 @@ def test_status_reports_which_agent_clis_exist_here(
     connectors.enable("github", source="gh-cli", home=tmp_path)
     present = connectors.status("github", home=tmp_path)["harnesses_present"]
     assert present == {"claude-code": True, "codex": False}
+
+
+@pytest.mark.parametrize(
+    "drop_policy_flag,drop_harness_entry",
+    [(False, False), (True, False), (False, True), (True, True)],
+)
+def test_panel_reports_availability_from_one_predicate(
+    isolated_env: Path,
+    tmp_path: Path,
+    drop_policy_flag: bool,
+    drop_harness_entry: bool,
+) -> None:
+    """Either store being off makes the panel say unavailable.
+
+    The (False, True) case is the one that matters: a harness entry removed
+    outside Duckterm leaves policy.enabled set, and the panel must still not
+    claim the connector is available to an agent that cannot resolve it.
+    """
+    from duckterm.agents import mcp_install
+
+    _stub(isolated_env, "github-mcp-server", "sleep 0")
+    connectors.save_secret("github", "ghp_stored")
+    connectors.enable("github", source="stored", home=tmp_path)
+    assert connectors.status("github", home=tmp_path)["enabled"] is True
+
+    if drop_policy_flag:
+        connectors._save_policy(
+            "github", {**connectors.policy("github", home=tmp_path), "enabled": False}
+        )
+    if drop_harness_entry:
+        mcp_install.managed_remove("github", "codex", home=tmp_path)
+
+    expected = not (drop_policy_flag or drop_harness_entry)
+    assert connectors.available_to_agents("github", home=tmp_path) is expected
+    assert connectors.status("github", home=tmp_path)["enabled"] is expected
+
+
+def test_an_unreadable_harness_config_reads_as_unavailable_rather_than_raising(
+    isolated_env: Path, tmp_path: Path
+) -> None:
+    """Fail-closed for display: a damaged config must not crash the panel."""
+    _stub(isolated_env, "github-mcp-server", "sleep 0")
+    connectors.save_secret("github", "ghp_stored")
+    connectors.enable("github", source="stored", home=tmp_path)
+
+    from duckterm.agents import mcp_install
+
+    mcp_install._managed_path("codex", tmp_path).write_text("{ this is not json")
+    assert connectors.available_to_agents("github", home=tmp_path) is False
+    assert connectors.status("github", home=tmp_path)["enabled"] is False
+
+
+def test_the_panel_can_tell_disable_apart_from_a_lost_harness_entry(
+    isolated_env: Path, tmp_path: Path
+) -> None:
+    """The two doors, and which one is shut.
+
+    `enabled` is false in both situations below, which is why one boolean made
+    the panel describe a missing registration in Disable's words. These two
+    fields are the whole point of the split: same `enabled`, different cause,
+    different fix.
+    """
+    from duckterm.agents import mcp_install
+
+    _stub(isolated_env, "github-mcp-server", "sleep 0")
+    _stub(isolated_env, "duckterm", "exit 0")
+    connectors.save_secret("github", "ghp_stored")
+    connectors.enable("github", source="stored", home=tmp_path)
+
+    on = connectors.status("github", home=tmp_path)
+    assert (on["duckterm_uses"], on["agents_use"]) == (True, True)
+    assert on["unreachable_harnesses"] == []
+
+    connectors.disable("github", home=tmp_path)
+    off = connectors.status("github", home=tmp_path)
+    assert off["agents_use"] is False
+    assert off["agents_off_by_choice"] is True
+    # Disable is about agents. Duckterm's own features need a credential, and
+    # Disable does not remove one, so this door stays open.
+    assert off["duckterm_uses"] is True
+
+    connectors.enable("github", source="stored", home=tmp_path)
+    mcp_install.managed_remove("github", "codex", home=tmp_path)
+    lost = connectors.status("github", home=tmp_path)
+    assert lost["agents_use"] is False
+    assert lost["agents_off_by_choice"] is False, "the owner did not turn this off"
+    assert lost["unreachable_harnesses"] == ["codex"]
+
+
+def test_a_deselected_harness_is_not_reported_as_unreachable(
+    isolated_env: Path, tmp_path: Path
+) -> None:
+    """Absence the owner chose is not a problem to report.
+
+    Counting a deselected harness would show a permanent warning naming an
+    agent the owner deliberately excluded.
+    """
+    _stub(isolated_env, "github-mcp-server", "sleep 0")
+    _stub(isolated_env, "duckterm", "exit 0")
+    connectors.save_secret("github", "ghp_stored")
+    connectors.enable("github", source="stored", home=tmp_path, harnesses=["claude-code"])
+
+    row = connectors.status("github", home=tmp_path)
+    assert row["unreachable_harnesses"] == []
+    assert row["agents_use"] is True
+
+
+def test_status_says_agents_cannot_run_the_server_when_nothing_can_run_it(
+    isolated_env: Path, tmp_path: Path
+) -> None:
+    """A valid token with no server to run gives agents nothing.
+
+    This was a detail string beside a row that still offered Connect, so the
+    owner could connect successfully and find agents had no GitHub at all.
+    """
+    connectors.save_secret("github", "ghp_stored")
+    # No github-mcp-server and no docker on the stubbed PATH.
+    row = connectors.status("github", home=tmp_path)
+    assert row["runner_ready"] is False
+    assert row["ready"] is False
+    assert "github-mcp-server" in str(row["detail"])
+
+
+def test_only_github_remains() -> None:
+    """Railway and Porkbun were MCP pass-throughs; nothing in Duckterm read them."""
+    assert connectors.NAMES == ("github",)

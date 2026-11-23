@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Build DuckTerm.app — the desktop shell around the local dashboard.
 #
-# Compiles the Swift sources directly (not via SwiftPM) into a .app bundle and
+# Resolves pinned native dependencies and compiles Swift into a .app bundle;
 # ad-hoc signs it so it runs on this machine. Requires a working Swift toolchain
 # with the macOS SDK — full Xcode is recommended; the standalone CommandLineTools
 # 16.4 SDK has a broken module map (duplicate SwiftBridging) that fails to import
@@ -76,14 +76,23 @@ MACOS="$CONTENTS/MacOS"
 echo "==> building dashboard"
 (cd ../web && npm run build --silent)
 
+echo "==> resolving pinned native updater"
+swift package resolve
+SPARKLE="$PWD/.build/artifacts/sparkle/Sparkle"
+FRAMEWORKS="$SPARKLE/Sparkle.xcframework/macos-arm64_x86_64"
+[[ -d "$FRAMEWORKS/Sparkle.framework" ]] || { echo "Sparkle framework missing" >&2; exit 1; }
 echo "==> compiling"
 rm -rf "$APP"
 mkdir -p "$MACOS" "$CONTENTS/Resources"
 swiftc -O -target "arm64-apple-macos${MIN_MACOS}" \
   -framework AppKit -framework WebKit -framework UserNotifications -framework Foundation \
+  -F "$FRAMEWORKS" -framework Sparkle -Xlinker -rpath -Xlinker @executable_path/../Frameworks \
   -o "$MACOS/DuckTerm" \
   Sources/Duckterm/*.swift
 
+mkdir -p "$CONTENTS/Frameworks"
+/usr/bin/ditto "$FRAMEWORKS/Sparkle.framework" "$CONTENTS/Frameworks/Sparkle.framework"
+cp "$SPARKLE/LICENSE" "$CONTENTS/Resources/LICENSE-Sparkle"
 echo "==> bundling app icon"
 # Edition icons are generated and reviewed together with their SVG sources.
 # Normal builds copy the exact checked-in resource, never rewrite source assets
@@ -106,6 +115,7 @@ cat > "$CONTENTS/Info.plist" <<PLIST
   <key>CFBundleName</key><string>${APP_NAME}</string>
   <key>CFBundleDisplayName</key><string>${APP_NAME}</string>
   <key>DucktermEdition</key><string>${EDITION}</string>
+  <key>DuckTermSupportEmail</key><string>getutsava@gmail.com</string>
   <key>CFBundleIdentifier</key><string>${BUNDLE_ID}</string>
   <key>CFBundleVersion</key><string>${VERSION}</string>
   <key>CFBundleShortVersionString</key><string>${VERSION}</string>
@@ -162,7 +172,8 @@ with (contents / 'Info.plist').open('wb') as f:
     plistlib.dump(info, f)
 PYBUILD
 
-# Optional support recipient is supplied at build time, never committed to source.
+# Official builds include the support recipient above, without machine-local setup.
+# Custom builds may override it. This only addresses a draft; it never sends mail.
 # Read the environment directly so the address is never logged or parsed as code.
 if [[ -n "${DUCKTERM_SUPPORT_EMAIL:-}" ]]; then
   python3 - "$CONTENTS/Info.plist" <<'PYCONFIG'
@@ -176,6 +187,8 @@ plist["DuckTermSupportEmail"] = os.environ["DUCKTERM_SUPPORT_EMAIL"]
 path.write_bytes(plistlib.dumps(plist))
 PYCONFIG
 fi
+
+"${PYTHON:-../.venv/bin/python}" configure-updates.py "$CONTENTS/Info.plist"
 
 built_minos=$(otool -l "$MACOS/DuckTerm" | awk '/LC_BUILD_VERSION/{f=1} f&&/minos/{print $2; exit}')
 if [[ "$built_minos" != "$MIN_MACOS" ]]; then

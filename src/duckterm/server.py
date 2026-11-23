@@ -238,6 +238,7 @@ _LOCKED_PAGE = """<!doctype html><meta charset="utf-8"><title>DuckTerm</title>
 _ROUTES: list[Route] = [
     Route("GET", "/edition", lambda s, r, w, h, b, seg: s._edition(w)),
     Route("GET", "/checkpoint-settings", lambda s, r, w, h, b, seg: s._checkpoint_settings(w)),
+    Route("GET", "/checkpoint-health", lambda s, r, w, h, b, seg: s._checkpoint_health(w)),
     Route("POST", "/checkpoint-settings", lambda s, r, w, h, b, seg: s._checkpoint_settings(w, b)),
     Route("GET", "/ai-settings", lambda s, r, w, h, b, seg: s._ai_settings(w)),
     Route("POST", "/ai-settings", lambda s, r, w, h, b, seg: s._ai_settings(w, b)),
@@ -484,6 +485,9 @@ class Server:
 
         self.checkpoint_requests = CheckpointRequests(self)
         self.progress_coordinator = ProgressCoordinator(self)
+        from duckterm.core.auto_checkpoints import AutoCheckpoints
+
+        self.auto_checkpoints = AutoCheckpoints(self)
         self.memory = Memory(self)
         self.memory_preparation = MemoryPreparation(self)
         from duckterm.handoff_review import HandoffReview
@@ -963,7 +967,26 @@ class Server:
         identity = instance.description()
         identity["port"] = getattr(self, "_bound_port", instance.port())
         identity["url"] = f"http://127.0.0.1:{identity['port']}"
-        await _write_json(writer, 200, {**self.edition.description(), "instance": identity})
+        from duckterm import __version__
+
+        await _write_json(
+            writer,
+            200,
+            {
+                **self.edition.description(),
+                "instance": identity,
+                "runtime_version": __version__,
+                "app_update_blocked": (
+                    "A backup is running. Wait until it finishes."
+                    if (
+                        self._backup_jobs
+                        and self._backup_jobs.task
+                        and not self._backup_jobs.task.done()
+                    )
+                    else None
+                ),
+            },
+        )
 
     def require_feature(self, feature: str) -> None:
         if not self.edition.includes(feature):
@@ -1113,6 +1136,10 @@ class Server:
             # The accepted Stop is already durable. A disconnected hook client
             # must not leave an idle session's restart queued forever.
             self.restarts.hook_finished(event)
+            if event.get("event_type") == events.STOP:
+                from duckterm.merge_closing import recover as recover_merge_closures
+
+                await recover_merge_closures(self)
 
     def _inbox_hook_output(self, raw: dict[str, Any], key: str) -> dict[str, Any] | None:
         if not self.edition.includes("inbox"):
@@ -1295,7 +1322,7 @@ class Server:
             await _write_json(writer, 200, {"prompt": prompt})
             return
         assert supervisor is not None
-        sent = await self._submit_prompt(session_key, prompt) == "submitted"
+        sent = await self._submit_prompt(session_key, prompt, source="system") == "submitted"
         await _write_json(writer, 200 if sent else 409, {"sent": sent})
 
     async def _session_enroll(
@@ -1452,9 +1479,10 @@ class Server:
             await _write_json(writer, 401, {"error": "owner credential required"})
             return
         surface = urllib.parse.unquote(surface)
+        store = self.history.home_layout if surface == "home" else self.history.layouts
         try:
             if method == "GET":
-                result = self.history.layouts.get(surface)
+                result = store.get(surface)
             else:
                 if len(body) > 16384:
                     await _write_json(writer, 413, {"error": "Layout is too large"})
@@ -1462,7 +1490,7 @@ class Server:
                 req = json.loads(body)
                 if not isinstance(req, dict) or set(req) != {"instances", "revision"}:
                     raise ValueError("Expected instances and revision")
-                result = self.history.layouts.put(surface, req["instances"], req["revision"])
+                result = store.put(surface, req["instances"], req["revision"])
         except FileExistsError as exc:
             await _write_json(writer, 409, {"error": str(exc)})
             return
@@ -3237,7 +3265,6 @@ class Server:
                     interrupt=request.get("interrupt", False),
                     memory=request.get("memory"),
                     request_key=request.get("request_key"),
-                    require_preparation=True,
                 )
             else:
                 raise APIError(405, "Unsupported restart operation")
@@ -3694,80 +3721,63 @@ class Server:
             revision = await self.progress_coordinator.refresh(session_key)
             row = self.history.session(session_key)
             if revision and row:
-                self._file_digest_candidates(row)
+                await self._refresh_rule_candidates(row)
         except Exception as exc:  # provider/background boundary; retain last good progress
             print(f"[duckterm] progress refresh failed: {type(exc).__name__}", file=sys.stderr)
 
-    # A collaboration pattern seen in this many distinct sessions of one folder
-    # graduates from digest observation to a proposed AGENTS.md rule.
-    _DIGEST_RULE_MIN_SESSIONS = 3
-
-    def _file_digest_candidates(self, row: dict[str, Any]) -> None:
-        """The digest→AGENTS.md bridge: user_learnings that recur across
-        sessions in this folder become candidate rules in its rule set. Only
-        for folders that already adopted the typed format (rules.json exists) —
-        the bridge must not start creating files in every watched folder. A
-        human still promotes: candidates never render into AGENTS.md."""
+    async def _refresh_rule_candidates(self, row: dict[str, Any]) -> None:
+        """Snapshot SQLite-backed observations on the owning event-loop thread."""
         from duckterm.core import agents_rules
-        from duckterm.core.agents_rules import RuleBlock, infer_scope, rule_id
-        from duckterm.persistence.digests import _normalize
 
+        if not (
+            self.edition.includes("rule_suggestions")
+            and self.edition.includes("background_rule_suggestions")
+        ):
+            return
         directory = row.get("worktree_path") or row.get("cwd")
         if not directory:
             return
         base = Path(str(directory)).expanduser()
         if not (base / agents_rules.RULES_FILENAME).is_file():
             return
-        root = str(Path(str(directory)))
-        # normalized learning -> (representative text, session keys, runtimes, models)
-        seen: dict[str, tuple[str, set[str], set[str], set[str]]] = {}
-        for s in self.history.sessions():
-            in_dir = any(
-                str(s.get(field) or "").startswith(root)
-                for field in ("cwd", "worktree_path", "repo_path")
-            )
-            if not in_dir:
-                continue
-            key = str(s["session_key"])
-            for item in self.digests.items(key):
-                if item["bucket"] != "user_learnings":
-                    continue
-                norm = _normalize(str(item["text"]))
-                text, keys, runtimes, models = seen.setdefault(
-                    norm, (str(item["text"]), set(), set(), set())
-                )
-                keys.add(key)
-                if s.get("runtime"):
-                    runtimes.add(str(s["runtime"]))
-                if s.get("model"):
-                    models.add(str(s["model"]))
-        proposals = [
-            RuleBlock(
-                id=rule_id(text),
-                text=text,
-                scope=infer_scope(runtimes, models) if runtimes else "all",
-                status="candidate",
-                source="digest",
-                evidence=len(keys),
-                added=time.strftime("%Y-%m-%d"),
-            )
-            for text, keys, runtimes, models in seen.values()
-            if len(keys) >= self._DIGEST_RULE_MIN_SESSIONS
-        ]
-        if not proposals:
-            return
-        # A hand-corrupted rules.json must not kill the digest loop — and must
-        # not be "repaired" by overwriting it with an empty rule set.
-        try:
-            existing = agents_rules.load_rules(base)
-        except (json.JSONDecodeError, TypeError):
-            return
+        corrections = tuple(self._corrections_for_dir(str(base)))
+        if corrections:
+            await asyncio.to_thread(self._file_digest_candidates, base, corrections)
+
+    @staticmethod
+    def _file_digest_candidates(base: Path, corrections: tuple[Correction, ...]) -> None:
+        """Reconcile an immutable snapshot without accessing the history connection."""
         from dataclasses import asdict
 
-        before = [asdict(r) for r in existing]  # merge mutates evidence in place
-        merged = agents_rules.merge_candidates(existing, proposals)
-        if [asdict(r) for r in merged] != before:
-            agents_rules.save_rules(base, merged)
+        from duckterm.core import agents_rules
+        from duckterm.core.rule_proposals import merge_proposals
+
+        try:
+            state = agents_rules.read_catalog(base)
+            if state["drift"]:
+                return
+            fingerprint = hashlib.sha256(
+                json.dumps(
+                    {"observations": [asdict(c) for c in corrections], "rules": state["rules"]},
+                    sort_keys=True,
+                ).encode()
+            ).hexdigest()
+            if fingerprint == state["capture_fingerprint"]:
+                return
+            rules = agents_rules.load_rules(base)
+            proposed = suggest_rules(corrections, rules, state["proposals"])
+            merged = merge_proposals(state["proposals"], proposed)
+            agents_rules.save_rules(
+                base,
+                rules,
+                proposals=merged,
+                expected_version=state["version"],
+                capture_fingerprint=fingerprint,
+                render=False,
+            )
+        except (ValueError, TypeError, OSError) as exc:
+            # Keep checkpoint/rules intact; log the category without private observations.
+            print(f"[duckterm] rule capture failed: {type(exc).__name__}", file=sys.stderr)
 
     async def _session_timeline(
         self, writer: asyncio.StreamWriter, headers: dict[str, str], key: str, query: str
@@ -3839,7 +3849,12 @@ class Server:
     async def _folder_chat_message(
         self, folder: str, question: str, request_key: str
     ) -> dict[str, Any] | None:
-        """Interpret only the owner's request, then reuse scoped inbox delivery."""
+        """Interpret only the owner's request into a plan the owner must confirm.
+
+        The model paraphrases and picks recipients, so it never sends. The
+        owner confirms the exact text and recipients through the reviewed
+        folder dispatch route, which re-validates scope at send time.
+        """
         service = FolderMessages(self.history)
         snapshot = service.recipients(folder)
         identity, messages = self.history.folder_chats.snapshot(folder)
@@ -3886,17 +3901,17 @@ class Server:
             raise APIError(
                 409, "Some recipients have no inbox. Use @ to review recipients. Nothing was sent."
             )
-        return service.send(
-            folder,
-            {
+        return {
+            "plan": {
                 "identity": identity,
                 "target": target,
+                "label": candidates[0]["name"] if target["kind"] == "session" else target["id"],
                 "text": intent["text"],
-                "request_key": request_key,
-                "recipients": [r["session_id"] for r in candidates],
-            },
-            owner_question=question,
-        )
+                "recipients": [
+                    {"session_id": r["session_id"], "name": r["name"]} for r in candidates
+                ],
+            }
+        }
 
     async def _fleet_ask(self, writer: asyncio.StreamWriter, body: bytes) -> None:
         """Route explicit folder messages; answer other questions from session digests."""
@@ -3937,6 +3952,9 @@ class Server:
                 return
             except ValueError as exc:
                 await _write_json(writer, 409, {"error": str(exc)})
+                return
+            if exchange is not None and "plan" in exchange:
+                await _write_json(writer, 200, exchange)
                 return
             if exchange is not None:
                 await _write_json(
@@ -4391,7 +4409,9 @@ class Server:
         now = int(time.time() * 1000)
         refusal = await self._typing_refusal(key)
         if refusal is None:
-            status = await self._submit_prompt(key, text)
+            status = await self._submit_prompt(
+                key, text, source="owner" if answered_by == "owner" else "relay"
+            )
             if status != "failed":
                 self.relay.close(
                     note,
@@ -4739,7 +4759,7 @@ class Server:
     _SUBMIT_GAP_S = 0.3
     _SUBMIT_CONFIRM_S = 4.0
 
-    async def _submit_prompt(self, key: str, text: str) -> str:
+    async def _submit_prompt(self, key: str, text: str, *, source: str = "owner") -> str:
         """Type text into a session's prompt and make sure it was submitted.
         Returns "submitted", "stuck" (still sitting in the prompt after a
         second Enter), or "failed" (couldn't write to the terminal)."""
@@ -4751,6 +4771,11 @@ class Server:
         ):
             return "failed"
         typed_at = int(time.time() * 1000)
+        # Record before writing: a hook can arrive before paste confirmation.
+        # This is delivery provenance, not a second UserPromptSubmit event.
+        self.bus.publish(
+            {"event_type": "PromptDelivery", "session_key": key, "text": text, "source": source}
+        )
         if self.restarts.pending(key):
             return "failed"
         if not await asyncio.to_thread(
@@ -4915,12 +4940,8 @@ class Server:
         except json.JSONDecodeError:
             await _write_json(writer, 400, {"error": "invalid JSON"})
             return
-        if not isinstance(req, dict) or (
-            "write_access" in req and not isinstance(req["write_access"], bool)
-        ):
-            await _write_json(
-                writer, 400, {"error": "expected an object with boolean write_access"}
-            )
+        if not isinstance(req, dict):
+            await _write_json(writer, 400, {"error": "expected an object"})
             return
         harnesses = req.get("harnesses")
         if harnesses is not None and not (
@@ -4929,15 +4950,12 @@ class Server:
             await _write_json(writer, 400, {"error": "harnesses must be a list of names"})
             return
         token = str(req.get("token") or "").strip() or None
-        secret = str(req.get("secret") or "").strip() or None
         try:
             result = await asyncio.to_thread(
                 connectors.enable,
                 name,
                 token,
-                secret,
                 source=req.get("source"),
-                write_access=req.get("write_access", False),
                 harnesses=harnesses,
             )
         except ValueError as e:
@@ -5344,8 +5362,6 @@ class Server:
         AGENTS.md — rendered output when managed, the hand-written file when a
         folder predates the typed format (managed=false, so the editor can
         offer an import instead of clobbering it)."""
-        from dataclasses import asdict
-
         from duckterm.core import agents_rules
 
         query = urllib.parse.urlparse("/agents-md" + seg).query
@@ -5361,19 +5377,12 @@ class Server:
         if not self._agents_md_dir_allowed(str(path)):
             await _write_json(writer, 400, {"error": "file outside the allowed roots"})
             return
-        rules = agents_rules.load_rules(base)
-        text = path.read_text() if path.is_file() else ""
-        await _write_json(
-            writer,
-            200,
-            {
-                "dir": directory,
-                "rules": [asdict(r) for r in rules],
-                "text": text,
-                "exists": path.is_file(),
-                "managed": (base / agents_rules.RULES_FILENAME).is_file(),
-            },
-        )
+        try:
+            state = agents_rules.read_catalog(base)
+        except (ValueError, TypeError, OSError) as exc:
+            await _write_json(writer, 400, {"error": str(exc)})
+            return
+        await _write_json(writer, 200, {"dir": directory, **state})
 
     async def _suggest_agents_md(self, writer: asyncio.StreamWriter, body: bytes) -> None:
         """The observation loop: {dir} -> proposed AGENTS.md rules distilled
@@ -5385,70 +5394,121 @@ class Server:
         except json.JSONDecodeError:
             await _write_json(writer, 400, {"error": "invalid JSON"})
             return
+        if not isinstance(req, dict):
+            await _write_json(writer, 400, {"error": "request must be an object"})
+            return
         directory = req.get("dir")
         if not directory:
             await _write_json(writer, 400, {"error": "dir required"})
             return
-        path = (Path(str(directory)).expanduser() / "AGENTS.md").resolve()
+        path = Path(str(directory)).expanduser().resolve() / "AGENTS.md"
         if not self._agents_md_dir_allowed(str(path)):
             await _write_json(writer, 400, {"error": "file outside the allowed roots"})
             return
-        from dataclasses import asdict
-
         from duckterm.core import agents_rules
+        from duckterm.core.rule_proposals import merge_proposals
 
-        corrections = self._corrections_for_dir(str(directory))
-        existing = agents_rules.load_rules(path.parent)
-        proposed = await asyncio.to_thread(suggest_rules, corrections, existing)
-        # Rejected tombstones and already-active rules block re-proposal.
-        taken = {r.id for r in existing}
-        fresh = [r for r in proposed if r.id not in taken]
+        try:
+            existing = agents_rules.load_rules(path.parent)
+            if "rules" in req:
+                if not isinstance(req["rules"], list):
+                    raise ValueError("rules must be an array")
+                existing = [agents_rules.parse_rule(r) for r in req["rules"]]
+            corrections = self._corrections_for_dir(str(path.parent))
+            if req.get("draft") is not None:
+                draft = req["draft"]
+                agents_rules.parse_rule({"id": "manual-draft", **draft})
+                corrections = [
+                    Correction(
+                        "manual",
+                        json.dumps(draft),
+                    )
+                ]
+            state = agents_rules.read_catalog(path.parent)
+            proposed = await asyncio.to_thread(
+                suggest_rules, corrections, existing, state["proposals"]
+            )
+            proposals = merge_proposals(state["proposals"], proposed)
+        except (ValueError, TypeError, OSError) as exc:
+            await _write_json(writer, 400, {"error": str(exc)})
+            return
         await _write_json(
-            writer,
-            200,
-            {"suggestions": [asdict(r) for r in fresh], "corrections_seen": len(corrections)},
+            writer, 200, {"proposals": proposals, "corrections_seen": len(corrections)}
         )
 
     def _corrections_for_dir(self, directory: str) -> "list[Correction]":
-        """Every correction signal from sessions that worked in `directory`:
-        annotation notes (span + pushback) and follow-up prompts (every
-        UserPromptSubmit after a session's first — the first is the task,
-        later ones are steering). Bounded so the LLM prompt stays small."""
-        root = str(Path(directory))
+        """Original owner observations with stable references; not every prompt is a correction."""
+        root = Path(directory).expanduser().resolve()
         out: list[Correction] = []
         for row in self.history.sessions():
-            in_dir = any(
-                str(row.get(field) or "").startswith(root)
+            if not any(
+                row.get(field) and Path(str(row[field])).expanduser().resolve().is_relative_to(root)
                 for field in ("cwd", "worktree_path", "repo_path")
-            )
-            if not in_dir:
+            ):
                 continue
             key = str(row["session_key"])
-            runtime = str(row.get("runtime") or "")
-            model = str(row.get("model") or "")
+            runtime, model = str(row.get("runtime") or ""), str(row.get("model") or "")
             for ann in self.history.annotations(key):
                 out.append(
-                    Correction("annotation", f"\"{ann['quote']}\" — {ann['note']}", runtime, model)
+                    Correction(
+                        "annotation",
+                        f"{ann['quote']} — {ann['note']}",
+                        runtime,
+                        model,
+                        f"annotation:{ann['id']}",
+                    )
                 )
-            prompts = [
-                str(e.get("prompt"))
-                for e in self.history.events_for(key)
-                if e.get("event_type") == events.USER_PROMPT_SUBMIT and e.get("prompt")
-            ]
-            out.extend(Correction("follow-up", p, runtime, model) for p in prompts[1:])
-        return out[-80:]  # newest-biased cap; enough signal, bounded prompt
+            session_events = self.history.events_for(key)
+            injected = {
+                " ".join(str(e.get("text") or "").split())
+                for e in session_events
+                if e.get("event_type") == "OracleNudge"
+                or (e.get("event_type") == "PromptDelivery" and e.get("source") != "owner")
+            }
+            for event in session_events:
+                if (
+                    event.get("event_type") == events.USER_PROMPT_SUBMIT
+                    and event.get("prompt")
+                    and event.get("_id")
+                ):
+                    prompt = str(event["prompt"])
+                    if (
+                        " ".join(prompt.split()) in injected
+                        or prompt.lstrip().startswith("Duckterm Oracle:")
+                        or event.get("source") in {"oracle", "peer", "inbox", "system"}
+                    ):
+                        continue
+                    if prompt.startswith(
+                        ("Duckterm session capability:", "Rules for your runtime")
+                    ):
+                        _, separator, prompt = prompt.partition("\n\nUser's task:\n")
+                        if not separator or not prompt.strip():
+                            continue
+                    out.append(
+                        Correction(
+                            "user-prompt",
+                            prompt,
+                            runtime,
+                            model,
+                            f"event:{event['_id']}",
+                        )
+                    )
+        # Event identity survives re-reading/forked records; summaries never add evidence.
+        unique = {c.ref: c for c in out}
+        return list(unique.values())[-80:]
 
     async def _write_agents_md(self, writer: asyncio.StreamWriter, body: bytes) -> None:
-        """Save a folder's rule set: {dir, rules: [...]} writes
-        .duckterm-rules.json AND renders AGENTS.md from it (the only writer, so
-        the two never drift). Legacy {dir, text} still writes a plain AGENTS.md
-        for folders that never adopted the typed format."""
+        """Save reviewed directory rules with version and export-drift checks.
+        Legacy {dir, text} writes plain AGENTS.md only for unmanaged directories."""
         from duckterm.core import agents_rules
 
         try:
             req: Any = json.loads(body or b"{}")
         except json.JSONDecodeError:
             await _write_json(writer, 400, {"error": "invalid JSON"})
+            return
+        if not isinstance(req, dict):
+            await _write_json(writer, 400, {"error": "request must be an object"})
             return
         directory = req.get("dir")
         text = req.get("text")
@@ -5463,27 +5523,54 @@ class Server:
         if not base.is_dir():
             await _write_json(writer, 400, {"error": f"no such directory: {directory}"})
             return
-        path = (base / "AGENTS.md").resolve()
+        path = base / "AGENTS.md"
         if not self._agents_md_dir_allowed(str(path)):
             await _write_json(writer, 400, {"error": "file outside the allowed roots"})
             return
-        if isinstance(rules_raw, list):
-            known = set(agents_rules.RuleBlock.__dataclass_fields__)
-            rules: list[agents_rules.RuleBlock] = []
-            for entry in rules_raw:
-                if not isinstance(entry, dict) or not entry.get("id") or not entry.get("text"):
-                    await _write_json(writer, 400, {"error": "each rule needs id and text"})
-                    return
-                if entry.get("status", "candidate") not in agents_rules.STATUSES:
-                    await _write_json(writer, 400, {"error": f"bad status on {entry['id']}"})
-                    return
-                rules.append(
-                    agents_rules.RuleBlock(**{k: v for k, v in entry.items() if k in known})
+        try:
+            state = agents_rules.read_catalog(base)
+            if state["managed"] and "version" not in req and state["schema_version"] == 2:
+                raise ValueError("A current rules version is required. Reload before saving.")
+            if isinstance(rules_raw, list):
+                from dataclasses import asdict
+
+                from duckterm.core.rule_proposals import review_proposals
+
+                rules = [agents_rules.parse_rule(entry) for entry in rules_raw]
+                prior = {r.id: r for r in agents_rules.load_rules(base)}
+                for rule in rules:
+                    old = prior.get(rule.id)
+                    if old:
+                        if rule.revision != old.revision:
+                            raise ValueError("A rule revision changed. Reload before saving.")
+                        if asdict(rule) != asdict(old):
+                            rule.revision += 1
+                proposals = req.get("proposals", state["proposals"])
+                if not isinstance(proposals, list):
+                    raise ValueError("proposals must be an array")
+                rules, proposals = review_proposals(rules, proposals, state["proposals"])
+                agents_rules.save_rules(
+                    base,
+                    rules,
+                    proposals=proposals,
+                    expected_version=req.get("version"),
+                    reconcile_drift=req.get("reconcile_drift") is True,
                 )
-            agents_rules.save_rules(base, rules)
-        else:
-            path.write_text(text)
-        await _write_json(writer, 200, {"dir": directory, "written": True})
+            else:
+                if state["managed"]:
+                    raise ValueError("Managed rules must be edited as structured records")
+                assert isinstance(text, str)
+                agents_rules.atomic_text(path, text)
+        except (ValueError, TypeError, OSError) as exc:
+            await _write_json(
+                writer,
+                409 if "changed" in str(exc) or "differs" in str(exc) else 400,
+                {"error": str(exc)},
+            )
+            return
+        await _write_json(
+            writer, 200, {"dir": directory, "written": True, **agents_rules.read_catalog(base)}
+        )
 
     async def _branches(self, writer: asyncio.StreamWriter, seg: str) -> None:
         """Branches in the repo at ?path=, for the 'base off' picker. Fetches
@@ -5656,6 +5743,17 @@ class Server:
         except APIError as exc:
             await _write_json(writer, exc.status, {"error": str(exc)})
 
+    async def _checkpoint_health(self, writer: asyncio.StreamWriter) -> None:
+        from duckterm import checkpoint_settings
+        from duckterm.core import checkpoint_health
+
+        try:
+            automatic = checkpoint_settings.load()["automatic"]
+        except APIError:
+            automatic = None
+        agents = checkpoint_health.report(self.history._conn, int(time.time() * 1000))
+        await _write_json(writer, 200, {"automatic": automatic, "agents": agents})
+
     async def _ai_settings(self, writer: asyncio.StreamWriter, body: bytes | None = None) -> None:
         from duckterm.llm import ai_settings, backend
 
@@ -5759,8 +5857,13 @@ class Server:
         try:
             if label != "Before harness switch" and selection is None:
                 captured = await memory_checkpoint.freeze(
-                    self, session_key, captured, checkpoint_settings.load()
+                    self,
+                    session_key,
+                    captured,
+                    checkpoint_settings.load(),
+                    automatic=label == memory_checkpoint.AUTOMATIC_LABEL,
                 )
+                memory_checkpoint.record_gap(self, session_key, captured)
             captured["trigger"] = trigger
             update = await self.progress_coordinator.refresh_result(
                 session_key, captured, on_progress=on_progress
@@ -6507,6 +6610,11 @@ class Server:
                 on_listening(host, port)
             self.archives.recover()
             sweeper = asyncio.create_task(self._sweep_dead_loop())
+            auto_checkpoints = (
+                asyncio.create_task(self.auto_checkpoints.loop())
+                if self.edition.includes("checkpoints")
+                else None
+            )
             collaboration_worker = (
                 asyncio.create_task(self.collaboration.run())
                 if self.edition.includes("inbox")
@@ -6525,21 +6633,40 @@ class Server:
                     await server.serve_forever()
                 finally:
                     self._mobile_messages = None
-                    mobile_manager.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await mobile_manager
-                    sweeper.cancel()
+                    # Cancel producers together; a hung optional service must not
+                    # keep SSH tunnels or terminal viewers alive behind it.
+                    workers = [mobile_manager, sweeper]
+                    if auto_checkpoints is not None:
+                        workers.append(auto_checkpoints)
                     if collaboration_worker is not None:
-                        collaboration_worker.cancel()
-                        with contextlib.suppress(asyncio.CancelledError):
-                            await collaboration_worker
-                    await self.collaboration.close()
-                    self.voice.stop()
-                    await self.archives.close()
-                    await self.checkpoint_requests.close()
-                    await self.memory_preparation.close()
-                    await self.restarts.close()
-                    await self.progress_coordinator.close()
+                        workers.append(collaboration_worker)
+                    for worker in workers:
+                        worker.cancel()
+                    from duckterm.agents.tmux_stream import close_viewers
+
+                    cleanup = [
+                        *workers,
+                        asyncio.create_task(manager.close_listener()),
+                        asyncio.create_task(close_viewers()),
+                        asyncio.create_task(self.collaboration.close()),
+                        asyncio.create_task(asyncio.to_thread(self.voice.stop)),
+                        asyncio.create_task(self.archives.close()),
+                        asyncio.create_task(self.checkpoint_requests.close()),
+                        asyncio.create_task(self.memory_preparation.close()),
+                        asyncio.create_task(self.restarts.close()),
+                        asyncio.create_task(self.progress_coordinator.close()),
+                    ]
+                    if auto_checkpoints is not None:
+                        cleanup.append(asyncio.create_task(self.auto_checkpoints.close()))
+                    done, pending = await asyncio.wait(cleanup, timeout=5)
+                    for finished in done:
+                        if not finished.cancelled() and finished.exception() is not None:
+                            print("duckterm: resource cleanup failed", file=sys.stderr)
+                    for unfinished in pending:
+                        unfinished.cancel()
+                    if pending:
+                        print("duckterm: resource cleanup timed out", file=sys.stderr)
+
         finally:
             if server is not None:
                 server.close()
@@ -6613,6 +6740,12 @@ class Server:
         while True:
             await asyncio.sleep(20)
             ticks += 1
+            from duckterm.merge_closing import recover as recover_merge_closures
+
+            try:
+                await recover_merge_closures(self)
+            except Exception:
+                traceback.print_exc()
             if ticks % 3 == 0:
                 try:
                     await self._relay_check_stuck(int(time.time() * 1000))
@@ -6736,7 +6869,7 @@ class Server:
             )
             if not text:
                 continue
-            status = await self._submit_prompt(key, text)
+            status = await self._submit_prompt(key, text, source="oracle")
             if status == "failed":
                 continue
             if pinned and status == "submitted":

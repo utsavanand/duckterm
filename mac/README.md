@@ -143,3 +143,11 @@ toolchain. No separately installed Python CLI is used by the built app.
 
 A broadly distributed installer should use Developer ID signing and notarization;
 these are not supplied by the current local build script.
+
+## Complete app updater
+
+Native builds resolve pinned Sparkle through Swift Package Manager and embed
+its framework/helpers. Settings updates the whole app bundle. See
+[Mac update architecture and release procedure](../docs/development/mac-updates.md)
+for public-key configuration, signed feeds, and isolated Test validation.
+Development builds without an update public key run with updates unavailable.

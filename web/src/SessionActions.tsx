@@ -77,8 +77,8 @@ export function SessionActions({ session: s, anchor, onClose, onFork, onDelete, 
       <hr role="separator" />
       {!archived && !ended && item("Rename", () => setDialog("rename"))}
       {item("Notes", () => { onNotes(s.key); onClose(); })}
-      {onMoveFolder && !archived && item("Move to folder", () => setDialog("folder"))}
-      {onUngroup && !archived && item("Remove from folder", () => void act("Removed from folder", onUngroup))}
+      {onMoveFolder && !archived && item("Move to workspace", () => setDialog("folder"))}
+      {onUngroup && !archived && item("Remove from workspace", () => void act("Removed from workspace", onUngroup))}
       {canMove && <>
         <hr role="separator" />
         {item("Move to remote", () => { window.dispatchEvent(new CustomEvent("move-to-remote", { detail: s.key })); onClose(); })}
@@ -100,7 +100,7 @@ export function SessionActions({ session: s, anchor, onClose, onFork, onDelete, 
     </SessionActionMenu>
     {dialog === "folder" && onMoveFolder && <MoveSessionFolderDialog session={s} folders={folders} onMove={onMoveFolder} onClose={onClose} />}
     {mergeService && <AgentMergeDialog key={s.key} sourceKey={s.key} service={mergeService} sourceName={s.label} onClose={onClose} />}
-    {forkService && <ForkMergeDialog service={forkService} onClose={onClose} onSaved={() => toast("Merge summary saved")} />}
+    {forkService && <ForkMergeDialog sourceKey={s.key} service={forkService} onClose={onClose} onSaved={() => toast("Merge summary saved")} />}
     {(dialog === "rename" || dialog === "delete") && createPortal(<Modal title={dialog === "rename" ? "Rename session" : !s.launched && live ? "Stop watching session" : "Delete session permanently"} onClose={onClose}>
       <form className="rd-session-action-dialog" role="dialog" aria-label={dialog === "rename" ? "Rename session" : "Confirm session removal"} aria-modal="true" onKeyDown={e => {
         if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); onClose(); }

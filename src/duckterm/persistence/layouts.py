@@ -13,13 +13,36 @@ from duckterm.persistence.folder_chats import valid_folder, within
 TYPES = {
     "oracle": ("agents", "needs-you", "tokens", "mail", "backup", "remote", "folder-tasks"),
     "folder": ("folder-tasks", "folder-stats", "artifacts-by-kind"),
+    "home": (
+        "teams",
+        "autopilot",
+        "chat",
+        "prs",
+        "spend",
+        "usage",
+        "needs-you",
+        "agents",
+        "mail",
+        "backup",
+        "remote",
+    ),
 }
+# Home places widgets on a 12-column grid: (type, x, y, w, h).
+HOME_COLUMNS = 12
+HOME_DEFAULTS = (
+    ("teams", 0, 0, 3, 2),
+    ("autopilot", 0, 2, 3, 2),
+    ("needs-you", 0, 4, 3, 4),
+    ("chat", 3, 0, 6, 8),
+    ("prs", 9, 0, 3, 5),
+    ("spend", 9, 5, 3, 3),
+)
 _LOCK = threading.RLock()
 
 
 def surface_slot(surface: str) -> str:
-    if surface == "oracle":
-        return "oracle"
+    if surface in ("oracle", "home"):
+        return surface
     if surface.startswith("folder:") and valid_folder(surface[7:]):
         return "folder"
     raise ValueError("Invalid layout surface")
@@ -27,6 +50,17 @@ def surface_slot(surface: str) -> str:
 
 def defaults(surface: str) -> list[dict[str, Any]]:
     slot = surface_slot(surface)
+    if slot == "home":
+        return [
+            {
+                "id": kind,
+                "type": kind,
+                "slot": slot,
+                "position": i,
+                "params": {"x": x, "y": y, "w": w, "h": h},
+            }
+            for i, (kind, x, y, w, h) in enumerate(HOME_DEFAULTS)
+        ]
     return [
         {
             "id": kind,
@@ -58,12 +92,26 @@ def validate(surface: str, instances: Any) -> list[dict[str, Any]]:
             or item["slot"] != slot
             or type(item["position"]) is not int
             or item["position"] != i
-            or item["params"] != ({"folder": surface[7:]} if slot == "folder" else {})
+            or not _valid_params(slot, surface, item["params"])
         ):
             raise ValueError("Invalid widget type, slot, position, or parameters")
         ids.add(identity)
         kinds.add(kind)
     return instances
+
+
+def _valid_params(slot: str, surface: str, params: Any) -> bool:
+    if slot != "home":
+        return bool(params == ({"folder": surface[7:]} if slot == "folder" else {}))
+    if not isinstance(params, dict) or set(params) != {"x", "y", "w", "h"}:
+        return False
+    if any(type(params[key]) is not int for key in params):
+        return False
+    x: int = params["x"]
+    y: int = params["y"]
+    w: int = params["w"]
+    h: int = params["h"]
+    return x >= 0 and w >= 1 and x + w <= HOME_COLUMNS and 0 <= y <= 200 and 1 <= h <= 24
 
 
 class Layouts:

@@ -18,6 +18,7 @@ _ESCAPE = re.compile(rb"\\(?:([0-3][0-7]{2})|(\\))")
 _MAX_SNAPSHOT = 8 * 1024 * 1024
 _MAX_QUEUED_CHUNKS = 32
 _COALESCE_BYTES = 64 * 1024
+_READERS: set[asyncio.Task[None]] = set()
 _SGR = re.compile(rb"\x1b\[[0-9;:]*m")
 
 
@@ -280,17 +281,27 @@ async def stream(target: str) -> AsyncGenerator[bytes, None]:
             try:
                 # communicate drains remaining pipe bytes; wait() alone can
                 # hang after exit when asyncio has paused a full stdout pipe.
-                await asyncio.wait_for(proc.communicate(), 2)
-            except TimeoutError:
-                with contextlib.suppress(ProcessLookupError):
-                    proc.kill()
-                await proc.communicate()
-            if queue.full():
-                while not queue.empty():
-                    queue.get_nowait()
-            queue.put_nowait(None)
+                try:
+                    await asyncio.wait_for(proc.communicate(), 2)
+                except TimeoutError:
+                    with contextlib.suppress(ProcessLookupError):
+                        proc.kill()
+                    await asyncio.wait_for(proc.communicate(), 1)
+            except BaseException:
+                # Another cancellation must not orphan a TERM-resistant client.
+                if proc.returncode is None:
+                    with contextlib.suppress(ProcessLookupError):
+                        proc.kill()
+                raise
+            finally:
+                if queue.full():
+                    while not queue.empty():
+                        queue.get_nowait()
+                queue.put_nowait(None)
 
     reader = asyncio.create_task(drain())
+    _READERS.add(reader)
+    reader.add_done_callback(_READERS.discard)
     try:
         while True:
             chunk = await queue.get()
@@ -319,7 +330,17 @@ async def stream(target: str) -> AsyncGenerator[bytes, None]:
             if ended:
                 break
     finally:
-        if not reader.done():
+        if not reader.done() and not reader.cancelling():
             reader.cancel()
         with contextlib.suppress(asyncio.CancelledError):
             await reader
+
+
+async def close_viewers() -> None:
+    """Detach this server's control clients, never the tmux server or its panes."""
+    readers = tuple(_READERS)
+    for reader in readers:
+        if not reader.done() and not reader.cancelling():
+            reader.cancel()
+    if readers:
+        await asyncio.gather(*readers, return_exceptions=True)
