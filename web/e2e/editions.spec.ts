@@ -249,7 +249,8 @@ test("Full keeps every view, including pull request review", async ({ page }) =>
     for (const name of ["Timeline", "Artifacts", "PRs"]) await expect(views.getByRole("button", { name, exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Oracle", exact: true })).toBeVisible();
     await page.locator(".rd-group-name", { hasText: folder }).click();
-    await expect(page.getByRole("region", { name: `Folder ${folder}` }).getByRole("tab")).toHaveText(["Overview", "Chat", "Artifacts", "Pull requests"]);
+    // e2e turns every development flag on (global-setup), so autopilot's Flows tab shows too.
+    await expect(page.getByRole("region", { name: `Folder ${folder}` }).getByRole("tab")).toHaveText(["Overview", "Chat", "Artifacts", "Pull requests", "Flows"]);
   });
 });
 

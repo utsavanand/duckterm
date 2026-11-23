@@ -31,8 +31,9 @@ export function FolderView({ folder, ...actions }: { folder: string } & FolderAc
   const [review, setReview] = useState<{ repo: string; ref: string; from?: string } | null>(null);
   const openReview = (row: PrRow) => setReview({ repo: row.repo, ref: row.pr ? String(row.pr.number) : row.branch, from: row.session?.name });
   const tabs = useRef<HTMLDivElement>(null);
-  const { has } = useEdition();
-  const shown = TABS.filter(name => has(TAB_FEATURES[name]));
+  const { has, id: editionId } = useEdition();
+  // Autopilot is managed from Full's sidebar, so its Flows tab is Full-only too.
+  const shown = TABS.filter(name => has(TAB_FEATURES[name]) && (name !== "flows" || editionId === "full"));
   const tab = shown.includes(chosenTab) ? chosenTab : shown.includes("chat") ? "chat" : shown[0];
   const detailsAvailable = has("overview") && tab !== "overview";
   return <section className={`rd-folder-view rd-folder-with-details${details && detailsAvailable ? " details-open" : ""}`} aria-label={`Folder ${folder}`}>
