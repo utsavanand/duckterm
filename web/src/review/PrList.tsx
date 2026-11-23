@@ -101,7 +101,7 @@ export function PrList({ scope, active, onOpenSession, onReview }: {
     <div className="rd-prs-head">
       <div>
         <h2>Pull requests</h2>
-        <small>{scope.kind === "session" ? `Branches pushed from ${scope.name}` : `Across ${scope.folder} and its subfolders`}{fetched ? ` · updated ${ago(fetched)}` : ""}</small>
+        <small>{scope.kind === "session" ? `Branches pushed from ${scope.name}` : `Across ${scope.folder} and its nested workspaces`}{fetched ? ` · updated ${ago(fetched)}` : ""}</small>
       </div>
       <div className="rd-prs-filters" role="group" aria-label="Filter pull requests">
         {FILTERS.map(f => <button key={f.id} aria-pressed={filter === f.id} onClick={() => setFilter(f.id)}>{f.label}{data ? ` ${counts[f.id]}` : ""}</button>)}
@@ -113,7 +113,7 @@ export function PrList({ scope, active, onOpenSession, onReview }: {
     {problems.map(repo => <p key={repo.path} className="rd-prs-note" role="status"><strong>{repo.name}</strong>{repo.error ?? "GitHub is not connected, so only local branch facts are shown."}</p>)}
     {!data && !error && <p className="rd-prs-empty" role="status">Reading branches and pull requests…</p>}
     {data && rows.length === 0 && <p className="rd-prs-empty">{data.rows.length === 0
-      ? (scope.kind === "session" ? "No pull requests yet. When this session commits on its branch, it shows here with its push and PR status." : "No pull requests from this folder's sessions yet.")
+      ? (scope.kind === "session" ? "No pull requests yet. When this session commits on its branch, it shows here with its push and PR status." : "No pull requests from this workspace's sessions yet.")
       : "Nothing matches this filter."}</p>}
     {rows.length > 0 && <table className="rd-prs-table">
       <thead><tr>

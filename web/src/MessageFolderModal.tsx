@@ -42,19 +42,19 @@ export function MessageFolderModal({ folder, onClose }: { folder: string; onClos
   }
 
   return <Modal title={`Message ${folder}${desktop() ? " · This Mac" : ""}`} onClose={() => { if (!busy) onClose(); }}>
-    <div className="rd-message-folder" role="region" aria-label="Message folder">
+    <div className="rd-message-folder" role="region" aria-label="Message workspace">
       {result ? <>
         <p role="status">Message queued for {result.queued} {result.queued === 1 ? "session" : "sessions"}.{result.skipped > 0 && ` ${result.skipped} skipped.`}</p>
         <p>Sessions can read it in their inbox at their next pause. No reply is required.</p>
         <ul>{result.results.map((target) => <li key={target.session_id}>{target.name}: {target.status}{target.status === "skipped" && target.reason ? ` · ${target.reason}` : ""}</li>)}</ul>
         <Button onClick={onClose}>Done</Button>
       </> : <>
-        <p>Send an inbox message to sessions in this folder and its subfolders.</p>
+        <p>Send an inbox message to sessions in this workspace and its nested workspaces.</p>
         {targets === null && !error && <p role="status">Loading recipients…</p>}
         {targets !== null && <details open>
           <summary>{count} {count === 1 ? "recipient" : "recipients"}</summary>
           <ul>{targets.map((target) => <li key={target.session_id}><strong>{target.name}</strong> · {target.eligible ? target.state : `Skipped: ${target.reason}`}</li>)}</ul>
-          {count === 0 && <p>No eligible sessions in this folder.</p>}
+          {count === 0 && <p>No eligible sessions in this workspace.</p>}
         </details>}
         <label htmlFor="folder-message">Message</label>
         <textarea id="folder-message" style={inputStyle} rows={5} value={text} disabled={busy} onChange={(event) => setText(event.target.value)} placeholder="What should these sessions know?" />

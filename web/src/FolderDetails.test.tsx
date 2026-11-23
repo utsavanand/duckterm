@@ -25,12 +25,12 @@ it.each([["Lite", LITE], ["Code", CODE], ["Full", FULL]] as const)("%s puts the 
   expect(await screen.findByText("4 sessions")).toBeVisible();
   expect(screen.getByText("2 busy · 1 idle · 1 waiting")).toBeVisible();
   expect(screen.getByText(/2 available · 1 removed/)).toBeVisible();
-  expect(screen.queryByRole("button", { name: "Close folder details" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Close workspace details" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "7 days" }));
   expect(screen.getByText("500")).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Review session ↗" }));
   expect(open).toHaveBeenCalledExactlyOnceWith("waiting");
-  fireEvent.click(screen.getByRole("button", { name: "Message folder" }));
+  fireEvent.click(screen.getByRole("button", { name: "Message workspace" }));
   expect(message).toHaveBeenCalledOnce();
   expect(api.folderStats).toHaveBeenCalledExactlyOnceWith("Team");
   expect(vi.mocked(fetch).mock.calls.map(([path]) => path)).toEqual(expect.arrayContaining(["/layouts/folder%3ATeam", "/tasks"]));

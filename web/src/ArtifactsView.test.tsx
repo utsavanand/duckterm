@@ -91,7 +91,7 @@ it("opens a folder artifact in the existing viewer using its producing session",
   render(<ArtifactsView folder="work" />);
   fireEvent.click(await screen.findByRole("button", { name: "Second report" }));
   expect(await screen.findByRole("dialog", { name: "Second report" })).toBeVisible();
-  expect(screen.getByRole("button", { name: "← Back to folder" })).toBeVisible();
+  expect(screen.getByRole("button", { name: "← Back to workspace" })).toBeVisible();
   expect(api.artifact).toHaveBeenCalledWith("archived-producer", "b");
   expect(screen.getByText("archived")).toBeInTheDocument();
 });

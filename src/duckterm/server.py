@@ -1479,9 +1479,10 @@ class Server:
             await _write_json(writer, 401, {"error": "owner credential required"})
             return
         surface = urllib.parse.unquote(surface)
+        store = self.history.home_layout if surface == "home" else self.history.layouts
         try:
             if method == "GET":
-                result = self.history.layouts.get(surface)
+                result = store.get(surface)
             else:
                 if len(body) > 16384:
                     await _write_json(writer, 413, {"error": "Layout is too large"})
@@ -1489,7 +1490,7 @@ class Server:
                 req = json.loads(body)
                 if not isinstance(req, dict) or set(req) != {"instances", "revision"}:
                     raise ValueError("Expected instances and revision")
-                result = self.history.layouts.put(surface, req["instances"], req["revision"])
+                result = store.put(surface, req["instances"], req["revision"])
         except FileExistsError as exc:
             await _write_json(writer, 409, {"error": str(exc)})
             return
@@ -3850,7 +3851,12 @@ class Server:
     async def _folder_chat_message(
         self, folder: str, question: str, request_key: str
     ) -> dict[str, Any] | None:
-        """Interpret only the owner's request, then reuse scoped inbox delivery."""
+        """Interpret only the owner's request into a plan the owner must confirm.
+
+        The model paraphrases and picks recipients, so it never sends. The
+        owner confirms the exact text and recipients through the reviewed
+        folder dispatch route, which re-validates scope at send time.
+        """
         service = FolderMessages(self.history)
         snapshot = service.recipients(folder)
         identity, messages = self.history.folder_chats.snapshot(folder)
@@ -3897,17 +3903,17 @@ class Server:
             raise APIError(
                 409, "Some recipients have no inbox. Use @ to review recipients. Nothing was sent."
             )
-        return service.send(
-            folder,
-            {
+        return {
+            "plan": {
                 "identity": identity,
                 "target": target,
+                "label": candidates[0]["name"] if target["kind"] == "session" else target["id"],
                 "text": intent["text"],
-                "request_key": request_key,
-                "recipients": [r["session_id"] for r in candidates],
-            },
-            owner_question=question,
-        )
+                "recipients": [
+                    {"session_id": r["session_id"], "name": r["name"]} for r in candidates
+                ],
+            }
+        }
 
     async def _fleet_ask(self, writer: asyncio.StreamWriter, body: bytes) -> None:
         """Route explicit folder messages; answer other questions from session digests."""
@@ -3948,6 +3954,9 @@ class Server:
                 return
             except ValueError as exc:
                 await _write_json(writer, 409, {"error": str(exc)})
+                return
+            if exchange is not None and "plan" in exchange:
+                await _write_json(writer, 200, exchange)
                 return
             if exchange is not None:
                 await _write_json(
@@ -6626,24 +6635,40 @@ class Server:
                     await server.serve_forever()
                 finally:
                     self._mobile_messages = None
-                    mobile_manager.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await mobile_manager
-                    sweeper.cancel()
+                    # Cancel producers together; a hung optional service must not
+                    # keep SSH tunnels or terminal viewers alive behind it.
+                    workers = [mobile_manager, sweeper]
                     if auto_checkpoints is not None:
-                        auto_checkpoints.cancel()
-                        await self.auto_checkpoints.close()
+                        workers.append(auto_checkpoints)
                     if collaboration_worker is not None:
-                        collaboration_worker.cancel()
-                        with contextlib.suppress(asyncio.CancelledError):
-                            await collaboration_worker
-                    await self.collaboration.close()
-                    self.voice.stop()
-                    await self.archives.close()
-                    await self.checkpoint_requests.close()
-                    await self.memory_preparation.close()
-                    await self.restarts.close()
-                    await self.progress_coordinator.close()
+                        workers.append(collaboration_worker)
+                    for worker in workers:
+                        worker.cancel()
+                    from duckterm.agents.tmux_stream import close_viewers
+
+                    cleanup = [
+                        *workers,
+                        asyncio.create_task(manager.close_listener()),
+                        asyncio.create_task(close_viewers()),
+                        asyncio.create_task(self.collaboration.close()),
+                        asyncio.create_task(asyncio.to_thread(self.voice.stop)),
+                        asyncio.create_task(self.archives.close()),
+                        asyncio.create_task(self.checkpoint_requests.close()),
+                        asyncio.create_task(self.memory_preparation.close()),
+                        asyncio.create_task(self.restarts.close()),
+                        asyncio.create_task(self.progress_coordinator.close()),
+                    ]
+                    if auto_checkpoints is not None:
+                        cleanup.append(asyncio.create_task(self.auto_checkpoints.close()))
+                    done, pending = await asyncio.wait(cleanup, timeout=5)
+                    for finished in done:
+                        if not finished.cancelled() and finished.exception() is not None:
+                            print("duckterm: resource cleanup failed", file=sys.stderr)
+                    for unfinished in pending:
+                        unfinished.cancel()
+                    if pending:
+                        print("duckterm: resource cleanup timed out", file=sys.stderr)
+
         finally:
             if server is not None:
                 server.close()

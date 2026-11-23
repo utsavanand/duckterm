@@ -1,0 +1,152 @@
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { afterEach, beforeEach, expect, it, vi } from "vitest";
+import { api, PrRow, TowerInsights } from "./api";
+import { Home } from "./Home";
+import { homeDefaults } from "./homeGrid";
+import { TowerAgent } from "./tower";
+import { edition, CODE, FULL } from "./test/editions";
+import { WidgetInstance } from "./Widgets";
+vi.mock("./api", () => ({ authHeaders: () => ({}), api: { controlTower: vi.fn(), folderPrs: vi.fn(), oracleChat: vi.fn(), fleetAsk: vi.fn(), clearOracleChat: vi.fn(), relay: vi.fn() } }));
+
+const NOW = 10_000_000_000;
+const insights: TowerInsights = { tokens: { days: 7, by_agent: {} }, mail: { sent: 0, answered: 0, nudges: 0 }, backup: { destination: null, status: null, finished_at: null }, remote: { available: false, count: 0 } };
+const agent = (p: Partial<TowerAgent> & { key: string }) => ({ label: p.key, state: "idle", shownState: "idle", lastEventType: "", startedAt: 0, updatedAt: NOW, eventCount: 0, group: "Duckterm", ...p } as TowerAgent);
+const agents = [agent({ key: "a", shownState: "waiting" }), agent({ key: "b", shownState: "busy", group: "Duckterm/core" }), agent({ key: "c", group: "Nourish" })];
+const pr = (number: number, p: Partial<PrRow> = {}) => ({ repo: "/r", repo_name: "r", github: "o/r", branch: `b${number}`, base: "main", session: null, author: null, status: "open", label: "CI passing", needs_you: false, checks: null,
+  pr: { number, title: `PR ${number}`, url: `https://github.com/o/r/pull/${number}`, state: "open" }, updated_at: number, ...p } as unknown as PrRow);
+
+const row = (day: string, agent: string, output: number) => ({ day, agent, output, input: 0, cache_read: 0, cache_write: 0, model: null, session: "s", session_name: "s", folder: "", folder_name: "" });
+const tokens = { version: 1, timezone: "UTC", days: 7, today: "2026-11-20", earliest_day: "2026-11-01", options: { agents: [], folders: [], sessions: [] },
+  rows: [row("2026-11-14", "claude-code", 1000), row("2026-11-20", "claude-code", 2000), row("2026-11-20", "codex", 1000)] };
+let saved: { instances: WidgetInstance[]; revision: string };
+const puts: WidgetInstance[][] = [];
+beforeEach(() => {
+  saved = { instances: homeDefaults(), revision: "default" }; puts.length = 0;
+  vi.stubGlobal("fetch", vi.fn(async (path: string, init?: RequestInit) => {
+    if (path.startsWith("/analytics/tokens")) return new Response(JSON.stringify(tokens));
+    if (init?.method === "PUT") { saved = { ...JSON.parse(init.body as string), revision: `r${puts.length}` }; puts.push(saved.instances); }
+    return new Response(JSON.stringify(saved));
+  }));
+  vi.mocked(api.controlTower).mockResolvedValue(insights);
+  vi.mocked(api.relay).mockResolvedValue({ notes: [], rules: [], open: 0 });
+  vi.mocked(api.oracleChat).mockResolvedValue({ messages: [] });
+  vi.mocked(api.folderPrs).mockResolvedValue({ rows: [], repos: [] });
+});
+afterEach(() => { cleanup(); vi.resetAllMocks(); vi.unstubAllGlobals(); });
+
+async function show(features = [...FULL, "home"], props: Partial<Parameters<typeof Home>[0]> = {}) {
+  const Wrapper = edition(features);
+  await act(async () => { render(<Wrapper><Home agents={agents} now={NOW} onTeams={() => undefined} onOpenTerminal={() => undefined} onAnalytics={() => undefined} {...props} /></Wrapper>); });
+}
+
+it("opens Teams from its tile and counts sessions by state across folders", async () => {
+  const onTeams = vi.fn();
+  await show(undefined, { onTeams });
+  const teams = within(screen.getByRole("article", { name: "Teams" })).getByRole("button");
+  expect(teams).toHaveTextContent("2 folders · 3 sessions");
+  expect(teams).toHaveTextContent("1 need you");
+  expect(teams).toHaveTextContent("1 working");
+  expect(teams).toHaveTextContent("1 idle");
+  fireEvent.click(teams);
+  expect(onTeams).toHaveBeenCalledOnce();
+  expect(within(screen.getByRole("article", { name: "Autopilot" })).getByText("Not available yet")).toBeVisible();
+  expect(screen.getByRole("textbox", { name: "Ask DuckTerm" })).toBeVisible();
+});
+
+it("leaves out the chat and pull requests when the edition lacks Oracle and PR review", async () => {
+  await show([...CODE.filter(f => f !== "pr_review"), "home"]);
+  expect(screen.queryByRole("article", { name: "Ask DuckTerm" })).toBeNull();
+  expect(screen.queryByRole("article", { name: "Pull requests" })).toBeNull();
+  expect(screen.getByRole("article", { name: "Teams" })).toBeVisible();
+});
+
+it("lists open pull requests once across top-level folders, needs-you first", async () => {
+  vi.mocked(api.folderPrs).mockImplementation(async folder => ({ repos: [], rows: folder === "Duckterm"
+    ? [pr(1), pr(2, { needs_you: true, label: "Needs your approval" }), pr(3, { status: "merged", pr: { number: 3, title: "PR 3", url: "", state: "merged" } as PrRow["pr"] })]
+    : [pr(1), pr(4)] }));
+  await show();
+  expect(vi.mocked(api.folderPrs).mock.calls.map(call => call[0])).toEqual(["Duckterm", "Nourish"]);
+  const rows = within(screen.getByRole("article", { name: "Pull requests" })).getAllByRole("listitem");
+  expect(rows.map(row => row.querySelector("a")?.textContent)).toEqual(["PR 2", "PR 4", "PR 1"]);
+  expect(rows[0]).toHaveTextContent("Needs your approval");
+});
+
+it("says why there are no pull requests when GitHub is not connected", async () => {
+  vi.mocked(api.folderPrs).mockResolvedValue({ rows: [pr(5, { pr: null, status: "pushed" })], repos: [{ name: "duckterm", error: "Enable the GitHub connector to see pull request status" }] } as never);
+  await show();
+  expect(within(screen.getByRole("article", { name: "Pull requests" })).getByText("duckterm: Enable the GitHub connector to see pull request status")).toBeVisible();
+});
+
+it("moves a widget with the keyboard, pushes its neighbour down, and saves positions in reading order", async () => {
+  await show();
+  fireEvent.click(screen.getByRole("button", { name: "Edit layout" }));
+  await act(async () => { fireEvent.keyDown(screen.getByRole("button", { name: "Move Teams" }), { key: "ArrowDown" }); });
+  const box = (type: string) => puts.at(-1)!.find(item => item.type === type)!.params;
+  expect(box("teams")).toEqual({ x: 0, y: 1, w: 3, h: 2 });
+  expect(box("autopilot")).toEqual({ x: 0, y: 3, w: 3, h: 2 });
+  expect(puts.at(-1)!.map(item => item.position)).toEqual(puts.at(-1)!.map((_, i) => i));
+  await act(async () => { fireEvent.keyDown(screen.getByRole("button", { name: "Move Teams" }), { key: "ArrowRight", shiftKey: true }); });
+  expect(box("teams")).toEqual({ x: 0, y: 1, w: 4, h: 2 });
+});
+
+it("removes and adds widgets, and the layout request carries the latest revision", async () => {
+  await show();
+  fireEvent.click(screen.getByRole("button", { name: "Edit layout" }));
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Remove Spend" })); });
+  expect(saved.instances.map(item => item.type)).not.toContain("spend");
+  fireEvent.click(screen.getByRole("button", { name: "+ Add widget" }));
+  expect(screen.getByRole("button", { name: /^Ask DuckTerm · on page/ })).toBeDisabled();
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: /^Agent mail · 24h/ })); });
+  const put = vi.mocked(fetch).mock.calls.filter(call => call[1]?.method === "PUT").at(-1)!;
+  expect(JSON.parse(put[1]!.body as string).revision).toBe("r0");
+  expect(saved.instances.find(item => item.type === "mail")!.params).toEqual({ x: 0, y: 8, w: 3, h: 2 });
+});
+
+it("answers in the Home chat from the shared fleet conversation, without the agents' notes", async () => {
+  vi.mocked(api.relay).mockResolvedValue({ notes: [{ id: "n1", session_key: "qa", name: "qa", folder: "Nourish/app", runtime: "claude-code", kind: "question", status: "open", created_at: NOW - 3_600_000, question: "Deploy now?" }], rules: [], open: 1 });
+  vi.mocked(api.fleetAsk).mockResolvedValue({ exchange: { q: "Who is stuck?", a: "Nobody is stuck.", at: 1 } } as never);
+  const onOpenTerminal = vi.fn();
+  await show(undefined, { onOpenTerminal });
+  const chat = screen.getByRole("article", { name: "Ask DuckTerm" });
+  expect(within(chat).queryByText(/Deploy now/)).toBeNull();
+  fireEvent.change(within(chat).getByRole("textbox", { name: "Ask DuckTerm" }), { target: { value: "Who is stuck?" } });
+  await act(async () => { fireEvent.click(within(chat).getByRole("button", { name: "Ask" })); });
+  expect(api.fleetAsk).toHaveBeenCalledWith("Who is stuck?");
+  expect(within(chat).getByText("Nobody is stuck.")).toBeVisible();
+  const needs = screen.getByRole("article", { name: "Needs you" });
+  expect(within(needs).getByText("Nourish · 1 h ago")).toBeVisible();
+  fireEvent.click(within(needs).getByRole("button", { name: "qa: Deploy now?" }));
+  expect(onOpenTerminal).toHaveBeenCalledWith("qa");
+});
+
+it("totals seven days of tokens and splits them by agent", async () => {
+  saved = { instances: [...homeDefaults(), { id: "usage", type: "usage", slot: "home", position: 6, params: { x: 0, y: 8, w: 3, h: 3 } as never }], revision: "default" };
+  await show();
+  const usage = screen.getByRole("button", { name: "Open token analytics" });
+  expect(usage).toHaveTextContent("4ktokens");
+  expect(usage).toHaveTextContent("Claude Code 3k");
+  expect(usage).toHaveTextContent("Codex 1k");
+  expect(usage).toHaveTextContent("Today 3k");
+});
+
+it("turns a session named in an answer into a chip that opens it", async () => {
+  vi.mocked(api.oracleChat).mockResolvedValue({ messages: [{ q: "Who is stuck?", a: "**b** is busy; **nobody** else.", at: 2 }] } as never);
+  const onOpenTerminal = vi.fn();
+  await show(undefined, { onOpenTerminal });
+  const chat = screen.getByRole("article", { name: "Ask DuckTerm" });
+  fireEvent.click(within(chat).getByRole("button", { name: "b" }));
+  expect(onOpenTerminal).toHaveBeenCalledWith("b");
+  expect(within(chat).queryByRole("button", { name: "nobody" })).toBeNull();
+});
+
+it("estimates spend at API list prices: today, the week, and each harness", async () => {
+  await show();
+  // Unnamed models are priced as the harness's usual model: Claude Code at
+  // Opus 5.5 ($20/M output), Codex at GPT-5 rates ($10/M output).
+  const spend = screen.getByRole("button", { name: "Open spend analytics" });
+  expect(spend).toHaveTextContent("$0.05today");
+  expect(spend).toHaveTextContent("Teams $0.07");
+  expect(spend).toHaveTextContent("Autopilot $0.00");
+  expect(spend).toHaveTextContent("7 days $0.07");
+  expect(spend).toHaveAttribute("title", expect.stringMatching(/^Claude Code \$0\.06 · Codex \$0\.01 over 7 days/));
+});

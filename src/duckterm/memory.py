@@ -70,7 +70,7 @@ class Memory:
                 "title": runtime + " conversation",
                 "current": current,
             }
-            for field in ("snapshot", "path", "root"):
+            for field in ("snapshot", "records_sha256", "path", "root"):
                 if field in value:
                     entry[field] = value[field]
             if entry.get("root", root) != root:
@@ -249,6 +249,7 @@ class Memory:
         return {
             **source,
             "snapshot": result["snapshot"],
+            "records_sha256": result["records_sha256"],
             "bytes": result["bytes"],
             "coverage": result["coverage"],
             "unprocessed_attachments": result["unprocessed_attachments"],
@@ -262,7 +263,7 @@ class Memory:
         ):
             raise APIError(409, "Invalid retained conversation reference")
         path = (
-            memory_sources.snapshot_file(key, snapshot)[0]
+            memory_sources.retained_path(key, snapshot, source.get("records_sha256"))
             if snapshot is not None
             else memory_sources.native_path(source)
         )
@@ -278,9 +279,12 @@ class Memory:
         loaded = memory_sources.read_native(key, source)
         # Retained versions used to bypass the cache altogether. Keep current
         # and retained sources together under the existing 8 MiB/session cap.
-        for old in list(cache):
-            if cache[old].get("path") == str(path):
-                del cache[old]
+        # Only a current file goes stale in place; retained versions of an
+        # appended conversation share one copy and must not evict each other.
+        if snapshot is None:
+            for old in list(cache):
+                if cache[old].get("path") == str(path):
+                    del cache[old]
         size = sum(len(r["text"].encode()) for r in loaded["records"])
         if size <= 8 * 1024 * 1024:
 
@@ -714,7 +718,15 @@ class Memory:
                     native_refs[ref["source"]] = {
                         **{
                             k: saved[k]
-                            for k in ("id", "runtime", "native_id", "cwd", "path", "snapshot")
+                            for k in (
+                                "id",
+                                "runtime",
+                                "native_id",
+                                "cwd",
+                                "path",
+                                "snapshot",
+                                "records_sha256",
+                            )
                         },
                         "root": catalog["root"],
                     }
