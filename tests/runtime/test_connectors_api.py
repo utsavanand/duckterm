@@ -46,6 +46,11 @@ def isolated(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     server_bin = bin_dir / "github-mcp-server"
     server_bin.write_text("#!/bin/sh\nexit 0\n")
     server_bin.chmod(0o755)
+    # Same reason as the unit fixture: PATH holds only bin_dir, so enable() ->
+    # _duckterm_bin() needs a duckterm here or it raises on the environment.
+    duckterm = bin_dir / "duckterm"
+    duckterm.write_text("#!/bin/sh\nexit 0\n")
+    duckterm.chmod(0o755)
     monkeypatch.setattr(connectors, "github_identity", lambda token: "test-user")
     return home
 
@@ -81,12 +86,17 @@ def test_connectors_lifecycle_over_endpoints(isolated: Path, tmp_path: Path) -> 
 
 
 def test_enable_failure_maps_to_400_with_reason(isolated: Path, tmp_path: Path) -> None:
+    """A refusal from enable() reaches the panel as 400 plus its own reason.
+
+    400 rather than 404: the connector exists, this attempt was rejected. An
+    unparseable source is the cheapest such refusal that needs no network.
+    """
     server = _server(tmp_path)
     w = _W()
-    asyncio.run(server._enable_connector(w, "railway", b"{}"))
+    asyncio.run(server._enable_connector(w, "github", b'{"source": "telepathy"}'))
     status, body = _status_and_body(w)
     assert status == 400
-    assert "not installed" in body["error"]
+    assert "GitHub CLI login or stored" in body["error"]
 
 
 def test_unknown_connector_is_404(isolated: Path, tmp_path: Path) -> None:

@@ -98,22 +98,27 @@ def assemble(
         "duckterm memory read <handle> --record 3282",
         **{name: handle for handle, name in handles.items()},
     }
+    from duckterm import checkpoint_settings, memory_checkpoint
+
+    # Owner, 2026-11-15: messages written while automatic checkpoints were off
+    # stay unsummarized and are declared as that gap, not as pending work.
+    periods = checkpoint_settings.off_periods(checkpoint_settings.load())
+    gap = [r for r in missing if memory_checkpoint.in_gap(r, periods)]
+    pending = [r for r in missing if not memory_checkpoint.in_gap(r, periods)]
     coverage: dict[str, Any] = {
         "declared": True,
         "unknown": False,
-        "omitted": (
-            [
-                {
-                    "reason": "pending_update",
-                    "count": len(missing),
-                    "sample_refs": [
-                        r["source"] + ":" + r["version"] + ":" + r["record"] for r in missing[:8]
-                    ],
-                }
-            ]
-            if missing
-            else []
-        ),
+        "omitted": [
+            {
+                "reason": reason,
+                "count": len(rows_),
+                "sample_refs": [
+                    r["source"] + ":" + r["version"] + ":" + r["record"] for r in rows_[:8]
+                ],
+            }
+            for reason, rows_ in (("pending_update", pending), ("automatic_checkpoints_off", gap))
+            if rows_
+        ],
     }
     newest = memory_folding.furthest(leaves)
     handoff: dict[str, Any] = {

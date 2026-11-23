@@ -43,9 +43,21 @@ export type LocalVoiceStatus =
   | { state: "failed"; reason: string; size: string };
 
 // One Ask Oracle exchange, as stored server-side (at = epoch ms).
+// GET /checkpoint-health: agents active in the last 7 days, problems first.
+export interface AgentMemoryHealth {
+  key: string; name: string; runtime: string | null;
+  status: "failing" | "none" | "behind" | "current";
+  saved_at: number | null; new_messages: number; gaps: number; active_at: number;
+  last_attempt: { at: number; state: string | null; reason: string | null } | null;
+}
+export interface CheckpointHealth { automatic: boolean | null; agents: AgentMemoryHealth[] }
+
 export interface CheckpointSettings {
   lookback_records: number | "all";
   writer_model: "haiku" | "sonnet" | "opus";
+  automatic: boolean;
+  // Server-written [off, on] times; on is null while still off.
+  automatic_off?: [number, number | null][];
 }
 
 export type AiProvider = "anthropic" | "openai" | "openrouter" | "custom";
@@ -139,6 +151,17 @@ export interface OracleExchange {
     recipients: { session_id: string; name: string; message_id: string; status: InboxMessage["status"]; answer: string | null; answered_at?: number | null }[];
   };
 }
+
+// A plain-language folder message the owner must confirm before it is sent.
+export interface FolderMessagePlan {
+  identity: string;
+  target: { kind: "session" | "folder"; id: string };
+  label: string;
+  text: string;
+  recipients: { session_id: string; name: string }[];
+}
+
+export interface FleetAnswer { answer: string; exchange: OracleExchange; sessions: string[] }
 
 export interface FolderRecipients {
   identity: string;
@@ -267,13 +290,19 @@ export interface Connector {
   description: string;
   identity: string | null;
   sources: string[];
-  write_access: boolean;
   revoke_url: string;
-  credential: string | null; // "gh-cli" | "stored" | "railway-cli" | null
+  credential: string | null; // "gh-cli" | "stored" | null
   installed: Record<string, boolean>; // per harness
   harnesses: string[]; // the agents this connector is registered for
   harnesses_present: Record<string, boolean>; // which agent CLIs exist here
-  enabled: boolean;
+  enabled: boolean; // duckterm_uses && agents_use, for callers that want one answer
+  // The two doors. `enabled` cannot say which one is shut, and Disable and a
+  // lost harness entry need different fixes, so the panel reads these instead.
+  duckterm_uses: boolean; // PR status, repo browser, review, transfers
+  agents_use: boolean; // agent sessions can resolve it through their harness
+  agents_off_by_choice: boolean; // the owner turned it off, vs an entry went missing
+  unreachable_harnesses: string[]; // chosen harnesses with no MCP entry
+  runner_ready: boolean; // github-mcp-server or Docker exists here
   ready: boolean;
   detail: string | null;
   last_used: number | null; // epoch ms of the newest hook-reported tool call
@@ -507,6 +536,7 @@ export const api = {
   removeArtifact: (key: string, id: string) => artifactRequest<{ removed: boolean }>(`/sessions/${encodeURIComponent(key)}/artifacts/${id}`, "DELETE"),
 
   checkpointSettings: () => get<CheckpointSettings>("/checkpoint-settings", undefined, { authed: true }),
+  checkpointHealth: () => get<CheckpointHealth>("/checkpoint-health", undefined, { authed: true }),
   saveCheckpointSettings: (value: CheckpointSettings) => post<CheckpointSettings>("/checkpoint-settings", value),
   aiSettings: () => get<AiState>("/ai-settings", undefined, { authed: true }),
   saveAiSettings: (value: AiSettings) => post<AiState>("/ai-settings", value),
@@ -554,7 +584,7 @@ export const api = {
     if (before !== undefined) query.set("before", String(before));
     const res = await fetch(`/folder-interactions?${query}`, { cache: "no-store", headers: authHeaders() });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error ?? "Could not load folder interactions");
+    if (!res.ok) throw new Error(data.error ?? "Could not load workspace interactions");
     return data as InboxPage;
   },
   openCodeOptions: () => get<OpenCodeLaunchOptions>("/runtimes/opencode/launch-options"),
@@ -571,11 +601,10 @@ export const api = {
     get<{ branches: string[] }>(`/branches?path=${encodeURIComponent(path)}`),
   zshThemes: () => get<{ themes: string[] }>("/zsh-themes"),
   connectors: (context?: string, signal?: AbortSignal) => get<{ connectors: Connector[] }>("/connectors", context, { authed: true, signal }),
-  enableConnector: (name: string, token?: string, secret?: string, source?: string, write_access = false, context?: string, harnesses?: string[]) =>
+  enableConnector: (name: string, token?: string, source?: string, context?: string, harnesses?: string[]) =>
     post<Connector>(`/connectors/${name}/enable`, {
-      source, write_access,
+      source,
       ...(token ? { token } : {}),
-      ...(secret ? { secret } : {}),
       ...(harnesses ? { harnesses } : {}),
     }, context),
   forgetConnector: (name: string, context?: string) => post<Connector>(`/connectors/${name}/forget`, {}, context),
@@ -588,11 +617,15 @@ export const api = {
   folderDispatch: (folder: string, request: { assign?: boolean; identity: string; target: { kind: "session" | "folder"; id: string }; text: string; request_key: string; recipients: string[] }) =>
     post<{ exchange: OracleExchange }>(`/folders/${encodeURIComponent(folder)}/dispatch`, request),
   folderChat: (folder: string) => artifactRequest<{ messages: OracleExchange[] }>(`/folders/${encodeURIComponent(folder)}/chat`),
-  fleetAsk: (question: string, folder?: string, requestKey?: string) =>
-    post<{ answer: string; exchange: OracleExchange; sessions: string[] }>(
+  // Only a folder request with a request key can come back as a message plan.
+  fleetAsk: ((question: string, folder?: string, requestKey?: string) =>
+    post<FleetAnswer | { plan: FolderMessagePlan }>(
       "/fleet/ask",
       { question, ...(folder !== undefined ? { folder } : {}), ...(requestKey !== undefined ? { request_key: requestKey } : {}) },
-    ),
+    )) as {
+    (question: string): Promise<FleetAnswer>;
+    (question: string, folder: string, requestKey?: string): Promise<FleetAnswer | { plan: FolderMessagePlan }>;
+  },
   oracleChat: () => get<{ messages: OracleExchange[] }>("/oracle/chat"),
   controlTower: () => get<TowerInsights>("/control-tower"),
   relay: (signal?: AbortSignal) => get<RelayState>("/relay", undefined, { signal }),
@@ -752,7 +785,7 @@ export const api = {
       headers: authHeaders(),
     }).then(async (r) => {
       const result = await r.json();
-      if (!r.ok) throw new Error(result.error ?? "Could not delete folder");
+      if (!r.ok) throw new Error(result.error ?? "Could not delete workspace");
       if (!result.pending) changeRemoteFolders(name, "");
       return result as { deleted: string; pending?: boolean };
     }),
@@ -913,6 +946,8 @@ export interface CheckpointRecord {
     memory_source?: unknown;
     memory_sources?: unknown[];
     memory_retention?: string;
+    // An "Automatic checkpoints off" entry: messages written then are not summarized.
+    gap?: { periods: [number, number][]; records: number; first_at: number; last_at: number };
     handoff?: { method?: string; packet_hash?: string; summary_revision_id?: string | null; eligible_records?: number; summarized_records?: number; reference_only_records?: number; included_records?: number; omitted_records?: number };
     intention?: string;
     prompts: string[];

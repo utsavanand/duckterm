@@ -330,12 +330,13 @@ class Messages:
             )
             return
         key = row["session_id"]
-        sup, reason = self.target(key)
-        if sup is None or self.binding(key, sup) != row["binding"]:
+        candidate, reason = self.target(key)
+        if candidate is None or self.binding(key, candidate) != row["binding"]:
             await asyncio.to_thread(
                 self.store.transition, row, "cancelled", reason or "target_changed"
             )
             return
+        sup: SessionSupervisor = candidate
         try:
             await asyncio.to_thread(
                 self.grants.authenticated_by_id, row["device"], "session:send", host_id=row["host"]

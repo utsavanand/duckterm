@@ -169,6 +169,21 @@ final class ServerProcess {
         return false
     }
 
+    var ownsRunningServer: Bool { task?.isRunning == true }
+
+    /// Stop only our child, never an external server or the tmux session host.
+    func stopForUpdate() async throws {
+        guard let owned = task, owned.isRunning else {
+            throw LaunchDestination.Failure.message("Another process owns the local server. Quit that server and reopen this app before updating.")
+        }
+        owned.terminate()
+        for _ in 0..<100 {
+            if !owned.isRunning { task = nil; return }
+            try await Task.sleep(nanoseconds: 100_000_000)
+        }
+        throw LaunchDestination.Failure.message("The local server has not stopped. The app update was cancelled.")
+    }
+
     func stop() {
         task?.terminate()
         task = nil

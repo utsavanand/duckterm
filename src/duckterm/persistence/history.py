@@ -302,6 +302,9 @@ class HistoryStore:
         self.path = path
         self.folder_chats = FolderChats(path.parent / "folder-chats.json", self.folders)
         self.layouts = Layouts(path.parent / "layouts.json", self.folders)
+        # Separate file: an older build validates every surface in layouts.json
+        # and would quarantine the whole file on seeing an unknown "home" slot.
+        self.home_layout = Layouts(path.parent / "home-layout.json", self.folders)
         path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(path), check_same_thread=True)
         self._conn.row_factory = sqlite3.Row
@@ -510,7 +513,27 @@ class HistoryStore:
             out.setdefault(r["session_key"], []).append(dict(r))
         return out
 
-    def add_annotation(self, ann_id: str, session_key: str, quote: str, note: str, ts: int) -> None:
+    def add_annotation(
+        self,
+        ann_id: str,
+        session_key: str,
+        quote: str,
+        note: str,
+        ts: int,
+        *,
+        message_key: str | None = None,
+    ) -> None:
+        # Like artifact feedback, message feedback carries its source reference
+        # in the existing quote field. No duplicate transcript or schema change.
+        if message_key is not None:
+            quote = json.dumps(
+                {
+                    "type": "message_annotation",
+                    "version": 1,
+                    "message_key": message_key,
+                    "quote": quote,
+                }
+            )
         self._conn.execute(
             "INSERT INTO annotations (id, session_key, quote, note, created_at) "
             "VALUES (?, ?, ?, ?, ?)",
@@ -556,7 +579,22 @@ class HistoryStore:
             "WHERE session_key = ? ORDER BY created_at",
             (session_key,),
         ).fetchall()
-        return [dict(r) for r in rows]
+        annotations = [dict(r) for r in rows]
+        for annotation in annotations:
+            try:
+                source = json.loads(annotation["quote"])
+            except (TypeError, ValueError):
+                continue
+            if (
+                isinstance(source, dict)
+                and source.get("type") == "message_annotation"
+                and source.get("version") == 1
+                and isinstance(source.get("quote"), str)
+                and isinstance(source.get("message_key"), str)
+            ):
+                annotation["quote"] = source["quote"]
+                annotation["message_key"] = source["message_key"]
+        return annotations
 
     def is_tombstoned(self, key: str) -> bool:
         """Whether a session was deleted and not yet revived by a SessionStart."""

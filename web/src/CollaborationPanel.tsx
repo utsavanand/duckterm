@@ -95,7 +95,7 @@ export function CollaborationPanel({ onClose }: { onClose: () => void }) {
 
   return <Modal title="Collaboration" onClose={onClose} width={660}>
     <div className="rd-backup">
-      <p>Sessions in the same sidebar folder can discover and message one another across connected computers. Ungrouped sessions stay private.</p>
+      <p>Sessions in the same sidebar workspace can discover and message one another across connected computers. Ungrouped sessions stay private.</p>
       {!desktop()?.canCollaborate ? <p role="alert">Open an updated DuckTerm Mac app to connect computers.</p> : <>
         {hasConnection && <section className="rd-backup-result" aria-label="Connected computers">
           <strong>Connected computers</strong>
@@ -114,21 +114,21 @@ export function CollaborationPanel({ onClose }: { onClose: () => void }) {
         {targets.map(target => {
           const status = statuses[target.id];
           return <div key={target.id}>
-            {status?.pending_changes?.map(item => <section key={item.operation.id} className="rd-backup-result" aria-label="Pending folder change">
-              <strong>Pending folder change · {target.name}</strong>
+            {status?.pending_changes?.map(item => <section key={item.operation.id} className="rd-backup-result" aria-label="Pending workspace change">
+              <strong>Pending workspace change · {target.name}</strong>
               <p>{item.operation.action === "create" ? `Create ${item.operation.new}` : item.operation.action === "delete" ? `Delete ${item.operation.old}` : `${item.operation.old} → ${item.operation.new}`}</p>
               <p role="status">{item.result?.state === "blocked" ? item.result.error : item.result?.state === "committed" ? "Saved on the coordinator; applying to this computer" : item.attempted ? "Delivery unconfirmed — retry to check the result" : "Waiting for coordinator"}</p>
-              <p>The change is saved. Sharing from the affected folder is paused until it is confirmed.</p>
+              <p>The change is saved. Sharing from the affected workspace is paused until it is confirmed.</p>
               <div className="rd-collaboration-actions">
                 <Button disabled={busy || item.result?.state === "blocked"} onClick={() => void recover(target.id, "collaboration-retry")}>Retry now</Button>
                 <Button variant="ghost" disabled={busy || item.result?.state === "committed" || (item.attempted && item.result?.state !== "blocked")} onClick={() => void recover(target.id, "collaboration-cancel", { id: item.operation.id })}>Cancel pending change</Button>
               </div>
-              {item.result?.state === "blocked" && <p>Cancel this rejected change, then review the current folder arrangement before trying again.</p>}
+              {item.result?.state === "blocked" && <p>Cancel this rejected change, then review the current workspace arrangement before trying again.</p>}
             </section>)}
-            {status?.conflict && <section className="rd-backup-result" aria-label="Folder needs attention">
-              <strong>Folder needs attention · {target.name}</strong>
-              <p>A local folder named <b>{status.conflict.path}</b> already exists. Its sessions and saved folder content will stay together.</p>
-              <label htmlFor={`keep-${target.id}`}>Keep the existing local folder as</label>
+            {status?.conflict && <section className="rd-backup-result" aria-label="Workspace needs attention">
+              <strong>Workspace needs attention · {target.name}</strong>
+              <p>A local workspace named <b>{status.conflict.path}</b> already exists. Its sessions and saved workspace content will stay together.</p>
+              <label htmlFor={`keep-${target.id}`}>Keep the existing local workspace as</label>
               <input id={`keep-${target.id}`} style={inputStyle} disabled={busy} value={keepNames[target.id] ?? `${status.conflict.path.split("/").at(-1)} (local)`} onChange={e => setKeepNames({ ...keepNames, [target.id]: e.target.value })} />
               <div className="rd-collaboration-actions">
                 <Button disabled={busy} onClick={() => void recover(target.id, "collaboration-keep-separately", { token: status.conflict!.token, new: keepNames[target.id] ?? `${status.conflict!.path.split("/").at(-1)} (local)` })}>Keep separately and retry</Button>
@@ -163,14 +163,14 @@ export function CollaborationPanel({ onClose }: { onClose: () => void }) {
         </>}
         <p>Messages for offline computers wait until they reconnect. Remote agents can keep exchanging messages while your Mac sleeps.</p>
         <p className="rd-backup-note">Keep the Mac app open to receive messages here. Closing it disconnects this Mac.</p>
-        {preview && <section aria-label="Folder sharing preview">
+        {preview && <section aria-label="Workspace sharing preview">
           <strong>{preview.source} and {preview.coordinator}</strong>
-          <p>The following sidebar arrangement becomes the shared workspace. Future sessions inherit their folder’s access automatically.</p>
+          <p>The following sidebar arrangement becomes the shared workspace. Future sessions inherit their workspace’s access automatically.</p>
           <ul>{preview.sessions.map(s => <li key={`${s.host}:${s.key}`}>{s.name} · {s.host === "local" ? "This Mac" : s.host} — {s.folder || "Ungrouped (private)"}</li>)}</ul>
-          <p>The coordinator stores session names, published activity, folder membership and messages you send. Project files and conversation transcripts are not transferred.</p>
+          <p>The coordinator stores session names, published activity, workspace membership and messages you send. Project files and conversation transcripts are not transferred.</p>
         </section>}
         </>}
-        {connected && <p role="status">Computer connected. Sessions in the same folder can now collaborate.</p>}
+        {connected && <p role="status">Computer connected. Sessions in the same workspace can now collaborate.</p>}
         {error && <p role="alert">{error}</p>}
         <footer>
           <Button variant="ghost" disabled={busy} onClick={preview ? () => { setPreview(null); setError(""); } : onClose}>{preview ? "Back" : "Close"}</Button>

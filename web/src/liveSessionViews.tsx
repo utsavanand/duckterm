@@ -1,6 +1,7 @@
 import { ComponentProps } from "react";
 import { AgentTree } from "./AgentTree";
 import { ControlTower } from "./ControlTower";
+import { Home } from "./Home";
 import { ContextPanel } from "./ContextPanel";
 import { InboxView } from "./InboxView";
 import { SessionCard } from "./SessionCard";
@@ -17,6 +18,10 @@ export function LiveAgentTree({ active, ...props }: Omit<ComponentProps<typeof A
 export function LiveControlTower({ agents, ...props }: Omit<ComponentProps<typeof ControlTower>, "now" | "agents"> & { agents: SessionView[] }) {
   const now = useNow();
   return <ControlTower {...props} now={now} agents={agents.map(s => ({ ...s, shownState: effectiveState(s, now) }))} />;
+}
+export function LiveHome({ agents, ...props }: Omit<ComponentProps<typeof Home>, "now" | "agents"> & { agents: SessionView[] }) {
+  const now = useNow();
+  return <Home {...props} now={now} agents={agents.map(s => ({ ...s, shownState: effectiveState(s, now) }))} />;
 }
 export function LiveSessionCard({ active, ...props }: Omit<ComponentProps<typeof SessionCard>, "now"> & { active: boolean }) {
   const now = useNow(1000, active);

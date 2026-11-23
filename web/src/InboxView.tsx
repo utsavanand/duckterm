@@ -125,9 +125,9 @@ export function InboxView({ session, folder, onMessageFolder }: ({ session: Sess
       <header className="rd-inbox-heading">
         <div>
           <h2>{folder !== undefined ? "Session interactions" : "Inbox"}</h2>
-          <p>{folder !== undefined ? `${folder} · Messages and replies in this folder and its subfolders.` : <>Messages to <strong>{session?.label}</strong>{card?.folder && ` · ${card.folder}`}</>}</p>
+          <p>{folder !== undefined ? `${folder} · Messages and replies in this workspace and its nested workspaces.` : <>Messages to <strong>{session?.label}</strong>{card?.folder && ` · ${card.folder}`}</>}</p>
         </div>
-        {onMessageFolder && <button className="rd-btn rd-btn-primary rd-btn-sm" onClick={onMessageFolder}>Message folder</button>}
+        {onMessageFolder && <button className="rd-btn rd-btn-primary rd-btn-sm" onClick={onMessageFolder}>Message workspace</button>}
       </header>
       {card && (
         <details className="rd-session-card">
@@ -141,7 +141,7 @@ export function InboxView({ session, folder, onMessageFolder }: ({ session: Sess
             {card.activity !== card.purpose && <p className="rd-card-activity">{card.activity}</p>}
             <dl>
               <dt>Session ID</dt><dd>{card.api_name}</dd>
-              <dt>Folder</dt><dd>{card.folder || "Ungrouped"}</dd>
+              <dt>Workspace</dt><dd>{card.folder || "Ungrouped"}</dd>
               <dt>Shared scope</dt><dd>{card.root || "Private"}</dd>
               {card.cwd && <><dt>Workspace</dt><dd>{card.cwd}</dd></>}
             </dl>

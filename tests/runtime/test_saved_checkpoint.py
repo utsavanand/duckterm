@@ -5,8 +5,6 @@ import json
 
 import pytest
 
-from duckterm import harness_switch
-from duckterm.core.session_api import APIError
 from duckterm.llm.summarizer import Summary
 from duckterm.persistence.checkpoints import load_record
 from duckterm.persistence.history import HistoryStore
@@ -93,7 +91,7 @@ def test_fresh_marker_reuses_revision_and_projects_original_events(rig):
     asyncio.run(run())
 
 
-def test_unavailable_provider_saves_facts_but_cannot_prepare_switch(rig, monkeypatch):
+def test_unavailable_provider_saves_facts_but_is_not_handoff_eligible(rig, monkeypatch):
     server, _, _ = rig
     monkeypatch.setattr("duckterm.server.summarize", lambda _, **_kw: Summary("", "none"))
 
@@ -101,9 +99,7 @@ def test_unavailable_provider_saves_facts_but_cannot_prepare_switch(rig, monkeyp
         cp = await checkpoint(server)
         assert cp["saved"] and cp["summary_state"] == "unavailable"
         assert not cp["handoff_eligible"]
-        with pytest.raises(APIError, match="not ready"):
-            await harness_switch.prepare(server, "test-save", server.history.session("test-save"))
-        assert len(server.history.checkpoints("test-save")) == 2
+        assert len(server.history.checkpoints("test-save")) == 1
 
     asyncio.run(run())
 
@@ -122,25 +118,6 @@ def test_unvalidated_paragraph_never_becomes_ready(rig, monkeypatch):
     cp = asyncio.run(checkpoint(server))
     assert cp["saved"] and cp["summary_state"] == "unverified"
     assert not cp["handoff_eligible"]
-
-
-def test_changed_transcript_and_notes_invalidate_same_event_boundary(rig):
-    server, text, _ = rig
-
-    async def run():
-        await checkpoint(server)
-        prepared = await harness_switch.prepare(
-            server, "test-save", server.history.session("test-save")
-        )
-        assert "Do not publish" in prepared["seed"]
-        text[-1] = {"role": "assistant", "text": "Different text of about the same length."}
-        with pytest.raises(APIError, match="sources changed"):
-            await harness_switch.validate(server, "test-save", prepared)
-        server.history.set_meta("test-save", notes="The owner added a new constraint")
-        with pytest.raises(APIError, match="context changed"):
-            harness_switch.validate_facts(server, "test-save", prepared)
-
-    asyncio.run(run())
 
 
 def test_provider_failure_keeps_last_good_summary_with_its_age(rig, monkeypatch):

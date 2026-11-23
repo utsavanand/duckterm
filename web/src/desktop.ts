@@ -6,6 +6,7 @@ type Desktop = {
   launchTarget?: string;
   testBuild?: boolean;
   canReportBug?: boolean;
+  canUpdateApp?: boolean;
   canCollaborate?: boolean;
   canApprove?: boolean;
   canSetUpAgents?: boolean;
@@ -23,6 +24,7 @@ declare global {
         remoteSession?: { postMessage: (message: unknown) => void };
         launchRequest?: { postMessage: (message: unknown) => Promise<unknown> };
         approval?: { postMessage: (message: unknown) => Promise<unknown> };
+        appUpdate?: { postMessage: (message: unknown) => Promise<unknown> };
         runtimeSetup?: { postMessage: (message: unknown) => Promise<unknown> };
       };
     };

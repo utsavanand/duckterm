@@ -118,10 +118,11 @@ export function LaunchModal({
     let stale = false;
     fetch(`/agents-md?dir=${encodeURIComponent(path)}`)
       .then((r) => r.json())
-      .then((d: { rules?: { status: string }[] }) => {
+      .then((d: { rules?: { status: string }[]; proposals?: { status: string }[] }) => {
         if (!stale)
           setPendingRules(
-            (d.rules ?? []).filter((r) => r.status === "candidate").length,
+            (d.rules ?? []).filter((r) => r.status === "candidate").length +
+            (d.proposals ?? []).filter((p) => p.status === "pending").length,
           );
       })
       .catch(() => undefined);
@@ -188,7 +189,7 @@ export function LaunchModal({
         try {
           await api.setGroup(sessionRef(target, launched.session_key), selectedGroup);
         } catch (e) {
-          toast(`Session started, but folder assignment failed: ${(e as Error).message}. Move it from Ungrouped.`, "err");
+          toast(`Session started, but workspace assignment failed: ${(e as Error).message}. Move it from Ungrouped.`, "err");
           onClose();
           return;
         }
@@ -277,8 +278,8 @@ export function LaunchModal({
         </Field>
       )}
 
-      {<Field label="Sidebar folder">
-        <select aria-label="Sidebar folder" style={inputStyle} value={selectedGroup} onChange={(e) => setSelectedGroup(e.target.value)}>
+      {<Field label="Sidebar workspace">
+        <select aria-label="Sidebar workspace" style={inputStyle} value={selectedGroup} onChange={(e) => setSelectedGroup(e.target.value)}>
           <option value="">Ungrouped</option>
           {[...new Set([...folders, ...(group ? [group] : [])])].sort().map((folder) => (
             <option key={folder} value={folder}>{folder}</option>

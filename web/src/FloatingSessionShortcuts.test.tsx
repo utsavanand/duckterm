@@ -70,7 +70,7 @@ it("keeps colors and order tied to host-qualified identity across rename, reload
   fireEvent.click(screen.getByRole("button", { name: "Red" }));
   expect(screen.getByRole("button", { name: "Color for Local / Agent: None" })).toBeInTheDocument();
   expect(screen.getByRole("button", { name: "Color for Cloud / Agent: Red" })).toHaveFocus();
-  fireEvent.keyDown(screen.getByRole("button", { name: "Reorder folder Cloud · cloud" }), { key: "ArrowUp", altKey: true });
+  fireEvent.keyDown(screen.getByRole("button", { name: "Reorder workspace Cloud · cloud" }), { key: "ArrowUp", altKey: true });
   fireEvent.change(screen.getByRole("combobox", { name: "Shortcut display" }), { target: { value: "expanded" } });
   expect(screen.getByRole("navigation")).toHaveClass("always-expanded");
   expect(onOpen).not.toHaveBeenCalled(); expect(onToggle).not.toHaveBeenCalled();
@@ -128,7 +128,7 @@ it("groups by folder and host, keeps names separate, and only reorders siblings"
   expect(document.querySelector(".rd-shortcut-name")).toHaveTextContent(/^a$/);
   fireEvent.keyDown(screen.getByRole("button", { name:"Reorder Core / c" }), { key:"ArrowDown",altKey:true });
   expect(names()[1]).toBe("Open pinned c");
-  fireEvent.keyDown(screen.getByRole("button", { name:"Reorder folder Other · This Mac" }), { key:"ArrowUp",altKey:true });
+  fireEvent.keyDown(screen.getByRole("button", { name:"Reorder workspace Other · This Mac" }), { key:"ArrowUp",altKey:true });
   expect(names()).toEqual(["Open pinned b", "Open pinned a", "Open pinned c", "Open pinned Remote"]);
 });
 
