@@ -1,3 +1,14 @@
+## 2026-11-22 — A retry key that lives only inside one dialog is not a retry key
+
+Folder chat's Confirm dialog kept one request key across Send retries, and the
+tests proved a lost response could not send twice. But Cancel threw the dialog
+away, and asking again minted a fresh key for the identical plan. So a send
+whose response was lost, followed by the natural next move (Cancel, ask again,
+Send), delivered the message twice. The independent review caught it, not me.
+The key now survives until a send for that exact plan succeeds. Lesson:
+idempotency has to cover every path back to the same action, not only the
+retry button you wrote a test for.
+
 ## 2026-11-22 — The memory cache watched a different file than the reader read
 
 After an idle agent's version was saved again as records, an old reference

@@ -3851,7 +3851,12 @@ class Server:
     async def _folder_chat_message(
         self, folder: str, question: str, request_key: str
     ) -> dict[str, Any] | None:
-        """Interpret only the owner's request, then reuse scoped inbox delivery."""
+        """Interpret only the owner's request into a plan the owner must confirm.
+
+        The model paraphrases and picks recipients, so it never sends. The
+        owner confirms the exact text and recipients through the reviewed
+        folder dispatch route, which re-validates scope at send time.
+        """
         service = FolderMessages(self.history)
         snapshot = service.recipients(folder)
         identity, messages = self.history.folder_chats.snapshot(folder)
@@ -3898,17 +3903,17 @@ class Server:
             raise APIError(
                 409, "Some recipients have no inbox. Use @ to review recipients. Nothing was sent."
             )
-        return service.send(
-            folder,
-            {
+        return {
+            "plan": {
                 "identity": identity,
                 "target": target,
+                "label": candidates[0]["name"] if target["kind"] == "session" else target["id"],
                 "text": intent["text"],
-                "request_key": request_key,
-                "recipients": [r["session_id"] for r in candidates],
-            },
-            owner_question=question,
-        )
+                "recipients": [
+                    {"session_id": r["session_id"], "name": r["name"]} for r in candidates
+                ],
+            }
+        }
 
     async def _fleet_ask(self, writer: asyncio.StreamWriter, body: bytes) -> None:
         """Route explicit folder messages; answer other questions from session digests."""
@@ -3949,6 +3954,9 @@ class Server:
                 return
             except ValueError as exc:
                 await _write_json(writer, 409, {"error": str(exc)})
+                return
+            if exchange is not None and "plan" in exchange:
+                await _write_json(writer, 200, exchange)
                 return
             if exchange is not None:
                 await _write_json(
