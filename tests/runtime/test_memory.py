@@ -1,6 +1,7 @@
 """Real native fixtures prove cross-harness lookup, retention and session isolation."""
 
 import asyncio
+import hashlib
 import json
 import os
 import sqlite3
@@ -222,7 +223,7 @@ def test_scope_change_during_worker_read_does_not_return_cached_private_text(
     asyncio.run(run())
 
 
-def test_raw_retention_is_atomic_and_corruption_is_detected(memory_rig):
+def test_retention_keeps_records_atomically_and_detects_corruption(memory_rig):
     _, _, _, tmp = memory_rig
     native = transcript(tmp, "agent-claude", "glacier")
     source = {
@@ -233,12 +234,13 @@ def test_raw_retention_is_atomic_and_corruption_is_detected(memory_rig):
         "title": "Claude",
     }
     saved = read_native("agent", source, retain=True)
-    retained = directory("agent") / (saved["snapshot"] + ".jsonl")
-    assert retained.read_bytes() == native.read_bytes()
+    retained = directory("agent") / (saved["snapshot"] + ".records")
+    assert b"glacier" in retained.read_bytes() and b'"message"' not in retained.read_bytes()
+    assert saved["snapshot"] == hashlib.sha256(native.read_bytes()).hexdigest()
     assert retained.stat().st_mode & 0o777 == 0o600
     retained.write_text(retained.read_text().replace("glacier", "altered"))
     with pytest.raises(APIError, match="checksum"):
-        read_native("agent", {**source, "snapshot": saved["snapshot"]})
+        read_native("agent", saved)
     assert not list(directory("agent").glob(".capture-*"))
 
 
