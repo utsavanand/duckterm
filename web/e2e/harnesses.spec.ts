@@ -143,7 +143,6 @@ test("the dry-run matrix stays readable at 390px in both themes", async ({ page 
   await page.screenshot({ path: testInfo.outputPath("review-390-light.png"), fullPage: true });
   await page.emulateMedia({ colorScheme: "dark" });
   await page.screenshot({ path: testInfo.outputPath("review-390-dark.png"), fullPage: true });
-  await page.getByRole("button", { name: "Back" }).click();
   rmSync(kit, { recursive: true, force: true });
 });
 
