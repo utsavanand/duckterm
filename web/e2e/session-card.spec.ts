@@ -132,14 +132,14 @@ test("Move to folder targets the clicked session, handles failures and persists 
     await page.locator(".rd-row-name", { hasText: "Working terminal" }).click();
     const row = page.locator(".rd-row", { has: page.getByText("Move this agent", { exact: true }) });
     await row.click({ button: "right" });
-    await page.getByRole("menuitem", { name: "Move to folder", exact: true }).click();
-    const dialog = page.getByRole("dialog", { name: "Move Move this agent to folder" });
+    await page.getByRole("menuitem", { name: "Move to workspace", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: "Move Move this agent to workspace" });
     await expect(dialog.getByRole("button", { name: "Move", exact: true })).toBeDisabled();
     await expect(row).toHaveClass(/context-target/);
     await expect(page.locator(".rd-row.selected")).toContainText("Working terminal");
-    await dialog.getByRole("searchbox", { name: "Search folders" }).fill("no such folder");
-    await expect(dialog.getByText("No matching folders.")).toBeVisible();
-    await dialog.getByRole("searchbox", { name: "Search folders" }).fill("Projects");
+    await dialog.getByRole("searchbox", { name: "Search workspaces" }).fill("no such folder");
+    await expect(dialog.getByText("No matching workspaces.")).toBeVisible();
+    await dialog.getByRole("searchbox", { name: "Search workspaces" }).fill("Projects");
     await dialog.getByRole("button", { name: destination, exact: true }).click();
     await page.screenshot({ path: "/tmp/duckterm-session-menu-folder-picker.png" });
     const route = `**/sessions/${target}`;
@@ -160,7 +160,7 @@ test("Move to folder targets the clicked session, handles failures and persists 
     await page.reload(); await expandFolder(page, destination);
     await expect(page.locator(".rd-group-body .rd-row", { hasText: "Move this agent" })).toBeVisible();
     await row.click({ button: "right" });
-    await page.getByRole("menuitem", { name: "Move to folder", exact: true }).click();
+    await page.getByRole("menuitem", { name: "Move to workspace", exact: true }).click();
     await expect(dialog.getByRole("button", { name: `${destination} Current`, exact: true })).toHaveAttribute("aria-pressed", "true");
     await dialog.getByRole("button", { name: "Ungrouped", exact: true }).click();
     await page.keyboard.press("Escape");

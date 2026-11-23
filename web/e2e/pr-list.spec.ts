@@ -64,8 +64,8 @@ test("session PRs tab lists a pushed branch without a PR; the folder tab leaves 
     await page.getByRole("tab", { name: "Pull requests", exact: true }).click();
     // A folder list leaves out test sessions (main-qa on #367), and every probe
     // session is test:true, so this folder reads as empty.
-    const folderList = page.getByRole("region", { name: `Folder ${folder}` }).getByRole("region", { name: "Pull requests" });
-    await expect(folderList.getByText("No pull requests from this folder's sessions yet.")).toBeVisible({ timeout: 20_000 });
+    const folderList = page.getByRole("region", { name: `Workspace ${folder}` }).getByRole("region", { name: "Pull requests" });
+    await expect(folderList.getByText("No pull requests from this workspace's sessions yet.")).toBeVisible({ timeout: 20_000 });
     await page.screenshot({ path: "/tmp/duckterm-pr-list-folder.png" });
     // Review opens the workspace from the session's own list: the diff against
     // main, bucketed, with viewed state.

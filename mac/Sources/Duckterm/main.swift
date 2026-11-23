@@ -22,6 +22,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let sessionTransport = SessionTransport()
     private let collaborationSetup = CollaborationSetup()
     private let server = ServerProcess()
+    private lazy var appUpdater = AppUpdater()
     private var localStart: Task<Bool, Never>?
     private var pollers: [String: SessionPoller] = [:]
     private var window: DashboardWindow?
@@ -71,6 +72,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             } catch { AppDiagnostics.shared.record("Approval key not bound") }
         }
         window = DashboardWindow(url: server.url)
+        appUpdater.onChange = { [weak self] state in self?.window?.dispatch(name: "app-update", detail: state) }
+        appUpdater.preflight = { [weak self] in
+            guard let self else { throw LaunchDestination.Failure.message("App is closing") }
+            try await self.checkAppUpdateReadiness()
+        }
+        appUpdater.prepareRestart = { [weak self] in
+            guard let self else { throw LaunchDestination.Failure.message("App is closing") }
+            try await self.checkAppUpdateReadiness()
+            try await self.server.stopForUpdate()
+        }
+        appUpdater.recoverServer = { [weak self] in
+            guard let self else { return }
+            _ = await self.ensureLocalServer()
+        }
+        window?.onAppUpdateRequest = { [weak self] operation in
+            guard let self else { throw LaunchDestination.Failure.message("App is closing") }
+            return try await self.appUpdater.perform(operation)
+        }
         runtimeSetup.onEvent = { [weak self] event in self?.window?.dispatch(name: "runtime-setup", detail: event) }
         runtimeSetup.onOutput = { [weak self] event in await self?.window?.dispatchSetupOutput(detail: event) }
         runtimeSetup.onPreferences = { [weak self] state in
@@ -334,6 +353,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         return true
     }
 
+    private func checkAppUpdateReadiness() async throws {
+        guard !runtimeSetup.isRunning, server.ownsRunningServer else {
+            throw LaunchDestination.Failure.message("Finish agent setup, or quit the separately started server and reopen this app before updating.")
+        }
+        let response = try await launchAPI.perform(base: server.url, operation: "edition", params: [:])
+        let current = try DesktopEdition(response: response)
+        try current.validate(edition: AppIdentity.edition, profile: AppIdentity.profile)
+        guard let raw = response as? [String: Any], raw.keys.contains("app_update_blocked") else {
+            throw LaunchDestination.Failure.message("The running backend cannot confirm update readiness. Reopen the app.")
+        }
+        if let reason = raw["app_update_blocked"] as? String { throw LaunchDestination.Failure.message(reason) }
+    }
+
     private func ensureLocalServer() async -> Bool {
         guard launchAdmission.canStart else { return false }
         if let localServerReadiness { return await localServerReadiness() }
@@ -486,6 +518,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
             let current = try DesktopEdition(response: response)
             try current.validate(edition: AppIdentity.edition, profile: AppIdentity.profile)
+            appUpdater.verifyRelaunch(backend: (response as? [String: Any])?["runtime_version"] as? String)
             applyEdition(current)
             return current
         } catch {
@@ -549,8 +582,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func reportResumeReadiness() async throws -> String? {
         // Native app diagnostics describe this Mac. Remote reports keep using
         // the web form's explicit selected-host context and transport.
+        let path = await window?.reportContextPath() ?? "/bugreport/context"
         let response = try await sessionTransport.perform(base: server.url, api: launchAPI,
-            params: ["method": "GET", "path": "/bugreport/context"])
+            params: ["method": "GET", "path": path])
         return BugReportData.resumeReadiness(from: response)
     }
 

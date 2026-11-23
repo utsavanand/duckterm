@@ -23,7 +23,7 @@ test("folder mentions deliver owner questions, retain replies, and review broadc
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.emulateMedia({ colorScheme: 'dark' });
     await page.goto(base()); await header().click();
-    const input = page.getByRole('textbox', { name: 'Ask this folder' });
+    const input = page.getByRole('textbox', { name: 'Ask this workspace' });
     await input.fill('@');
     await expect(page.getByRole('option', { name: /ui-dev/ })).toBeVisible();
     await page.screenshot({ path: '/tmp/duckterm-mentions-implemented.png' });
@@ -40,14 +40,21 @@ test("folder mentions deliver owner questions, retain replies, and review broadc
     await expect(page.locator('.rd-folder-answer')).toContainText('Keyboard navigation verified. All paths passed.');
     await page.reload(); await header().click();
     await expect(page.locator('.rd-folder-answer')).toContainText('Keyboard navigation verified. All paths passed.');
-    // A plain-language request uses the same real broker without selecting @.
+    // A plain-language request returns a plan; only the owner's confirm reaches the broker.
     await input.fill('Ask ui-dev to report progress.');
     await page.getByRole('button', { name: 'Ask', exact: true }).click();
+    const plan = page.getByRole('dialog', { name: 'Confirm message' });
+    await expect(plan).toContainText('Report your progress.');
+    expect((await inbox(0)).messages).toHaveLength(1);
+    await plan.getByRole('button', { name: 'Send to ui-dev', exact: true }).click();
     await expect(page.getByText('ui-dev · Queued in inbox', { exact: true })).toBeVisible();
     const direct = (await inbox(0)).messages.find((m: { question: string }) => m.question === 'Report your progress.');
     expect(direct).toMatchObject({ sender_kind: 'owner', requires_reply: true });
     await input.fill('Tell everyone in this folder to report progress.');
     await page.getByRole('button', { name: 'Ask', exact: true }).click();
+    await expect(plan).toContainText('research');
+    expect((await inbox(1)).messages).toHaveLength(0);
+    await plan.getByRole('button', { name: 'Send to 2 sessions', exact: true }).click();
     await expect(page.getByText('research · Queued in inbox', { exact: true })).toBeVisible();
     expect((await inbox(1)).messages).toHaveLength(1);
     expect((await inbox(1)).messages[0]).toMatchObject({ question: 'Report your progress.', sender_kind: 'owner', requires_reply: false });

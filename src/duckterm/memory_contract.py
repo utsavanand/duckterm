@@ -61,6 +61,7 @@ OMISSION_REASONS = {
     "unclassified_source",
     "budget_exhausted",
     "unreadable_source",
+    "automatic_checkpoints_off",
 }
 
 

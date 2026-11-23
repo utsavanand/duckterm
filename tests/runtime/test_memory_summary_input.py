@@ -106,9 +106,10 @@ def test_mixed_blocks_keep_agent_text_and_explicit_failure_only(memory_rig):
     assert "Keep the owner boundary." in summary and "I will run the check." in summary
     assert (
         loaded["records"]
-        == memory_sources.read_native("agent", {**source, "snapshot": loaded["snapshot"]})[
-            "records"
-        ]
+        == memory_sources.read_native(
+            "agent",
+            {**source, "snapshot": loaded["snapshot"], "records_sha256": loaded["records_sha256"]},
+        )["records"]
     )
 
 

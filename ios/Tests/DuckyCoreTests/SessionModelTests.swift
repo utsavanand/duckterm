@@ -76,7 +76,13 @@ final class FakeStore: CredentialStoring {
 /// Lets a test step the poll loop one interval at a time.
 final class Clock {
     var waiting: [CheckedContinuation<Void, Error>] = []
-    func pause() async throws { try await withCheckedThrowingContinuation { waiting.append($0) } }
+    var onPause: (() -> Void)?
+    func pause() async throws {
+        try await withCheckedThrowingContinuation {
+            waiting.append($0)
+            onPause?()
+        }
+    }
     func tick() { if !waiting.isEmpty { waiting.removeFirst().resume() } }
 }
 
@@ -354,12 +360,23 @@ final class SessionModelTests: XCTestCase {
         await m.restore()
         m.enterBackground()
         transports[0].snapshots = [.failure(URLError(.timedOut))]
+        let awaitingRetry = expectation(description: "Failed foreground refresh is waiting to retry")
+        retries.onPause = { awaitingRetry.fulfill() }
+        let awaitingPoll = expectation(description: "Successful retry is waiting for the next poll")
+        clock.onPause = { awaitingPoll.fulfill() }
+        defer {
+            m.enterBackground()
+            retries.tick()
+            clock.tick()
+        }
         m.enterForeground()
         XCTAssertEqual(m.phase, .stale)
-        await settle()
+        await fulfillment(of: [awaitingRetry], timeout: 5)
         XCTAssertEqual(m.phase, .stale)
-        retries.tick(); await settle()
+        retries.tick()
+        await fulfillment(of: [awaitingPoll], timeout: 5)
         XCTAssertEqual(m.phase, .live)
+        XCTAssertEqual(transports[0].snapshotReads, 3)
     }
 
     func testForgetKeepsThePairingVisibleWhenKeychainKeepsTheCredential() async {

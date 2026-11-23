@@ -104,7 +104,7 @@ export function AgentTree({
     onSessionMoved(key, group);
     try {
       await api.setGroup(key, group);
-      toast(group ? `Moved to ${group}` : "Removed from folder");
+      toast(group ? `Moved to ${group}` : "Removed from workspace");
       onFoldersChanged();
     } catch (e) {
       toast(`Move failed: ${(e as Error).message}`, "err");
@@ -117,7 +117,7 @@ export function AgentTree({
     if (name === parent || parent.startsWith(name + "/")) return;
     try {
       const r = await api.moveFolder(name, parent);
-      if (r.pending) { toast("Folder change pending sync. Open Settings → Collaboration to review."); onFoldersChanged(); return; }
+      if (r.pending) { toast("Workspace change pending sync. Open Settings → Collaboration to review."); onFoldersChanged(); return; }
       // Sessions follow the move server-side; mirror locally or they'd render
       // under a group path that no longer exists (invisible until reload).
       for (const s of sessions) {
@@ -138,17 +138,17 @@ export function AgentTree({
 
   async function renameFolder(path: string) {
     const leaf = path.split("/").pop() ?? path;
-    const name = window.prompt(`Rename folder "${leaf}" to:`, leaf)?.trim();
+    const name = window.prompt(`Rename workspace "${leaf}" to:`, leaf)?.trim();
     if (!name || name === leaf) return;
     if (name.includes("/")) {
-      toast("Folder names can't contain '/'", "err");
+      toast("Workspace names can't contain '/'", "err");
       return;
     }
     const parent = path.includes("/") ? path.slice(0, path.lastIndexOf("/")) : "";
     const next = parent ? `${parent}/${name}` : name;
     try {
       const result = await api.renameFolder(path, name);
-      if (result.pending) { toast("Folder change pending sync. Open Settings → Collaboration to review."); onFoldersChanged(); return; }
+      if (result.pending) { toast("Workspace change pending sync. Open Settings → Collaboration to review."); onFoldersChanged(); return; }
       // Sessions follow the rename server-side; mirror it locally so rows
       // don't jump to Ungrouped until the next refetch.
       for (const s of sessions) {
@@ -165,11 +165,11 @@ export function AgentTree({
   }
 
   async function createSubfolder(parent: string) {
-    const name = window.prompt(`New folder inside "${parent}":`)?.trim();
+    const name = window.prompt(`New workspace inside "${parent}":`)?.trim();
     if (!name) return;
     try {
       const result = await api.createFolder(`${parent}/${name.replaceAll("/", "-")}`);
-      if (result.pending) toast("Folder creation pending sync. Open Settings → Collaboration to review.");
+      if (result.pending) toast("Workspace creation pending sync. Open Settings → Collaboration to review.");
       onFoldersChanged();
     } catch (e) {
       toast(`Create failed: ${(e as Error).message}`, "err");
@@ -179,18 +179,18 @@ export function AgentTree({
   async function removeFolder(name: string) {
     if (
       !window.confirm(
-        `Delete folder "${name}"? Its sessions return to Ungrouped.`,
+        `Delete workspace "${name}"? Its sessions return to Ungrouped.`,
       )
     )
       return;
     try {
       const result = await api.deleteFolder(name);
-      if (result.pending) { toast("Folder deletion pending sync. Open Settings → Collaboration to review."); onFoldersChanged(); return; }
+      if (result.pending) { toast("Workspace deletion pending sync. Open Settings → Collaboration to review."); onFoldersChanged(); return; }
       for (const s of sessions) {
         if (s.group === name || s.group?.startsWith(name + "/")) onSessionMoved(s.key, "");
       }
       onFolderDeleted?.(name);
-      toast(`Deleted folder ${name}`);
+      toast(`Deleted workspace ${name}`);
       onFoldersChanged();
     } catch (e) {
       toast(`Delete failed: ${(e as Error).message}`, "err");
@@ -419,7 +419,7 @@ function GroupHeader({
         <span className="rd-group-count">{count}</span>
         {onOpenInbox && <button
           className="rd-group-phone"
-          title={desktop() ? "View this folder’s interactions on This Mac" : "View folder interactions"}
+          title={desktop() ? "View this workspace’s interactions on This Mac" : "View workspace interactions"}
           aria-label={`View interactions in ${name}`}
           onClick={(e) => { e.stopPropagation(); onOpenInbox(); }}
         >
@@ -430,7 +430,7 @@ function GroupHeader({
         <button className={`rd-group-theme-wrap${theme ? " set" : ""}`} aria-label={`Terminal colors for ${name}`} title={`Terminal colors for ${name}`} onClick={onOpenAppearance}>🎨</button>
         <button
           className="rd-group-grid"
-          title="Open this folder's terminals in a grid"
+          title="Open this workspace's terminals in a grid"
           onClick={(e) => {
             e.stopPropagation();
             onOpenGrid();
@@ -441,7 +441,7 @@ function GroupHeader({
         {onUnnest && (
           <button
             className="rd-group-unnest"
-            title="Move this folder to the top level"
+            title="Move this workspace to the top level"
             onClick={(e) => {
               e.stopPropagation();
               onUnnest();
@@ -452,7 +452,7 @@ function GroupHeader({
         )}
         <button
           className="rd-group-rename"
-          title="Rename this folder (double-clicking the name works too)"
+          title="Rename this workspace (double-clicking the name works too)"
           onClick={(e) => {
             e.stopPropagation();
             onRename();
@@ -462,7 +462,7 @@ function GroupHeader({
         </button>
         <button
           className="rd-group-add"
-          title="New session in this folder"
+          title="New session in this workspace"
           onClick={(e) => {
             e.stopPropagation();
             onNewSession();
@@ -472,7 +472,7 @@ function GroupHeader({
         </button>
         <button
           className="rd-group-subfolder"
-          title="New folder inside this one"
+          title="New workspace inside this one"
           onClick={(e) => {
             e.stopPropagation();
             onNewSubfolder();
@@ -482,7 +482,7 @@ function GroupHeader({
         </button>
         <button
           className="rd-group-del"
-          title="Delete folder and its subfolders (sessions return to Ungrouped)"
+          title="Delete workspace and its nested workspaces (sessions return to Ungrouped)"
           onClick={(e) => {
             e.stopPropagation();
             onDelete();
@@ -615,7 +615,7 @@ function TreeRow({
         aria-expanded={s.key === contextKey}
         data-session-key={s.key}
         data-sidebar-order-key={drag ? s.key : undefined}
-        aria-description={drag ? "Drag to reorder. Alt and arrow keys move within the folder or parent." : undefined}
+        aria-description={drag ? "Drag to reorder. Alt and arrow keys move within the workspace or parent." : undefined}
         {...(drag?.bindings(s) ?? {})}
         onClickCapture={e => { if (drag?.consumeClick(s.key, e.detail)) { e.preventDefault(); e.stopPropagation(); } }}
         onContextMenu={e => { e.preventDefault(); e.stopPropagation(); openSessionActions({ key: s.key, x: e.clientX, y: e.clientY, trigger: e.currentTarget }); }}

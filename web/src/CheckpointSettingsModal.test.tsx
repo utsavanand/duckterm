@@ -3,7 +3,7 @@ import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api, type AiState, type CheckpointSettings } from "./api";
 import { CheckpointSettingsModal } from "./CheckpointSettingsModal";
 
-vi.mock("./api", () => ({ api: { checkpointSettings: vi.fn(), saveCheckpointSettings: vi.fn(), aiSettings: vi.fn() } }));
+vi.mock("./api", () => ({ api: { checkpointSettings: vi.fn(), saveCheckpointSettings: vi.fn(), aiSettings: vi.fn(), checkpointHealth: vi.fn() } }));
 function aiState(backend: AiState["settings"]["backend"], harness: AiState["harness"] = "claude-code"): AiState {
   return {
     settings: { backend, harness: "auto", provider: "anthropic", base_url: "", fast_model: "", deep_model: "", harness_fast_model: "haiku", harness_deep_model: "sonnet" },
@@ -12,7 +12,7 @@ function aiState(backend: AiState["settings"]["backend"], harness: AiState["harn
 }
 beforeEach(() => { vi.mocked(api.aiSettings).mockResolvedValue(aiState("harness")); });
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
-const defaults: CheckpointSettings = { lookback_records: "all", writer_model: "sonnet" };
+const defaults: CheckpointSettings = { lookback_records: "all", writer_model: "sonnet", automatic: false };
 
 it("defaults to all unsummarized messages and saves a latest-N choice", async () => {
   vi.mocked(api.checkpointSettings).mockResolvedValue(defaults);
@@ -31,7 +31,7 @@ it("defaults to all unsummarized messages and saves a latest-N choice", async ()
   fireEvent.change(screen.getByLabelText("Summary writer (Claude Code)"), { target: { value: "opus" } });
   fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
   expect(await screen.findByText("Settings saved")).toBeVisible();
-  expect(api.saveCheckpointSettings).toHaveBeenCalledExactlyOnceWith({ lookback_records: 60, writer_model: "opus" });
+  expect(api.saveCheckpointSettings).toHaveBeenCalledExactlyOnceWith({ lookback_records: 60, writer_model: "opus", automatic: false });
   fireEvent.click(screen.getByRole("button", { name: "Reset defaults" }));
   expect(all).toBeChecked();
   expect(screen.getByLabelText("Summary writer (Claude Code)")).toHaveValue("sonnet");
@@ -46,7 +46,7 @@ it("saves all as the literal setting", async () => {
   fireEvent.click(screen.getByRole("radio", { name: "All unsummarized messages (default)" }));
   fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
   expect(await screen.findByText("Settings saved")).toBeVisible();
-  expect(api.saveCheckpointSettings).toHaveBeenCalledExactlyOnceWith({ lookback_records: "all", writer_model: "sonnet" });
+  expect(api.saveCheckpointSettings).toHaveBeenCalledExactlyOnceWith({ lookback_records: "all", writer_model: "sonnet", automatic: false });
 });
 
 it("rejects invalid limits and does not claim success after a lost response", async () => {
@@ -90,4 +90,25 @@ it("adds no note when Claude Code runs checkpoints or AI settings fail to load",
   render(<CheckpointSettingsModal onClose={() => {}} />);
   expect(await screen.findByLabelText("Summary writer (Claude Code)")).toBeVisible();
   expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("turns automatic checkpoints on and saves it", async () => {
+  vi.mocked(api.checkpointSettings).mockResolvedValue(defaults);
+  vi.mocked(api.saveCheckpointSettings).mockResolvedValue({ ...defaults, automatic: true });
+  render(<CheckpointSettingsModal onClose={() => {}} />);
+  const toggle = await screen.findByRole("checkbox", { name: "Automatic checkpoints" });
+  expect(toggle).not.toBeChecked();
+  fireEvent.click(toggle);
+  fireEvent.click(screen.getByRole("button", { name: "Save settings" }));
+  expect(api.saveCheckpointSettings).toHaveBeenCalledExactlyOnceWith({ lookback_records: "all", writer_model: "sonnet", automatic: true });
+  expect(await screen.findByText("Settings saved")).toBeVisible();
+});
+
+it("switches to the agent memory tab", async () => {
+  vi.mocked(api.checkpointSettings).mockResolvedValue(defaults);
+  vi.mocked(api.checkpointHealth).mockResolvedValue({ automatic: false, agents: [] });
+  render(<CheckpointSettingsModal onClose={() => {}} />);
+  fireEvent.click(await screen.findByRole("tab", { name: "Agent memory" }));
+  expect(await screen.findByText("No agents were active in the last 7 days.")).toBeVisible();
+  expect(screen.getByRole("checkbox", { name: "Automatic checkpoints", hidden: true })).not.toBeVisible();
 });

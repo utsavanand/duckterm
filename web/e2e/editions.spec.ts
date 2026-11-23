@@ -79,10 +79,10 @@ test("Lite runs continuity, saved artifacts and factual overviews without coding
     await expect(page.getByRole("region", { name: "Session artifacts" })).toBeVisible();
     await expect(page.getByRole("region", { name: "Session files" })).toHaveCount(0);
     await page.locator(".rd-group-name", { hasText: folder }).click();
-    const folderView = page.getByRole("region", { name: `Folder ${folder}` });
+    const folderView = page.getByRole("region", { name: `Workspace ${folder}` });
     await expect(folderView.getByRole("tab")).toHaveText(["Overview", "Artifacts"]);
     await expect(folderView.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
-    await expect(folderView.getByRole("complementary", { name: "Folder overview" })).toBeVisible();
+    await expect(folderView.getByRole("complementary", { name: "Workspace overview" })).toBeVisible();
     await page.getByRole("button", { name: "Overview", exact: true }).click();
     await expect(page.getByRole("heading", { name: /Control tower/ })).toBeVisible();
     await expect(page.getByLabel("Message Oracle")).toHaveCount(0);
@@ -144,18 +144,18 @@ test("desktop folders without the inbox capability use core HTTP despite a nativ
     await seedSession(key, { name, runtime: "generic", test: true });
     await page.goto(base());
     await page.getByRole("button", { name: "New", exact: true }).click();
-    await page.getByRole("button", { name: "New folder", exact: true }).click();
+    await page.getByRole("button", { name: "New workspace", exact: true }).click();
     await page.getByPlaceholder("e.g. payments").fill(original);
     await coreWrite("POST", "/folders", { name: original }, async () => {
-      await page.getByRole("button", { name: "Create folder", exact: true }).click();
+      await page.getByRole("button", { name: "Create workspace", exact: true }).click();
     });
     await expandFolder(page, parent);
     await expect(header(original)).toBeVisible();
 
     const row = page.locator(".rd-row", { has: page.getByText(name, { exact: true }) });
     await row.click({ button: "right" });
-    await page.getByRole("menuitem", { name: "Move to folder", exact: true }).click();
-    const picker = page.getByRole("dialog", { name: `Move ${name} to folder` });
+    await page.getByRole("menuitem", { name: "Move to workspace", exact: true }).click();
+    const picker = page.getByRole("dialog", { name: `Move ${name} to workspace` });
     await picker.getByRole("button", { name: original, exact: true }).click();
     await coreWrite("PATCH", `/sessions/${key}`, { group: original }, async () => {
       await picker.getByRole("button", { name: "Move", exact: true }).click();
@@ -176,7 +176,7 @@ test("desktop folders without the inbox capability use core HTTP despite a nativ
 
     await header(renamed).hover();
     await coreWrite("PATCH", `/folders/${encodeURIComponent(renamed)}`, { parent: "" }, async () => {
-      await header(renamed).getByTitle("Move this folder to the top level", { exact: true }).click();
+      await header(renamed).getByTitle("Move this workspace to the top level", { exact: true }).click();
     });
     await expect(header(renamedLeaf)).toBeVisible();
     await expect(header(renamed)).toHaveCount(0);
@@ -188,7 +188,7 @@ test("desktop folders without the inbox capability use core HTTP despite a nativ
     await header(renamedLeaf).hover();
     await coreWrite("DELETE", `/folders/${encodeURIComponent(renamedLeaf)}`, null, async () => {
       const confirm = page.waitForEvent("dialog").then(dialog => dialog.accept());
-      await header(renamedLeaf).getByTitle("Delete folder and its subfolders (sessions return to Ungrouped)", { exact: true }).click();
+      await header(renamedLeaf).getByTitle("Delete workspace and its nested workspaces (sessions return to Ungrouped)", { exact: true }).click();
       await confirm;
     });
     await expect(header(renamedLeaf)).toHaveCount(0);
@@ -223,10 +223,10 @@ test("Code combines files and artifacts and offers folder chat without the Oracl
     await expect(files).toContainText("EDITION_FILE");
     await expect(files.getByRole("group", { name: "Files filter" })).toBeVisible();
     await page.locator(".rd-group-name", { hasText: folder }).click();
-    const folderView = page.getByRole("region", { name: `Folder ${folder}` });
+    const folderView = page.getByRole("region", { name: `Workspace ${folder}` });
     await expect(folderView.getByRole("tab")).toHaveText(["Overview", "Chat", "Artifacts", "Pull requests"]);
     await expect(folderView.getByRole("tab", { name: "Chat" })).toHaveAttribute("aria-selected", "true");
-    const draft = folderView.getByRole("textbox", { name: "Ask this folder" });
+    const draft = folderView.getByRole("textbox", { name: "Ask this workspace" });
     await draft.fill("Keep this unsent draft");
     await folderView.getByRole("tab", { name: "Overview" }).click();
     await folderView.getByRole("tab", { name: "Chat" }).click();
@@ -249,7 +249,7 @@ test("Full keeps every view, including pull request review", async ({ page }) =>
     for (const name of ["Timeline", "Artifacts", "PRs"]) await expect(views.getByRole("button", { name, exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Oracle", exact: true })).toBeVisible();
     await page.locator(".rd-group-name", { hasText: folder }).click();
-    await expect(page.getByRole("region", { name: `Folder ${folder}` }).getByRole("tab")).toHaveText(["Overview", "Chat", "Artifacts", "Pull requests"]);
+    await expect(page.getByRole("region", { name: `Workspace ${folder}` }).getByRole("tab")).toHaveText(["Overview", "Chat", "Artifacts", "Pull requests"]);
   });
 });
 

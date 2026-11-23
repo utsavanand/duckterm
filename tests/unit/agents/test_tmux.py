@@ -39,6 +39,24 @@ def test_capture_screen_trims_pane_padding_and_uses_crlf() -> None:
 
 
 @pytest.mark.skipif(not _HAS_TMUX, reason="tmux not installed")
+def test_send_raw_delivers_paste_longer_than_tmux_argument_cap(tmp_path) -> None:
+    """tmux caps a command at 1000 arguments and -H uses one per byte; a
+    single send-keys for a long paste failed with "command too long"."""
+    sink = tmp_path / "received"
+    target = tmux.spawn("test-paste", f"stty raw -echo; cat > {sink}", cwd="/tmp")
+    paste = b"\x1b[200~" + b"a long pasted sentence " * 200 + b"\x1b[201~"
+    try:
+        time.sleep(0.5)
+        assert tmux.send_raw(target, paste)
+        deadline = time.time() + 5
+        while time.time() < deadline and (not sink.exists() or sink.stat().st_size < len(paste)):
+            time.sleep(0.1)
+        assert sink.read_bytes() == paste
+    finally:
+        tmux.kill_session(target)
+
+
+@pytest.mark.skipif(not _HAS_TMUX, reason="tmux not installed")
 def test_capture_screen_includes_scrolled_off_history() -> None:
     """Output that scrolled past the pane top must still reach an attaching
     terminal — it lives in tmux history, and the snapshot pulls it in (-S).

@@ -379,7 +379,6 @@ class Restarts:
         interrupt: Any = False,
         memory: Any = None,
         request_key: Any = None,
-        require_preparation: bool = False,
     ) -> dict[str, Any]:
         request_hash = fingerprint([model, harness, interrupt, memory])
         if request_key is not None:
@@ -424,14 +423,13 @@ class Restarts:
         memory_job = None
         if switching:
             version = await self.switch_version(target, binary)
-            if require_preparation or memory is not None:
-                memory_job = await self.server.memory_preparation.checked_proof(
-                    key, memory, target, model
+            memory_job = await self.server.memory_preparation.checked_proof(
+                key, memory, target, model
+            )
+            if version != memory_job["cli_version"]:
+                raise PreparationError(
+                    409, "target_changed", "The target CLI changed; prepare again"
                 )
-                if version != memory_job["cli_version"]:
-                    raise PreparationError(
-                        409, "target_changed", "The target CLI changed; prepare again"
-                    )
         elif memory is not None:
             raise PreparationError(
                 409, "target_changed", "The target is already the current harness"
@@ -591,14 +589,13 @@ class Restarts:
             if switching:
                 assert isinstance(harness, str)
                 version = await self.switch_version(harness, binary)
-                if self.read(key).get("memory"):
-                    job = await self.server.memory_preparation.checked_proof(
-                        key, self.read(key)["memory"], harness, self.read(key)["requested_model"]
+                job = await self.server.memory_preparation.checked_proof(
+                    key, self.read(key).get("memory"), harness, self.read(key)["requested_model"]
+                )
+                if version != job["cli_version"]:
+                    raise PreparationError(
+                        409, "target_changed", "The target CLI changed; prepare again"
                     )
-                    if version != job["cli_version"]:
-                        raise PreparationError(
-                            409, "target_changed", "The target CLI changed; prepare again"
-                        )
             else:
                 await cli_version(binary)  # verify before stopping
             if (await self.live_plan(key, harness))[1] is not sup:
@@ -607,7 +604,7 @@ class Restarts:
             if switching:
                 from duckterm.harness_switch import prepare, validate
 
-                prepared = await prepare(self.server, key, row)
+                prepared = await prepare(self.server, key)
                 await validate(self.server, key, prepared)
             # The Stop hook can return just before the CLI paints its prompt.
             # Normal restarts require positive turn-end evidence. An explicitly

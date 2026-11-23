@@ -302,6 +302,9 @@ class HistoryStore:
         self.path = path
         self.folder_chats = FolderChats(path.parent / "folder-chats.json", self.folders)
         self.layouts = Layouts(path.parent / "layouts.json", self.folders)
+        # Separate file: an older build validates every surface in layouts.json
+        # and would quarantine the whole file on seeing an unknown "home" slot.
+        self.home_layout = Layouts(path.parent / "home-layout.json", self.folders)
         path.parent.mkdir(parents=True, exist_ok=True)
         self._conn = sqlite3.connect(str(path), check_same_thread=True)
         self._conn.row_factory = sqlite3.Row

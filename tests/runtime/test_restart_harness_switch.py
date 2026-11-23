@@ -11,27 +11,65 @@ from tests.runtime.test_restarts import rig as restart_rig
 from tests.runtime.test_session_api import Writer, dispatch
 
 from duckterm.core.session_api import APIError
+from duckterm.memory_preparation import generation
 from duckterm.model_catalog import CatalogError
 from duckterm.persistence.history import HistoryStore
+from duckterm.runtimes.claude_code import project_slug
 
 
-async def ready_checkpoint(server, key="a", summary="Checkpoint summary"):
-    """A current, explicit ready response for tests of the later stop guards."""
-    captured = await server.progress_coordinator.capture(key)
-    source = captured["source"]
-    return {
-        "id": "checkpoint",
-        "summary": summary,
-        "saved": True,
-        "handoff_eligible": True,
-        "record": {
-            "policy": captured["policy"],
-            "conversation": captured["conversation"],
-            "events": source["events"],
-            "required_hash": source["required_hash"],
-            "transcript": {k: v for k, v in source.items() if k.startswith("transcript_")},
+async def prepare(server, target="claude-code", model="", key="a"):
+    """The proof the switch dialog obtains before it may request a switch."""
+    body = {
+        "request_key": "prepare-" + target,
+        "binding": {
+            "session_key": key,
+            "source_generation": generation(server, key),
+            "target": {
+                "harness": target,
+                "model": {"mode": "explicit", "id": model} if model else {"mode": "default"},
+            },
         },
     }
+    view = await server.memory_preparation.start(key, body)
+    await server.memory_preparation.tasks[view["preparation_id"]]
+    view = server.memory_preparation.status(key, view["preparation_id"])
+    assert view["state"] == "ready", view
+    return {
+        "version": 1,
+        "preparation_id": view["preparation_id"],
+        "snapshot_id": view["proof"]["snapshot_id"],
+        "source_generation": view["binding"]["source_generation"],
+    }
+
+
+async def switch(server, model, target, key="a", **kwargs):
+    """A queued switch waits for turn end, and that event would make an earlier
+    proof stale, so end the turn first. Interrupting switches prepare mid-turn."""
+    if not kwargs.get("interrupt"):
+        await hook(
+            server,
+            runtime=server.history.session(key)["runtime"],
+            session_id=server.history.session_id_for(key),
+        )
+    proof = await prepare(server, target, model, key)
+    kwargs.setdefault("request_key", "switch")
+    return await server.restarts.request(key, model, target, memory=proof, **kwargs)
+
+
+def claude_source(server, screen, key="a", native_id="claude-source"):
+    """Make the card a Claude Code agent whose conversation preparation can read."""
+    cwd = Path(server.history.session(key)["cwd"])
+    path = Path.home() / ".claude/projects" / project_slug(cwd) / f"{native_id}.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    message = {"role": "user", "content": "Review the work before release."}
+    path.write_text(
+        json.dumps({"type": "user", "cwd": str(cwd), "sessionId": native_id, "message": message})
+        + "\n"
+    )
+    observed = {"runtime": "claude-code", "native_id": native_id, "ts": 9999999999999}
+    control = {**server.history.restart_control(key), "native_observation": observed}
+    server.history.set_harness_identity(key, "claude-code", "claude", None, control=control)
+    screen[0] = "────────────────\n❯ \n────────────────"
 
 
 @pytest.fixture
@@ -192,9 +230,8 @@ def test_switch_preserves_card_and_records_new_identity_with_seed(rig, monkeypat
         assert kwargs["cwd"] == old_row["cwd"]
         assert kwargs["record_intention"] is False
         assert kwargs["test"] is True
-        assert "Checkpoint summary" in kwargs["prompt"]
         assert "Keep notes" in kwargs["prompt"]
-        assert "NEW conversation" in kwargs["prompt"]
+        assert "new native conversation" in kwargs["prompt"]
         launches.append(kwargs)
         server.bus.publish(
             {
@@ -216,14 +253,8 @@ def test_switch_preserves_card_and_records_new_identity_with_seed(rig, monkeypat
     monkeypatch.setattr(server.orchestrator, "launch", launch)
 
     async def run():
-        await server.restarts.request("a", "claude-model", "claude-code")
+        await switch(server, "claude-model", "claude-code")
         assert not calls and not launches
-        # The old conversation's transcript can disappear without disabling a new conversation.
-        from duckterm.runtimes.codex import CodexRuntime
-
-        path = CodexRuntime().locate_transcript(cwd=Path(old_row["cwd"]), session_id=A)
-        path.unlink()
-        await hook(server)
         await drain(server)
         state = server.restarts.read("a")
         assert state["status"] == "completed", state
@@ -283,8 +314,7 @@ def test_failed_switch_keeps_old_conversation_resumable(rig, monkeypatch):
     monkeypatch.setattr(server.orchestrator, "launch", fail)
 
     async def run():
-        await server.restarts.request("a", "new-model", "claude-code")
-        await hook(server)
+        await switch(server, "new-model", "claude-code")
         await drain(server)
         assert calls == [("stop", "a")]
         state = server.restarts.read("a")
@@ -295,28 +325,6 @@ def test_failed_switch_keeps_old_conversation_resumable(rig, monkeypatch):
         row = server.history.session("a")
         assert row["runtime"] == old["runtime"] and row["state"] == "stopped"
         assert server._resume_argv("a", "codex", row)[0][-2:] == ["resume", A]
-
-    asyncio.run(run())
-
-
-def test_input_during_checkpoint_never_stops_old_agent(rig, monkeypatch):
-    server, _, _, calls = rig
-
-    async def checkpoint(*args):
-        await hook(server, event_type="UserPromptSubmit")
-        return await ready_checkpoint(server, summary="notes")
-
-    monkeypatch.setattr(server, "_create_checkpoint", checkpoint)
-
-    async def run():
-        await server.restarts.request("a", "", "claude-code")
-        await hook(server)
-        await drain(server)
-        assert not calls
-        assert server.restarts.read("a")["status"] == "queued"
-        server.restarts.cancel("a")
-        await hook(server)
-        assert not calls
 
     asyncio.run(run())
 
@@ -408,15 +416,16 @@ def test_old_generation_cannot_bind_or_control_new_launch(rig):
     asyncio.run(run())
 
 
-def test_pending_switch_duplicate_is_idempotent_but_different_target_conflicts(rig):
+def test_pending_switch_duplicate_is_idempotent_but_another_request_conflicts(rig):
     server, _, _, calls = rig
 
     async def run():
-        first = await server.restarts.request("a", "", "claude-code")
-        again = await server.restarts.request("a", "", "claude-code")
+        proof = await prepare(server)
+        first = await server.restarts.request("a", "", "claude-code", memory=proof, request_key="k")
+        again = await server.restarts.request("a", "", "claude-code", memory=proof, request_key="k")
         assert first["id"] == again["id"]
         with pytest.raises(APIError, match="already pending"):
-            await server.restarts.request("a", "", "copilot")
+            await server.restarts.request("a", "", "claude-code", memory=proof, request_key="other")
         server.restarts.cancel("a")
         await hook(server)
         assert not calls
@@ -488,29 +497,6 @@ def test_real_hook_forwards_switch_generation_without_network(tmp_path, with_jq)
     assert payload["session_key"] == "synthetic-test"
 
 
-def test_seeded_queue_can_learn_initial_id_from_real_parent_turn_end(rig):
-    server, _, _, calls = rig
-    server.history._conn.execute(
-        "DELETE FROM events WHERE json_extract(payload_json, '$.session_id') IS NOT NULL"
-    )
-    # This fixture models an identity never captured, not telemetry retention.
-    control = server.history.restart_control("a")
-    control.pop("native_observation", None)
-    server.history.set_restart_control("a", control)
-    server.history._conn.commit()
-    assert server.history.session_id_for("a") is None
-
-    async def run():
-        await server.restarts.request("a", "", "claude-code")
-        assert not calls
-        await hook(server, runtime="codex")
-        await drain(server)
-        assert calls[0] == ("stop", "a")
-        assert server.restarts.read("a")["status"] == "completed"
-
-    asyncio.run(run())
-
-
 @pytest.mark.parametrize("startup_failure", [False, True])
 def test_failed_switch_drains_delayed_eof_before_restoring(rig, monkeypatch, startup_failure):
     from duckterm.core.orchestrator import Orchestrator, SessionSupervisor
@@ -555,8 +541,7 @@ def test_failed_switch_drains_delayed_eof_before_restoring(rig, monkeypatch, sta
         )
         monkeypatch.setattr(orchestrator, "stop", stop)
         monkeypatch.setattr(orchestrator, "on_completed", lambda key: None)
-        await server.restarts.request("a", "invalid", "claude-code")
-        await hook(server)
+        await switch(server, "invalid", "claude-code")
         await asyncio.wait_for(draining.wait(), 5)
         # Neither a dead process nor startup failure is safe to roll back until EOF.
         assert server.history.session("a")["runtime"] == "claude-code"
