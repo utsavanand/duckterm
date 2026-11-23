@@ -6891,24 +6891,40 @@ class Server:
                     await server.serve_forever()
                 finally:
                     self._mobile_messages = None
-                    mobile_manager.cancel()
-                    with contextlib.suppress(asyncio.CancelledError):
-                        await mobile_manager
-                    sweeper.cancel()
+                    # Cancel producers together; a hung optional service must not
+                    # keep SSH tunnels or terminal viewers alive behind it.
+                    workers = [mobile_manager, sweeper]
                     if auto_checkpoints is not None:
-                        auto_checkpoints.cancel()
-                        await self.auto_checkpoints.close()
+                        workers.append(auto_checkpoints)
                     if collaboration_worker is not None:
-                        collaboration_worker.cancel()
-                        with contextlib.suppress(asyncio.CancelledError):
-                            await collaboration_worker
-                    await self.collaboration.close()
-                    self.voice.stop()
-                    await self.archives.close()
-                    await self.checkpoint_requests.close()
-                    await self.memory_preparation.close()
-                    await self.restarts.close()
-                    await self.progress_coordinator.close()
+                        workers.append(collaboration_worker)
+                    for worker in workers:
+                        worker.cancel()
+                    from duckterm.agents.tmux_stream import close_viewers
+
+                    cleanup = [
+                        *workers,
+                        asyncio.create_task(manager.close_listener()),
+                        asyncio.create_task(close_viewers()),
+                        asyncio.create_task(self.collaboration.close()),
+                        asyncio.create_task(asyncio.to_thread(self.voice.stop)),
+                        asyncio.create_task(self.archives.close()),
+                        asyncio.create_task(self.checkpoint_requests.close()),
+                        asyncio.create_task(self.memory_preparation.close()),
+                        asyncio.create_task(self.restarts.close()),
+                        asyncio.create_task(self.progress_coordinator.close()),
+                    ]
+                    if auto_checkpoints is not None:
+                        cleanup.append(asyncio.create_task(self.auto_checkpoints.close()))
+                    done, pending = await asyncio.wait(cleanup, timeout=5)
+                    for finished in done:
+                        if not finished.cancelled() and finished.exception() is not None:
+                            print("duckterm: resource cleanup failed", file=sys.stderr)
+                    for unfinished in pending:
+                        unfinished.cancel()
+                    if pending:
+                        print("duckterm: resource cleanup timed out", file=sys.stderr)
+
         finally:
             if server is not None:
                 server.close()

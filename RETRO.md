@@ -1,5 +1,21 @@
 ## 2026-11-22 — Test checkpoint capture across the actual thread boundary
 
+## 2026-11-22 — Closing the listener is not completing a restart
+
+A server released its dashboard port but stayed alive in shutdown. Cleanup awaited
+one optional service before closing the SSH tunnel and tmux viewers; restart waited
+ten seconds and then left the dashboard unavailable. Cleanup now stops producers
+and closes independent resources concurrently, bounds TERM/KILL waits on owned
+clients, and has a server-only exit deadline covering blocked executor threads.
+Restart can force the previously authenticated server to exit only after its port
+is free and its home PID and kernel process birth still match. It never signals a
+tmux server or an agent pane. Regressions exercise a TERM-resistant child, blocked
+phone cleanup and executor, a legacy server that requires forced exit, changed
+process identities, and three real tmux viewers whose agent remains usable.
+Lesson: test shutdown completion and the replacement listener, not just a closed
+HTTP port; a slow optional cleanup must not hold later resource cleanup hostage.
+
+
 Background rule capture read HistoryStore from an asyncio worker, violating
 SQLite connection thread affinity. Helper-only tests missed the failure.
 Collect frozen observations on the event-loop thread, then pass that snapshot

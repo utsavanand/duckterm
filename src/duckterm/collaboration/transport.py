@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import json
 import re
 import socket
@@ -80,12 +81,19 @@ class Transport:
     async def close(self) -> None:
         process, self.process = self.process, None
         if process is not None and process.returncode is None:
-            process.terminate()
+            with contextlib.suppress(ProcessLookupError):
+                process.terminate()
             try:
-                await asyncio.wait_for(process.wait(), 5)
-            except TimeoutError:
-                process.kill()
-                await process.wait()
+                try:
+                    await asyncio.wait_for(process.wait(), 2)
+                except TimeoutError:
+                    with contextlib.suppress(ProcessLookupError):
+                        process.kill()
+                    await asyncio.wait_for(process.wait(), 1)
+            finally:
+                if process.returncode is None:
+                    with contextlib.suppress(ProcessLookupError):
+                        process.kill()
 
     async def exchange(self, token: str, payload: dict[str, Any]) -> dict[str, Any]:
         return await self.request("exchange", "Computer", token, payload)
