@@ -1,3 +1,11 @@
+## 2026-11-22 — Give dense rule pages readable hierarchy
+
+A monochrome rule editor made warnings, scopes and proposal actions hard to
+scan, while muted labels were too dim. Use scoped semantic colors alongside
+text labels, brighter secondary text and tinted surfaces. Keep light and dark
+palettes local to the page and verify the real component with long rules at
+desktop and phone widths after the owner approves a visual preview.
+
 ## 2026-11-22 — A retry key that lives only inside one dialog is not a retry key
 
 Folder chat's Confirm dialog kept one request key across Send retries, and the
