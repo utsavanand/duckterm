@@ -192,6 +192,24 @@ def _serve(host: str, port: int, reload: bool = False, *, recover: bool = False)
 
         watch_and_reexec()  # background thread; re-execs this process on a .py change
 
+    # asyncio.run also joins executor threads. A blocked OS wait can outlive
+    # coroutine cancellation, so keep the deadline armed until run has returned.
+    import threading
+
+    shutdown_deadline: threading.Timer | None = None
+
+    def arm_shutdown_deadline() -> None:
+        nonlocal shutdown_deadline
+        if shutdown_deadline is None:
+
+            def expired() -> None:
+                os.write(2, b"duckterm: shutdown deadline exceeded; exiting server\n")
+                os._exit(1)  # This server only; flock and SQLite WAL recover on exit.
+
+            shutdown_deadline = threading.Timer(8, expired)
+            shutdown_deadline.daemon = True
+            shutdown_deadline.start()
+
     async def run(serve: Coroutine[Any, Any, None]) -> None:
         import signal
 
@@ -205,18 +223,21 @@ def _serve(host: str, port: int, reload: bool = False, *, recover: bool = False)
             # A repeated signal must not cancel the resource cleanup itself.
             if not stopping:
                 stopping = True
+                arm_shutdown_deadline()
                 task.cancel()
 
-        previous = signal.getsignal(signal.SIGTERM)
-        loop.add_signal_handler(signal.SIGTERM, stop)
+        previous = {sig: signal.getsignal(sig) for sig in (signal.SIGTERM, signal.SIGINT)}
+        for sig in previous:
+            loop.add_signal_handler(sig, stop)
         try:
             await serve
         except asyncio.CancelledError:
             if not stopping:
                 raise
         finally:
-            loop.remove_signal_handler(signal.SIGTERM)
-            signal.signal(signal.SIGTERM, previous)
+            for sig, handler in previous.items():
+                loop.remove_signal_handler(sig)
+                signal.signal(sig, handler)
 
     try:
         # Bind BEFORE opening SQLite, reconciling terminals, or changing hooks.
@@ -262,6 +283,8 @@ def _serve(host: str, port: int, reload: bool = False, *, recover: bool = False)
                     )
                 )
             finally:
+                if shutdown_deadline is not None:
+                    shutdown_deadline.cancel()
                 _release_home_lock(lock)
     except KeyboardInterrupt:
         return 0
@@ -300,6 +323,41 @@ def _pid_alive(pid: int) -> bool:
     except PermissionError:
         return True
     return True
+
+
+def _process_birth(pid: int) -> str | None:
+    """Kernel start identity, not a command-name guess or a reusable PID alone."""
+    try:
+        if sys.platform == "darwin":
+            import ctypes
+            import struct
+
+            # proc_bsdinfo from <sys/proc_info.h>; its final fields are the
+            # microsecond process start time. No environment/credentials read.
+            info = ctypes.create_string_buffer(136)
+            libproc = ctypes.CDLL("/usr/lib/libproc.dylib", use_errno=True)
+            size = libproc.proc_pidinfo(pid, 3, ctypes.c_uint64(0), info, len(info))
+            if size != len(info):
+                return None
+            seconds, micros = struct.unpack_from("=QQ", info.raw, 120)
+            return f"{seconds}:{micros}" if seconds else None
+        if sys.platform.startswith("linux"):
+            fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+            return fields[19]  # field 22 (starttime); comm can contain spaces.
+    except (OSError, ValueError, IndexError):
+        pass
+    return None
+
+
+def _same_server_process(pid: int, birth: str | None) -> bool:
+    try:
+        return (
+            birth is not None
+            and int((instance.home() / "server.pid").read_text()) == pid
+            and _process_birth(pid) == birth
+        )
+    except (OSError, ValueError):
+        return False
 
 
 def _restart(host: str, port: int, *, edition: str | None = None) -> int:
@@ -352,6 +410,7 @@ def _restart(host: str, port: int, *, edition: str | None = None) -> int:
                 file=sys.stderr,
             )
             return 1
+        birth = _process_birth(owner_pid)
         for pid in old_pids:
             try:
                 os.kill(pid, signal.SIGTERM)
@@ -365,8 +424,30 @@ def _restart(host: str, port: int, *, edition: str | None = None) -> int:
                 break
             time.sleep(0.2)
         else:
-            print(f"server on :{port} did not exit; stop it before retrying", file=sys.stderr)
-            return 1
+            # The authenticated identity + listening PID + home were checked
+            # before TERM. Recheck its kernel birth before escalating: a reused
+            # PID or replacement listener must never receive this signal.
+            try:
+                listeners = _listening_pids(port)
+                if listeners or not _same_server_process(owner_pid, birth):
+                    print("Cannot safely force the old server to exit", file=sys.stderr)
+                    return 1
+                print(
+                    "old server released its port but did not exit; forcing exit", file=sys.stderr
+                )
+                os.kill(owner_pid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            except (OSError, subprocess.TimeoutExpired) as exc:
+                print(f"cannot finish server shutdown: {exc}", file=sys.stderr)
+                return 1
+            for _ in range(25):
+                if not _pid_alive(owner_pid):
+                    break
+                time.sleep(0.2)
+            else:
+                print("old server has not exited; replacement was not started", file=sys.stderr)
+                return 1
         try:
             replacement = _listening_pids(port)
         except (OSError, subprocess.TimeoutExpired) as exc:
