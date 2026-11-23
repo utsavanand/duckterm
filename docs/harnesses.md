@@ -42,7 +42,9 @@ Installing never runs a kit's own script (owner decision 2026-10-04). A kit is
 installed declaratively: the manifest lists components, and the installer
 writes each one where the chosen harness reads it, or reports why it cannot.
 The one place a kit script runs is a flow's `exec` step, at run time, and only
-a script the install on this machine recorded (see Flows and the runner).
+a script the install on this machine recorded (see Flows and the runner); a
+kit's hooks are installed only at the kit digest reviewed at Enable. Both
+pins are the owner's decision of 2026-11-22.
 The format is the Skill Kit Specification (`docs/specs/skill-kit-protocol-spec.md`
 on the spec branch); `examples/skill-kits/sample-kit` holds one of every
 component kind and is the kit the installer is tried on.

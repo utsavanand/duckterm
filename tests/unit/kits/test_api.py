@@ -127,6 +127,32 @@ def test_start_run_returns_the_run_id_before_the_step_finishes(tmp_path, monkeyp
     )
 
 
+def test_plan_refuses_a_repository_that_no_longer_exists(tmp_path):
+    gone = _project(tmp_path)
+    gone.rmdir()
+    with pytest.raises(api.KitApiError) as e:
+        api.plan_for({"kit": str(SAMPLE), "project": str(gone), "harnesses": ["claude-code"]})
+    assert e.value.status == 400
+    assert str(e.value) == f"no such directory: {gone}"
+
+
+def test_create_team_never_overwrites_a_record_it_did_not_write(tmp_path, monkeypatch):
+    from duckterm.helpers import instance
+
+    monkeypatch.setattr(instance, "home", lambda: tmp_path / "home")
+    # Another request won the race between the duplicate check and the write:
+    # its record is there, whatever it holds, and this request must not
+    # replace it (or recovery would later delete the winner's record).
+    record = tmp_path / "home" / "teams" / "feature-squad.json"
+    record.parent.mkdir(parents=True)
+    record.write_text("{half-written")
+    with pytest.raises(api.KitApiError) as e:
+        api.create_team({"kit": "sample-kit", "team": "feature-squad", "kit_path": str(SAMPLE)})
+    assert e.value.status == 409
+    assert record.read_text() == "{half-written"
+    assert oct(record.stat().st_mode & 0o777) == "0o644"
+
+
 def test_create_team_records_the_procedure_under_the_home_and_refuses_twice(tmp_path, monkeypatch):
     from duckterm.helpers import instance
 

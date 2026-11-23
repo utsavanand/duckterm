@@ -106,6 +106,28 @@ it("enables a kit for chosen workspaces: reviews the repositories known now, ins
   expect(await screen.findByRole("heading", { name: "Skill kits" })).toBeVisible();
 });
 
+it("a dry run the server refuses stays in the wizard, names the repository, and lets the owner go back", async () => {
+  vi.mocked(api.kitsCatalog).mockResolvedValue({ ...catalog, kits: [uvSuite, sample] });
+  // One repository of several has been deleted since its last session.
+  vi.mocked(api.kitsPlan).mockImplementation(async (body) => {
+    if (body.project === "/ws/payments") throw new Error("no such directory: /ws/payments");
+    return { inventory: sample.inventory!, plan };
+  });
+  render(<SkillKitsPage onClose={() => {}} fallback={null} />);
+  fireEvent.click((await screen.findAllByRole("button", { name: "Open" }))[1]);
+  fireEvent.click(await screen.findByRole("button", { name: "Enable for workspaces…" }));
+  fireEvent.click(screen.getByRole("button", { name: "Review what will change" }));
+  const alert = await screen.findByRole("alert");
+  expect(alert).toHaveTextContent("payments · /ws/payments: no such directory: /ws/payments");
+  expect(alert).toHaveTextContent("Nothing was written");
+  expect(screen.getByLabelText("All workspaces")).toBeChecked();
+  expect(screen.getByRole("button", { name: "Review what will change" })).toBeEnabled();
+  expect(api.kitsEnable).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Back" }));
+  expect(await screen.findByRole("heading", { name: /sample-kit/ })).toBeVisible();
+  expect(screen.queryByRole("alert")).toBeNull();
+});
+
 it("enabling for all workspaces with nothing to install keeps the choice without a review", async () => {
   vi.mocked(api.kitsCatalog).mockResolvedValue({ ...catalog, workspaces: [], kits: [sample] });
   vi.mocked(api.kitsEnable).mockResolvedValue({ kit: "sample-kit", policy: { scope: "all" }, installed: [], already: [], failed: [], pending: [] });

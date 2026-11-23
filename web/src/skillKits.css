@@ -38,6 +38,9 @@
 .rd-kits-plan table { border-collapse: collapse; width: 100%; font-size: 0.75rem; }
 .rd-kits-plan th { font-size: 0.6875rem; letter-spacing: 0.06em; text-transform: uppercase; color: var(--text-soft); text-align: left; padding: 8px 10px; background: var(--bg-soft); border-bottom: 1px solid var(--border); position: sticky; top: 0; }
 .rd-kits-plan td { padding: 7px 10px; border-bottom: 1px solid var(--border); vertical-align: top; }
+/* At phone width the matrix scrolls sideways instead of wrapping names one letter per line. */
+.rd-kits-plan th:first-child, .rd-kits-plan td:first-child { min-width: 11rem; }
+.rd-kits-plan th, .rd-kits-plan td { min-width: 7rem; }
 .rd-kits-cards { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 14px; }
 .rd-kits-card { border: 1px solid var(--border); border-radius: 6px; background: var(--bg); padding: 12px 14px; display: flex; flex-direction: column; gap: 8px; min-width: 0; overflow-wrap: anywhere; }
 .rd-kits-card strong { font-size: 0.8125rem; }
