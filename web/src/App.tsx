@@ -35,7 +35,7 @@ import { CheckpointDialogHost } from "./CheckpointDialog";
 import { BackupModal } from "./BackupModal";
 import { BugReport } from "./BugReport";
 import { DashboardMenus } from "./DashboardMenus";
-import { LiveAgentTree, LiveControlTower, LiveContextPanel, LiveInboxView, LiveSessionCard } from "./liveSessionViews";
+import { LiveAgentTree, LiveControlTower, LiveHome, LiveContextPanel, LiveInboxView, LiveSessionCard } from "./liveSessionViews";
 import { HarnessesModal } from "./HarnessesModal";
 import { MemoryView } from "./MemoryView";
 import { TimelineView } from "./TimelineView";
@@ -131,6 +131,9 @@ function Dashboard() {
   }, []);
   const [bugSession, setBugSession] = useState<string | null>(null);
   const [towerChosen, setTowerOpen] = useState(false);
+  // Home is where the dashboard opens; choosing a session or Teams leaves it.
+  const [homeChosen, setHomeOpen] = useState(true);
+  const homeOpen = homeChosen && has("home");
   const towerOpen = towerChosen && has("overview");
   const sidebarOracle = editionId === "full" && has("oracle") && has("overview");
   const [analyticsTab, setAnalyticsTab] = useState<AnalyticsTab | null>(null);
@@ -143,6 +146,7 @@ function Dashboard() {
   const selectedFolder = has("overview") ? chosenFolder : null;
   const setSelectedKey = useCallback((key: string | null) => {
     setTowerOpen(false);
+    setHomeOpen(false);
     setSelectedFolder(null);
     setAppearanceFolder(null);
     selectSession(key);
@@ -343,6 +347,7 @@ function Dashboard() {
   }, [candidates, agentsMdDir, modal, selected?.key]);
 
   const towerVisible = towerOpen && !focusOpen && gridFolder === null;
+  const closeHome = useCallback(() => setHomeOpen(false), []);
   const towerLayer = towerVisible && <div className="rd-tower-layer">
     {analyticsTab ? <Analytics initialTab={analyticsTab} sessions={agents} onBack={() => setAnalyticsTab(null)} /> : <LiveControlTower
       onAnalytics={setAnalyticsTab}
@@ -371,16 +376,20 @@ function Dashboard() {
           {connected ? "Live" : "Disconnected"}
         </span>
         <span className="rd-spacer" />
+        {has("home") && <button className={`rd-btn rd-btn-ghost rd-btn-sm${homeOpen ? " rd-btn-active" : ""}`} aria-pressed={homeOpen}
+          onClick={() => { setHomeOpen(open => !open); setTowerOpen(false); setFocusOpen(false); setGridFolder(null); }}>
+          Home
+        </button>}
         <button className={`rd-btn rd-btn-ghost rd-btn-sm${focusOpen ? " rd-btn-active" : ""}`}
           disabled={!pinnedSessions.length} aria-pressed={focusOpen}
           title={pinnedSessions.length ? "Open pinned terminals" : "Pin a session to open Focus"}
-          onClick={() => { setFocusOpen((open) => !open); setTowerOpen(false); }}>
+          onClick={() => { setFocusOpen((open) => !open); setTowerOpen(false); setHomeOpen(false); }}>
           Focus · {pinnedSessions.length}
         </button>
         {has("overview") && <button
           className={`rd-btn rd-btn-ghost rd-btn-sm${towerOpen ? " rd-btn-active" : ""}`}
           aria-pressed={towerOpen}
-          onClick={() => { setTowerOpen((o) => !o); setFocusOpen(false); setGridFolder(null); }}
+          onClick={() => { setTowerOpen((o) => !o); setFocusOpen(false); setGridFolder(null); setHomeOpen(false); }}
           title={has("oracle") ? "Control tower: fleet insights, every agent at a glance, and Oracle chat" : "Control tower: fleet insights and every agent at a glance"}
         >
           {has("oracle") ? "Oracle" : "Overview"}
@@ -418,8 +427,12 @@ function Dashboard() {
       <div className="rd-workspace">
       {/* Keep terminals mounted at their existing size beneath the tower. Full
           leaves Agents interactive; other editions retain the fleet overview. */}
+      {homeOpen && <div className="rd-home-layer">
+        <LiveHome agents={agents} onTeams={closeHome} onOpenTerminal={key => { setSelectedKey(key); setView("terminal"); }}
+          onAnalytics={tab => { setHomeOpen(false); setTowerOpen(true); setAnalyticsTab(tab); }} />
+      </div>}
       {!sidebarOracle && towerLayer}
-      <div className="rd-workspace-panes" {...(towerVisible && !sidebarOracle ? { inert: "" } : {})}>
+      <div className="rd-workspace-panes" {...((towerVisible && !sidebarOracle) || homeOpen ? { inert: "" } : {})}>
       {focusOpen ? (
         <GridView key="focus" title="Focus" focus
           agents={pinnedSessions} folders={[]} themeFor={themeFor}
