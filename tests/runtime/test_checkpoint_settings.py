@@ -2,6 +2,7 @@
 
 import json
 from concurrent.futures import ThreadPoolExecutor
+from types import SimpleNamespace
 
 import pytest
 from test_memory import memory_rig
@@ -92,3 +93,28 @@ def test_settings_routes_require_owner_and_validate_payload(memory_rig):
     )
     assert status == 200 and result["lookback_records"] == 60
     assert dispatch(server, "POST", "/checkpoint-settings", owner, b"{bad")[0] == 400
+
+
+def test_only_switching_automatic_off_after_it_was_on_records_an_off_period(
+    memory_rig, monkeypatch
+):
+    # The module's own clock, not the global time module other code shares.
+    clock = iter([1000, 2000, 3000, 4000])
+    monkeypatch.setattr(
+        checkpoint_settings, "time", SimpleNamespace(time=lambda: next(clock) / 1000)
+    )
+    assert checkpoint_settings.load()["automatic"] is False
+    # Turning it on for the first time is not the end of a gap.
+    assert checkpoint_settings.save({"automatic": True})["automatic_off"] == []
+    assert checkpoint_settings.save({"automatic": False})["automatic_off"] == [[2000, None]]
+    assert checkpoint_settings.off_periods(checkpoint_settings.load()) == []
+    assert checkpoint_settings.save({"automatic": True})["automatic_off"] == [[2000, 3000]]
+    # Saving other settings while on leaves the history alone.
+    assert checkpoint_settings.save({"lookback_records": 40})["automatic_off"] == [[2000, 3000]]
+    assert checkpoint_settings.off_periods(checkpoint_settings.load()) == [(2000, 3000)]
+
+
+@pytest.mark.parametrize("value", [{"automatic": "yes"}, {"automatic_off": [[1, 2]]}])
+def test_automatic_is_a_bool_and_its_history_is_server_written(memory_rig, value):
+    with pytest.raises(APIError):
+        checkpoint_settings.save(value)

@@ -7,7 +7,6 @@ from typing import TYPE_CHECKING, Any
 
 from duckterm.core.session_api import APIError
 from duckterm.helpers import security
-from duckterm.runtimes.base import AT_REST_STATES
 
 if TYPE_CHECKING:
     from duckterm.server import Server
@@ -61,27 +60,17 @@ async def handle(
                         409, "Finish or cancel the pending archive/restart before merging"
                     )
                 row = merges.prepare(key, request, server._can_pin)
+                close_state = None
                 if not row["keep_open"]:
-                    child = server.history.session(key)
-                    if child is None:
-                        raise APIError(409, "Child deleted after the summary was saved")
-                    if child["state"] != "merged":
-                        sup = server.orchestrator.get(key)
-                        if sup is not None:
-                            await server.orchestrator.stop(key)
-                        elif child["state"] not in AT_REST_STATES:
-                            raise APIError(
-                                409,
-                                "Summary saved, but the child terminal could not be stopped. "
-                                "Retry to finish closing it.",
-                            )
-                        merges.finish(row)
-                        server._set_lifecycle(key, "merged")
-                        server.approvals.drop_session(key)
+                    from duckterm.merge_closing import finish
+
+                    close_state = await finish(server, key, row["parent"])
                 else:
                     merges.finish(row)
                 server._oracle_soon()
                 result = merges.status(key, row["id"], server._can_pin)
+                if close_state:
+                    result["closeState"] = close_state
         await _write_json(writer, 200, result)
     except (APIError, ValueError, OSError) as exc:
         status = 400 if isinstance(exc, ValueError) else 500

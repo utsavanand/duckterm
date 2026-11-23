@@ -478,13 +478,16 @@ def test_real_isolated_terminal_restarts_under_same_key(
             else:
                 pytest.fail("fake CLI did not paint its empty prompt")
             version_file.write_text("fake-codex 2.0")
-            await server.restarts.request(
-                "a", "test-model", "claude-code" if switch_harness else None, interrupt=interrupt
-            )
+            if switch_harness:
+                from tests.runtime.test_restart_harness_switch import switch
+
+                await switch(server, "test-model", "claude-code", interrupt=interrupt)
+            else:
+                await server.restarts.request("a", "test-model")
             assert server.restarts.read("a")["status"] == "queued"
             if interrupt:
                 assert not server.restarts.turn_finished("a")
-            else:
+            elif not switch_harness:
                 await hook(server)
             await drain(server)
             state = server.restarts.read("a")
@@ -496,7 +499,7 @@ def test_real_isolated_terminal_restarts_under_same_key(
             command = shlex.split(row["command"])
             if switch_harness:
                 assert command[:3] == ["claude", "--model", "test-model"]
-                assert "NEW conversation" in command[-1]
+                assert "new native conversation" in command[-1]
                 assert row["runtime"] == "claude-code"
                 assigned = command[command.index("--session-id") + 1]
                 assert uuid.UUID(assigned).version == 4
