@@ -8,6 +8,16 @@ final class AppUpdateTests: XCTestCase {
         ["DucktermEdition": edition, "SUPublicEDKey": key,
          "SUFeedURL": "https://github.com/utsavanand/duckterm/releases/latest/download/appcast-\(edition)-arm64.xml"]
     }
+    @MainActor func testInstallLocationErrorsExplainRecovery() {
+        for code in [1003, 1005] {
+            let message = AppUpdater.recoveryMessage(for: NSError(domain: SUSparkleErrorDomain, code: code))
+            XCTAssertTrue(message.contains("Quit DuckTerm"))
+            XCTAssertTrue(message.contains("Applications"))
+            XCTAssertFalse(message.contains("not been confirmed"))
+        }
+        XCTAssertTrue(AppUpdater.recoveryMessage(for: NSError(domain: "NSURLErrorDomain", code: 1005)).contains("Update failed (1005)"))
+        XCTAssertTrue(AppUpdater.recoveryMessage(for: NSError(domain: SUSparkleErrorDomain, code: 3001)).contains("Update failed (3001)"))
+    }
     func testEditionCannotSwitchThroughFeedOrArchive() throws {
         let policy = try AppUpdatePolicy(info: info("code"))
         let base = "https://github.com/utsavanand/duckterm/releases/download/v0.4.210/"
