@@ -41,8 +41,8 @@ want parallel attempts, and fork — including conversation forks for Claude Cod
 ## Install
 
 **DuckTerm Lite is the public download.** On Apple Silicon Macs running macOS 13+,
-[download the app](https://github.com/utsavanand/duckterm/releases/latest/download/DuckTerm-Lite-macos-arm64.zip),
-unzip it, move **DuckTerm Lite.app** to **Applications**, and open it. Python,
+[download the installer](https://github.com/utsavanand/duckterm/releases/latest/download/DuckTerm-Lite-macos-arm64.dmg),
+open it, drag **DuckTerm Lite.app** to **Applications**, then open the app from there. Python,
 tmux, the dashboard and its local backend are included. No Homebrew, pipx or
 separate backend installation is required for the app.
 
@@ -160,8 +160,9 @@ certificate. See [shared connector setup and enrollment](docs/shared-connectors.
 ## Mac app
 
 On **Apple Silicon Macs running macOS 13+**, download
-[DuckTerm-Lite-macos-arm64.zip](https://github.com/utsavanand/duckterm/releases/latest/download/DuckTerm-Lite-macos-arm64.zip),
-unzip it, and move **DuckTerm Lite.app** to **Applications**. Its private Python,
+[DuckTerm-Lite-macos-arm64.dmg](https://github.com/utsavanand/duckterm/releases/latest/download/DuckTerm-Lite-macos-arm64.dmg),
+open the installer, and drag **DuckTerm Lite.app** to **Applications**. Open the app
+from Applications after copying. Its private Python,
 backend, tmux and hook tools are packaged together and updated with the app.
 Your installed Python and project virtual environments are unchanged.
 
