@@ -31,7 +31,7 @@ test("computer pairing reviews sharing and preserves the dashboard", async ({ pa
   await page.getByRole("button", { name: "Collaboration", exact: false }).click();
   await expect(page.getByLabel("Always-on coordinator")).toHaveValue("duckterm-dev");
   await page.getByRole("button", { name: "Review sharing" }).click();
-  await expect(page.getByRole("region", { name: "Folder sharing preview" })).toContainText("main-local");
+  await expect(page.getByRole("region", { name: "Workspace sharing preview" })).toContainText("main-local");
   await expect(page.getByText("Personal session · This Mac — Ungrouped (private)")).toBeVisible();
   await page.screenshot({ path: "/tmp/duckterm-collaboration-preview.png", fullPage: true });
   await page.getByRole("button", { name: "Connect computers" }).click();
@@ -78,12 +78,12 @@ test("recovery shows uncertain delivery, preserves conflicts separately and conf
   await expect(page.getByRole("button", { name: "Cancel pending change" })).toBeDisabled();
   await page.screenshot({ path: "/tmp/duckterm-collaboration-recovery-implemented.png", fullPage: true });
   await page.getByRole("button", { name: "Retry now" }).click();
-  await expect(page.getByRole("region", { name: "Pending folder change" })).toContainText("Destination parent changed");
+  await expect(page.getByRole("region", { name: "Pending workspace change" })).toContainText("Destination parent changed");
   await page.getByRole("button", { name: "Cancel pending change" }).click();
-  await expect(page.getByRole("region", { name: "Pending folder change" })).toHaveCount(0);
-  await page.getByLabel("Keep the existing local folder as").fill("Renamed (saved)");
+  await expect(page.getByRole("region", { name: "Pending workspace change" })).toHaveCount(0);
+  await page.getByLabel("Keep the existing local workspace as").fill("Renamed (saved)");
   await page.getByRole("button", { name: "Keep separately and retry" }).click();
-  await expect(page.getByRole("region", { name: "Folder needs attention" })).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Workspace needs attention" })).toHaveCount(0);
   await page.getByRole("button", { name: "Disconnect…", exact: true }).click();
   await expect(page.getByRole("region", { name: "Confirm disconnect" })).toContainText("sessions and files stay in place");
   await page.getByRole("button", { name: "Keep connected", exact: true }).click();
@@ -109,9 +109,9 @@ test("sidebar folder creation reports pending instead of claiming completion", a
   });
   await page.goto("/");
   await page.getByRole("button", { name: "New", exact: true }).click();
-  await page.getByRole("button", { name: "New folder", exact: false }).click();
+  await page.getByRole("button", { name: "New workspace", exact: false }).click();
   await page.getByPlaceholder("e.g. payments").fill("Queued project");
-  await page.getByRole("button", { name: "Create folder", exact: true }).click();
-  await expect(page.getByText("Folder creation pending sync. Open Settings → Collaboration to review.", { exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Create workspace", exact: true }).click();
+  await expect(page.getByText("Workspace creation pending sync. Open Settings → Collaboration to review.", { exact: true })).toBeVisible();
   await expect(page.locator('.rd-group-name', { hasText: "Queued project" })).toHaveCount(0);
 });

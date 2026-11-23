@@ -10,3 +10,5 @@
 .rd-update-progress [aria-current] { color: var(--text); text-decoration: underline; }
 
 .rd-update-control a.rd-btn-primary { color: #fff; }
+
+.rd-update-control progress { display: block; width: 100%; accent-color: var(--brand-green-strong); }

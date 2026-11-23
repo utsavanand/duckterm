@@ -87,7 +87,14 @@ def test_edition_route_is_owner_read_only_and_preserves_data(memory_rig):
     assert status(server, "GET", {**owner, "origin": "https://evil.test"}) == 403
     before_changes = server.history._conn.total_changes
     before_schema = server.history._conn.execute("PRAGMA user_version").fetchone()[0]
-    expected = {**FULL.description(), "instance": instance.description()}
+    from duckterm import __version__
+
+    expected = {
+        **FULL.description(),
+        "instance": instance.description(),
+        "runtime_version": __version__,
+        "app_update_blocked": None,
+    }
     assert dispatch(server, "GET", "/edition", owner) == (200, expected)
     assert status(server, "POST", owner, json.dumps({"id": "lite"}).encode()) == 404
     assert dispatch(server, "GET", "/edition", owner) == (200, expected)
@@ -620,3 +627,16 @@ def test_session_api_query_cannot_hide_a_disabled_artifact_capability(edition_ri
     agent = {"authorization": "Bearer " + enrolled["token"]}
     with pytest.raises(APIError, match="artifacts is unavailable"):
         server.history.session_api.handle("GET", "/api/v1/session/artifacts?x=/memory", agent, b"")
+
+
+def test_edition_reports_running_backup_before_native_app_update(memory_rig):
+    from types import SimpleNamespace
+
+    server, _, _, _ = memory_rig
+    server._backup_jobs = SimpleNamespace(task=SimpleNamespace(done=lambda: False))
+    status_code, body = dispatch(server, "GET", "/edition", {"x-duckterm-token": server.token})
+    assert status_code == 200
+    assert body["app_update_blocked"] == "A backup is running. Wait until it finishes."
+    server._backup_jobs.task = SimpleNamespace(done=lambda: True)
+    _, body = dispatch(server, "GET", "/edition", {"x-duckterm-token": server.token})
+    assert body["app_update_blocked"] is None

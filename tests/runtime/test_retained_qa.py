@@ -212,7 +212,20 @@ def test_a_checkpoint_from_another_sharing_scope_stays_hidden(memory_rig, monkey
     # (memory_records.projections). Retaining only citable rows must keep it.
     from test_session_api import enroll
 
+    from duckterm import memory_records
     from duckterm import server as sm
+
+    # Put the checkpoint after page one deterministically. Its generated id
+    # otherwise makes this regression depend on random source ordering.
+    original_projection = memory_records.projection
+
+    def checkpoint_last(key, kind, *args, **kwargs):
+        value = original_projection(key, kind, *args, **kwargs)
+        if kind == "checkpoint":
+            value["id"] = "f" * 32
+        return value
+
+    monkeypatch.setattr(memory_records, "projection", checkpoint_last)
 
     server, headers, _, tmp = memory_rig
     transcript(tmp, "agent-claude", "Retain the owner instruction.")
@@ -239,10 +252,29 @@ def test_a_checkpoint_from_another_sharing_scope_stays_hidden(memory_rig, monkey
         )
     asyncio.run(server._create_checkpoint("agent", server.history.session("agent"), "manual"))
 
+    status, first = dispatch(server, "GET", "/api/v1/session/memory/sources", headers)
+    assert status == 200 and first["next_cursor"] is not None
+    assert not any(s["kind"] == "checkpoint" for s in first["sources"])
+
     def checkpoint_sources(auth):
-        status, body = dispatch(server, "GET", "/api/v1/session/memory/sources", auth)
-        assert status == 200
-        return [s for s in body["sources"] if s["kind"] == "checkpoint"]
+        # Source listings are paginated. A checkpoint need not be on page one.
+        from urllib.parse import urlencode
+
+        found, cursor = [], None
+        while True:
+            query = {"limit": 1}
+            if cursor:
+                query["cursor"] = cursor
+            status, body = dispatch(
+                server, "GET", "/api/v1/session/memory/sources?" + urlencode(query), auth
+            )
+            assert status == 200
+            found.extend(s for s in body["sources"] if s["kind"] == "checkpoint")
+            next_cursor = body["next_cursor"]
+            if next_cursor is None:
+                return found
+            assert cursor is None or next_cursor > cursor
+            cursor = next_cursor
 
     assert len(checkpoint_sources(headers)) == 1
     server.history.set_meta("agent", group="Elsewhere")

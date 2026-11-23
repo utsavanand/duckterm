@@ -5,15 +5,17 @@ import { CheckpointProgress } from "./CheckpointProgress";
 import { requestCheckpoint, checkpointRequestError, useCheckpointAttempt } from "./checkpointRequests";
 import { checkpointNotice } from "./checkpointState";
 import type { CheckpointSelection } from "./api";
+import { SourceMemory, mergeClosure } from "./SourceMemory";
 import { Modal } from "./ui";
+import { MergeMemoryDisclosure } from "./MergeMemoryDisclosure";
 import "./forkMerge.css";
 import "./agentMerge.css";
 
 export interface MergeTarget { key: string; name: string; group: string; state: string; allowed: boolean; reason?: string; priorityDelivery: boolean }
 interface MergeGit { allowed: boolean; reason?: string; sourcePath?: string; targetPath?: string; sourceCommit?: string; targetCommit?: string; sourceBranch?: string; targetBranch?: string; commits?: number; changes?: string }
-export interface AgentMergePreview { source: { key: string; name: string }; target: MergeTarget; context: string; notes: string; git: MergeGit; revision: string }
-export interface AgentMergeDraft { target: string; revision: string; context: string | null; notes: string | null; code: boolean; requestKey: string }
-export interface AgentMergeRecord { id: string; source: string; sourceName: string; target: string; targetName: string; context: string | null; notes: string | null; git: MergeGit | null; packet: string; createdAt: number; delivery: string; statusAvailable: boolean; reply?: string | null }
+export interface AgentMergePreview { source: { key: string; name: string }; target: MergeTarget; context: string; notes: string; git: MergeGit; revision: string; memory?: { sourceSession: string; summaryRevision: string | null; access: string } }
+export interface AgentMergeDraft { target: string; revision: string; context: string | null; notes: string | null; code: boolean; memory: boolean; closeSource: boolean; requestKey: string }
+export interface AgentMergeRecord { id: string; source: string; sourceName: string; target: string; targetName: string; context: string | null; notes: string | null; git: MergeGit | null; packet: string; createdAt: number; delivery: string; statusAvailable: boolean; reply?: string | null; memorySource?: string | null; summaryRevision?: string | null; closeSource?: boolean; sourceClosed?: boolean; closeState?: string | null }
 export interface AgentMergeService {
   targets: () => Promise<{ destinations: MergeTarget[] }>;
   preview: (target: string) => Promise<AgentMergePreview>;
@@ -22,6 +24,7 @@ export interface AgentMergeService {
 }
 
 export function AgentMergeDialog({ service, sourceKey, sourceName, onClose }: { service: AgentMergeService; sourceKey: string; sourceName: string; onClose: () => void }) {
+  const [readingMemory, setReadingMemory] = useState(false);
   const [targets, setTargets] = useState<MergeTarget[]>([]), [target, setTarget] = useState("");
   const [preview, setPreview] = useState<AgentMergePreview | null>(null);
   const [context, setContext] = useState(""), [notes, setNotes] = useState("");
@@ -107,12 +110,12 @@ export function AgentMergeDialog({ service, sourceKey, sourceName, onClose }: { 
     }
   }
   const emptyContext = includeContext && !context.trim(), emptyNotes = includeNotes && !notes.trim();
-  const validation = !includeContext && !includeNotes && !code ? "Choose context, notes, or available code to include."
+  const validation = !preview?.memory ? "Update DuckTerm on this computer to merge with source memory."
     : emptyContext || emptyNotes ? "Add text to each selected section, or deselect the empty sections." : "";
-  const valid = !!target && preview?.target.key === target && !!preview?.target.allowed && (includeContext || includeNotes || code) && (!includeContext || !!context.trim()) && (!includeNotes || !!notes.trim()) && (!code || preview.git.allowed);
+  const valid = !!target && preview?.target.key === target && !!preview?.target.allowed && !!preview.memory && (!includeContext || !!context.trim()) && (!includeNotes || !!notes.trim()) && (!code || preview.git.allowed);
   async function send() {
     if (sending.current || generationPending || !preview || !valid) return;
-    const draft = { target, revision: preview.revision, context: includeContext ? context : null, notes: includeNotes ? notes : null, code };
+    const draft = { target, revision: preview.revision, context: includeContext ? context : null, notes: includeNotes ? notes : null, code, memory: true, closeSource: true };
     const signature = JSON.stringify(draft);
     if (submission.current?.signature !== signature) submission.current = { signature, requestKey: crypto.randomUUID() };
     sending.current = true; setBusy(true); setError("");
@@ -120,6 +123,7 @@ export function AgentMergeDialog({ service, sourceKey, sourceName, onClose }: { 
     catch (e) { if (alive.current) setError(`Could not confirm the merge: ${(e as Error).message}. Your draft is kept. Retry unchanged to check the same request; it may already be saved.`); }
     finally { sending.current = false; if (alive.current) setBusy(false); }
   }
+  if (readingMemory && record?.memorySource) return <SourceMemory origin={sourceKey} target={{ source: record.memorySource, name: record.sourceName, revision: record.summaryRevision }} onClose={() => setReadingMemory(false)} />;
   if (choosingSummary) return <CheckpointDialog request={{ key: sourceKey, name: sourceName, resolve: selection => void finishSummary(selection) }} onFinish={selection => void finishSummary(selection)} />;
   return createPortal(<div onKeyDown={event => {
     if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); close(); }
@@ -132,15 +136,16 @@ export function AgentMergeDialog({ service, sourceKey, sourceName, onClose }: { 
   }}><Modal title={record ? "Merge request saved" : reviewing ? "Review merge" : "Merge with agent"} onClose={close} width={660}>
     <div className="rd-merge-review rd-agent-merge" role="dialog" aria-modal="true" aria-label="Merge with agent" aria-busy={busy || loading || generationPending}>
       {!record && !reviewing && <>
-        <p>Bring selected context into another agent. Both sessions stay open.</p>
+        <p>Send selected context and a link to this session’s saved memory. The source closes after its turn finishes; the destination stays open.</p>
         <label className="rd-merge-label" htmlFor="merge-agent-target">Destination agent</label>
         <select autoFocus id="merge-agent-target" value={target} disabled={busy} onChange={e => setTarget(e.target.value)}><option value="">Choose an agent</option>{targets.map(item => <option key={item.key} value={item.key} disabled={!item.allowed}>{item.name} · {item.group}{item.allowed ? ` · ${item.state}` : ` — ${item.reason}`}</option>)}</select>
         <p>Agents on this computer only. Cross-computer merges are not available yet.</p>
         {loading && <p role="status">Preparing merge options…</p>}
-        {!loading && !targets.some(item => item.allowed) && <p>No available agents. A destination must be open and have an inbox in a shared folder.</p>}
+        {!loading && !targets.some(item => item.allowed) && <p>No available agents. A destination must be open and have an inbox in a shared workspace.</p>}
         {preview && <>
           <div className="rd-merge-route"><strong>{sourceName}</strong>→<strong>{preview.target.name}</strong></div>
           {!preview.target.allowed && <p role="alert">{preview.target.reason}</p>}
+          <MergeMemoryDisclosure source={sourceName} target={preview.target.name} />
           <label className="rd-agent-merge-choice"><input type="checkbox" checked={includeContext} onChange={e => { edited.current.includeContext = true; setIncludeContext(e.target.checked); }} />Conversation context<small>A reviewed summary. The original conversations remain separate.</small></label>
           {includeContext && <textarea aria-invalid={emptyContext} aria-describedby={emptyContext ? "merge-context-error" : undefined} aria-label="Context to send" value={context} maxLength={12000} placeholder="Review or write the context the destination should receive" onChange={e => { edited.current.context = true; setContext(e.target.value); }} />}
           {emptyContext && <p id="merge-context-error" className="rd-agent-merge-validation">Write context to send, generate a summary below, or deselect Conversation context.</p>}
@@ -167,13 +172,13 @@ export function AgentMergeDialog({ service, sourceKey, sourceName, onClose }: { 
         {includeNotes && <section><h3>Notes to append</h3><pre>{notes}</pre></section>}
         {code && <GitReview git={preview.git} />}
         <p>{preview.target.priorityDelivery ? "The request reaches an idle agent immediately, or waits until a busy agent finishes its turn." : "This agent receives the request in its inbox; automatic delivery is unavailable."}</p>
-        <p>Both agents stay open. {includeNotes && "The reviewed notes are appended once when you send."}</p>
+        <MergeMemoryDisclosure source={sourceName} target={preview.target.name} /><section><p>{sourceName} closes after its current turn finishes and its input is empty. Typed drafts and original history are preserved.</p></section><p>{includeNotes && "The reviewed notes are appended once when you send."}</p>
       </>}
-      {record && <section aria-label="Saved merge request"><strong>{record.sourceName} → {record.targetName}</strong><p>Delivery: {record.delivery}</p><p>{record.notes !== null ? "Notes appended once. " : ""}Both agents remain open.</p>{record.git && <p>Code integration was requested. Delivery or acknowledgement does not confirm that the code is merged.</p>}<pre>{record.packet}</pre>{record.reply && <><h3>Destination reply</h3><pre>{record.reply}</pre></>}{!record.statusAvailable && <p>Live delivery tracking is unavailable.</p>}</section>}
+      {record && <section aria-label="Saved merge request"><strong>{record.sourceName} → {record.targetName}</strong><p>Delivery: {record.delivery}</p><p>{record.notes !== null ? "Notes appended once. " : ""}{record.closeSource ? mergeClosure(record.sourceClosed, record.closeState) : "This earlier merge kept both agents open."}</p>{record.memorySource && <button className="rd-btn rd-btn-ghost" onClick={() => setReadingMemory(true)}>Open source memory ↗</button>}{record.git && <p>Code integration was requested. Delivery or acknowledgement does not confirm that the code is merged.</p>}<pre>{record.packet}</pre>{record.reply && <><h3>Destination reply</h3><pre>{record.reply}</pre></>}{!record.statusAvailable && <p>Live delivery tracking is unavailable.</p>}</section>}
       {!record && !reviewing && history.length > 0 && <details><summary>Recent merge requests ({history.length})</summary>{history.map(item => <button type="button" className="rd-agent-merge-history" key={item.id} onClick={() => setRecord(item)}>{item.sourceName} → {item.targetName} · {item.delivery} · {new Date(item.createdAt).toLocaleString()}</button>)}</details>}
       {historyError && <p role="status">{historyError}</p>}
       {error && <p className="rd-merge-error" role="alert">{error}</p>}
-      <footer><button className="rd-btn" disabled={busy} onClick={close}>{record ? "Done" : "Cancel"}</button>{!record && <>{reviewing ? <button className="rd-btn" disabled={busy} onClick={() => setReviewing(false)}>Back</button> : <button className="rd-btn" disabled={busy || loading || generationPending} onClick={() => setRetry(n => n + 1)}>Refresh preview</button>}<button className="rd-btn rd-btn-primary" disabled={busy || loading || generationPending || !valid} onClick={() => reviewing ? void send() : setReviewing(true)}>{busy ? "Saving merge request…" : reviewing ? "Send merge request" : "Review merge"}</button></>}</footer>
+      <footer><button className="rd-btn" disabled={busy} onClick={close}>{record ? "Done" : "Cancel"}</button>{!record && <>{reviewing ? <button className="rd-btn" disabled={busy} onClick={() => setReviewing(false)}>Back</button> : <button className="rd-btn" disabled={busy || loading || generationPending} onClick={() => setRetry(n => n + 1)}>Refresh preview</button>}<button className="rd-btn rd-btn-primary" disabled={busy || loading || generationPending || !valid} onClick={() => reviewing ? void send() : setReviewing(true)}>{busy ? "Saving merge request…" : reviewing ? `Merge and close ${sourceName}` : "Review merge"}</button></>}</footer>
     </div>
   </Modal></div>, document.body);
 }

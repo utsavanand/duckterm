@@ -187,12 +187,12 @@ export function ArtifactsView({ sessionKey, sessionName, folder }: ArtifactScope
     finally { setRemoving(false); }
   }
 
-  return <section className={`rd-artifacts${folder !== undefined ? " rd-folder-artifacts" : ""}`} aria-label={folder !== undefined ? "Folder artifacts" : "Session artifacts"}>
-    <header className="rd-artifacts-heading"><div><h2>Artifacts</h2><p>{folder !== undefined ? "Saved files from this folder and subfolders, including archived sessions." : `Saved outputs from ${sessionName}`}</p></div><button className="rd-btn rd-btn-sm" onClick={() => setRetry((value) => value + 1)}>Refresh</button></header>
-    {truncated && <p className="rd-artifact-note">Showing the 500 most recently updated files. Open a subfolder to narrow the list.</p>}
+  return <section className={`rd-artifacts${folder !== undefined ? " rd-folder-artifacts" : ""}`} aria-label={folder !== undefined ? "Workspace artifacts" : "Session artifacts"}>
+    <header className="rd-artifacts-heading"><div><h2>Artifacts</h2><p>{folder !== undefined ? "Saved files from this workspace and nested workspaces, including archived sessions." : `Saved outputs from ${sessionName}`}</p></div><button className="rd-btn rd-btn-sm" onClick={() => setRetry((value) => value + 1)}>Refresh</button></header>
+    {truncated && <p className="rd-artifact-note">Showing the 500 most recently updated files. Open a nested workspace to narrow the list.</p>}
     {error && <p className="rd-artifact-error" role="alert">{error}</p>}
     {files === null && !error && <p className="rd-artifact-note" role="status">Loading artifacts…</p>}
-    {files?.length === 0 && <div className="rd-artifact-empty"><h3>Your outputs will appear here</h3><p>{folder !== undefined ? "Files registered by this folder’s sessions will appear here." : "When this agent registers a document, mockup, image, or exported file, it is saved here for you to preview and download."}</p><p>Local to this Mac. Nothing is published or shared.</p></div>}
+    {files?.length === 0 && <div className="rd-artifact-empty"><h3>Your outputs will appear here</h3><p>{folder !== undefined ? "Files registered by this workspace’s sessions will appear here." : "When this agent registers a document, mockup, image, or exported file, it is saved here for you to preview and download."}</p><p>Local to this Mac. Nothing is published or shared.</p></div>}
     {folder !== undefined && <><div className="rd-artifact-kinds" role="group" aria-label="Artifact kinds">{(["all", ...Object.keys(ARTIFACT_KINDS)] as (ArtifactKind | "all")[]).map(value => <button key={value} aria-pressed={kind === value} onClick={() => setKind(value)}>{value === "all" ? "All" : ARTIFACT_KINDS[value]}</button>)}</div><div className="rd-artifact-filter-summary"><label><input type="checkbox" checked={showRemoved} onChange={event => setShowRemoved(event.target.checked)} /> Show removed</label><small>{visibleFiles?.length ?? 0} files shown · No automatic cleanup</small></div></>}
     {!!files?.length && visibleFiles?.length === 0 && <p className="rd-artifact-note">No artifacts match these filters.</p>}
     {!!files?.length && <div className="rd-artifact-layout">
@@ -204,7 +204,7 @@ export function ArtifactsView({ sessionKey, sessionName, folder }: ArtifactScope
         <span className="rd-artifact-type">{label(file)}</span><strong>{file.title}</strong><small>{file.source_path.split("/").pop()} · {size(file.size)}</small><small>{new Date(file.updated_at).toLocaleString()}</small>
       </button>)}</nav>}
       {selected && <div ref={viewer} style={folder !== undefined && !expanded ? { display: "none" } : undefined} className={`rd-artifact-viewer${expanded ? " rd-artifact-expanded" : ""}`} role={expanded ? "dialog" : undefined} aria-modal={expanded ? true : undefined} aria-label={expanded ? selected.title : undefined}><header className="rd-artifact-detail">
-        {expanded && <button ref={back} className="rd-btn rd-btn-sm rd-artifact-back" onClick={close}>← Back to {folder !== undefined ? "folder" : "sessions"}</button>}
+        {expanded && <button ref={back} className="rd-btn rd-btn-sm rd-artifact-back" onClick={close}>← Back to {folder !== undefined ? "workspace" : "sessions"}</button>}
         <div className="rd-artifact-title"><h3><button className="rd-artifact-title-button" aria-label={`Expand ${selected.title}`} disabled={expanded} onClick={event => expand(event.currentTarget)}>{selected.title}</button></h3><p className="rd-artifact-path">{selected.source_path}</p></div><div className="rd-artifact-actions">
         <button hidden={expanded} className="rd-btn rd-btn-sm" onClick={event => expand(event.currentTarget)}>Expand</button>
         <button ref={feedbackButton} className="rd-btn rd-btn-sm" disabled={!visibleContent || !!selected.removed_at} onClick={event => {
@@ -213,7 +213,7 @@ export function ArtifactsView({ sessionKey, sessionName, folder }: ArtifactScope
           setFeedback({ artifact: visibleContent, quote: "", left: box.left, bottom: box.bottom }); setFeedbackStatus("");
         }}>Feedback</button>
         {!selected.removed_at && downloadUrl && visibleContent && <a className="rd-btn rd-btn-sm" href={downloadUrl} download={selected.source_path.split("/").pop() || "artifact"}>Download</a>}
-        {!expanded && <button className="rd-btn rd-btn-sm" disabled={removing || !!selected.kept || !!selected.removed_at} title={selected.kept ? "Undo Keep in the folder before removing this file" : undefined} onClick={() => void remove()}>{removing ? "Removing…" : "Remove"}</button>}
+        {!expanded && <button className="rd-btn rd-btn-sm" disabled={removing || !!selected.kept || !!selected.removed_at} title={selected.kept ? "Undo Keep in the workspace before removing this file" : undefined} onClick={() => void remove()}>{removing ? "Removing…" : "Remove"}</button>}
       </div></header>
       {visibleContent?.media_type.startsWith("text/") && <p className="rd-artifact-note">Highlight text to send feedback to {producerName}.</p>}
       {feedbackStatus && <p className="rd-artifact-note" role="status">{feedbackStatus}</p>}

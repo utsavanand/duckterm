@@ -451,7 +451,7 @@ function Dashboard() {
             {sidebarOracle && <button className="rd-oracle-row" type="button" aria-label="Oracle main chat" aria-pressed={towerVisible}
               onClick={() => { setTowerOpen(true); setAnalyticsTab(null); }}>
               <img src={fullDuckMark} alt="" />
-              <span>Oracle<small>All folders</small></span>
+              <span>Oracle<small>All workspaces</small></span>
             </button>}
             {sessions.length === 0 && folders.length === 0 ? (
               <p className="rd-panel-empty">
@@ -607,7 +607,7 @@ function Dashboard() {
 
           <section className={`rd-context-pane${sidePanels.collapsed.right ? " rd-side-collapsed" : ""}`} style={selectedFolder !== null ? { display: "none" } : undefined}>
             <div className="rd-panel-head">
-              <span>{appearanceFolder ? `${appearanceFolder} · Folder` : selected ? selected.label : "Context"}</span>
+              <span>{appearanceFolder ? `${appearanceFolder} · Workspace` : selected ? selected.label : "Context"}</span>
               <PanelToggle side="right" collapsed={sidePanels.collapsed.right} onToggle={() => sidePanels.toggle("right")} />
             </div>
             {appearanceFolder ? <>
@@ -616,7 +616,7 @@ function Dashboard() {
               <button className="rd-btn rd-btn-ghost" style={{ margin: "0 18px 18px" }} onClick={() => setAppearanceFolder(null)}>View session override →</button>
             </> : <ContextViews session={<>
               {selected && <LiveContextPanel key={`context-${selected.key}`} session={selected} onMemory={revision => { setMemoryTarget(revision ? { key: selected.key, revision } : null); setView("memory"); }} onCheckpointMemory={checkpoint => { setMemoryTarget({ key: selected.key, revision: "", checkpoint }); setView("memory"); }} onCheckpointTimeline={() => { setCheckpointTarget(n => ({ key: selected.key, request: (n?.request ?? 0) + 1 })); setView("history"); }} active={!towerOpen && selectedFolder === null && !sidePanels.collapsed.right} />}
-              {selected && selected.ptyOwned && <SessionPanelSection key={`appearance-${selected.key}`} title="Terminal appearance" status={themeOverrides.sessions[selected.key] || "Folder default"}>
+              {selected && selected.ptyOwned && <SessionPanelSection key={`appearance-${selected.key}`} title="Terminal appearance" status={themeOverrides.sessions[selected.key] || "Workspace default"}>
                 <TerminalAppearance scope="sessions" target={selected.key} mode={mode} theme={themeOverrides.sessions[selected.key]} effectiveTheme={themeFor(selected)} onTheme={pick => setSessionTheme(selected.key, pick)} />
               </SessionPanelSection>}
               {selected && <LiveSessionCard key={selected.key} session={selected} active={!towerOpen && selectedFolder === null && !sidePanels.collapsed.right}

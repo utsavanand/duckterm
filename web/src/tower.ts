@@ -11,7 +11,7 @@ export function looksStuck(a: TowerAgent, now: number): boolean {
 }
 
 export function teamOf(a: SessionView): string {
-  return a.group ? a.group.split("/")[0] : "No folder";
+  return a.group ? a.group.split("/")[0] : "No workspace";
 }
 
 export function teams(agents: TowerAgent[]): { name: string; agents: TowerAgent[] }[] {

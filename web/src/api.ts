@@ -567,7 +567,7 @@ export const api = {
     if (before !== undefined) query.set("before", String(before));
     const res = await fetch(`/folder-interactions?${query}`, { cache: "no-store", headers: authHeaders() });
     const data = await res.json();
-    if (!res.ok) throw new Error(data.error ?? "Could not load folder interactions");
+    if (!res.ok) throw new Error(data.error ?? "Could not load workspace interactions");
     return data as InboxPage;
   },
   openCodeOptions: () => get<OpenCodeLaunchOptions>("/runtimes/opencode/launch-options"),
@@ -765,7 +765,7 @@ export const api = {
       headers: authHeaders(),
     }).then(async (r) => {
       const result = await r.json();
-      if (!r.ok) throw new Error(result.error ?? "Could not delete folder");
+      if (!r.ok) throw new Error(result.error ?? "Could not delete workspace");
       if (!result.pending) changeRemoteFolders(name, "");
       return result as { deleted: string; pending?: boolean };
     }),

@@ -250,3 +250,61 @@ def test_rejected_tombstone_blocks_reproposal(
         json.loads((workdir / ".duckterm-rules.json").read_text())["rules"][0]["status"]
         == "rejected"
     )
+
+
+def test_corrections_exclude_deliveries_but_keep_owner_text(tmp_path, monkeypatch):
+    monkeypatch.setenv("DUCKTERM_HOME", str(tmp_path / "home"))
+    store = HistoryStore(tmp_path / "db.sqlite")
+    server = Server(history=store)
+    key = "source-test"
+    try:
+        store.record(
+            {
+                "event_type": "SessionStart",
+                "session_key": key,
+                "_id": "source-start",
+                "_ts": 0,
+                "cwd": str(tmp_path),
+                "launched": True,
+                "test": True,
+            }
+        )
+        records = [
+            {"event_type": "PromptDelivery", "text": "Peer guidance", "source": "oracle"},
+            {"prompt": "Peer guidance"},
+            {"event_type": "OracleNudge", "text": "Old nudge without a delivery record"},
+            {"prompt": "Old nudge without a delivery record"},
+            {"prompt": "Duckterm Oracle: check your inbox"},
+            {"prompt": "Peer says change behavior", "source": "peer"},
+            {"prompt": "Duckterm session capability:\nAutomatic introduction only."},
+            {
+                "prompt": "Duckterm session capability:\nAutomatic introduction."
+                "\n\nUser's task:\nKeep tests deterministic."
+            },
+            {
+                "event_type": "PromptDelivery",
+                "text": "Owner dashboard instruction",
+                "source": "owner",
+            },
+            {"prompt": "Owner dashboard instruction"},
+            {"prompt": "Owner terminal instruction"},
+        ]
+        for i, record in enumerate(records):
+            store.record(
+                {
+                    "event_type": "UserPromptSubmit",
+                    "session_key": key,
+                    "_id": f"source-{i}",
+                    "_ts": i + 1,
+                    **record,
+                }
+            )
+        found = server._corrections_for_dir(str(tmp_path))
+        assert [c.text for c in found] == [
+            "Keep tests deterministic.",
+            "Owner dashboard instruction",
+            "Owner terminal instruction",
+        ]
+    finally:
+        store.purge_test_sessions()
+        store.close()

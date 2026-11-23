@@ -24,11 +24,11 @@ test("folder details keep categorized files and show removed provenance across r
     await page.emulateMedia({ colorScheme: "dark" }); await page.goto(base());
     const openFolder = async () => { await page.locator(".rd-group-head").filter({ has: page.getByRole("button", { name: `View interactions in ${folder}`, exact: true }) }).locator(".rd-group-name").click(); };
     await openFolder();
-    const details = page.getByRole("complementary", { name: "Folder details", exact: true });
+    const details = page.getByRole("complementary", { name: "Workspace details", exact: true });
     await expect(details).toContainText("1 session");
     await expect(details).toContainText("2 available · 1 removed");
     await page.getByRole("tab", { name: "Artifacts", exact: true }).click();
-    const artifacts = page.getByRole("region", { name: "Folder artifacts", exact: true });
+    const artifacts = page.getByRole("region", { name: "Workspace artifacts", exact: true });
     await expect(artifacts.getByRole("button", { name: "Earlier preview", exact: true })).toHaveCount(0);
     await artifacts.getByRole("button", { name: "Keep Navigation decision", exact: true }).click();
     await expect(artifacts.getByRole("button", { name: "Undo Keep for Navigation decision", exact: true })).toHaveAttribute("aria-pressed", "true");
@@ -47,7 +47,7 @@ test("folder details keep categorized files and show removed provenance across r
     const removed = page.getByRole("dialog", { name: "Earlier preview", exact: true });
     await expect(removed).toContainText("Saved content removed");
     await expect(removed.getByRole("link", { name: "Download" })).toHaveCount(0);
-    await removed.getByRole("button", { name: "← Back to folder", exact: true }).click();
+    await removed.getByRole("button", { name: "← Back to workspace", exact: true }).click();
     await page.emulateMedia({ colorScheme: "light" });
     await page.screenshot({ path: "/tmp/duckterm-folder-details-light.png" });
     await page.setViewportSize({ width: 900, height: 900 });
@@ -56,7 +56,7 @@ test("folder details keep categorized files and show removed provenance across r
     await expect(details).toBeVisible();
     await expect(details.getByRole("button", { name: "Add widget" })).toBeEnabled();
     await page.screenshot({ path: "/tmp/duckterm-folder-details-narrow.png" });
-    await details.getByRole("button", { name: "Close folder details" }).click();
+    await details.getByRole("button", { name: "Close workspace details" }).click();
     await expect(details).toHaveCount(0);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   } finally {

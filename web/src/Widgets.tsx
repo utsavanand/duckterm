@@ -75,7 +75,7 @@ export function Widgets({ surface, slot, registry, source, kindLabel = slot === 
     const [item] = next.splice(index, 1); next.splice(target, 0, item); void save(next);
   }
   const disabled = loading || saving;
-  return <section ref={root} className="rd-widgets" aria-label={slot === "oracle" ? "Fleet insights" : "Folder widgets"} onKeyDown={event => {
+  return <section ref={root} className="rd-widgets" aria-label={slot === "oracle" ? "Fleet insights" : "Workspace widgets"} onKeyDown={event => {
     if (event.key === "Escape" && (add || menu)) { event.stopPropagation(); setAdd(false); setMenu(null); }
   }}>
     <header className="rd-widgets-heading"><h2>Widgets</h2><div><button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={disabled || !!error} onClick={() => void save(defaults)}>Reset</button><button className="rd-btn rd-btn-ghost rd-btn-sm" aria-expanded={add} disabled={disabled || !!error} onClick={() => setAdd(!add)}>Add widget</button></div>
