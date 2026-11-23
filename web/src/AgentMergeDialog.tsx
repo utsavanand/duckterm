@@ -141,7 +141,7 @@ export function AgentMergeDialog({ service, sourceKey, sourceName, onClose }: { 
         <select autoFocus id="merge-agent-target" value={target} disabled={busy} onChange={e => setTarget(e.target.value)}><option value="">Choose an agent</option>{targets.map(item => <option key={item.key} value={item.key} disabled={!item.allowed}>{item.name} · {item.group}{item.allowed ? ` · ${item.state}` : ` — ${item.reason}`}</option>)}</select>
         <p>Agents on this computer only. Cross-computer merges are not available yet.</p>
         {loading && <p role="status">Preparing merge options…</p>}
-        {!loading && !targets.some(item => item.allowed) && <p>No available agents. A destination must be open and have an inbox in a shared folder.</p>}
+        {!loading && !targets.some(item => item.allowed) && <p>No available agents. A destination must be open and have an inbox in a shared workspace.</p>}
         {preview && <>
           <div className="rd-merge-route"><strong>{sourceName}</strong>→<strong>{preview.target.name}</strong></div>
           {!preview.target.allowed && <p role="alert">{preview.target.reason}</p>}

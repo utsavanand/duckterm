@@ -1,3 +1,12 @@
+## 2026-11-22 — Rename the grouping, not the filesystem
+
+Changing sidebar folders to workspaces also affects accessibility labels,
+notifications, empty states and generated Analytics headings. Audit rendered
+strings rather than replacing identifiers: API fields and persisted keys stay
+compatible, while project-folder pickers retain their filesystem meaning.
+Update existing workflow assertions together with their labels and review the
+longer wording at desktop and narrow viewport sizes.
+
 ## 2026-11-22 — Test checkpoint capture across the actual thread boundary
 
 ## 2026-11-22 — Closing the listener is not completing a restart

@@ -51,7 +51,7 @@ test("new session lists empty and nested sidebar folders and sends the selected 
     await expect(page.getByRole("button", { name: "View interactions in Launch review", exact: true })).toBeVisible();
     await page.getByRole("button", { name: "New", exact: true }).click();
     await page.getByRole("button", { name: "New session", exact: true }).click();
-    const select = page.getByLabel("Sidebar folder", { exact: true });
+    const select = page.getByLabel("Sidebar workspace", { exact: true });
     await expect(select).toHaveValue("");
     await expect(select.locator("option")).toContainText(["Ungrouped", "Launch review", "Launch review/Child"]);
     await select.selectOption("Launch review/Child");
@@ -71,7 +71,7 @@ test("new session lists empty and nested sidebar folders and sends the selected 
     await expandFolder(page, "Launch review/Child");
     const child = page.locator(".rd-group").filter({ has: page.locator('.rd-group-name', { hasText: /^Child$/ }) }).last();
     await expect(child).toContainText("Folder launch");
-    await child.getByTitle("New session in this folder", { exact: true }).click();
+    await child.getByTitle("New session in this workspace", { exact: true }).click();
     await expect(select).toHaveValue("Launch review/Child");
     await select.selectOption("");
     await expect(select).toHaveValue("");
@@ -88,15 +88,15 @@ test("owner reviews folder recipients, sends once, and sees unread Owner notices
     await apiPost("/sessions/broadcast-ui-a/collaboration", { root: "Message review" });
     await page.goto("/");
     await page.getByRole("button", { name: "View interactions in Message review", exact: true }).click();
-    await page.getByRole("button", { name: "Message folder", exact: true }).click();
+    await page.getByRole("button", { name: "Message workspace", exact: true }).click();
     await expect(page.getByRole("heading", { name: "Message Message review", exact: true })).toBeVisible();
-    await expect(page.getByRole("region", { name: "Message folder", exact: true }).getByText("Eligible recipient", { exact: true })).toBeVisible();
+    await expect(page.getByRole("region", { name: "Message workspace", exact: true }).getByText("Eligible recipient", { exact: true })).toBeVisible();
     const send = page.getByRole("button", { name: "Send to 2 sessions", exact: true });
     await expect(send).toBeDisabled();
     await page.getByLabel("Message", { exact: true }).fill("Review this folder’s roadmap when ready.");
     await page.screenshot({ path: "/tmp/duckterm-message-folder.png" });
     await send.click();
-    await expect(page.getByRole("region", { name: "Message folder", exact: true }).getByRole("status")).toContainText("Message queued for 2 sessions.");
+    await expect(page.getByRole("region", { name: "Message workspace", exact: true }).getByRole("status")).toContainText("Message queued for 2 sessions.");
     await page.getByRole("button", { name: "Done", exact: true }).click();
     await expect(page.locator(".rd-inbox-message")).toHaveCount(2);
     await expect(page.locator(".rd-inbox-owner")).toHaveText(["Owner", "Owner"]);
