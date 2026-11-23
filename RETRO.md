@@ -1,3 +1,13 @@
+## 2026-11-22 — The memory cache watched a different file than the reader read
+
+After an idle agent's version was saved again as records, an old reference
+(no records digest) still read the raw copy, but the cache decided freshness
+from the records copy. Once cached, rewriting, deleting or symlinking the raw
+copy went unnoticed and the old evidence kept being served (QA found it on
+#436). retained_path now picks the file the same way the reader does. Lesson:
+when a cache fences a read, it must fence the file that read opens, chosen by
+the same rule, not by a parallel one.
+
 ## 2026-11-21 — Saved conversation copies vouched for themselves
 
 The extracted-records copies (#436) carried their own checksum, and a read

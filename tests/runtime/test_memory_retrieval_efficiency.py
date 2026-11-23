@@ -79,7 +79,7 @@ def test_retained_native_cache_reuses_both_snapshots_and_detects_replacement(
         for source in (first, second):
             assert server.memory._read_native("agent", source)["version"] == source["version"]
     assert reads == [first["snapshot"], second["snapshot"]]
-    saved = memory_sources.retained_path("agent", first["snapshot"])
+    saved = memory_sources.retained_path("agent", first["snapshot"], first["records_sha256"])
     saved.write_bytes(saved.read_bytes().replace(b"first", b"other"))
     with pytest.raises(APIError, match="checksum"):
         server.memory._read_native("agent", first)

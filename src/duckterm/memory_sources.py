@@ -226,9 +226,13 @@ def _read_records(key: str, snapshot: str, bound: Any) -> dict[str, Any] | None:
     }
 
 
-def retained_path(key: str, snapshot: str) -> Path:
-    """The file a retained version is read from, for cache fences."""
-    found = _records_file(key, snapshot)
+def retained_path(key: str, snapshot: str, bound: str | None) -> Path:
+    """The file a retained version is read from, for cache fences.
+
+    Chosen exactly as _read_records does: a reference without a records digest
+    reads the raw copy even when the version was later also saved as records.
+    """
+    found = _records_file(key, snapshot) if bound is not None else None
     return found[0] if found is not None else snapshot_file(key, snapshot)[0]
 
 
