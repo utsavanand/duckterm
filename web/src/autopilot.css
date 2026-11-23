@@ -2,6 +2,11 @@
    (claude.ai artifact X231mN3bPUdP8L98r8gxuf, v3). */
 .ap-page { height: 100%; overflow-y: auto; padding: 20px 24px 48px; box-sizing: border-box; background: var(--bg); color: var(--text); }
 .ap-page h1 { font-size: 1.375rem; font-weight: 600; margin: 0; }
+.ap-embedded { height: auto; padding: 4px 0 24px; background: transparent; }
+/* The workspace view's tabs and heading are inset 30 px (folderView.css). */
+.rd-folder-flows-panel { flex: 1; min-height: 0; overflow: auto; padding: 0 30px; }
+@media (max-width: 1100px) { .rd-folder-flows-panel { padding: 0 22px; } }
+.ap-embedded .ap-sec:first-child { margin-top: 8px; }
 .ap-head { display: flex; align-items: flex-start; gap: 16px; flex-wrap: wrap; }
 .ap-head > div { flex: 1; min-width: 0; }
 .ap-head p { margin: 2px 0 0; }

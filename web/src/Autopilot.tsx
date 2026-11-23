@@ -392,3 +392,48 @@ function SetupDialog({ overview, editing, onClose, onSaved }: {
     </div>
   </Modal>;
 }
+
+// A workspace's Flows tab: the flows on autopilot in this workspace (and its
+// subfolders) and their runs, one-off runs included. Managed on the Autopilot page.
+export function WorkspaceFlows({ workspace }: { workspace: string }) {
+  const [data, setData] = useState<AutopilotOverview | null>(null);
+  const [error, setError] = useState("");
+  const [openRun, setOpenRun] = useState<string | null>(null);
+  useEffect(() => {
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const tick = async () => {
+      try {
+        const next = await autopilotApi.overview(workspace);
+        if (!stopped) { setData(next); setError(""); }
+      } catch (e) {
+        if (!stopped) setError((e as Error).message);
+      }
+      if (!stopped) timer = setTimeout(tick, POLL_MS);
+    };
+    void tick();
+    return () => { stopped = true; clearTimeout(timer); };
+  }, [workspace]);
+  if (!data) return <div className="ap-page ap-embedded"><p className="ap-muted">{error || "Loading…"}</p></div>;
+  const flowsById = new Map(data.flows.map(f => [f.id, f]));
+  return <div className="ap-page ap-embedded">
+    {error && <p className="ap-error" role="alert">{error}</p>}
+    <h2 className="ap-sec">On autopilot <small>{data.autopilots.length}</small></h2>
+    {data.autopilots.length === 0
+      ? <p className="ap-muted">No flows on autopilot in this workspace. Put one on autopilot from the Autopilot page and choose this workspace.</p>
+      : <div className="ap-cards">{data.autopilots.map(entry => <article key={entry.id} className={`ap-card${entry.on ? "" : " ap-off"}`}>
+        <div className="ap-card-top"><h3>{entry.name}</h3><span className={entry.on ? "ap-on" : "ap-paused"}>{entry.on ? "On" : "Paused"}</span></div>
+        <div className="ap-muted">{flowTitle(flowsById.get(entry.flow)?.name ?? entry.flow)} · <b>{entry.repo}</b>{entry.workspace !== workspace ? <> · in {entry.workspace}</> : null}</div>
+        <TriggerChips entry={entry} />
+        <div className="ap-muted ap-small">{entry.active ? `${entry.active} running` : entry.watch.checked_at ? `Checked ${ago(entry.watch.checked_at)}` : "Not checked yet"}</div>
+      </article>)}</div>}
+    <h2 className="ap-sec">Runs <small>{data.runs.length}</small></h2>
+    {data.runs.length === 0
+      ? <p className="ap-muted">No runs in this workspace yet.</p>
+      : <div className="ap-table-wrap"><table className="ap-table">
+        <thead><tr><th>Issue</th><th>Autopilot</th><th>Step</th><th>State</th><th>Tokens</th><th>Started</th></tr></thead>
+        <tbody>{data.runs.map(run => <RunRow key={run.id} run={run} open={openRun === run.id}
+          onToggle={() => setOpenRun(id => id === run.id ? null : run.id)} />)}</tbody>
+      </table></div>}
+  </div>;
+}

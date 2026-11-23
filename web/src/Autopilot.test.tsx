@@ -1,6 +1,6 @@
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { AutopilotPage } from "./Autopilot";
+import { AutopilotPage, WorkspaceFlows } from "./Autopilot";
 import { AutopilotOverview } from "./autopilotApi";
 
 const sent: { method: string; path: string; body: unknown }[] = [];
@@ -26,7 +26,7 @@ beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn(async (input: string, init?: RequestInit) => {
     const path = String(input), method = init?.method ?? "GET";
     sent.push({ method, path, body: init?.body ? JSON.parse(String(init.body)) : undefined });
-    const body = path === "/api/autopilot" ? overview
+    const body = path === "/api/autopilot" || path.startsWith("/api/autopilot?workspace=") ? overview
       : path === "/api/autopilot/repositories" ? ["o/duckterm", "o/uv-suite"]
       : path === "/folders" ? { folders: ["Team", "Docs"] }
       : method === "POST" && path === "/api/autopilot/autopilots" ? { id: "ap-2" }
@@ -80,4 +80,12 @@ it("a run row opens to its steps, its error and the issue", async () => {
   await act(async () => { fireEvent.click(row); });
   expect(screen.getByText("Docker is not running")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Open the issue" })).toHaveAttribute("href", "https://github.com/o/duckterm/issues/41");
+});
+
+it("a workspace's Flows tab asks for that workspace only and lists its runs", async () => {
+  render(<WorkspaceFlows workspace="Team/web" />);
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
+  expect(sent.map(r => r.path)).toContain("/api/autopilot?workspace=Team%2Fweb");
+  expect(screen.getByText("Inbox badge stays")).toBeInTheDocument();
+  expect(screen.getByText(/No flows on autopilot in this workspace/)).toBeInTheDocument();
 });
