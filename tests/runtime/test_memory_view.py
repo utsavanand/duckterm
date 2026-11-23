@@ -319,7 +319,7 @@ def test_removed_evidence_hides_claim_and_summary_instead_of_leaking_cache(memor
         e for claim in claims(before) for e in claim["evidence"] if e["kind"] == "conversation"
     )
     path.unlink()
-    for snapshot in directory("agent").glob("*.jsonl"):
+    for snapshot in [*directory("agent").glob("*.jsonl"), *directory("agent").glob("*.records")]:
         snapshot.unlink()
     server.memory.cache.clear()
     code, after = get(server)

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, OracleExchange } from "./api";
+import { api, FolderMessagePlan, OracleExchange } from "./api";
 import { FolderRecipient, FolderRecipientPicker } from "./FolderRecipientPicker";
 import { Modal } from "./ui";
 import { ArtifactsView } from "./ArtifactsView";
@@ -64,7 +64,9 @@ function FolderChat({ folder, active }: { folder: string; active: boolean }) {
   const [recipient, setRecipient] = useState<FolderRecipient | null>(null);
   const [picker, setPicker] = useState<string | null>(null);
   const [reviewing, setReviewing] = useState(false);
+  const [plan, setPlan] = useState<FolderMessagePlan & { question: string; key: string; error?: string } | null>(null);
   const submission = useRef<{ signature: string; key: string }>();
+  const unsent = useRef<{ signature: string; key: string }>();
   const log = useRef<HTMLDivElement>(null);
   const mounted = useRef(false);
   const sending = useRef(false);
@@ -125,7 +127,14 @@ function FolderChat({ folder, active }: { folder: string; active: boolean }) {
         request_key: submission.current.key, recipients: target.recipients.filter(r => r.eligible).map(r => r.session_id),
       }) : await api.fleetAsk(value, folder, answerOnly ? undefined : submission.current.key);
       if (assign) window.dispatchEvent(new Event("folder-tasks-refresh"));
-      if (mounted.current) setMessages(previous => result.exchange.dispatch && previous.some(m => m.dispatch?.request_key === result.exchange.dispatch?.request_key) ? previous : [...previous, result.exchange]);
+      if ("plan" in result) {
+        // Asking again after Cancel yields the same plan; reusing its key means
+        // a send whose response was lost cannot be delivered a second time.
+        const { identity, target, text, recipients } = result.plan;
+        const signature = JSON.stringify([identity, target, text, recipients.map(r => r.session_id)]);
+        if (unsent.current?.signature !== signature) unsent.current = { signature, key: crypto.randomUUID() };
+        if (mounted.current) setPlan({ ...result.plan, question: value, key: unsent.current.key });
+      } else if (mounted.current) append(result.exchange);
       submission.current = undefined;
     } catch (cause) {
       if (mounted.current) { setError((cause as Error).message); setQuestion(current => current || value); }
@@ -134,6 +143,30 @@ function FolderChat({ folder, active }: { folder: string; active: boolean }) {
       if (mounted.current) { setPending(null); input.current?.focus(); }
     }
   }
+  function append(exchange: OracleExchange) {
+    setMessages(previous => exchange.dispatch && previous.some(m => m.dispatch?.request_key === exchange.dispatch?.request_key) ? previous : [...previous, exchange]);
+  }
+  async function confirmPlan() {
+    if (!plan || sending.current) return;
+    sending.current = true;
+    setPending(plan.text);
+    try {
+      const result = await api.folderDispatch(folder, { identity: plan.identity, target: plan.target, text: plan.text, request_key: plan.key, recipients: plan.recipients.map(r => r.session_id) });
+      unsent.current = undefined;
+      if (mounted.current) { append(result.exchange); setPlan(null); }
+    } catch (cause) {
+      if (mounted.current) setPlan(current => current && { ...current, error: (cause as Error).message });
+    } finally {
+      sending.current = false;
+      if (mounted.current) setPending(null);
+    }
+  }
+  function cancelPlan() {
+    if (sending.current) return;
+    if (plan) setQuestion(current => current || plan.question);
+    setPlan(null);
+    input.current?.focus();
+  }
   return <div className="rd-folder-chat">
     <div className="rd-folder-chat-heading"><h2>Workspace chat</h2><span>Ask or message a session</span></div>
     <p className="rd-folder-intro">Answers from {folder} and its nested workspaces{desktop() ? " on this Mac" : ""}.</p>
@@ -141,7 +174,7 @@ function FolderChat({ folder, active }: { folder: string; active: boolean }) {
       {!loaded && !error && <p role="status">Loading conversation…</p>}
       {loaded && messages.length === 0 && !pending && <p className="rd-folder-intro">Ask what needs your attention or what the sessions in this workspace are working on.</p>}
       {messages.map((message, index) => <div className="rd-folder-exchange" key={`${message.at}-${index}`}><div className="rd-folder-question"><small>You{message.dispatch?.assigned ? " · Assigned" : ""}{message.dispatch ? ` → ${message.dispatch.label}` : ""}</small><p>{message.q}</p></div>{message.dispatch ? <div className="rd-folder-delivery">{message.dispatch.recipients.map(r => <div key={r.message_id}><small>{r.name} · {({ queued: "Queued in inbox", accepted: "Accepted", read: "Read", answered: "Answered", declined: "Declined", expired: "Expired", cancelled: "Cancelled", blocked: "Access changed" })[r.status]}</small>{r.answer && <div className="rd-folder-answer"><small>{r.name} · Reply</small><div dangerouslySetInnerHTML={{ __html: html(r.answer) }} /></div>}</div>)}</div> : <div className="rd-folder-answer"><small>Workspace answer</small><div dangerouslySetInnerHTML={{ __html: html(message.a) }} /></div>}</div>)}
-      {pending !== null && <div className="rd-folder-exchange"><div className="rd-folder-question"><small>You</small><p>{pending}</p></div><p role="status">{recipient ? "Queuing your message…" : "Reading this workspace’s sessions…"}</p></div>}
+      {pending !== null && <div className="rd-folder-exchange"><div className="rd-folder-question"><small>You</small><p>{pending}</p></div><p role="status">{recipient || plan ? "Queuing your message…" : "Reading this workspace’s sessions…"}</p></div>}
     </div>
     {error && <div className="rd-folder-error" role="alert">{error}{!loaded && <button className="rd-btn rd-btn-sm" onClick={() => setRetry(n => n + 1)}>Retry</button>}</div>}
     <div className="rd-folder-suggestions">{["What needs my attention?", "What is this workspace working on?"].map(text => <button key={text} disabled={!loaded || pending !== null} onClick={() => void ask(text, true)}>{text}</button>)}</div>
@@ -165,6 +198,17 @@ function FolderChat({ folder, active }: { folder: string; active: boolean }) {
       <p>Each recipient receives your inbox message. Replies are optional.</p>
       <button className="rd-btn rd-btn-ghost" onClick={() => setReviewing(false)}>Cancel</button>
       <button className="rd-btn rd-btn-primary" onClick={() => { setReviewing(false); void ask(); }}>Send to {recipient.recipients.filter(r => r.eligible).length} sessions</button>
+      </section>
+    </Modal>}
+    {plan && <Modal title="Confirm message" onClose={cancelPlan}>
+      <section role="dialog" aria-label="Confirm message">
+      <p>Nothing has been sent yet. Check who receives this message and its exact wording.</p>
+      <p>To {plan.target.kind === "folder" ? `everyone in ${plan.label}` : plan.label}:</p>
+      <ul>{plan.recipients.map(r => <li key={r.session_id}>{r.name}</li>)}</ul>
+      <p className="rd-folder-review-text">{plan.text}</p>
+      {plan.error && <div className="rd-folder-error" role="alert">{plan.error}</div>}
+      <button className="rd-btn rd-btn-ghost" disabled={pending !== null} onClick={cancelPlan}>Cancel</button>
+      <button className="rd-btn rd-btn-primary" disabled={pending !== null} onClick={() => void confirmPlan()}>Send to {plan.recipients.length === 1 ? plan.recipients[0].name : `${plan.recipients.length} sessions`}</button>
       </section>
     </Modal>}
   </div>;
