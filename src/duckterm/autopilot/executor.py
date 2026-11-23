@@ -92,6 +92,25 @@ def _start_branch(dirs: RunDirs, branch: str) -> RunDirs:
     return dirs
 
 
+def hide_install(dirs: RunDirs) -> list[str]:
+    """Keep what installing the kit wrote out of the run's commits and diffs:
+    new files go into .git/info/exclude, changed tracked files are marked
+    skip-worktree. Returns the paths hidden. Call right after the install,
+    before any step runs."""
+    out = _git("-C", str(dirs.project), "status", "--porcelain", "-z", "--untracked-files=all")
+    new: list[str] = []
+    changed: list[str] = []
+    for entry in filter(None, out.split("\0")):
+        status, path = entry[:2], entry[3:]
+        (new if status == "??" else changed).append(path)
+    if new:
+        with (dirs.project / ".git" / "info" / "exclude").open("a") as f:
+            f.write("".join(f"/{p}\n" for p in new))
+    if changed:
+        _git("-C", str(dirs.project), "update-index", "--skip-worktree", "--", *changed)
+    return new + changed
+
+
 class AutopilotExecutor(runner.Executor):
     name = "autopilot"
 

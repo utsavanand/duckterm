@@ -149,3 +149,30 @@ def test_a_real_flow_runs_in_a_sandbox_and_commits_to_the_run_branch(tmp_path: P
     finally:
         box.destroy()
         sandbox.docker("rm", "-f", gateway.name, check=False)
+
+
+def test_what_the_kit_install_wrote_never_reaches_a_run_commit(tmp_path: Path) -> None:
+    src = _repo(tmp_path / "src")
+    (src / ".claude").mkdir()
+    (src / ".claude" / "settings.json").write_text("{}\n")
+    git = ["git", "-C", str(src), "-c", "user.name=t", "-c", "user.email=t@t"]
+    subprocess.run([*git, "add", "."], check=True)
+    subprocess.run([*git, "-c", "commit.gpgsign=false", "commit", "-qm", "settings"], check=True)
+    dirs = prepare(str(src), "main", "autopilot/r1", tmp_path / "run")
+    p = dirs.project
+    # What an install does: new skill files, and an edit to a tracked file.
+    (p / ".claude" / "skills" / "spec-fix").mkdir(parents=True)
+    (p / ".claude" / "skills" / "spec-fix" / "SKILL.md").write_text("skill\n")
+    (p / ".claude" / "settings.json").write_text('{"hooks": {}}\n')
+    hidden = executor.hide_install(dirs)
+    assert sorted(hidden) == [".claude/settings.json", ".claude/skills/spec-fix/SKILL.md"]
+    status = subprocess.run(
+        ["git", "-C", str(p), "status", "--porcelain"], capture_output=True, text=True
+    )
+    assert status.stdout == ""
+    # A step's own change is still seen and committed.
+    (p / "README.md").write_text("# fixed\n")
+    status = subprocess.run(
+        ["git", "-C", str(p), "status", "--porcelain"], capture_output=True, text=True
+    )
+    assert status.stdout.strip() == "M README.md"

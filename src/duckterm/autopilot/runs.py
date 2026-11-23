@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from duckterm import github_projects
-from duckterm.autopilot import catalog, github_push, sandbox, store
+from duckterm.autopilot import catalog, executor, github_push, sandbox, store
 from duckterm.autopilot.executor import AutopilotExecutor, prepare_github
 from duckterm.autopilot.sandbox import Gateway, Sandbox
 from duckterm.kits import install, plan, runner
@@ -99,6 +99,7 @@ def _execute(autopilot: dict[str, Any], meta: dict[str, Any], item: dict[str, An
         base_sha = _git_out(dirs.project, "rev-parse", "HEAD")
         kit = kit_manifest.load(flow.kit_path)
         install.apply(plan.build(kit, dirs.project, [HARNESS]))
+        executor.hide_install(dirs)
         gateway.ensure(
             anthropic_key=None, openai_key=None, anthropic_oauth_token=subscription_token()
         )
