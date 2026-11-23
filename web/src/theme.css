@@ -859,8 +859,18 @@ code,
   flex-basis: 100%;
   line-height: 1.45;
 }
-.rd-connector-installed a {
+/* The revoke link sits inside that sentence now. Only its own text is held on
+   one line; the sentence around it wraps. Same brand green as .rd-msg-text a,
+   since the default blue-violet clashed with the panel. */
+.rd-connector-installed > div a {
   white-space: nowrap;
+  color: var(--brand-green-strong);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: color-mix(in srgb, var(--brand-green-strong) 45%, transparent);
+}
+.rd-connector-installed > div a:hover {
+  text-decoration-color: var(--brand-green-strong);
 }
 .rd-connector-doors {
   display: flex;

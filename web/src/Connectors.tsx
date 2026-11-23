@@ -231,8 +231,10 @@ export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
               ? <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy !== null} onClick={() => change(c, "disable")}>Stop sharing with agents</button>
               : <button className="rd-btn rd-btn-sm rd-btn-primary" disabled={busy !== null} onClick={() => change(c, "enable", c.harnesses ?? HARNESS_ORDER)}>Share with agents</button>}
             <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy !== null} onClick={() => change(c, "forget")}>Sign out</button>
-            <a href={c.revoke_url} target="_blank" rel="noreferrer">Revoke at GitHub ↗</a>
-            <div>Signing out deletes the token Duckterm stored. Revoking the authorization itself must be done on github.com.</div>
+            {/* Revoking lives in the sentence, not the button row: it happens on
+                github.com, so offering it beside Sign out read as a third thing
+                Duckterm does. */}
+            <div>Signing out deletes the token Duckterm stored. Revoking the authorization itself must be done <a href={c.revoke_url} target="_blank" rel="noreferrer">on github.com ↗</a>.</div>
           </div>}
 
           {editing === c.name && <div className="rd-connector-token">
