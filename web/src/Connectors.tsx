@@ -17,26 +17,27 @@ function lastUsedLabel(c: Connector): string {
 const HARNESS_ORDER = ["claude-code", "codex"];
 const harnessNames: Record<string, string> = { "claude-code": "Claude Code", codex: "Codex" };
 
-// A registration is written whether or not the agent CLI exists here, so say
-// which agents can actually use it rather than that a config entry was written.
-function availabilityLabel(c: Connector): string {
+function harnessList(names: string[]): string {
+  const labels = names.map(h => harnessNames[h] ?? h);
+  if (labels.length <= 1) return labels[0] ?? "";
+  return `${labels.slice(0, -1).join(", ")} and ${labels[labels.length - 1]}`;
+}
+
+// What agents can reach it, naming the ones whose CLI is absent: a registration
+// is written whether or not the agent exists here, so "registered" is not
+// "usable on this computer".
+function agentReachLabel(c: Connector): string {
   const chosen = c.harnesses ?? HARNESS_ORDER;
   const named = chosen.map(h => {
     const label = harnessNames[h] ?? h;
     return c.harnesses_present?.[h] === false ? `${label} (not installed here)` : label;
   });
-  const omitted = HARNESS_ORDER.filter(h => !chosen.includes(h)).map(h => harnessNames[h] ?? h);
-  const tail = omitted.length ? ` · not ${omitted.join(", ")}` : "";
-  return `Available to ${named.join(", ")}${tail}`;
+  return `${named.join(" and ")}, through the GitHub MCP server.`;
 }
 
 const sourceNames: Record<string, string> = {
-  "gh-cli": "GitHub CLI login on this computer",
-  stored: "Stored API credentials",
-  anonymous: "Public access (no token)",
-  "google-oauth": "Google OAuth on this computer",
-  "gcloud-cli": "Google Cloud CLI account",
-  "railway-cli": "Railway CLI login on this computer",
+  "gh-cli": "GitHub CLI login",
+  stored: "Stored personal access token",
 };
 
 export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
@@ -47,8 +48,6 @@ export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
   const [editing, setEditing] = useState<string | null>(null);
   const [source, setSource] = useState("");
   const [token, setToken] = useState("");
-  const [secret, setSecret] = useState("");
-  const [write, setWrite] = useState(false);
   const [harnesses, setHarnesses] = useState<string[]>(HARNESS_ORDER);
   const [checks, setChecks] = useState<Record<string, ConnectorCheck & { at: number }>>({});
   // Status and usage belong to a host, not its selected session. In-flight CLI
@@ -94,7 +93,7 @@ export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
   }, [context]);
   useEffect(() => {
     const epoch = ++lifetime.current;
-    setRows([]); setChecks({}); setEditing(null); setToken(""); setSecret(""); setBusy(null);
+    setRows([]); setChecks({}); setEditing(null); setToken(""); setBusy(null);
     refresh();
     window.addEventListener("focus", refresh);
     return () => { lifetime.current = epoch + 1; invalidate(); window.removeEventListener("focus", refresh); };
@@ -115,34 +114,34 @@ export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
 
   function edit(c: Connector) {
     setEditing(c.name);
-    setSource(c.credential ?? (c.sources?.length === 1 ? c.sources[0] : ""));
-    setWrite(c.write_access);
+    setSource(c.credential ?? (c.sources?.includes("gh-cli") ? "gh-cli" : "stored"));
     setHarnesses(c.harnesses ?? HARNESS_ORDER);
     setToken("");
-    setSecret("");
   }
 
-  async function change(c: Connector, action: "enable" | "disable" | "forget") {
+  async function change(c: Connector, action: "enable" | "disable" | "forget", chosen?: string[]) {
     const epoch = lifetime.current;
     const current = () => lifetime.current === epoch && currentHost.current === host;
-    if (action === "forget" && !window.confirm(`Forget credentials stored by Duckterm for ${c.title}? This also disables the connector. CLI logins and provider authorization remain active.`)) return;
+    if (action === "forget" && !window.confirm(`Sign out of ${c.title} and delete the token Duckterm stored? Your GitHub CLI login and the authorization on github.com are untouched.`)) return;
     setBusy(c.name);
     try {
       const next = action === "enable"
-        ? await api.enableConnector(c.name, editing === c.name ? token.trim() || undefined : undefined, editing === c.name ? secret.trim() || undefined : undefined, source, write, sessionKey, editing === c.name ? harnesses : undefined)
+        ? await api.enableConnector(c.name, editing === c.name ? token.trim() || undefined : undefined, editing === c.name ? source : c.credential ?? undefined, sessionKey, chosen ?? (editing === c.name ? harnesses : undefined))
         : action === "forget" ? await api.forgetConnector(c.name, sessionKey) : await api.disableConnector(c.name, sessionKey);
       if (!current()) return;
       invalidate(); // An older status response cannot undo this confirmed change.
       setRows(rs => rs.map(r => r.name === next.name ? next : r));
       setEditing(null);
       setToken("");
-      setSecret("");
-      toast(action === "enable" ? `${c.title} enabled — available to new agent sessions` : `${c.title} disabled in Duckterm${action === "forget" ? "; stored credentials removed" : "; authorization retained"}`);
+      // Name the door that moved. "Disabled" was read as Duckterm dropping the
+      // credential, which is what Sign out does, not what this does.
+      toast(action === "enable"
+        ? `${c.title} shared with ${harnessList(next.harnesses ?? HARNESS_ORDER)}`
+        : action === "forget" ? `Signed out of ${c.title} — stored token deleted`
+        : `${c.title} withdrawn from agents — Duckterm still uses it`);
     } catch (e) {
       if (!current()) return;
-      // Clear submitted secrets even when validation fails.
-      setToken("");
-      setSecret("");
+      setToken(""); // Clear submitted secrets even when validation fails.
       toast(`${c.title}: ${(e as Error).message}`, "err");
     } finally {
       if (current()) setBusy(null);
@@ -150,69 +149,131 @@ export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
   }
 
   return <div ref={panel} className="rd-connectors">
-    <div className="rd-panel-head"><span>Connectors ({rows.length}) · {hostName(sessionKey)}</span><button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={refresh}>Refresh</button></div>
-    <div className="rd-connector-desc">Enabled integrations are shared by agents on {hostName(sessionKey)}.</div>
-    {rows.map(c => <div key={c.name} className="rd-connector">
-      <div className="rd-connector-row">
-        <span className={`dot ${c.enabled ? "on" : "off"}`} />
-        <span className="rd-connector-title">{c.title}</span>
-        <span className="rd-connector-cred">{c.credential ? sourceNames[c.credential] ?? c.credential : "Not connected"}</span>
-        {(!c.managed || c.hosted === false) && <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy !== null} onClick={() => c.enabled ? change(c, "disable") : c.managed ? change(c, "enable") : edit(c)}>{c.enabled ? "Disable" : "Connect"}</button>}
-        {editing === c.name && <button className="rd-btn rd-btn-ghost rd-btn-sm" aria-label={`Close ${c.title} connection settings`} onClick={() => { setEditing(null); setToken(""); setSecret(""); }}>Close</button>}
-      </div>
-      {!c.managed && !c.credential && <div className="rd-connector-desc">Finished signing in? <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={refresh}>Refresh credentials</button></div>}
-      <div className="rd-connector-desc">{c.description}{c.name === "porkbun" ? ` · ${c.write_access ? "Write access enabled" : "Read-only"}` : ""}</div>
-      <div className="rd-connector-desc">{c.identity ?? (c.credential ? "Identity not verified — reconnect to verify" : c.detail)}</div>
-      {c.enabled && <div className="rd-connector-desc rd-connector-proof">
-        <span>{checks[c.name]
-          ? (checks[c.name].ok
-              ? `✓ Verified — ${checks[c.name].tools} tools available`
-              : `✗ ${checks[c.name].detail ?? "Verification failed"}`)
-          : "Configured · not verified this session"}</span>
-        <span> · {lastUsedLabel(c)}</span>
-        <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy !== null} onClick={() => verify(c)}>
-          {busy === c.name ? "Checking…" : "Check now"}
-        </button>
-      </div>}
-      {c.enabled && <div className="rd-connector-desc">{availabilityLabel(c)}</div>}
-      {c.managed ? <div className="rd-connector-desc">Managed through the remote connector administrator.</div> : <>
-        {c.credential && <div className="rd-connector-installed">
-          <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy !== null} onClick={() => edit(c)}>Change connection</button>
-          <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy !== null} onClick={() => change(c, "forget")}>Forget stored credentials</button>
-          <a href={c.revoke_url} target="_blank" rel="noreferrer">Revoke at {c.title} ↗</a>
-          <div>Revocation must be completed on the provider’s website. Disable does not revoke authorization.</div>
+    <div className="rd-panel-head"><span>Connectors · {hostName(sessionKey)}</span><button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={refresh}>Refresh</button></div>
+    {rows.map(c => {
+      const connected = !!c.credential;
+      const lost = c.unreachable_harnesses ?? [];
+      return <div key={c.name} className="rd-connector">
+        <div className="rd-connector-row">
+          <span className={`dot ${c.agents_use ? "on" : connected ? "part" : "off"}`} />
+          <span className="rd-connector-title">{c.title}</span>
+          <span className="rd-connector-cred">
+            {connected
+              ? c.identity ?? "Identity not verified — reconnect to verify"
+              : "Not connected"}
+          </span>
+          {connected && !c.managed && <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy !== null} onClick={() => edit(c)}>Change</button>}
+          {editing === c.name && <button className="rd-btn rd-btn-ghost rd-btn-sm" aria-label={`Close ${c.title} connection settings`} onClick={() => { setEditing(null); setToken(""); }}>Close</button>}
+        </div>
+
+        {connected && <div className="rd-connector-desc">{sourceNames[c.credential!] ?? c.credential} · {c.description}</div>}
+
+        {/* The two doors, each said separately. One line for both read as
+            "Duckterm stopped using it" whenever agents were off. */}
+        {connected && <div className="rd-connector-doors">
+          <div className="rd-door on">
+            <span className="rd-door-mark" aria-hidden="true">▸</span>
+            <div>
+              <strong>Duckterm uses it</strong>
+              <div className="rd-connector-desc">Pull request status, repository browser, code review and transfers.</div>
+            </div>
+          </div>
+          <div className={`rd-door ${c.agents_use ? "on" : "off"}`}>
+            <span className="rd-door-mark" aria-hidden="true">{c.agents_use ? "▸" : "×"}</span>
+            <div>
+              <strong>{c.agents_use ? "Agents use it" : "Agents cannot use it"}</strong>
+              <div className="rd-connector-desc">
+                {c.agents_use
+                  ? agentReachLabel(c)
+                  : lost.length && !c.agents_off_by_choice
+                  ? `${harnessList(lost)} ${lost.length > 1 ? "have" : "has"} no entry for it, so ${lost.length > 1 ? "those agents" : "that agent"} cannot reach it. Re-register below, or deselect ${lost.length > 1 ? "them" : "it"}.`
+                  : "No agent session can reach GitHub. Your login stays saved."}
+              </div>
+            </div>
+          </div>
         </div>}
-        {editing === c.name && <div className="rd-connector-token">
-          <label>Credential source <select aria-label={`${c.title} credential source`} value={source} onChange={e => { setSource(e.target.value); setToken(""); setSecret(""); }}>
-            <option value="" disabled>Choose a source</option>
-            {(c.sources ?? []).map(s => <option key={s} value={s}>{sourceNames[s] ?? s}</option>)}
-          </select></label>
-          {source === "stored" && <>
-            <input aria-label={`${c.title} API key`} type="password" autoComplete="off" value={token} placeholder={c.credential === "stored" ? "Leave blank to reuse stored credentials" : "API key or personal access token"} onChange={e => setToken(e.target.value)} />
-            {c.name === "porkbun" && <input aria-label="Porkbun secret key" type="password" autoComplete="off" value={secret} placeholder="Secret key" onChange={e => setSecret(e.target.value)} />}
-          </>}
-          {c.name === "porkbun" && <label><input type="checkbox" aria-label="Allow changes to domains and DNS records" checked={write} onChange={e => setWrite(e.target.checked)} />Allow changes to domains and DNS records</label>}
-          <fieldset className="rd-connector-harnesses">
-            <legend>Available to</legend>
-            {HARNESS_ORDER.map(h => {
-              const present = c.harnesses_present?.[h] ?? true;
-              return <label key={h}>
-                <input
-                  type="checkbox"
-                  aria-label={harnessNames[h]}
-                  checked={harnesses.includes(h)}
-                  onChange={e => setHarnesses(prev =>
-                    e.target.checked ? [...HARNESS_ORDER].filter(x => x === h || prev.includes(x))
-                                     : prev.filter(x => x !== h))}
-                />
-                {harnessNames[h]}
-                {!present && <span className="dim"> · not installed here</span>}
-              </label>;
-            })}
-          </fieldset>
-          <button className="rd-btn rd-btn-sm rd-btn-primary" disabled={busy !== null || !source || harnesses.length === 0} onClick={() => change(c, "enable")}>Verify and enable</button>
+
+        {connected && c.runner_ready === false && <div className="rd-connector-desc rd-connector-warn">
+          Agents also need the server to run: {c.detail}
         </div>}
-      </>}
-    </div>)}
+
+        {c.agents_use && <div className="rd-connector-desc rd-connector-proof">
+          <span>{checks[c.name]
+            ? (checks[c.name].ok
+                ? `✓ Verified — ${checks[c.name].tools} tools available`
+                : `✗ ${checks[c.name].detail ?? "Verification failed"}`)
+            : "Configured · not verified this session"}</span>
+          <span> · {lastUsedLabel(c)}</span>
+          <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy !== null} onClick={() => verify(c)}>
+            {busy === c.name ? "Checking…" : "Check now"}
+          </button>
+        </div>}
+
+        {c.managed ? <div className="rd-connector-desc">Managed through the remote connector administrator.</div> : <>
+          {/* Not connected: the prerequisite first, then the two ways in. A
+              dropdown for a binary choice hid that gh needs nothing pasted. */}
+          {!connected && editing !== c.name && <div className="rd-connector-connect">
+            <div className="rd-connector-desc">{c.description} — lets Duckterm show pull request status and browse your repositories, and lets agents work with issues, PRs and Actions.</div>
+            {c.runner_ready === false
+              ? <div className="rd-connector-desc rd-connector-warn">Before connecting: {c.detail}</div>
+              : <div className="rd-connector-desc">✓ Found the GitHub MCP server, so agents can run it.</div>}
+            {(c.sources ?? []).includes("gh-cli") && <button className="rd-btn rd-btn-sm rd-btn-primary" disabled={busy !== null} onClick={() => { setSource("gh-cli"); setToken(""); setHarnesses(c.harnesses ?? HARNESS_ORDER); void change({ ...c, credential: "gh-cli" }, "enable", c.harnesses ?? HARNESS_ORDER); }}>
+              Use my GitHub CLI login
+            </button>}
+            <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy !== null} onClick={() => { setEditing(c.name); setSource("stored"); setToken(""); setHarnesses(c.harnesses ?? HARNESS_ORDER); }}>
+              Paste a token instead
+            </button>
+            <div className="rd-connector-desc">Finished signing in elsewhere? <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={refresh}>Refresh credentials</button></div>
+          </div>}
+
+          {connected && <div className="rd-connector-installed">
+            {c.agents_use
+              ? <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy !== null} onClick={() => change(c, "disable")}>Stop sharing with agents</button>
+              : <button className="rd-btn rd-btn-sm rd-btn-primary" disabled={busy !== null} onClick={() => change(c, "enable", c.harnesses ?? HARNESS_ORDER)}>Share with agents</button>}
+            <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy !== null} onClick={() => change(c, "forget")}>Sign out</button>
+            {/* Revoking lives in the sentence, not the button row: it happens on
+                github.com, so offering it beside Sign out read as a third thing
+                Duckterm does. */}
+            <div>Signing out deletes the token Duckterm stored. Revoking the authorization itself must be done <a href={c.revoke_url} target="_blank" rel="noreferrer">on github.com ↗</a>.</div>
+          </div>}
+
+          {editing === c.name && <div className="rd-connector-token">
+            <label>Credential
+              <select aria-label={`${c.title} credential source`} value={source} onChange={e => { setSource(e.target.value); setToken(""); }}>
+                {(c.sources ?? []).map(s => <option key={s} value={s}>{sourceNames[s] ?? s}</option>)}
+              </select>
+            </label>
+            {source === "stored" && <>
+              <input aria-label={`${c.title} personal access token`} type="password" autoComplete="off" value={token} placeholder={c.credential === "stored" ? "Leave blank to reuse the stored token" : "ghp_… or github_pat_…"} onChange={e => setToken(e.target.value)} />
+              {/* A gh token cannot go below repo + read:org + gist, so a
+                  fine-grained token is the only way to hand agents less. */}
+              <div className="rd-connector-desc">A fine-grained token lets you limit which repositories agents reach, and grant read-only access. Your CLI login cannot go narrower than full <code>repo</code> access.</div>
+            </>}
+            <fieldset className="rd-connector-harnesses">
+              <legend>Share with</legend>
+              {HARNESS_ORDER.map(h => {
+                const present = c.harnesses_present?.[h] ?? true;
+                return <label key={h}>
+                  <input
+                    type="checkbox"
+                    aria-label={harnessNames[h]}
+                    checked={harnesses.includes(h)}
+                    onChange={e => setHarnesses(prev =>
+                      e.target.checked ? [...HARNESS_ORDER].filter(x => x === h || prev.includes(x))
+                                       : prev.filter(x => x !== h))}
+                  />
+                  {harnessNames[h]}
+                  {!present && <span className="dim"> · not installed here</span>}
+                </label>;
+              })}
+            </fieldset>
+            <div className="rd-connector-desc">Duckterm uses the credential for pull request status either way. This chooses which agents may also use it.</div>
+            <button className="rd-btn rd-btn-sm rd-btn-primary" disabled={busy !== null || !source || harnesses.length === 0} onClick={() => change(c, "enable")}>
+              {harnesses.length ? "Verify and share" : "Verify"}
+            </button>
+          </div>}
+        </>}
+      </div>;
+    })}
   </div>;
 }

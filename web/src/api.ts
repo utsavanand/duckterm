@@ -290,13 +290,19 @@ export interface Connector {
   description: string;
   identity: string | null;
   sources: string[];
-  write_access: boolean;
   revoke_url: string;
-  credential: string | null; // "gh-cli" | "stored" | "railway-cli" | null
+  credential: string | null; // "gh-cli" | "stored" | null
   installed: Record<string, boolean>; // per harness
   harnesses: string[]; // the agents this connector is registered for
   harnesses_present: Record<string, boolean>; // which agent CLIs exist here
-  enabled: boolean;
+  enabled: boolean; // duckterm_uses && agents_use, for callers that want one answer
+  // The two doors. `enabled` cannot say which one is shut, and Disable and a
+  // lost harness entry need different fixes, so the panel reads these instead.
+  duckterm_uses: boolean; // PR status, repo browser, review, transfers
+  agents_use: boolean; // agent sessions can resolve it through their harness
+  agents_off_by_choice: boolean; // the owner turned it off, vs an entry went missing
+  unreachable_harnesses: string[]; // chosen harnesses with no MCP entry
+  runner_ready: boolean; // github-mcp-server or Docker exists here
   ready: boolean;
   detail: string | null;
   last_used: number | null; // epoch ms of the newest hook-reported tool call
@@ -595,11 +601,10 @@ export const api = {
     get<{ branches: string[] }>(`/branches?path=${encodeURIComponent(path)}`),
   zshThemes: () => get<{ themes: string[] }>("/zsh-themes"),
   connectors: (context?: string, signal?: AbortSignal) => get<{ connectors: Connector[] }>("/connectors", context, { authed: true, signal }),
-  enableConnector: (name: string, token?: string, secret?: string, source?: string, write_access = false, context?: string, harnesses?: string[]) =>
+  enableConnector: (name: string, token?: string, source?: string, context?: string, harnesses?: string[]) =>
     post<Connector>(`/connectors/${name}/enable`, {
-      source, write_access,
+      source,
       ...(token ? { token } : {}),
-      ...(secret ? { secret } : {}),
       ...(harnesses ? { harnesses } : {}),
     }, context),
   forgetConnector: (name: string, context?: string) => post<Connector>(`/connectors/${name}/forget`, {}, context),

@@ -4942,12 +4942,8 @@ class Server:
         except json.JSONDecodeError:
             await _write_json(writer, 400, {"error": "invalid JSON"})
             return
-        if not isinstance(req, dict) or (
-            "write_access" in req and not isinstance(req["write_access"], bool)
-        ):
-            await _write_json(
-                writer, 400, {"error": "expected an object with boolean write_access"}
-            )
+        if not isinstance(req, dict):
+            await _write_json(writer, 400, {"error": "expected an object"})
             return
         harnesses = req.get("harnesses")
         if harnesses is not None and not (
@@ -4956,15 +4952,12 @@ class Server:
             await _write_json(writer, 400, {"error": "harnesses must be a list of names"})
             return
         token = str(req.get("token") or "").strip() or None
-        secret = str(req.get("secret") or "").strip() or None
         try:
             result = await asyncio.to_thread(
                 connectors.enable,
                 name,
                 token,
-                secret,
                 source=req.get("source"),
-                write_access=req.get("write_access", False),
                 harnesses=harnesses,
             )
         except ValueError as e:
