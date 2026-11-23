@@ -151,3 +151,39 @@ its framework/helpers. Settings updates the whole app bundle. See
 [Mac update architecture and release procedure](../docs/development/mac-updates.md)
 for public-key configuration, signed feeds, and isolated Test validation.
 Development builds without an update public key run with updates unavailable.
+
+## Distribution installer
+
+Website and emailed installation links use an edition-specific DMG. Open the
+image, drag the app to Applications, then open the copied app from Applications.
+Finder handles any existing-app replacement confirmation. The installer does
+not move files automatically or change DuckTerm session data.
+
+Keep signed ZIPs and their appcasts for in-app Sparkle updates. After signing,
+notarizing, and stapling each app, build both formats from that same bundle:
+
+```sh
+# Use the matching edition name and release version for each of Lite, Code, Full.
+mac/archive-bundle.sh "$APP" "$RELEASE_DIR/DuckTerm-Full-$VERSION-macos-arm64.zip"
+python3 mac/build-installer.py "$APP" "$RELEASE_DIR/DuckTerm-Full-$VERSION-macos-arm64.dmg"
+```
+
+The DMG builder requires a logged-in Finder session and may request permission
+to configure Finder. It changes only the temporary image window. It verifies
+bundle signatures and checks every packaged file against the input. It never
+launches the app or overwrites an existing output.
+
+Use the existing release identity and notarization profile to sign the final
+DMG, submit it to Apple's notarization service, and staple its ticket. Credentials
+remain in the release environment; the builder never creates or reads them.
+`python3 scripts/verify_mac_installers.py --archives "$RELEASE_DIR" --version "$VERSION"`
+checks all three final DMGs, their tickets and Gatekeeper approval, their
+Applications shortcuts and window layouts, and equality with the ZIP contents.
+`scripts/release.sh prod` requires this verification and publishes versioned
+DMGs plus stable DMG and ZIP aliases. Publish all assets before switching website
+and email links to the DMG aliases. Older ZIP links stay available.
+
+Run `python3 mac/Tests/installer-bundle.py` on a Mac with Finder to exercise the
+real disk-image pipeline using an ad-hoc-signed disposable Test app. It never
+installs or launches that app. CI's headless unit tests cover rejection and
+mount cleanup; the release Mac must run the real Finder test as well.

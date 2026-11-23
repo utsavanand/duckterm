@@ -170,6 +170,11 @@ longer wording at desktop and narrow viewport sizes.
 
 ## 2026-11-22 — Test checkpoint capture across the actual thread boundary
 
+## 2026-11-22 — Downloaded apps need an installation path
+
+A Mac running 0.4.209 could not check for updates because macOS translocated the downloaded app. Sparkle correctly returned 1005, but our custom UI discarded its recovery instructions and only said to retry. ZIP downloads also encouraged opening the app before moving it to Applications. Ship Finder DMGs with a visible Applications shortcut, retain ZIPs for signed updater delivery, and map install-location errors to explicit quit/move/reopen instructions. Verify the DMG preserves the signed app, is read-only, and refuses output overwrites. Exercise this using a disposable signed fixture, not the owner's installation.
+
+
 ## 2026-11-22 — Closing the listener is not completing a restart
 
 A server released its dashboard port but stayed alive in shutdown. Cleanup awaited
