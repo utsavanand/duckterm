@@ -2,18 +2,18 @@ import { ComponentType, useCallback, useEffect, useMemo, useRef, useState, useSy
 import { authHeaders } from "./api";
 import { StreamState, WidgetStreams } from "./widgetStreams";
 import "./widgets.css";
-export type WidgetSlot = "oracle" | "folder";
+export type WidgetSlot = "oracle" | "folder" | "home";
 export interface WidgetInstance { id: string; type: string; slot: WidgetSlot; position: number; params: Record<string, string>; }
 export interface WidgetType { type: string; title: string; slots: WidgetSlot[]; streams: string[]; render: ComponentType<{ streams: Record<string, StreamState>; params: Record<string, string> }>; }
-interface Layout { instances: WidgetInstance[]; revision: string; }
+export interface Layout { instances: WidgetInstance[]; revision: string; }
 export function defaultLayout(slot: WidgetSlot, registry: WidgetType[], folder?: string): WidgetInstance[] {
   return registry.filter(type => type.slots.includes(slot)).map((type, position): WidgetInstance => ({ id: type.type, type: type.type, slot, position, params: folder ? { folder } : {} }));
 }
-async function request(surface: string, body?: Layout): Promise<Layout> {
+export async function requestLayout(surface: string, body?: Layout): Promise<Layout> {
   const response = await fetch(`/layouts/${encodeURIComponent(surface)}`, { method: body ? "PUT" : "GET", cache: "no-store", headers: authHeaders({ "Content-Type": "application/json" }), ...(body ? { body: JSON.stringify(body) } : {}) });
   const value = await response.json(); if (!response.ok) throw new Error(value.error || `Layout request failed (${response.status})`); return value;
 }
-function WidgetContent({ type, instance, source }: { type: WidgetType; instance: WidgetInstance; source: WidgetStreams }) {
+export function WidgetContent({ type, instance, source }: { type: WidgetType; instance: WidgetInstance; source: WidgetStreams }) {
   const view = useMemo(() => {
     let snapshot = Object.fromEntries(type.streams.map(name => [name, source.read(name)]));
     return {
@@ -41,7 +41,7 @@ export function Widgets({ surface, slot, registry, source, kindLabel = slot === 
   const root = useRef<HTMLElement>(null), active = useRef(true), saveLock = useRef(false);
   const load = useCallback(async () => {
     setLoading(true); setError("");
-    try { const value = await request(surface); if (active.current) setLayout(value); }
+    try { const value = await requestLayout(surface); if (active.current) setLayout(value); }
     catch (e) { if (active.current) setError((e as Error).message); }
     finally { if (active.current) setLoading(false); }
   }, [surface]);
@@ -64,7 +64,7 @@ export function Widgets({ surface, slot, registry, source, kindLabel = slot === 
     const focused = document.activeElement as HTMLElement | null;
     saveLock.current = true; setSaving(true); setError("");
     try {
-      const next = await request(surface, { revision: layout.revision, instances: instances.map((item, position) => ({ ...item, position })) });
+      const next = await requestLayout(surface, { revision: layout.revision, instances: instances.map((item, position) => ({ ...item, position })) });
       if (active.current) { setLayout(next); setMenu(null); setAnnouncement("Widget layout saved"); }
     } catch (e) { if (active.current) setError((e as Error).message); }
     finally { saveLock.current = false; if (active.current) { setSaving(false); requestAnimationFrame(() => { if (active.current && focused?.isConnected) focused.focus(); }); } }
@@ -75,7 +75,7 @@ export function Widgets({ surface, slot, registry, source, kindLabel = slot === 
     const [item] = next.splice(index, 1); next.splice(target, 0, item); void save(next);
   }
   const disabled = loading || saving;
-  return <section ref={root} className="rd-widgets" aria-label={slot === "oracle" ? "Fleet insights" : "Folder widgets"} onKeyDown={event => {
+  return <section ref={root} className="rd-widgets" aria-label={slot === "oracle" ? "Fleet insights" : "Workspace widgets"} onKeyDown={event => {
     if (event.key === "Escape" && (add || menu)) { event.stopPropagation(); setAdd(false); setMenu(null); }
   }}>
     <header className="rd-widgets-heading"><h2>Widgets</h2><div><button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={disabled || !!error} onClick={() => void save(defaults)}>Reset</button><button className="rd-btn rd-btn-ghost rd-btn-sm" aria-expanded={add} disabled={disabled || !!error} onClick={() => setAdd(!add)}>Add widget</button></div>

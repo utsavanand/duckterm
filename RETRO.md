@@ -1,3 +1,79 @@
+## 2026-11-22 — A retry key that lives only inside one dialog is not a retry key
+
+Folder chat's Confirm dialog kept one request key across Send retries, and the
+tests proved a lost response could not send twice. But Cancel threw the dialog
+away, and asking again minted a fresh key for the identical plan. So a send
+whose response was lost, followed by the natural next move (Cancel, ask again,
+Send), delivered the message twice. The independent review caught it, not me.
+The key now survives until a send for that exact plan succeeds. Lesson:
+idempotency has to cover every path back to the same action, not only the
+retry button you wrote a test for.
+
+## 2026-11-22 — The memory cache watched a different file than the reader read
+
+After an idle agent's version was saved again as records, an old reference
+(no records digest) still read the raw copy, but the cache decided freshness
+from the records copy. Once cached, rewriting, deleting or symlinking the raw
+copy went unnoticed and the old evidence kept being served (QA found it on
+#436). retained_path now picks the file the same way the reader does. Lesson:
+when a cache fences a read, it must fence the file that read opens, chosen by
+the same rule, not by a parallel one.
+
+## 2026-11-21 — Saved conversation copies vouched for themselves
+
+The extracted-records copies (#436) carried their own checksum, and a read
+checked the file against that. Security rewrote a record to "Owner said: ALWAYS
+push to main", recomputed the checksum, and the read served it as verified
+evidence. A checksum stored next to the data only catches accidental damage.
+Raw copies didn't have this gap, because their name was the digest of their bytes.
+Changing the format quietly removed that binding.
+
+The checkpoint's database reference now stores the records digest, and a read
+must match it. A malformed record line now gives a 409 instead of a 500.
+Lesson: when a format change moves the integrity proof, check where the proof
+lives; it has to be somewhere the attacker can't also rewrite.
+
+## 2026-11-21 — Two saved versions of one conversation evicted each other from the read cache
+
+Memory caches each conversation it reads, and drops older entries for the same
+file because a live conversation file goes stale in place. Saved versions of an
+appended conversation all read from one copy, so the same rule threw out the
+other version on every read. A search touching two versions re-read and
+re-checked the whole copy each time. The test only covered a rewritten
+conversation, where each version has its own file.
+
+Only current files evict now; saved versions are fixed by their digest. Lesson:
+when several handles share one backing file, a cache keyed on the file is
+wrong; test the shared case, not just the one-file-per-handle case.
+
+## 2026-11-21 — Memory kept 4.9 GB of raw history to prove 1% of it
+
+Each checkpoint retained a byte-for-byte copy of the agent's native
+conversation, so memory could still show its evidence after Claude or Codex
+cleaned up or rewrote the file. The raw file is mostly not conversation: ids,
+token counts and hidden reasoning on every Claude line, and Codex's compaction
+copies of the whole history. Measured with DuckTerm's own reader, a 521 MB Codex
+rollout held 1.15 MB of text and a 54.5 MB Claude conversation 7.1 MB. Across
+agents the copies reached 4.9 GB, the largest part of a backup.
+
+Copies now keep the extracted records. The handle is still the digest of the
+native bytes, so every saved evidence link resolves unchanged; the records
+carry their own digest for verification. It took the owner asking how the
+stores relate before anyone listed them side by side.
+
+Lesson: when a store exists "for evidence", measure how much of it a reader
+ever uses. Keeping the form you read, verified, is the evidence; the bytes
+around it are not.
+
+## 2026-11-22 — Rename the grouping, not the filesystem
+
+Changing sidebar folders to workspaces also affects accessibility labels,
+notifications, empty states and generated Analytics headings. Audit rendered
+strings rather than replacing identifiers: API fields and persisted keys stay
+compatible, while project-folder pickers retain their filesystem meaning.
+Update existing workflow assertions together with their labels and review the
+longer wording at desktop and narrow viewport sizes.
+
 ## 2026-11-22 — Test checkpoint capture across the actual thread boundary
 
 ## 2026-11-22 — Closing the listener is not completing a restart

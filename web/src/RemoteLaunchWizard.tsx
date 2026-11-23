@@ -115,7 +115,7 @@ export function RemoteLaunchWizard({ target, onTarget, onOtherProject, onClose, 
         <details><summary>Advanced options</summary>
           <Field label="Session name (optional)"><input aria-label="Session name" style={inputStyle} placeholder={repositoryName} value={name} disabled={busy} onChange={e => setName(e.target.value)} /></Field>
           <Field label="Branch"><input aria-label="Clone branch" style={inputStyle} placeholder="Repository default" value={project.branch} disabled={busy} onChange={e => changeProject({ branch: e.target.value })} /></Field>
-          <Field label="Sidebar folder"><select aria-label="Sidebar folder" style={inputStyle} value={folder} disabled={busy} onChange={e => setFolder(e.target.value)}><option value="">Ungrouped</option>{[...new Set([...folders, ...(group ? [group] : [])])].sort().map(f => <option key={f} value={f}>{f}</option>)}</select></Field>
+          <Field label="Sidebar workspace"><select aria-label="Sidebar workspace" style={inputStyle} value={folder} disabled={busy} onChange={e => setFolder(e.target.value)}><option value="">Ungrouped</option>{[...new Set([...folders, ...(group ? [group] : [])])].sort().map(f => <option key={f} value={f}>{f}</option>)}</select></Field>
         </details>
       </>}
       {step === 2 && <>

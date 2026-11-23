@@ -87,7 +87,7 @@ export function FloatingSessionShortcuts({ sessions, selected, onOpen, onToggle 
       const next = groups.filter(g => g.key !== key);
       next.splice(next.findIndex(g => g.key === target) + (after ? 1 : 0), 0, sourceGroup);
       order = next.flatMap(g => g.sessions.map(s => s.key));
-      setAnnouncement(`${sourceGroup.sessions[0].group || "Ungrouped"}, folder position ${next.indexOf(sourceGroup) + 1} of ${next.length}`);
+      setAnnouncement(`${sourceGroup.sessions[0].group || "Ungrouped"}, workspace position ${next.indexOf(sourceGroup) + 1} of ${next.length}`);
     } else {
       const source = pins.find(s => s.key === key), destination = pins.find(s => s.key === target);
       if (!source || !destination || groupOf(source) !== groupOf(destination)) return;
@@ -176,7 +176,7 @@ export function FloatingSessionShortcuts({ sessions, selected, onOpen, onToggle 
     <div className="rd-shortcut-list">{groups.map(group => <section key={group.key} data-key={group.key}
       className={`rd-shortcut-group${dragKey === group.key ? " dragging" : ""}${drop?.key === group.key ? drop.after ? " drop-after" : " drop-before" : ""}`}>
       <button className="rd-shortcut-group-heading" {...dragBindings(group.key, "group")}
-        aria-label={`Reorder folder ${locationOf(group.sessions[0])}`} title="Drag folder to reorder · Alt + ↑ / ↓"
+        aria-label={`Reorder workspace ${locationOf(group.sessions[0])}`} title="Drag workspace to reorder · Alt + ↑ / ↓"
         aria-keyshortcuts="Alt+ArrowUp Alt+ArrowDown"
         onKeyDown={event => { if (event.altKey && ["ArrowUp", "ArrowDown"].includes(event.key)) { event.preventDefault(); move(group.key, event.key === "ArrowUp" ? -1 : 1); } }}>
         <span>{group.sessions[0].group || "Ungrouped"}{hostOf(group.sessions[0]) !== "local" && <small>{group.sessions[0].hostLabel || hostName(group.sessions[0].key)}</small>}</span><span>{group.sessions.length}</span>
