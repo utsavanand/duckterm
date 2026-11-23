@@ -10,7 +10,7 @@ test("explicit assignment creates a visible task and ordinary messages do not", 
     const tasks = async () => { const response = await fetch(`${base()}/api/v1/session/tasks`, { headers: { Authorization: `Bearer ${enrollment.body.token}` } }); expect(response.ok).toBe(true); return (await response.json()).tasks; };
     await page.setViewportSize({ width: 1440, height: 1000 }); await page.emulateMedia({ colorScheme: "dark" }); await page.goto(base());
     await page.locator(".rd-group-head").filter({ has: page.getByRole("button", { name: `View interactions in ${folder}`, exact: true }) }).locator(".rd-group-name").click();
-    const input = page.getByRole("textbox", { name: "Ask this folder" });
+    const input = page.getByRole("textbox", { name: "Ask this workspace" });
     await input.fill("@"); await page.getByRole("option", { name: /Design agent/ }).click();
     await input.fill("Review the mobile navigation");
     await page.getByRole("button", { name: "Send to Design agent", exact: true }).click();

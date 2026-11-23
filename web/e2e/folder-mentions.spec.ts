@@ -23,7 +23,7 @@ test("folder mentions deliver owner questions, retain replies, and review broadc
     await page.setViewportSize({ width: 1440, height: 1000 });
     await page.emulateMedia({ colorScheme: 'dark' });
     await page.goto(base()); await header().click();
-    const input = page.getByRole('textbox', { name: 'Ask this folder' });
+    const input = page.getByRole('textbox', { name: 'Ask this workspace' });
     await input.fill('@');
     await expect(page.getByRole('option', { name: /ui-dev/ })).toBeVisible();
     await page.screenshot({ path: '/tmp/duckterm-mentions-implemented.png' });

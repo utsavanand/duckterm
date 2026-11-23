@@ -385,20 +385,20 @@ function Tokens({ data, range }: { data: TokenAnalytics; range: Range }) {
                     model: "By model",
                     agent: "By agent",
                     session: "Top sessions",
-                    folder: "Top folders",
+                    folder: "Top workspaces",
                   }[field]
                 }
                 description={
                   field === "model"
                     ? "Exact model identifiers reported in transcripts"
                     : field === "session" || field === "folder"
-                      ? "Current session names and folder placement"
+                      ? "Current session names and workspace placement"
                       : "Total tokens in the selected range"
                 }
                 table={
                   <Table
                     headers={[
-                      field[0].toUpperCase() + field.slice(1),
+                      field === "folder" ? "Workspace" : field[0].toUpperCase() + field.slice(1),
                       "Tokens",
                     ]}
                     rows={rows.map((r) => [
@@ -651,7 +651,7 @@ function Mail({
           <Panel
             wide
             title="Broadcasts & Oracle nudges"
-            description="Broadcasts count recipient deliveries, not folder actions"
+            description="Broadcasts count recipient deliveries, not workspace actions"
             table={
               <Table
                 headers={["Day (UTC)", "Broadcast deliveries", "Oracle nudges"]}
@@ -842,16 +842,16 @@ export function Analytics({
         <div className="an-filters">
           {(["agent", "folder", "session"] as const).map((k) => (
             <label key={k}>
-              {k[0].toUpperCase() + k.slice(1)}
+              {(k === "folder" ? "Workspace" : k[0].toUpperCase() + k.slice(1))}
               <select
-                aria-label={k[0].toUpperCase() + k.slice(1)}
+                aria-label={(k === "folder" ? "Workspace" : k[0].toUpperCase() + k.slice(1))}
                 disabled={tab === "mail"}
                 value={tab === "mail" ? "" : filters[k]}
                 onChange={(e) =>
                   setFilters({ ...filters, [k]: e.target.value })
                 }
               >
-                <option value="">All {k}s</option>
+                <option value="">All {k === "folder" ? "workspaces" : `${k}s`}</option>
                 {tokens?.options[`${k}s`].map((v) => (
                   <option key={v.value} value={v.value}>
                     {v.label}

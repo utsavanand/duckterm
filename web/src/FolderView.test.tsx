@@ -5,7 +5,7 @@ import { FolderView } from "./FolderView";
 import { edition, CODE, FULL, LITE } from "./test/editions";
 import { StaticEdition } from "./edition";
 vi.mock("./api", () => ({ api: { folderChat: vi.fn(), fleetAsk: vi.fn(), folderArtifacts: vi.fn(), folderRecipients: vi.fn(), folderDispatch: vi.fn() } }));
-vi.mock("./FolderDetails", () => ({ FolderDetails: ({ presentation }: { presentation?: string }) => <aside>{presentation === "overview" ? "Folder overview" : "Folder details"}</aside> }));
+vi.mock("./FolderDetails", () => ({ FolderDetails: ({ presentation }: { presentation?: string }) => <aside>{presentation === "overview" ? "Workspace overview" : "Workspace details"}</aside> }));
 vi.mock("./ArtifactsView", () => ({ ArtifactsView: ({ folder }: { folder: string }) => <p>Files from {folder}</p> }));
 beforeEach(() => { vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }))); });
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
@@ -13,7 +13,7 @@ it("opens Lite on Overview without mounting or requesting folder chat", async ()
   render(<FolderView folder="Website" />, { wrapper: edition(LITE, "lite") });
   await act(async () => {});
   expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
-  expect(screen.getByRole("tabpanel", { name: "Overview" })).toHaveTextContent("Folder overview");
+  expect(screen.getByRole("tabpanel", { name: "Overview" })).toHaveTextContent("Workspace overview");
   expect(screen.queryByRole("tab", { name: "Chat" })).toBeNull();
   expect(screen.queryByRole("textbox")).toBeNull();
   expect(screen.queryByRole("button", { name: /Details/ })).toBeNull();
@@ -45,7 +45,7 @@ it("hides a mounted chat and chooses an available tab after edition capabilities
   await act(async () => {});
   view.rerender(<StaticEdition features={LITE} id="lite"><FolderView folder="Website" /></StaticEdition>);
   expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
-  expect(screen.queryByLabelText("Ask this folder")).toBeNull();
+  expect(screen.queryByLabelText("Ask this workspace")).toBeNull();
   expect(api.folderChat).toHaveBeenCalledTimes(1);
 });
 it("sends only the selected folder and keeps the answer when switching tabs", async () => {
