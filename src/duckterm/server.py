@@ -346,6 +346,9 @@ _ROUTES: list[Route] = [
           prefix="/harnesses/"),
     # ── autopilot: flows started by triggers, run in sandboxes (flag `autopilot`) ──
     Route("GET", "/api/autopilot", lambda s, r, w, h, b, seg: s._autopilot(w, ap_api.overview)),
+    # Routes match the raw path, query included: one workspace's flows and runs.
+    Route("GET", "", lambda s, r, w, h, b, seg: s._autopilot(
+        w, ap_api.overview, urllib.parse.unquote(seg)), prefix="/api/autopilot?workspace="),
     Route("GET", "/api/autopilot/summary",
           lambda s, r, w, h, b, seg: s._autopilot(w, ap_api.summary)),
     Route("GET", "/api/autopilot/repositories",

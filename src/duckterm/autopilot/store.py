@@ -106,6 +106,9 @@ def _validated(body: dict[str, Any], base: dict[str, Any]) -> dict[str, Any]:
             raise ValueError(f"Use at most {MAX_LABELS} labels")
         triggers[kind] = {"labels": sorted({str(x).strip() for x in labels if str(x).strip()})}
     name = str(body.get("name") or "").strip()[:80] or f"{repo.split('/')[1]} {flow.name}"
+    workspace = str(body.get("workspace") or "").strip().strip("/")
+    if len(workspace) > 200:
+        raise ValueError("Workspace name is too long")
     raw_approvals = body.get("approvals")
     approvals = raw_approvals if isinstance(raw_approvals, dict) else {}
     return {
@@ -114,6 +117,7 @@ def _validated(body: dict[str, Any], base: dict[str, Any]) -> dict[str, Any]:
         "created_at": base["created_at"],
         "flow": flow.id,
         "name": name,
+        "workspace": workspace,
         "repo": repo,
         "triggers": triggers,
         "approvals": {

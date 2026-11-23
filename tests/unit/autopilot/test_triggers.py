@@ -191,6 +191,33 @@ def test_changing_the_labels_starts_over_from_what_is_there(tmp_path: Path) -> N
 def test_autopilot_routes_belong_to_the_autopilot_flag() -> None:
     from duckterm import editions
 
-    for url in ("/api/autopilot", "/api/autopilot/autopilots/ap-1/run", "/api/autopilot/runs/x"):
+    for url in (
+        "/api/autopilot",
+        "/api/autopilot?workspace=Team",
+        "/api/autopilot/autopilots/ap-1/run",
+        "/api/autopilot/runs/x",
+    ):
         assert editions.request_features("GET", url) == ("autopilot",), url
     assert "autopilot" in editions.DEVELOPMENT
+
+
+def test_a_workspace_sees_its_own_and_its_subfolders_flows_and_runs(home: Path) -> None:
+    from duckterm.autopilot import api, runs
+
+    mine = store.create(_body(workspace="Team/"))
+    store.create(_body(workspace="Team/web"))
+    store.create(_body(workspace="Teamwork"))
+    store.create(_body())
+    meta = {
+        "id": "r1",
+        "autopilot": mine["id"],
+        "workspace": "Team",
+        "state": "succeeded",
+        "started_at": 1,
+    }
+    runs._write_meta(runs.runs_root() / "r1", meta)
+    other = {**meta, "id": "r2", "workspace": "Teamwork"}
+    runs._write_meta(runs.runs_root() / "r2", other)
+    entries = [e for e in store.load() if api.in_workspace(e, "Team")]
+    assert sorted(e["workspace"] for e in entries) == ["Team", "Team/web"]
+    assert [r["id"] for r in runs.list_runs() if api.in_workspace(r, "Team")] == ["r1"]

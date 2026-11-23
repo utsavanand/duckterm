@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from "react";
 import {
   AutopilotDraft, AutopilotEntry, AutopilotFlow, AutopilotOverview, AutopilotRun, AutopilotSummary, autopilotApi, TriggerType,
 } from "./autopilotApi";
+import { api } from "./api";
 import { Button, inputStyle, Modal } from "./ui";
 import "./autopilot.css";
 
@@ -128,7 +129,7 @@ export function AutopilotPage() {
           <h3>{entry.name}</h3>
           <span className={entry.on ? "ap-on" : "ap-paused"}>{entry.on ? "On" : "Paused"}</span>
         </div>
-        <div className="ap-muted">{flowTitle(flowsById.get(entry.flow)?.name ?? entry.flow)} · <b>{entry.repo}</b></div>
+        <div className="ap-muted">{flowTitle(flowsById.get(entry.flow)?.name ?? entry.flow)} · <b>{entry.repo}</b>{entry.workspace ? <> · in {entry.workspace}</> : null}</div>
         <TriggerChips entry={entry} />
         <div className="ap-muted ap-small">
           {entry.watch.error ? <span className="ap-error-text">{entry.watch.error}</span>
@@ -175,7 +176,7 @@ function RunRow({ run, open, onToggle }: { run: AutopilotRun; open: boolean; onT
     <tr className="ap-row" onClick={onToggle} aria-expanded={open} tabIndex={0}
       onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onToggle(); } }}>
       <td>{run.item.number ? <span className="ap-num">#{run.item.number}</span> : null} {run.item.title ?? run.id}</td>
-      <td className="ap-muted">{run.autopilot_name}</td>
+      <td className="ap-muted">{run.autopilot_name}{run.workspace ? <span className="ap-small"> · {run.workspace}</span> : null}</td>
       <td>{step}</td>
       <td><span className={`ap-state ap-state-${run.state}`}>{STATE_LABEL[run.state] ?? run.state}</span></td>
       <td className="ap-mono">{run.tokens != null ? `${Math.round(run.tokens / 1000)}k` : "—"}</td>
@@ -226,7 +227,7 @@ function RunOnceDialog({ entry, onClose, onStarted }: { entry: AutopilotEntry; o
 const emptyDraft = (flow: AutopilotFlow, repo: string, overview: AutopilotOverview): AutopilotDraft => {
   const first = flow.triggers.find(k => overview.triggers[k]?.available);
   return {
-    flow: flow.id, name: "", repo,
+    flow: flow.id, name: "", workspace: "", repo,
     triggers: first ? { [first]: { labels: first === "github-issue" ? ["autopilot"] : [] } } : {},
     approvals: { spec_on_visible: false, keep_merge_approval: false }, budget_m: 5, max_runs: 2,
   };
@@ -237,10 +238,11 @@ function SetupDialog({ overview, editing, onClose, onSaved }: {
 }) {
   const [step, setStep] = useState(editing ? 2 : 1);
   const [draft, setDraft] = useState<AutopilotDraft | null>(editing ? {
-    flow: editing.flow, name: editing.name, repo: editing.repo, triggers: editing.triggers,
+    flow: editing.flow, name: editing.name, workspace: editing.workspace ?? "", repo: editing.repo, triggers: editing.triggers,
     approvals: editing.approvals, budget_m: editing.budget_m, max_runs: editing.max_runs,
   } : null);
   const [repos, setRepos] = useState<string[] | null>(null);
+  const [workspaces, setWorkspaces] = useState<string[]>([]);
   const [labelsText, setLabelsText] = useState((editing?.triggers["github-issue"]?.labels ?? ["autopilot"]).join(", "));
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -248,6 +250,7 @@ function SetupDialog({ overview, editing, onClose, onSaved }: {
   useEffect(() => {
     let stopped = false;
     autopilotApi.repositories().then(list => { if (!stopped) setRepos(list); }).catch(() => { if (!stopped) setRepos([]); });
+    api.folders().then(r => { if (!stopped) setWorkspaces(r.folders); }).catch(() => undefined);
     return () => { stopped = true; };
   }, []);
 
@@ -317,6 +320,14 @@ function SetupDialog({ overview, editing, onClose, onSaved }: {
     </div>}
 
     {step === 2 && draft && flow && <>
+      <div className="ap-row2">
+      <label className="ap-field"><span>Workspace</span>
+        <select style={inputStyle} value={draft.workspace} onChange={e => setDraft({ ...draft, workspace: e.target.value })}>
+          <option value="">None</option>
+          {!workspaces.includes(draft.workspace) && draft.workspace && <option value={draft.workspace}>{draft.workspace}</option>}
+          {workspaces.map(w => <option key={w} value={w}>{w}</option>)}
+        </select>
+      </label>
       <label className="ap-field"><span>Repository</span>
         {repos && repos.length > 0
           ? <select style={inputStyle} value={draft.repo} onChange={e => setDraft({ ...draft, repo: e.target.value })}>
@@ -326,6 +337,7 @@ function SetupDialog({ overview, editing, onClose, onSaved }: {
           : <input style={inputStyle} value={draft.repo} placeholder={repos ? "owner/name" : "Loading repositories…"}
             onChange={e => setDraft({ ...draft, repo: e.target.value.trim() })} />}
       </label>
+      </div>
       <div className="ap-label">Start a run on</div>
       <div className="ap-trigs">
         {flow.triggers.map(kind => {
@@ -351,7 +363,7 @@ function SetupDialog({ overview, editing, onClose, onSaved }: {
       <label className="ap-field"><span>Name</span>
         <input style={inputStyle} value={draft.name} placeholder={finished().name} onChange={e => setDraft({ ...draft, name: e.target.value })} /></label>
       <div className="ap-recap">
-        {draft.repo}
+        {draft.repo}{draft.workspace ? <span className="ap-muted"> · in {draft.workspace}</span> : null}
         <ul>{(Object.keys(finished().triggers) as TriggerType[]).map(k => <li key={k}>{triggerLine(k, finished().triggers[k])}</li>)}</ul>
         <div className="ap-small ap-muted">Each run commits to its own branch on this Mac. Nothing is pushed or merged yet. Pause any time from its card.</div>
       </div>

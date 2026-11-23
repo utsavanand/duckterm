@@ -68,6 +68,7 @@ def start(autopilot: dict[str, Any], trigger: str, item: dict[str, Any]) -> str:
         "id": run_id,
         "autopilot": autopilot["id"],
         "autopilot_name": autopilot["name"],
+        "workspace": autopilot.get("workspace") or "",
         "flow": autopilot["flow"],
         "repo": autopilot["repo"],
         "trigger": trigger,

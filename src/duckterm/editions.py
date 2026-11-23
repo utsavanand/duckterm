@@ -169,7 +169,9 @@ def request_features(method: str, url: str, body: bytes = b"") -> tuple[str, ...
     paths = [urlsplit(url).path, url]
     if url == "/harnesses" or url.startswith("/harnesses/"):
         return ("skill_kits",)
-    if url == "/api/autopilot" or url.startswith("/api/autopilot/"):
+    if any(
+        p == "/api/autopilot" or p.startswith(("/api/autopilot/", "/api/autopilot?")) for p in paths
+    ):
         return ("autopilot",)
     if url.startswith("/sessions/"):
         # Prefix/suffix routes accept slashes inside the captured session key.

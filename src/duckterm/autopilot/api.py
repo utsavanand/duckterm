@@ -13,8 +13,16 @@ POLL_SECONDS = 120
 _watch: dict[str, dict[str, Any]] = {}
 
 
-def overview() -> dict[str, Any]:
-    entries = store.load()
+def in_workspace(item: dict[str, Any], workspace: str | None) -> bool:
+    """A workspace includes its subfolders, as the workspace view does."""
+    if workspace is None:
+        return True
+    own = str(item.get("workspace") or "")
+    return own == workspace or own.startswith(workspace + "/")
+
+
+def overview(workspace: str | None = None) -> dict[str, Any]:
+    entries = [e for e in store.load() if in_workspace(e, workspace)]
     for entry in entries:
         entry["active"] = runs.active(entry["id"])
         entry["watch"] = _watch.get(entry["id"], {})
@@ -25,7 +33,7 @@ def overview() -> dict[str, Any]:
             for kind, needs in catalog.TRIGGERS.items()
         },
         "autopilots": entries,
-        "runs": runs.list_runs()[:200],
+        "runs": [r for r in runs.list_runs() if in_workspace(r, workspace)][:200],
         "summary": runs.summary(),
         "problems": runs.readiness(),
     }

@@ -20,6 +20,7 @@ export interface AutopilotEntry {
   created_at: number;
   flow: string;
   name: string;
+  workspace: string;
   repo: string;
   triggers: Partial<Record<TriggerType, { labels: string[] }>>;
   approvals: { spec_on_visible: boolean; keep_merge_approval: boolean };
@@ -33,6 +34,7 @@ export interface AutopilotRun {
   id: string;
   autopilot: string;
   autopilot_name: string;
+  workspace: string;
   flow: string;
   repo: string;
   trigger: TriggerType;
@@ -68,6 +70,7 @@ export interface AutopilotOverview {
 export interface AutopilotDraft {
   flow: string;
   name: string;
+  workspace: string;
   repo: string;
   triggers: Partial<Record<TriggerType, { labels: string[] }>>;
   approvals: { spec_on_visible: boolean; keep_merge_approval: boolean };
@@ -91,7 +94,9 @@ async function call<T>(method: string, path: string, body?: unknown): Promise<T>
 }
 
 export const autopilotApi = {
-  overview: () => call<AutopilotOverview>("GET", "/api/autopilot"),
+  // A workspace includes its subfolders.
+  overview: (workspace?: string) =>
+    call<AutopilotOverview>("GET", workspace === undefined ? "/api/autopilot" : `/api/autopilot?workspace=${encodeURIComponent(workspace)}`),
   summary: () => call<AutopilotSummary>("GET", "/api/autopilot/summary"),
   repositories: () => call<string[]>("GET", "/api/autopilot/repositories"),
   create: (draft: AutopilotDraft) => call<AutopilotEntry>("POST", "/api/autopilot/autopilots", draft),

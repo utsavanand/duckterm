@@ -17,7 +17,7 @@ beforeEach(() => {
       "slack-message": { needs: "slack", available: false }, schedule: { needs: null, available: false },
     },
     autopilots: [],
-    runs: [{ id: "r1", autopilot: "ap-1", autopilot_name: "duckterm issues", flow: "autopilot/issue-to-merge", repo: "o/duckterm",
+    runs: [{ id: "r1", autopilot: "ap-1", autopilot_name: "duckterm issues", workspace: "Team", flow: "autopilot/issue-to-merge", repo: "o/duckterm",
       trigger: "github-issue", item: { number: 41, title: "Inbox badge stays", url: "https://github.com/o/duckterm/issues/41", started_by: "maintainer" },
       branch: "autopilot/r1", state: "failed", started_at: Date.now(), error: "Docker is not running", steps: [{ step: "spec", attempt: 1, exit: 0, choice: null }] }],
     summary: { available: true, active: 0, waiting_gate: 0, done_today: 0, failed_today: 1 },
@@ -28,6 +28,7 @@ beforeEach(() => {
     sent.push({ method, path, body: init?.body ? JSON.parse(String(init.body)) : undefined });
     const body = path === "/api/autopilot" ? overview
       : path === "/api/autopilot/repositories" ? ["o/duckterm", "o/uv-suite"]
+      : path === "/folders" ? { folders: ["Team", "Docs"] }
       : method === "POST" && path === "/api/autopilot/autopilots" ? { id: "ap-2" }
       : {};
     return new Response(JSON.stringify(body), { status: 200 });
@@ -49,14 +50,15 @@ it("puts a flow on autopilot with only the triggers that exist, and labels as a 
   expect(screen.getByRole("checkbox", { name: /Jira issues/ })).toBeDisabled();
   expect(screen.getByRole("checkbox", { name: /Slack messages/ })).toBeDisabled();
   expect(screen.queryByText(/by hand/i)).toBeNull();
-  fireEvent.change(screen.getByRole("combobox"), { target: { value: "o/uv-suite" } });
+  fireEvent.change(screen.getByLabelText("Repository"), { target: { value: "o/uv-suite" } });
+  fireEvent.change(screen.getByLabelText("Workspace"), { target: { value: "Team" } });
   fireEvent.change(screen.getByLabelText("Labels"), { target: { value: "autopilot, bug ," } });
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Next" })); });
   expect(screen.getByText("GitHub issues labelled autopilot, bug")).toBeInTheDocument();
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Put on autopilot" })); });
   const create = sent.find(r => r.method === "POST");
   expect(create?.body).toEqual({
-    flow: "autopilot/issue-to-merge", name: "uv-suite issue to merge", repo: "o/uv-suite",
+    flow: "autopilot/issue-to-merge", name: "uv-suite issue to merge", workspace: "Team", repo: "o/uv-suite",
     triggers: { "github-issue": { labels: ["autopilot", "bug"] } },
     approvals: { spec_on_visible: false, keep_merge_approval: false }, budget_m: 5, max_runs: 2,
   });
