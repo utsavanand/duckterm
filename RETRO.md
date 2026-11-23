@@ -1,3 +1,12 @@
+## 2026-11-22 — Restore sidebar scroll only when its container mounts
+
+Inline ref callbacks reapplied saved scroll positions during selection and drag
+renders, before the browser delivered its latest scroll event. In a crowded
+short sidebar this moved a workspace between the clicks of a double-click.
+Stable attachment callbacks restore on mount while allowing normal scrolling.
+Browser regressions use a crowded 652px viewport; drag helpers must keep both
+pointer targets visible after scrolling, rather than pressing below the window.
+
 ## 2026-11-22 — Test checkpoint capture across the actual thread boundary
 
 ## 2026-11-22 — Closing the listener is not completing a restart
