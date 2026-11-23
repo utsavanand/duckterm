@@ -19,7 +19,10 @@ beforeEach(() => {
     autopilots: [],
     runs: [{ id: "r1", autopilot: "ap-1", autopilot_name: "duckterm issues", workspace: "Team", flow: "autopilot/issue-to-merge", repo: "o/duckterm",
       trigger: "github-issue", item: { number: 41, title: "Inbox badge stays", url: "https://github.com/o/duckterm/issues/41", started_by: "maintainer" },
-      branch: "autopilot/r1", state: "failed", started_at: Date.now(), error: "Docker is not running", steps: [{ step: "spec", attempt: 1, exit: 0, choice: null }] }],
+      branch: "autopilot/r1", state: "failed", started_at: Date.now(), error: "Docker is not running", steps: [{ step: "spec", attempt: 1, exit: 0, choice: null }] },
+    { id: "r2", autopilot: "ap-1", autopilot_name: "duckterm issues", workspace: "Team", flow: "autopilot/issue-to-merge", repo: "o/duckterm",
+      trigger: "github-issue", item: { number: 42, title: "Badge colour" }, branch: "autopilot/r2", state: "succeeded", started_at: Date.now() - 1000,
+      pushed: true, pr: { number: 450, url: "https://github.com/o/duckterm/pull/450", base: "main" } }],
     summary: { available: true, active: 0, waiting_gate: 0, done_today: 0, failed_today: 1 },
     problems: [],
   };
@@ -80,6 +83,15 @@ it("a run row opens to its steps, its error and the issue", async () => {
   await act(async () => { fireEvent.click(row); });
   expect(screen.getByText("Docker is not running")).toBeInTheDocument();
   expect(screen.getByRole("link", { name: "Open the issue" })).toHaveAttribute("href", "https://github.com/o/duckterm/issues/41");
+});
+
+it("a run that opened a pull request says so and links it", async () => {
+  await mount();
+  const row = screen.getByText("Badge colour").closest("tr")!;
+  expect(within(row).getByText("PR open")).toBeInTheDocument();
+  await act(async () => { fireEvent.click(row); });
+  expect(screen.getByRole("link", { name: "Draft pull request #450" })).toHaveAttribute("href", "https://github.com/o/duckterm/pull/450");
+  expect(screen.getByText(/on GitHub/)).toBeInTheDocument();
 });
 
 it("a workspace's Flows tab asks for that workspace only and lists its runs", async () => {

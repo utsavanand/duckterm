@@ -178,7 +178,7 @@ function RunRow({ run, open, onToggle }: { run: AutopilotRun; open: boolean; onT
       <td>{run.item.number ? <span className="ap-num">#{run.item.number}</span> : null} {run.item.title ?? run.id}</td>
       <td className="ap-muted">{run.autopilot_name}{run.workspace ? <span className="ap-small"> · {run.workspace}</span> : null}</td>
       <td>{step}</td>
-      <td><span className={`ap-state ap-state-${run.state}`}>{STATE_LABEL[run.state] ?? run.state}</span></td>
+      <td><span className={`ap-state ap-state-${run.state}`}>{run.pr ? "PR open" : STATE_LABEL[run.state] ?? run.state}</span></td>
       <td className="ap-mono">{run.tokens != null ? `${Math.round(run.tokens / 1000)}k` : "—"}</td>
       <td className="ap-muted">{new Date(run.started_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</td>
     </tr>
@@ -190,8 +190,11 @@ function RunRow({ run, open, onToggle }: { run: AutopilotRun; open: boolean; onT
         {(run.steps ?? []).length === 0 && <span className="ap-muted">No steps finished yet.</span>}
       </div>
       {run.error && <p className="ap-error-text">{run.error}</p>}
+      {run.pr_error && <p className="ap-error-text">Could not open the pull request: {run.pr_error}</p>}
+      {run.pr && <p className="ap-small"><a href={run.pr.url} target="_blank" rel="noreferrer">Draft pull request #{run.pr.number}</a> into {run.pr.base}</p>}
+      {run.pr_skipped && <p className="ap-muted ap-small">No pull request: {run.pr_skipped}.</p>}
       <p className="ap-muted ap-small">
-        Branch <code>{run.branch}</code> on this Mac{run.item.started_by ? ` · started by ${run.item.started_by}` : ""}
+        Branch <code>{run.branch}</code>{run.pushed ? " on GitHub" : " on this Mac"}{run.item.started_by ? ` · started by ${run.item.started_by}` : ""}
         {run.item.url && <> · <a href={run.item.url} target="_blank" rel="noreferrer">Open the issue</a></>}
       </p>
     </td></tr>}
@@ -365,7 +368,7 @@ function SetupDialog({ overview, editing, onClose, onSaved }: {
       <div className="ap-recap">
         {draft.repo}{draft.workspace ? <span className="ap-muted"> · in {draft.workspace}</span> : null}
         <ul>{(Object.keys(finished().triggers) as TriggerType[]).map(k => <li key={k}>{triggerLine(k, finished().triggers[k])}</li>)}</ul>
-        <div className="ap-small ap-muted">Each run commits to its own branch on this Mac. Nothing is pushed or merged yet. Pause any time from its card.</div>
+        <div className="ap-small ap-muted">Each run works on its own branch. When it succeeds, DuckTerm pushes that branch and opens a draft pull request for you to review; nothing is merged. Pause any time from its card.</div>
       </div>
       <details className="ap-limits">
         <summary>Limits <span>{draft.budget_m}M tokens a run · {draft.max_runs} at once</span></summary>

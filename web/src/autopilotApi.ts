@@ -48,6 +48,10 @@ export interface AutopilotRun {
   failure?: unknown;
   current?: string;
   steps?: { step: string; attempt: number; exit?: number | null; choice?: string | null }[];
+  pushed?: boolean;
+  pr?: { number: number; url: string; base: string };
+  pr_error?: string;
+  pr_skipped?: string;
 }
 
 export interface AutopilotSummary {
