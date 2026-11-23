@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { expect, test } from "@playwright/test";
-import { apiPost, seedSession } from "./helpers";
+import { api, apiPost, seedSession } from "./helpers";
 
 test("AGENTS.md waits for existing rules and reconciles a manual addition before save", async ({ page }) => {
   const dir = mkdtempSync(join(tmpdir(), "rd-e2e-rules-load-"));
@@ -29,7 +29,10 @@ test("AGENTS.md waits for existing rules and reconciles a manual addition before
     expect(readFileSync(join(dir, "AGENTS.md"), "utf8")).toContain("Keep the new rule.");
     const saved = JSON.parse(readFileSync(join(dir, ".duckterm-rules.json"), "utf8"));
     expect(saved.rules).toEqual([expect.objectContaining({ title: "Preserve instructions", text: "Keep the new rule.", status: "active" })]);
-    expect(saved.proposals[0].status).toBe("accepted");
+    expect(saved).not.toHaveProperty("proposals");
+    expect(saved).not.toHaveProperty("capture_fingerprint");
+    const review = await (await api(`/agents-md?dir=${encodeURIComponent(dir)}`)).json();
+    expect(review.proposals[0].status).toBe("accepted");
     await page.getByRole("button", { name: "Rules 1" }).click();
     await page.getByRole("button", { name: "Edit", exact: true }).click();
     await page.getByLabel("Why", { exact: true }).fill("Avoid losing owner instructions.");

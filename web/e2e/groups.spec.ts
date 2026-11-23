@@ -35,10 +35,10 @@ test("a grouped session shows under its folder header and collapses", async ({
 test("New folder button creates an empty folder", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "New", exact: true }).click();
-  await page.getByRole("button", { name: "New folder" }).click();
+  await page.getByRole("button", { name: "New workspace" }).click();
   const name = `Folder-${Date.now()}`;
   await page.getByPlaceholder("e.g. payments").fill(name);
-  await page.getByRole("button", { name: "Create folder" }).click();
+  await page.getByRole("button", { name: "Create workspace" }).click();
 
   // It appears as a (empty) folder header in the left panel.
   await expect(page.locator(".rd-group-head", { hasText: name })).toBeVisible();
@@ -117,7 +117,7 @@ test("Ungroup button moves a session out of its folder", async ({ page }) => {
   const row = page.locator(".rd-row", { hasText: key });
   await expect(row).toBeVisible();
   await row.locator(".rd-row-click").click();
-  await (await sessionMenu(page)).getByRole("menuitem", { name: "Remove from folder" }).click();
+  await (await sessionMenu(page)).getByRole("menuitem", { name: "Remove from workspace" }).click();
 
   // The row now renders in the root drop zone, not inside any folder body.
   await expect(
@@ -247,7 +247,7 @@ test("folder remains visible after its last session is ungrouped", async ({ page
     await expandFolder(page, folder);
     const row = page.locator(".rd-row", { has: page.getByText("Last session", { exact: true }) });
     await row.locator(".rd-row-click").click();
-    await (await sessionMenu(page)).getByRole("menuitem", { name: "Remove from folder", exact: true }).click();
+    await (await sessionMenu(page)).getByRole("menuitem", { name: "Remove from workspace", exact: true }).click();
     const header = page.getByRole("button", { name: `View interactions in ${folder}`, exact: true }).locator("..");
     await expect(header).toBeVisible();
     await expect(header.locator(".rd-group-count")).toHaveText("0");

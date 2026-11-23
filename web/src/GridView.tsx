@@ -268,7 +268,7 @@ export function GridView({
         <p className="rd-panel-empty">
           {dockedList.length > 0
             ? "Every session is collapsed — click a chip below to expand it."
-            : focus ? "No pinned sessions. Return to Sessions to pin one." : "No running terminals in this folder."}
+            : focus ? "No pinned sessions. Return to Sessions to pin one." : "No running terminals in this workspace."}
         </p>
       ) : (
         <div ref={rootRef} className="rd-grid-tiles-tree">

@@ -34,9 +34,9 @@ export function FolderView({ folder, ...actions }: { folder: string } & FolderAc
   const shown = TABS.filter(name => has(TAB_FEATURES[name]));
   const tab = shown.includes(chosenTab) ? chosenTab : shown.includes("chat") ? "chat" : shown[0];
   const detailsAvailable = has("overview") && tab !== "overview";
-  return <section className={`rd-folder-view rd-folder-with-details${details && detailsAvailable ? " details-open" : ""}`} aria-label={`Folder ${folder}`}>
-    <div className="rd-folder-main"><header className="rd-folder-heading">{detailsAvailable && <button className="rd-btn rd-btn-ghost rd-btn-sm rd-folder-details-toggle" aria-expanded={details} onClick={() => setDetails(!details)}>{details ? "Hide details" : "Details"}</button>}<small>Folder</small><h1>{folder.split("/").pop()}</h1><p>{folder} · Includes subfolders{desktop() ? " · This Mac" : ""}</p></header>
-    <div ref={tabs} className="rd-folder-tabs" role="tablist" aria-label="Folder views" onKeyDown={event => {
+  return <section className={`rd-folder-view rd-folder-with-details${details && detailsAvailable ? " details-open" : ""}`} aria-label={`Workspace ${folder}`}>
+    <div className="rd-folder-main"><header className="rd-folder-heading">{detailsAvailable && <button className="rd-btn rd-btn-ghost rd-btn-sm rd-folder-details-toggle" aria-expanded={details} onClick={() => setDetails(!details)}>{details ? "Hide details" : "Details"}</button>}<small>Workspace</small><h1>{folder.split("/").pop()}</h1><p>{folder} · Includes nested workspaces{desktop() ? " · This Mac" : ""}</p></header>
+    <div ref={tabs} className="rd-folder-tabs" role="tablist" aria-label="Workspace views" onKeyDown={event => {
       if (!shown.length || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
       event.preventDefault();
       const index = shown.indexOf(tab);
@@ -81,7 +81,7 @@ function FolderChat({ folder, active }: { folder: string; active: boolean }) {
     setError("");
     void api.folderChat(folder).then(result => {
       if (!cancelled) { setMessages(result.messages); setLoaded(true); }
-    }).catch((cause: Error) => { if (!cancelled) setError(`Could not load this folder’s conversation: ${cause.message}`); });
+    }).catch((cause: Error) => { if (!cancelled) setError(`Could not load this workspace’s conversation: ${cause.message}`); });
     return () => { cancelled = true; };
   }, [folder, retry]);
   useEffect(() => {
@@ -168,31 +168,31 @@ function FolderChat({ folder, active }: { folder: string; active: boolean }) {
     input.current?.focus();
   }
   return <div className="rd-folder-chat">
-    <div className="rd-folder-chat-heading"><h2>Folder chat</h2><span>Ask or message a session</span></div>
-    <p className="rd-folder-intro">Answers from {folder} and its subfolders{desktop() ? " on this Mac" : ""}.</p>
-    <div ref={log} className="rd-folder-conversation" aria-live="polite" aria-label="Folder conversation">
+    <div className="rd-folder-chat-heading"><h2>Workspace chat</h2><span>Ask or message a session</span></div>
+    <p className="rd-folder-intro">Answers from {folder} and its nested workspaces{desktop() ? " on this Mac" : ""}.</p>
+    <div ref={log} className="rd-folder-conversation" aria-live="polite" aria-label="Workspace conversation">
       {!loaded && !error && <p role="status">Loading conversation…</p>}
-      {loaded && messages.length === 0 && !pending && <p className="rd-folder-intro">Ask what needs your attention or what the sessions in this folder are working on.</p>}
-      {messages.map((message, index) => <div className="rd-folder-exchange" key={`${message.at}-${index}`}><div className="rd-folder-question"><small>You{message.dispatch?.assigned ? " · Assigned" : ""}{message.dispatch ? ` → ${message.dispatch.label}` : ""}</small><p>{message.q}</p></div>{message.dispatch ? <div className="rd-folder-delivery">{message.dispatch.recipients.map(r => <div key={r.message_id}><small>{r.name} · {({ queued: "Queued in inbox", accepted: "Accepted", read: "Read", answered: "Answered", declined: "Declined", expired: "Expired", cancelled: "Cancelled", blocked: "Access changed" })[r.status]}</small>{r.answer && <div className="rd-folder-answer"><small>{r.name} · Reply</small><div dangerouslySetInnerHTML={{ __html: html(r.answer) }} /></div>}</div>)}</div> : <div className="rd-folder-answer"><small>Folder answer</small><div dangerouslySetInnerHTML={{ __html: html(message.a) }} /></div>}</div>)}
-      {pending !== null && <div className="rd-folder-exchange"><div className="rd-folder-question"><small>You</small><p>{pending}</p></div><p role="status">{recipient || plan ? "Queuing your message…" : "Reading this folder’s sessions…"}</p></div>}
+      {loaded && messages.length === 0 && !pending && <p className="rd-folder-intro">Ask what needs your attention or what the sessions in this workspace are working on.</p>}
+      {messages.map((message, index) => <div className="rd-folder-exchange" key={`${message.at}-${index}`}><div className="rd-folder-question"><small>You{message.dispatch?.assigned ? " · Assigned" : ""}{message.dispatch ? ` → ${message.dispatch.label}` : ""}</small><p>{message.q}</p></div>{message.dispatch ? <div className="rd-folder-delivery">{message.dispatch.recipients.map(r => <div key={r.message_id}><small>{r.name} · {({ queued: "Queued in inbox", accepted: "Accepted", read: "Read", answered: "Answered", declined: "Declined", expired: "Expired", cancelled: "Cancelled", blocked: "Access changed" })[r.status]}</small>{r.answer && <div className="rd-folder-answer"><small>{r.name} · Reply</small><div dangerouslySetInnerHTML={{ __html: html(r.answer) }} /></div>}</div>)}</div> : <div className="rd-folder-answer"><small>Workspace answer</small><div dangerouslySetInnerHTML={{ __html: html(message.a) }} /></div>}</div>)}
+      {pending !== null && <div className="rd-folder-exchange"><div className="rd-folder-question"><small>You</small><p>{pending}</p></div><p role="status">{recipient || plan ? "Queuing your message…" : "Reading this workspace’s sessions…"}</p></div>}
     </div>
     {error && <div className="rd-folder-error" role="alert">{error}{!loaded && <button className="rd-btn rd-btn-sm" onClick={() => setRetry(n => n + 1)}>Retry</button>}</div>}
-    <div className="rd-folder-suggestions">{["What needs my attention?", "What is this folder working on?"].map(text => <button key={text} disabled={!loaded || pending !== null} onClick={() => void ask(text, true)}>{text}</button>)}</div>
+    <div className="rd-folder-suggestions">{["What needs my attention?", "What is this workspace working on?"].map(text => <button key={text} disabled={!loaded || pending !== null} onClick={() => void ask(text, true)}>{text}</button>)}</div>
     <form className="rd-folder-compose" onSubmit={event => { event.preventDefault(); send(); }}>
-      {recipient && <div className="rd-folder-target"><span>@{recipient.name} · {recipient.kind === "folder" ? "Subfolder" : "Session"}</span><button type="button" aria-label="Remove recipient" disabled={pending !== null} onClick={() => choose(null)}>×</button></div>}
+      {recipient && <div className="rd-folder-target"><span>@{recipient.name} · {recipient.kind === "folder" ? "Nested workspace" : "Session"}</span><button type="button" aria-label="Remove recipient" disabled={pending !== null} onClick={() => choose(null)}>×</button></div>}
       {picker !== null && <FolderRecipientPicker folder={folder} query={picker} onPick={choose} onClose={() => { setPicker(null); input.current?.focus(); }} />}
-      <textarea ref={input} disabled={pending !== null} aria-label="Ask this folder" placeholder="Ask about this folder, or type @ to message a session…" rows={2} maxLength={8000} value={question} onChange={event => { setQuestion(event.target.value); const match = event.target.value.match(/@([^@\n]*)$/); setPicker(match ? match[1] : null); }} onKeyDown={event => {
+      <textarea ref={input} disabled={pending !== null} aria-label="Ask this workspace" placeholder="Ask about this workspace, or type @ to message a session…" rows={2} maxLength={8000} value={question} onChange={event => { setQuestion(event.target.value); const match = event.target.value.match(/@([^@\n]*)$/); setPicker(match ? match[1] : null); }} onKeyDown={event => {
         if (event.key === "ArrowDown" && picker !== null) { event.preventDefault(); document.querySelector<HTMLButtonElement>('#folder-recipient-picker button[role="option"]:not(:disabled)')?.focus(); return; }
         if (event.key === "Escape") { setPicker(null); return; }
         if (picker !== null && event.key === "Enter") { event.preventDefault(); return; }
         if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); send(); }
       }} />
-      <div><span><button type="button" className="rd-folder-mention" aria-label="Choose recipient" disabled={pending !== null} onClick={() => setPicker(picker === null ? "" : null)}> @ </button> {recipient ? recipient.kind === "folder" ? "Broadcast to subfolder" : "Direct message" : "Folder answer"}</span>{recipient?.kind === "session" && <button type="button" className="rd-btn rd-btn-sm" disabled={!loaded || pending !== null || !question.trim()} onClick={() => void ask(question, false, true)}>Assign &amp; send</button>}<button className="rd-btn rd-btn-primary rd-btn-sm" disabled={!loaded || pending !== null || !question.trim()}>{recipient ? recipient.kind === "folder" ? "Review recipients" : `Send to ${recipient.name}` : "Ask"}</button></div>
+      <div><span><button type="button" className="rd-folder-mention" aria-label="Choose recipient" disabled={pending !== null} onClick={() => setPicker(picker === null ? "" : null)}> @ </button> {recipient ? recipient.kind === "folder" ? "Broadcast to nested workspace" : "Direct message" : "Workspace answer"}</span>{recipient?.kind === "session" && <button type="button" className="rd-btn rd-btn-sm" disabled={!loaded || pending !== null || !question.trim()} onClick={() => void ask(question, false, true)}>Assign &amp; send</button>}<button className="rd-btn rd-btn-primary rd-btn-sm" disabled={!loaded || pending !== null || !question.trim()}>{recipient ? recipient.kind === "folder" ? "Review recipients" : `Send to ${recipient.name}` : "Ask"}</button></div>
     </form>
-    <p className="rd-folder-helper">{recipient ? recipient.kind === "folder" ? "Review who receives your message before sending. Replies are optional." : "Send a message, or choose Assign & send to create a task with the same message." : "Ask about this folder, or tell me who to message and what to say. Use @ to choose a recipient."}</p>
+    <p className="rd-folder-helper">{recipient ? recipient.kind === "folder" ? "Review who receives your message before sending. Replies are optional." : "Send a message, or choose Assign & send to create a task with the same message." : "Ask about this workspace, or tell me who to message and what to say. Use @ to choose a recipient."}</p>
     {reviewing && recipient && <Modal title="Review recipients" onClose={() => setReviewing(false)}>
       <section role="dialog" aria-label="Review recipients">
-      <p>Message {recipient.name} and its subfolders.</p>
+      <p>Message {recipient.name} and its nested workspaces.</p>
       <ul>{recipient.recipients.map(r => <li key={r.session_id}>{r.name} · {r.eligible ? r.state : `Skipped: ${r.reason}`}</li>)}</ul>
       <p className="rd-folder-review-text">{question}</p>
       <p>Each recipient receives your inbox message. Replies are optional.</p>

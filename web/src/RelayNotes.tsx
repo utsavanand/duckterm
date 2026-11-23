@@ -212,7 +212,7 @@ export function RuleFields({ rule }: { rule: RelayRule }) {
         {rule.command_pattern ? <>matching <code>{rule.command_pattern}</code></> : "anything"}
       </dd>
       <dt>Where</dt>
-      <dd>{rule.folder ? `${rule.folder} folder` : "Any folder"}</dd>
+      <dd>{rule.folder ? `${rule.folder} workspace` : "Any workspace"}</dd>
       <dt>Do</dt>
       <dd>{rule.action === "approve" ? "Approve" : "Deny"}. Never covers chained commands or irreversible ones like force pushes and releases.</dd>
     </dl>

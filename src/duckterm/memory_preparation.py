@@ -429,7 +429,15 @@ class MemoryPreparation:
                     retained.append(
                         {
                             k: saved[k]
-                            for k in ("id", "runtime", "native_id", "cwd", "path", "snapshot")
+                            for k in (
+                                "id",
+                                "runtime",
+                                "native_id",
+                                "cwd",
+                                "path",
+                                "snapshot",
+                                "records_sha256",
+                            )
                         }
                     )
                     retained[-1]["root"] = catalog["root"]
