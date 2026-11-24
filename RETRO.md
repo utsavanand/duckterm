@@ -133,6 +133,18 @@ requests needs explicit reply-required counts, retaining read/accepted requests
 and excluding informational notices and closed requests. Keep the existing badge
 count intact, count matching sessions once, and test live answers plus status unions.
 
+## 2026-11-24 — An editable prompt is not a waiting agent
+
+Claude keeps its input arrow visible while a foreground turn runs. The terminal
+fallback treated any arrow as Waiting, overriding a valid UserPromptSubmit.
+After a minute, stale-wait cleanup saw the empty input box and changed it to
+Idle, hiding running sessions from Working. Remove the ambiguous arrow signal;
+native hooks still report work, approvals and turn completion. Reproduce the
+whole repaint-to-cleanup sequence, not just the filter predicate, and check
+that genuine approvals still wait. The emailed report contained app lifecycle
+logs but no session events, so this is a reproduced defect consistent with the
+screenshots, not proof of the other computer's exact event sequence.
+
 ## 2026-11-24 — A completed response does not mean completed work
 
 The status fold treated every Stop as idle and the hook discarded Claude's
