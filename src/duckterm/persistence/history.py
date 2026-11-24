@@ -180,6 +180,23 @@ def _is_idle_notice(event: Event) -> bool:
     ).startswith("Claude is waiting for your input")
 
 
+def background_task_count(event: Event) -> int:
+    """Count Claude's native in-flight snapshot, not scheduled future wakeups."""
+    tasks = event.get("background_tasks")
+    if not isinstance(tasks, list):
+        return 0
+    return len(
+        {
+            task["id"]
+            for task in tasks
+            if isinstance(task, dict)
+            and isinstance(task.get("id"), str)
+            and task["id"]
+            and task.get("status") in ("running", "pending")
+        }
+    )
+
+
 def derive_state(event: Event, prev: SessionState | None) -> SessionState:
     # An explicit lifecycle marker (a deliberate stop/archive/sweep) always wins.
     if prev == "merged" or event.get("lifecycle") == "merged":
@@ -213,7 +230,7 @@ def derive_state(event: Event, prev: SessionState | None) -> SessionState:
             # Claude Code notifies ~60s after a turn ends with nothing to answer.
             # Counting that as waiting flooded the "needs you" count with idle
             # sessions and hid the real permission prompts among them.
-            return "idle"
+            return "busy" if background_task_count(event) else "idle"
         case "Notification" if event.get("notification_type") == "auth_success":
             return prev or "busy"
         case "PermissionRequest" if event.get("auto_reviewed"):
@@ -228,7 +245,7 @@ def derive_state(event: Event, prev: SessionState | None) -> SessionState:
             # sessions flap busy<->idle on every tool call.
             return "busy"
         case "Stop":
-            return "idle"
+            return "busy" if background_task_count(event) else "idle"
         case _:
             return prev or "busy"
 
@@ -447,6 +464,12 @@ class HistoryStore:
                 json.dumps(event),
             ),
         )
+        # Enrich only the state fold and live stream. The stored idle observation
+        # stays metadata-only: repeating a known task snapshot is not new memory.
+        if key and _is_idle_notice(event) and "background_tasks" not in event:
+            tasks = self.background_tasks(key)
+            if tasks:
+                event["background_tasks"] = tasks
         etype = event.get("event_type")
         if etype == events.MERGE_DELIVERED:
             # Server bookkeeping for the merge checkpoint, not agent activity:
@@ -459,6 +482,21 @@ class HistoryStore:
             # instead and don't touch the session table or metrics.
             if key is not None:
                 self._record_subagent(key, event)
+                # SubagentStop carries the parent's authoritative task snapshot.
+                # It can settle a completed parent turn, never an active turn or wait.
+                latest = self.latest_turn_event(key)
+                row = self.session(key)
+                if (
+                    isinstance(event.get("background_tasks"), list)
+                    and latest
+                    and latest.get("event_type") == events.STOP
+                    and row
+                    and row["state"] in ("busy", "idle")
+                ):
+                    state = "busy" if background_task_count(event) else "idle"
+                    self._conn.execute(
+                        "UPDATE sessions SET state = ? WHERE session_key = ?", (state, key)
+                    )
             self._conn.commit()
             return
         if key is not None:
@@ -501,6 +539,26 @@ class HistoryStore:
                 "UPDATE subagents SET state = 'done', ended_at = ? WHERE agent_id = ?",
                 (ts, str(agent_id)),
             )
+
+    def background_tasks(self, key: str) -> list[dict[str, Any]]:
+        """Latest native snapshot, bounded by the current harness run.
+
+        Missing fields on older harnesses are unknown, never an invented task.
+        Existing event storage retains the snapshot across server restarts.
+        """
+        row = self._conn.execute(
+            "SELECT payload_json FROM events WHERE session_key = ? AND "
+            "(event_type IN ('SessionStart', 'SessionEnd', 'Stop') OR "
+            "(event_type = 'SubagentStop' AND "
+            "json_type(payload_json, '$.background_tasks') = 'array')) "
+            "ORDER BY rowid DESC LIMIT 1",
+            (key,),
+        ).fetchone()
+        event = json.loads(row[0]) if row else {}
+        tasks = event.get("background_tasks")
+        if event.get("event_type") in (events.SESSION_START, events.SESSION_END):
+            return []
+        return tasks if isinstance(tasks, list) else []
 
     def subagents_by_session(self) -> dict[str, list[dict[str, Any]]]:
         """All sub-agents grouped by parent session_key, for one /sessions fetch."""

@@ -83,6 +83,7 @@ from duckterm.core.relay import (
     choices_from,
     parse_ask,
     parse_rule_reply,
+    permission_question,
     question_from,
     validate_rule,
 )
@@ -1860,7 +1861,7 @@ class Server:
             target = await asyncio.to_thread(workspace.resolve, repo, ref, refresh=flag)
             if part == "":
                 result = await asyncio.to_thread(workspace.header, target)
-                result["session"] = await self._review_author(target.branch)
+                result["session"] = await self._review_author(target.repo, target.branch)
             elif part == "diff":
                 result = await asyncio.to_thread(
                     workspace.diff_payload,
@@ -1890,26 +1891,35 @@ class Server:
             return
         await _write_json(writer, 200, result)
 
-    async def _review_author(self, branch: str) -> dict[str, Any] | None:
-        """The session whose checkout is on this PR's head branch, with its
-        digest. Rows are read on the loop thread; the git look-ups run in a
-        worker, the same claim rule the PR lists use."""
+    async def _review_author(self, repo: str, branch: str) -> dict[str, Any] | None:
+        """The session that made this PR's head branch, with its digest: the
+        session that first pushed it (the PR lists' rule), else a live session
+        whose checkout is on it in this repository. Every review page waits on
+        this, and asking git about every session's checkout took seconds, so
+        ended sessions are skipped. Checkouts are asked fresh each time: a
+        cached answer went stale when a session switched branches."""
         from duckterm.review import lists
 
-        rows = [r for r in self.history.sessions() if r.get("worktree_path") or r.get("cwd")]
-        rows.sort(key=lambda r: bool(r.get("ended_at")))
+        sessions = self.history.sessions()
+        owner = (await self._branch_owners(False)).get((repo, branch))
+        row = next((r for r in sessions if r["session_key"] == owner), None)
+        if row is None:
+            live = [
+                r
+                for r in sessions
+                if not r.get("ended_at") and (r.get("worktree_path") or r.get("cwd"))
+            ]
+            # A recorded branch is only a hint (it can be stale, or name the
+            # same branch in another repository), so it orders the checks.
+            live.sort(key=lambda r: r.get("branch") != branch)
 
-        def find() -> dict[str, Any] | None:
-            for row in rows:
-                if row.get("branch") == branch:
-                    return row
-            for row in rows:
-                found = lists._worktree_branch(row)
-                if found and found[1] == branch:
-                    return row
-            return None
+            def find() -> dict[str, Any] | None:
+                for candidate in live:
+                    if lists._worktree_branch(candidate) == (repo, branch):
+                        return candidate
+                return None
 
-        row = await asyncio.to_thread(find)
+            row = await asyncio.to_thread(find)
         if row is None:
             return None
         return {
@@ -1950,7 +1960,7 @@ class Server:
             if not isinstance(question, str) or not question.strip() or len(question) > 8000:
                 raise workspace.ReviewError(400, "question must be 1 to 8000 characters")
             hunk = payload.get("hunk")
-            author = await self._review_author(target.branch)
+            author = await self._review_author(target.repo, target.branch)
             digest = author.get("progress") if author else None
             diff = await asyncio.to_thread(
                 workspace.diff_payload, target, since=None, whitespace=True
@@ -2022,7 +2032,7 @@ class Server:
         from duckterm.review import approvals, cards, workspace
 
         header = await asyncio.to_thread(workspace.header, target)
-        author = await self._review_author(target.branch)
+        author = await self._review_author(target.repo, target.branch)
         release_row = (
             approvals.release_session(self.history.sessions(), author["folder"]) if author else None
         )
@@ -2227,7 +2237,7 @@ class Server:
         from duckterm.review import author, cards, lists, workspace
 
         # Session data is read here, on the loop thread, before the worker runs.
-        owner = await self._review_author(target.branch)
+        owner = await self._review_author(target.repo, target.branch)
         author_facts = author.facts(self.history, owner["key"]) if owner else None
 
         async def run() -> None:
@@ -2630,6 +2640,10 @@ class Server:
                 else []
             )
             await self._reconcile_waiting(s)
+            if s["state"] not in AT_REST_STATES and self._owner_question_pending(
+                str(s["session_key"])
+            ):
+                s["state"] = "waiting"
         await _write_json(
             writer,
             200,
@@ -2677,7 +2691,7 @@ class Server:
         with no prompt and visible work reports busy. A hook-driven wait
         (Claude Code, Copilot) is never overridden. The owner's raised hand is
         kept separately (attention_since) and isn't touched here."""
-        if row.get("state") != "waiting":
+        if row.get("state") != "waiting" or self._owner_question_pending(str(row["session_key"])):
             return
         runtime = _build_runtime(str(row.get("runtime") or "generic"), "")
         if not runtime.auto_approves_requests:
@@ -2717,7 +2731,8 @@ class Server:
             return {"model": observation.get("model"), "context_tokens": None}
         if (row.get("runtime") or "") != "claude-code":
             return {}
-        sid = self.history.session_id_for(str(row.get("session_key") or ""))
+        key = str(row.get("session_key") or "")
+        sid = self.history.session_id_for(key)
         cwd = row.get("worktree_path") or row.get("cwd")
         if not sid or not cwd:
             return {}
@@ -2727,14 +2742,28 @@ class Server:
         if path is None:
             return {}
         try:
-            mtime = path.stat().st_mtime
+            before = path.stat()
         except OSError:
             return {}
         cached = self._context_cache.get(str(path))
-        if cached is not None and cached[0] == mtime:
+        if cached is not None and cached[0] == before.st_mtime:
             return cached[1]
-        stats = transcript_stats(path)
-        self._context_cache[str(path)] = (mtime, stats)
+        stats = await asyncio.to_thread(transcript_stats, path)
+        # The session may have been rebound or moved during the read.
+        current = self.history.session(key)
+        if (
+            current is None
+            or self.history.session_id_for(key) != sid
+            or any(current.get(k) != row.get(k) for k in ("runtime", "cwd", "worktree_path"))
+        ):
+            return {}
+        try:
+            after = path.stat()
+        except OSError:
+            return {}
+        if (after.st_dev, after.st_ino) != (before.st_dev, before.st_ino):
+            return {}
+        self._context_cache[str(path)] = (before.st_mtime, stats)
         return stats
 
     async def _session_kits(
@@ -4340,16 +4369,10 @@ class Server:
             )
             await _write_json(writer, 200, {"answer": answer, "exchange": exchange, "sessions": []})
             return
-        digests = "\n\n".join(
-            [
-                (
-                    (await self._fleet_digest(r, question))[:6000]
-                    if folder is not None
-                    else await self._fleet_digest(r, question)
-                )
-                for r in running
-            ]
+        texts = await fleet_questions.collect_digests(
+            running, lambda row: self._fleet_digest(row, question)
         )
+        digests = "\n\n".join(text[:6000] if folder is not None else text for text in texts)
         prompt = fleet_questions.prompt(
             question,
             digests,
@@ -4456,7 +4479,7 @@ class Server:
             # only a submitted prompt (the answer, or one that discards it)
             # or the session ending closes that note.
             self.relay.close_for_session(key, {"choice"}, "handled", now)
-        if et in (events.USER_PROMPT_SUBMIT, events.SESSION_END):
+        if et in (events.USER_PROMPT_SUBMIT, events.SESSION_END, events.SESSION_START):
             kinds = {"question", "choice"}
             answered = (
                 self._answered_choice(key, str(event.get("prompt") or ""))
@@ -4470,14 +4493,55 @@ class Server:
                 self.relay.close(answered, "handled", closed_at=now)
                 kinds = {"question"}
             self.relay.close_for_session(key, kinds, "handled", now)
-        if et == events.STOP:
+        row = self.history.session(key)
+        if et == events.STOP and row and row["state"] not in AT_REST_STATES:
+            final = event.get("last_assistant_message")
+            final = final if isinstance(final, str) else None
+            direct = permission_question(final or "")
+            if direct and not self._owner_question_pending(key):
+                self.relay.add(
+                    {
+                        **self._relay_session_fields(key),
+                        "kind": "question",
+                        "urgency": "blocked",
+                        "created_at": now,
+                        "question": direct,
+                        "options": [],
+                        "excerpt": (final or "")[-1200:],
+                        "detected_without_model": True,
+                    }
+                )
             try:
                 loop = asyncio.get_running_loop()
             except RuntimeError:
                 loop = None
             if loop is not None:
-                loop.create_task(self._relay_detect_question(key, now))
+                loop.create_task(self._relay_detect_question(key, now, final, str(event["_id"])))
         self._relay_sync_approvals()
+        row = self.history.session(key)
+        if row and row["state"] not in AT_REST_STATES and self._owner_question_pending(key):
+            event["owner_waiting"] = True
+            if row["state"] != "waiting":
+                self._mark_question_waiting(key)
+
+    def _owner_question_pending(self, key: str) -> bool:
+        return any(
+            n["session_key"] == key
+            and (
+                n["kind"] == "choice" or (n["kind"] == "question" and n.get("urgency") == "blocked")
+            )
+            for n in self.relay.open_notes()
+        )
+
+    def _mark_question_waiting(self, key: str) -> None:
+        self.bus.publish(
+            {
+                "event_type": events.NOTIFICATION,
+                "notification_type": "owner_question",
+                "session_key": key,
+                "reconciled": True,
+            }
+        )
 
     def _answered_choice(self, key: str, prompt: str) -> dict[str, Any] | None:
         first = prompt.split("\n", 1)[0]
@@ -4677,7 +4741,9 @@ class Server:
             if isinstance(b, dict) and b.get("type") == "text"
         ).strip()
 
-    async def _relay_detect_question(self, key: str, at: int) -> None:
+    async def _relay_detect_question(
+        self, key: str, at: int, final_message: str | None = None, turn_id: str | None = None
+    ) -> None:
         """Did this turn end waiting on the owner? A word-cue filter, then one
         classifier call (core/relay.py documents both and how they measured)."""
         if not self.edition.includes("oracle"):
@@ -4685,12 +4751,44 @@ class Server:
         row = self.history.session(key)
         if row is None or (row.get("runtime") or "") not in self._RELAY_RUNTIMES:
             return
+        turn = self.history.latest_turn_event(key)
+        if turn_id is not None and (not turn or turn.get("_id") != turn_id):
+            return
+
+        def still_current() -> bool:
+            current = self.history.session(key)
+            return bool(
+                current
+                and current["state"] not in AT_REST_STATES
+                and self.history.latest_turn_event(key) == turn
+                and self.history.last_event_ts(key, events.USER_PROMPT_SUBMIT) <= at
+            )
+
         await asyncio.sleep(self._RELAY_SETTLE_S)
-        if self.history.last_event_ts(key, events.USER_PROMPT_SUBMIT) > at:
+        if not still_current():
+            return
+        if self._owner_question_pending(key):
+            # A direct permission ask was already surfaced synchronously. Keep
+            # the existing owner-authored answer-rule path for that same note.
+            direct = next(
+                (
+                    n
+                    for n in self.relay.open_notes()
+                    if n["session_key"] == key
+                    and n["kind"] == "question"
+                    and n.get("created_at") == at
+                    and n.get("detected_without_model")
+                ),
+                None,
+            )
+            if direct is not None and final_message is not None:
+                await self._relay_question_rule(direct, final_message)
             return
         messages = await asyncio.to_thread(self._read_messages, self._message_source(key))
+        if not still_current():
+            return
         last = next((m for m in reversed(messages) if m.get("role") == "assistant"), None)
-        final = self._message_text(last)
+        final = final_message if final_message is not None else self._message_text(last)
         if not final or not ASK_CUES.search(final[-900:]):
             return
         if any(
@@ -4709,6 +4807,8 @@ class Server:
         result = await asyncio.to_thread(
             summarize, ask_prompt(owner, final), tier="deep", claude_model="sonnet"
         )
+        if not still_current() or self._owner_question_pending(key):
+            return
         verdict = parse_ask(result.text) if result.text else None
         if verdict is None:
             fallback = question_from(final)
@@ -4729,6 +4829,11 @@ class Server:
                 "detected_without_model": bool(verdict.get("fallback")),
             }
         )
+        if verdict["kind"] == "blocked":
+            self._mark_question_waiting(key)
+        await self._relay_question_rule(note, final)
+
+    async def _relay_question_rule(self, note: dict[str, Any], final: str) -> None:
         rule = self.relay.answer_rule_for(f"{note['question']}\n{final[-600:]}")
         if rule is None:
             return
@@ -4744,7 +4849,7 @@ class Server:
         allow it; otherwise put it in the session's inbox for a nudge."""
         key = note["session_key"]
         now = int(time.time() * 1000)
-        refusal = await self._typing_refusal(key)
+        refusal = await self._typing_refusal(key, answering_question=True)
         if refusal is None:
             status = await self._submit_prompt(
                 key, text, source="owner" if answered_by == "owner" else "relay"
@@ -5139,7 +5244,9 @@ class Server:
                 return "submitted"
         return "stuck"
 
-    async def _typing_refusal(self, session_key: str) -> str | None:
+    async def _typing_refusal(
+        self, session_key: str, *, answering_question: bool = False
+    ) -> str | None:
         """Why owner text can't be typed into this session's prompt right now,
         or None. The same gates Oracle applies before pasting a nudge."""
         row = self.history.session(session_key)
@@ -5149,7 +5256,20 @@ class Server:
         if self.restarts.pending(session_key):
             return "A restart is pending. Cancel it before sending a new prompt."
         inbox = "Send it to the inbox instead."
-        if row.get("state") != "idle":
+        turn = self.history.latest_turn_event(session_key)
+        answering_completed_turn = (
+            answering_question
+            and row.get("state") == "waiting"
+            and self._owner_question_pending(session_key)
+            and turn is not None
+            and turn.get("event_type") == events.STOP
+            and not any(a.session_key == session_key for a in self.approvals.pending())
+            and not any(
+                n["session_key"] == session_key and n["kind"] == "choice"
+                for n in self.relay.open_notes()
+            )
+        )
+        if row.get("state") != "idle" and not answering_completed_turn:
             return f"It isn't idle, so typing could interrupt it. {inbox}"
         if time.time() * 1000 - sup.last_owner_input_ms < oracle.TYPING_QUIET_MS:
             return f"Someone typed in its terminal in the last 2 minutes. {inbox}"
@@ -6143,7 +6263,7 @@ class Server:
         await _write_json(writer, 200, {"automatic": automatic, "agents": agents})
 
     async def _ai_settings(self, writer: asyncio.StreamWriter, body: bytes | None = None) -> None:
-        from duckterm.llm import ai_settings, backend
+        from duckterm.llm import ai_settings, backend, latency
 
         def state(settings: dict[str, Any]) -> dict[str, Any]:
             keys = {}
@@ -6156,6 +6276,7 @@ class Server:
                 "keys": keys,
                 "harness": backend.harness(settings["harness"]),
                 "models": {t: ai_settings.model(settings, t) for t in backend.TIERS},
+                "recent_timings": latency.recent(),
             }
 
         try:
@@ -7183,7 +7304,11 @@ class Server:
         waiting_on_approval = {a.session_key for a in self.approvals.pending()}
         for row in self.history.sessions():
             key = str(row["session_key"])
-            if row.get("state") != "waiting" or key in waiting_on_approval:
+            if (
+                row.get("state") != "waiting"
+                or key in waiting_on_approval
+                or self._owner_question_pending(key)
+            ):
                 continue
             if now - int(row.get("updated_at") or now) < 60_000:
                 continue  # a dialog may still be drawing

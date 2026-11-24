@@ -248,7 +248,21 @@ def test_stop_shell_forwards_only_hook_response_and_loop_guard(tmp_path):
     script = Path(__file__).parents[2] / "src/duckterm/hooks/duckterm-hook.sh"
     result = subprocess.run(
         ["bash", str(script), "Stop", "claude-code"],
-        input='{"session_id":"test","stop_hook_active":false}',
+        input=json.dumps(
+            {
+                "session_id": "test",
+                "stop_hook_active": False,
+                "last_assistant_message": "Can I push this?",
+                "background_tasks": [
+                    {
+                        "id": "task1",
+                        "type": "shell",
+                        "status": "running",
+                        "command": "private command",
+                    }
+                ],
+            }
+        ),
         text=True,
         capture_output=True,
         check=True,
@@ -262,7 +276,10 @@ def test_stop_shell_forwards_only_hook_response_and_loop_guard(tmp_path):
         },
     )
     assert json.loads(result.stdout) == response["hook_output"]
-    assert json.loads(capture.read_text())["stop_hook_active"] is False
+    payload = json.loads(capture.read_text())
+    assert payload["stop_hook_active"] is False
+    assert payload["last_assistant_message"] == "Can I push this?"
+    assert payload["background_tasks"] == [{"id": "task1", "type": "shell", "status": "running"}]
 
 
 def test_old_persistent_assignment_retained_for_seven_days_after_cancellation(
