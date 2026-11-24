@@ -211,17 +211,32 @@ def transcript_stats(path: Path) -> dict[str, object]:
             obj = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if obj.get("type") != "assistant":
+        if not isinstance(obj, dict) or obj.get("type") != "assistant":
             continue
-        message = obj.get("message") or {}
+        message = obj.get("message")
+        if not isinstance(message, dict):
+            continue
         model = message.get("model")
-        if stats["model"] is None and model and not str(model).startswith("<"):
-            stats["model"] = str(model)
-        usage = message.get("usage") or {}
-        total = sum(
-            int(usage.get(k) or 0)
-            for k in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
-        )
+        if (
+            stats["model"] is None
+            and isinstance(model, str)
+            and model
+            and not model.startswith("<")
+        ):
+            stats["model"] = model
+        usage = message.get("usage")
+        if not isinstance(usage, dict):
+            continue
+        try:
+            counts = [
+                int(usage.get(k) or 0)
+                for k in ("input_tokens", "cache_read_input_tokens", "cache_creation_input_tokens")
+            ]
+        except (TypeError, ValueError, OverflowError):
+            continue
+        if any(count < 0 for count in counts):
+            continue
+        total = sum(counts)
         if stats["context_tokens"] is None and total:
             stats["context_tokens"] = total
         if stats["context_tokens"] is not None and stats["model"] is not None:

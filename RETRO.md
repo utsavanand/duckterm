@@ -1,3 +1,32 @@
+## 2026-11-24 — Valid JSON is not necessarily a transcript record
+
+A JSON array in a Claude transcript made the whole sessions endpoint return 500.
+Moving parsing off the event loop kept other requests responsive but did not
+protect the agent list. Validate record, message and usage shapes before field
+access; skip invalid usage values and retain earlier valid evidence. Exercise
+malformed but valid JSON as well as interrupted JSON and unreadable files.
+
+## 2026-11-24 — Concurrent callers don't overlap a read that runs on the loop
+
+Fleet digests started reading four sessions at a time, but Claude transcript
+parsing still ran synchronously inside the coroutine, so only tmux and Codex
+reads actually overlapped. Moving a read to a thread opens an await, and that
+await is a window in which the session can be rebound, moved or have its
+transcript replaced. Recheck binding and file identity after the await, as the
+Codex path already did.
+
+
+## 2026-11-23 — Measure the gap between an AI answer and CLI exit
+
+A short internal Claude call kept waiting after its final result because the CLI
+was finishing nonessential background traffic. Separate first-text, final-result
+and process-exit timings before attributing the whole wait to the model. The
+documented nonessential-traffic switch removed the measured exit delay while
+preserving subscription login and normal zero-exit validation. Keep diagnostic
+records bounded and content-free; do not add blocking log writes to the loop.
+Local context reads can overlap, but preserve prompt order, bound concurrency,
+and cancel sibling readers on failure instead of leaving stale work running.
+
 ## 2026-11-22 — Reconcile flags through real entry points after integration
 
 A branch that passed against an older main contained a duplicate CLI gate and a
