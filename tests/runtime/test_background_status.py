@@ -161,8 +161,12 @@ def test_late_classifier_cannot_raise_answered_question(world, monkeypatch):
         "Pushed it. Everything passed.",
     ],
 )
-def test_permission_fast_path_excludes_quotes_examples_and_offers(text):
+def test_permission_fast_path_excludes_quotes_examples_and_offers(world, text):
+    server, history = world
     assert permission_question(text) is None
+    emit(server, "Stop", background_tasks=[], last_assistant_message=text)
+    assert history.session("test-bg")["state"] == "idle"
+    assert not server._owner_question_pending("test-bg")
 
 
 def test_restart_clears_old_owner_question(world):
