@@ -15,7 +15,7 @@ from duckterm.llm import latency
 
 
 @pytest.fixture
-def cli(monkeypatch):
+def cli(monkeypatch, tmp_path):
     monkeypatch.delenv("DUCKTERM_SUMMARIZER", raising=False)
     processes = []
     create = asyncio.create_subprocess_exec
@@ -28,8 +28,11 @@ def cli(monkeypatch):
     monkeypatch.setattr(memory_provider.asyncio, "create_subprocess_exec", capture)
 
     def install(script):
+        # Linux caps one argv string at 128 KiB, so large fixtures can't go through -c.
+        path = tmp_path / f"cli-{len(processes)}-{time.monotonic_ns()}.py"
+        path.write_text(script, encoding="utf-8")
         monkeypatch.setattr(
-            memory_provider, "arguments", lambda *a, **kw: [sys.executable, "-u", "-c", script]
+            memory_provider, "arguments", lambda *a, **kw: [sys.executable, "-u", str(path)]
         )
         return processes
 
