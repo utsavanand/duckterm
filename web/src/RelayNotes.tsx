@@ -17,6 +17,7 @@ function when(ts: number): string {
 
 // What happened to a closed note, in words.
 export function closedLine(n: RelayNote): string {
+  if (n.status === "ended") return "The session stopped before this was answered.";
   if (n.status === "handled") {
     return n.kind === "question"
       ? "Answered in its terminal."

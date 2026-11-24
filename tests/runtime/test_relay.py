@@ -581,3 +581,37 @@ def test_dashboard_stream_carries_the_auto_reviewed_tag(codex_world) -> None:
 
     streamed = asyncio.run(scenario())
     assert (streamed["event_type"], streamed.get("auto_reviewed")) == ("PermissionRequest", True)
+
+
+def question(server, key="pm", at=1):
+    return server.relay.add(
+        {"session_key": key, "name": key, "kind": "question", "created_at": at, "question": "Go?"}
+    )
+
+
+def test_open_notes_survive_the_note_limit_and_are_all_listed(world) -> None:
+    server, _, _, _ = world
+    waiting = question(server)
+    for i in range(600):
+        server.relay.add({"session_key": "pm", "kind": "question", "created_at": i})
+        server.relay.close(server.relay.notes[-1], "handled")
+    assert len(server.relay.notes) == 500
+    assert server.relay.get(waiting["id"])["status"] == "open"
+    listed = [n for n in notes(server) if n["status"] == "open"]
+    count = dispatch(server, "GET", "/relay/count", {"x-duckterm-token": server.token})[1]
+    assert [n["id"] for n in listed] == [waiting["id"]] and count == {"open": 1}
+
+
+def test_a_session_that_stopped_without_session_end_leaves_needs_you(world) -> None:
+    server, _, _, history = world
+    waiting = question(server)
+    history.set_state("pm", "interrupted")
+    [note] = notes(server)
+    assert (note["id"], note["status"]) == (waiting["id"], "ended")
+
+
+def test_session_end_marks_open_questions_ended_not_answered(world) -> None:
+    server, _, _, _ = world
+    waiting = question(server)
+    server.bus.publish({"event_type": "SessionEnd", "session_key": "pm"})
+    assert server.relay.get(waiting["id"])["status"] == "ended"
