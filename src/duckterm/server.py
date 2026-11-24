@@ -67,6 +67,7 @@ from typing import Any, TextIO
 from duckterm import bug_reports, connectors, editions, suites, zsh_themes
 from duckterm.agents import tmux
 from duckterm.agents.terminal import available_terminals, open_in_terminal
+from duckterm.autopilot import api as ap_api
 from duckterm.core import events, fleet_questions, oracle
 from duckterm.core.approvals import Approval, ApprovalRegistry
 from duckterm.core.backup_jobs import BackupJobs
@@ -414,6 +415,25 @@ _ROUTES: list[Route] = [
     Route("POST", "/kits/gate", lambda s, r, w, h, b, seg: s._kits(w, "gate", b)),
     Route("POST", "/kits/teams", lambda s, r, w, h, b, seg: s._kits(w, "teams", b)),
     Route("POST", "/kits/team", lambda s, r, w, h, b, seg: s._kits(w, "team", b)),
+    # ── autopilot: flows started by triggers, run in sandboxes (flag `autopilot`) ──
+    Route("GET", "/api/autopilot", lambda s, r, w, h, b, seg: s._autopilot(w, ap_api.overview)),
+    # Routes match the raw path, query included: one workspace's flows and runs.
+    Route("GET", "", lambda s, r, w, h, b, seg: s._autopilot(
+        w, ap_api.overview, urllib.parse.unquote(seg)), prefix="/api/autopilot?workspace="),
+    Route("GET", "/api/autopilot/summary",
+          lambda s, r, w, h, b, seg: s._autopilot(w, ap_api.summary)),
+    Route("GET", "/api/autopilot/repositories",
+          lambda s, r, w, h, b, seg: s._autopilot(w, ap_api.repositories)),
+    Route("POST", "/api/autopilot/autopilots",
+          lambda s, r, w, h, b, seg: s._autopilot(w, ap_api.create, body=b)),
+    Route("POST", "", lambda s, r, w, h, b, seg: s._autopilot(w, ap_api.run_once, seg, body=b),
+          **_mid("/api/autopilot/autopilots/", "/run")),
+    Route("PATCH", "", lambda s, r, w, h, b, seg: s._autopilot(w, ap_api.update, seg, body=b),
+          prefix="/api/autopilot/autopilots/"),
+    Route("DELETE", "", lambda s, r, w, h, b, seg: s._autopilot(w, ap_api.delete, seg),
+          prefix="/api/autopilot/autopilots/"),
+    Route("GET", "", lambda s, r, w, h, b, seg: s._autopilot(w, ap_api.run, seg),
+          prefix="/api/autopilot/runs/"),
     # ── connectors (GitHub, Railway, … — credentials + MCP install) ──
     Route("POST", "", lambda s, r, w, h, b, seg: s._forget_connector(w, seg),
           **_mid("/connectors/", "/forget")),
@@ -5139,6 +5159,47 @@ class Server:
     async def _list_zsh_themes(self, writer: asyncio.StreamWriter) -> None:
         await _write_json(writer, 200, {"themes": zsh_themes.list_themes()})
 
+    async def _autopilot(
+        self,
+        writer: asyncio.StreamWriter,
+        fn: Callable[..., Any],
+        *args: str,
+        body: bytes | None = None,
+    ) -> None:
+        """Run one autopilot API call on a worker thread (it touches files,
+        docker and GitHub). ValueError is the caller's mistake, KeyError an
+        unknown id."""
+        call_args: list[Any] = list(args)
+        if body is not None:
+            try:
+                payload = json.loads(body or b"{}")
+            except json.JSONDecodeError:
+                await _write_json(writer, 400, {"error": "invalid JSON"})
+                return
+            if not isinstance(payload, dict):
+                await _write_json(writer, 400, {"error": "expected a JSON object"})
+                return
+            call_args.append(payload)
+        try:
+            result = await asyncio.to_thread(fn, *call_args)
+        except ValueError as exc:
+            await _write_json(writer, 400, {"error": str(exc)})
+            return
+        except KeyError:
+            await _write_json(writer, 404, {"error": "not found"})
+            return
+        await _write_json(writer, 200, result if result is not None else {"ok": True})
+
+    async def _autopilot_loop(self) -> None:
+        """The GitHub issues trigger: poll every autopilot that is on."""
+        await asyncio.to_thread(ap_api.recover)
+        while True:
+            try:
+                await asyncio.to_thread(ap_api.tick)
+            except Exception:
+                traceback.print_exc()
+            await asyncio.sleep(ap_api.POLL_SECONDS)
+
     async def _list_harnesses(self, writer: asyncio.StreamWriter) -> None:
         """Registered skill kits, with manifest details re-read from disk (a kit
         that vanished from disk is reported, not hidden)."""
@@ -6927,6 +6988,11 @@ class Server:
                 if self.edition.includes("checkpoints")
                 else None
             )
+            autopilot_worker = (
+                asyncio.create_task(self._autopilot_loop())
+                if self.edition.includes("autopilot")
+                else None
+            )
             collaboration_worker = (
                 asyncio.create_task(self.collaboration.run())
                 if self.edition.includes("inbox")
@@ -6950,6 +7016,8 @@ class Server:
                     workers = [mobile_manager, sweeper]
                     if auto_checkpoints is not None:
                         workers.append(auto_checkpoints)
+                    if autopilot_worker is not None:
+                        workers.append(autopilot_worker)
                     if collaboration_worker is not None:
                         workers.append(collaboration_worker)
                     for worker in workers:

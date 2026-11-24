@@ -1,0 +1,10 @@
+{
+  "name": "greet",
+  "description": "Write a greeting file, then check it",
+  "inputs": {},
+  "steps": [
+    { "id": "write", "run": "write-greeting" },
+    { "id": "check", "decide": "check-greeting",
+      "routes": { "ok": "end", "wrong": "fail" }, "default": "wrong" }
+  ]
+}

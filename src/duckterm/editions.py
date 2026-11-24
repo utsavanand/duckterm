@@ -69,7 +69,7 @@ PRESETS: dict[str, EditionConfig] = {edition.name: edition for edition in (LITE,
 # Features still being built. Off in every edition; an instance turns one on by
 # listing it in <home>/flags.json as {"enabled": ["skill_kits"]}. Each flag has
 # a row in docs/feature-flags.md (a test keeps the two in step).
-DEVELOPMENT = frozenset({"skill_kits", "home", "background_rule_suggestions"})
+DEVELOPMENT = frozenset({"skill_kits", "home", "background_rule_suggestions", "autopilot"})
 
 # These operations also serve local repository clones. The handler validates
 # parameters and journal provenance before any restricted read or mutation.
@@ -171,6 +171,10 @@ def request_features(method: str, url: str, body: bytes = b"") -> tuple[str, ...
         return ("skill_kits",)
     if url == "/kits" or url.startswith("/kits/") or url.startswith("/kits?"):
         return ("skill_kits",)
+    if any(
+        p == "/api/autopilot" or p.startswith(("/api/autopilot/", "/api/autopilot?")) for p in paths
+    ):
+        return ("autopilot",)
     if url.startswith("/sessions/"):
         # Prefix/suffix routes accept slashes inside the captured session key.
         # Check the final operation as well as nested routes such as /memory/*.

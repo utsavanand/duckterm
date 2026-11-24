@@ -12,17 +12,18 @@ import { PrList } from "./review/PrList";
 import { ReviewWorkspace } from "./review/ReviewWorkspace";
 import type { PrRow } from "./api";
 import { Feature, useEdition } from "./edition";
+import { WorkspaceFlows } from "./Autopilot";
 
-const TABS = ["overview", "chat", "artifacts", "prs"] as const;
+const TABS = ["overview", "chat", "artifacts", "prs", "flows"] as const;
 type Tab = (typeof TABS)[number];
-const TAB_LABELS: Record<Tab, string> = { overview: "Overview", chat: "Chat", artifacts: "Artifacts", prs: "Pull requests" };
-const TAB_FEATURES: Record<Tab, Feature> = { overview: "overview", chat: "folder_chat", artifacts: "artifacts", prs: "pr_review" };
+const TAB_LABELS: Record<Tab, string> = { overview: "Overview", chat: "Chat", artifacts: "Artifacts", prs: "Pull requests", flows: "Flows" };
+const TAB_FEATURES: Record<Tab, Feature> = { overview: "overview", chat: "folder_chat", artifacts: "artifacts", prs: "pr_review", flows: "autopilot" };
 
 // Folder panels are ordinary internal components; sessions remain in the tree.
 export function FolderView({ folder, ...actions }: { folder: string } & FolderActions) {
   const [details, setDetails] = useState(() => window.innerWidth >= 1250);
   const [team, setTeam] = useState<KitTeam | null>(null);
-  const { has } = useEdition();
+  const { has, id: editionId } = useEdition();
   useEffect(() => {
     if (!has("skill_kits")) return;
     let cancelled = false;
@@ -43,7 +44,8 @@ export function FolderView({ folder, ...actions }: { folder: string } & FolderAc
   const [review, setReview] = useState<{ repo: string; ref: string; from?: string } | null>(null);
   const openReview = (row: PrRow) => setReview({ repo: row.repo, ref: row.pr ? String(row.pr.number) : row.branch, from: row.session?.name });
   const tabs = useRef<HTMLDivElement>(null);
-  const shown = TABS.filter(name => has(TAB_FEATURES[name]));
+  // Autopilot is managed from Full's sidebar, so its Flows tab is Full-only too.
+  const shown = TABS.filter(name => has(TAB_FEATURES[name]) && (name !== "flows" || editionId === "full"));
   const tab = shown.includes(chosenTab) ? chosenTab : shown.includes("chat") ? "chat" : shown[0];
   const detailsAvailable = has("overview") && tab !== "overview";
   return <section className={`rd-folder-view rd-folder-with-details${details && detailsAvailable ? " details-open" : ""}`} aria-label={`Workspace ${folder}`}>
@@ -63,6 +65,7 @@ export function FolderView({ folder, ...actions }: { folder: string } & FolderAc
     {has("folder_chat") && <div id="folder-chat" role="tabpanel" aria-labelledby="folder-chat-tab" className="rd-folder-chat-panel" hidden={tab !== "chat"}><FolderChat key={folder} folder={folder} active={tab === "chat"} /></div>}
     <div id="folder-artifacts" role="tabpanel" aria-labelledby="folder-artifacts-tab" className="rd-folder-artifacts-panel" hidden={tab !== "artifacts"}>{tab === "artifacts" && has("artifacts") && <ArtifactsView key={folder} folder={folder} />}</div>
     <div id="folder-prs" role="tabpanel" aria-labelledby="folder-prs-tab" className="rd-folder-prs-panel" hidden={tab !== "prs"}>{tab === "prs" && has("pr_review") && review && <ReviewWorkspace key={`${review.repo}:${review.ref}`} repo={review.repo} target={review.ref} from={review.from} onBack={() => setReview(null)} />}{tab === "prs" && has("pr_review") && !review && <PrList key={folder} scope={{ kind: "folder", folder }} active={tab === "prs"} onOpenSession={actions.onOpenSession} onReview={openReview} />}</div>
+    <div id="folder-flows" role="tabpanel" aria-labelledby="folder-flows-tab" className="rd-folder-flows-panel" hidden={tab !== "flows"}>{tab === "flows" && has("autopilot") && <WorkspaceFlows key={folder} workspace={folder} />}</div>
     </div>{details && detailsAvailable && <FolderDetails key={folder} folder={folder} onClose={() => setDetails(false)} {...actions} />}
   </section>;
 }

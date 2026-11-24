@@ -1,3 +1,21 @@
+## 2026-11-23 — A path check cannot see through a symlink the same commit adds
+
+Autopilot refused to push a run that touched CI configuration by matching the
+changed paths against CI directories with a trailing slash. A step could commit
+`.github/workflows` itself as a symlink to `ci/`, and the diff then listed
+`.github/workflows` and `ci/x.yml`, neither of which matched. A diff names the
+entries that changed, not what they resolve to. Refuse any symlink the run adds
+or changes (mode 120000 in `git diff --raw`) before checking names, and treat a
+bare CI directory name as CI too.
+
+## 2026-11-22 — Restore sidebar scroll only when its container mounts
+
+Inline ref callbacks reapplied saved scroll positions during selection and drag
+renders, before the browser delivered its latest scroll event. In a crowded
+short sidebar this moved a workspace between the clicks of a double-click.
+Stable attachment callbacks restore on mount while allowing normal scrolling.
+Browser regressions use a crowded 652px viewport; drag helpers must keep both
+pointer targets visible after scrolling, rather than pressing below the window.
 ## 2026-11-22 — One flag gated two unrelated things, in three places
 
 Disable on the GitHub connector blanked the pull request view and the

@@ -8,7 +8,7 @@ export type Feature =
   | "explorer" | "file_editing" | "git_changes" | "inbox" | "folder_chat" | "checkpoints"
   | "summaries" | "context" | "handoff" | "connectors" | "oracle" | "remote_workspaces"
   | "artifacts" | "pr_review" | "overview" | "rule_suggestions"
-  | "skill_kits" | "home" | "background_rule_suggestions"; // development flags, see docs/feature-flags.md
+  | "skill_kits" | "home" | "background_rule_suggestions" | "autopilot"; // development flags, see docs/feature-flags.md
 
 export type EditionState =
   | { status: "loading" }

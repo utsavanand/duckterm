@@ -75,6 +75,7 @@ import { useSidebarDensity } from "./useSidebarDensity";
 import { useFolders } from "./useFolders";
 import "./sidebarDensity.css";
 import "./oracleNavigation.css";
+import { AutopilotPage, useAutopilotSummary } from "./Autopilot";
 import { useAttended } from "./useAttended";
 import { EditionProvider, useEdition } from "./edition";
 
@@ -138,6 +139,10 @@ function Dashboard() {
   const homeOpen = homeChosen && has("home");
   const towerOpen = towerChosen && has("overview");
   const sidebarOracle = editionId === "full" && has("oracle") && has("overview");
+  // Autopilot shares the Oracle layer: a sidebar row above Oracle opens it.
+  const sidebarAutopilot = sidebarOracle && has("autopilot");
+  const [towerMode, setTowerMode] = useState<"oracle" | "autopilot">("oracle");
+  const autopilotSummary = useAutopilotSummary(sidebarAutopilot);
   const [analyticsTab, setAnalyticsTab] = useState<AnalyticsTab | null>(null);
   const relayOpen = useRelayCount(has("oracle"));
   const defaultSelection = sessions.find(s => s.state !== "archived")?.key ?? null;
@@ -351,7 +356,7 @@ function Dashboard() {
   const towerVisible = towerOpen && !focusOpen && gridFolder === null;
   const closeHome = useCallback(() => setHomeOpen(false), []);
   const towerLayer = towerVisible && <div className="rd-tower-layer">
-    {analyticsTab ? <Analytics initialTab={analyticsTab} sessions={agents} onBack={() => setAnalyticsTab(null)} /> : <LiveControlTower
+    {towerMode === "autopilot" && sidebarAutopilot ? <AutopilotPage /> : analyticsTab ? <Analytics initialTab={analyticsTab} sessions={agents} onBack={() => setAnalyticsTab(null)} /> : <LiveControlTower
       onAnalytics={setAnalyticsTab}
       agents={agents}
       onBack={() => setTowerOpen(false)}
@@ -391,7 +396,7 @@ function Dashboard() {
         {has("overview") && <button
           className={`rd-btn rd-btn-ghost rd-btn-sm${towerOpen ? " rd-btn-active" : ""}`}
           aria-pressed={towerOpen}
-          onClick={() => { setTowerOpen((o) => !o); setFocusOpen(false); setGridFolder(null); setHomeOpen(false); }}
+          onClick={() => { setTowerMode("oracle"); setTowerOpen((o) => !o); setFocusOpen(false); setGridFolder(null); setHomeOpen(false); }}
           title={has("oracle") ? "Control tower: fleet insights, every agent at a glance, and Oracle chat" : "Control tower: fleet insights and every agent at a glance"}
         >
           {has("oracle") ? "Oracle" : "Overview"}
@@ -463,11 +468,20 @@ function Dashboard() {
               {(agents.length > 0 || folders.length > 0) && <SidebarFilterToggle filters={sidebarFilters.filters} expanded={sidebarFilters.expanded} onToggle={sidebarFilters.toggleExpanded} />}
               <PanelToggle side="left" collapsed={sidePanels.collapsed.left} onToggle={() => sidePanels.toggle("left")} />
             </div>
-            {sidebarOracle && <button className="rd-oracle-row" type="button" aria-label="Oracle main chat" aria-pressed={towerVisible}
-              onClick={() => { setTowerOpen(true); setAnalyticsTab(null); }}>
-              <img src={fullDuckMark} alt="" />
-              <span>Oracle<small>All workspaces</small></span>
-            </button>}
+            {/* Narrow windows stack Agents above the work area; the two rows share one strip there. */}
+            <div className={sidebarAutopilot ? "rd-sidebar-tops" : "rd-sidebar-tops-single"}>
+              {sidebarAutopilot && <button className="rd-autopilot-row" type="button" aria-label="Autopilot" aria-pressed={towerVisible && towerMode === "autopilot"}
+                onClick={() => { setTowerMode("autopilot"); setTowerOpen(true); setAnalyticsTab(null); }}>
+                <svg viewBox="0 0 26 26" aria-hidden="true"><rect x="1" y="1" width="24" height="24" rx="7" fill="var(--brand-green)" /><path d="M8 17.5 13 7l5 10.5-5-2.6z" fill="#fff" /></svg>
+                <span>Autopilot<small>{autopilotSummary ? `${autopilotSummary.active} running` : "Flows on autopilot"}</small></span>
+                {autopilotSummary && autopilotSummary.waiting_gate > 0 && <span className="rd-autopilot-badge" aria-label={`${autopilotSummary.waiting_gate} need you`}>{autopilotSummary.waiting_gate}</span>}
+              </button>}
+              {sidebarOracle && <button className="rd-oracle-row" type="button" aria-label="Oracle main chat" aria-pressed={towerVisible && towerMode === "oracle"}
+                onClick={() => { setTowerMode("oracle"); setTowerOpen(true); setAnalyticsTab(null); }}>
+                <img src={fullDuckMark} alt="" />
+                <span>Oracle<small>All workspaces</small></span>
+              </button>}
+            </div>
             {sessions.length === 0 && folders.length === 0 ? (
               <p className="rd-panel-empty">
                 No agents yet. Choose New → New session to start one.

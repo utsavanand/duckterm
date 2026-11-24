@@ -10,7 +10,7 @@ import { desktop } from "./desktop";
 import { SessionPin } from "./SessionPin";
 import { SessionLocationDuck } from "./SessionLocationDuck";
 import { HelperAgents } from "./HelperAgents";
-import { ReactNode, useEffect, useRef, useState, type Dispatch, type SetStateAction, type MutableRefObject } from "react";
+import { ReactNode, useCallback, useEffect, useRef, useState, type Dispatch, type SetStateAction, type MutableRefObject } from "react";
 import { api } from "./api";
 import { Duck, poseFor } from "./Duck";
 import { contextLevel, effectiveState, fmtTokens } from "./sessions";
@@ -69,6 +69,16 @@ export function AgentTree({
   const ordering = useSidebarOrder(sessions);
   const visibleSessions = sidebarSessions(ordering.sessions);
   const dragRoot = useRef<HTMLDivElement | null>(null);
+  const savedScroll = expansion?.scroll;
+  // Restore on mount, not on every render: a selection or drag update must not
+  // rewind scrolling before the browser has dispatched its next scroll event.
+  const attachContent = useCallback((node: HTMLDivElement | null) => {
+    dragRoot.current = node;
+    if (node && savedScroll) node.scrollTop = savedScroll.current.content;
+  }, [savedScroll]);
+  const attachTree = useCallback((node: HTMLDivElement | null) => {
+    if (node && savedScroll) node.scrollTop = savedScroll.current.tree;
+  }, [savedScroll]);
   const archivedSessions = sessions.filter(s => ["archived", "merged"].includes(s.state));
   const localArchives = useState(false);
   const [archivesOpen, setArchivesOpen] = expansion?.archives ?? localArchives;
@@ -280,7 +290,7 @@ export function AgentTree({
   );
 
   return (
-    <div className="rd-sidebar-content" ref={node => { dragRoot.current = node; if (node && expansion) node.scrollTop = expansion.scroll.current.content; }}
+    <div className="rd-sidebar-content" ref={attachContent}
       onScroll={event => { if (expansion) expansion.scroll.current.content = event.currentTarget.scrollTop; }} onKeyDown={event => {
       if (event.key === "Escape" && filtering) {
         event.preventDefault();
@@ -293,7 +303,7 @@ export function AgentTree({
     <div className="rd-order-announcement" role="status" aria-live="polite">{drag.message}</div>
     {ordering.error && <p className="rd-order-error" role="alert">{ordering.error}</p>}
     <SidebarFilters sessions={visibleSessions} now={now} filters={filters} onToggle={toggle} onClear={clear} saveError={saveError} expanded={expanded} />
-    <div className="rd-tree" ref={node => { if (node && expansion) node.scrollTop = expansion.scroll.current.tree; }}
+    <div className="rd-tree" ref={attachTree}
       onScroll={event => { if (expansion) expansion.scroll.current.tree = event.currentTarget.scrollTop; }}>
       {filtering ? <>
         {visibleSessions.filter(s => matchesFilters(s, filters, now)).map(s => <TreeRow key={s.key} node={{ session: s, children: [] }} depth={0} now={now} selectedKey={selectedKey} contextKey={contextKey} onOpen={onOpen} onOpenInbox={onOpenInbox} onPin={onPin} showFolder />)}
