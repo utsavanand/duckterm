@@ -82,6 +82,7 @@ class ClaudeCodeRuntime(Harness):
         repo_rel=Path(".claude") / "settings.json",
         build=claude_style_build,
         strip=claude_style_strip,
+        config_env="CLAUDE_CONFIG_DIR",
     )
 
     def __init__(self, command: str = "claude") -> None:

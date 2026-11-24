@@ -1,3 +1,15 @@
+## 2026-11-24 — Launching a CLI is not connecting its activity signals
+
+A distributed app could start Claude with no DuckTerm hooks installed. Setup
+checked the CLI and credentials; startup only repaired existing hooks. A running
+terminal therefore looked healthy while filters lacked the provider's events.
+Install through the existing atomic merge before launch, preserve other hooks
+and policy settings, and check configuration before stopping a source terminal.
+Record real accepted hook delivery separately from configuration, scoped to the
+current launch generation. A synthetic SessionStart or old hook cannot prove
+connection. Test the actual installed script against an isolated authenticated
+server, not just a successful JSON write. Keep hook-writing tests isolated from
+the developer's real harness settings and shared assets.
 ## 2026-11-25 — A text check doesn't vouch for the recipient
 
 Ask Oracle sent free text at once when the model's message was a span of the

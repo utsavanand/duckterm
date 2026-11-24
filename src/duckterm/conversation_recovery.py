@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import copy
 import json
+import os
 import secrets
 import sqlite3
 import time
@@ -12,7 +13,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from duckterm import conversation_files
-from duckterm.agents import hook_dispatch, hooks_install
+from duckterm.agents import hook_connection, hook_dispatch, hooks_install
 from duckterm.core.session_api import APIError
 from duckterm.harnesses import REGISTRY, runtime_for
 from duckterm.helpers import security
@@ -24,13 +25,17 @@ if TYPE_CHECKING:
 SUPPORTED = {"claude-code", "codex"}
 
 
-def hook_status(runtime: str, cwd: str) -> dict[str, Any]:
+def hook_status(runtime: str, cwd: str, settings: Path | None = None) -> dict[str, Any]:
     spec = getattr(REGISTRY.get(runtime), "hook_spec", None)
     if not spec:
         return {"status": "unknown", "canInstall": False}
     try:
         for global_scope in (True, False):
-            path = spec.path(global_scope=global_scope, project_dir=Path(cwd))
+            path = (
+                settings
+                if global_scope and settings is not None
+                else spec.path(global_scope=global_scope, project_dir=Path(cwd))
+            )
             if not path.exists():
                 continue
             if path.stat().st_size > 1024 * 1024:
@@ -121,7 +126,11 @@ class ConversationRecovery:
         runtime = str(row.get("runtime") or "generic")
         cwd = str(row.get("worktree_path") or row.get("cwd") or ".")
         before = native_identity.revision(row)
-        hooks = await asyncio.to_thread(hook_status, runtime, cwd)
+        settings = hook_connection.read(row).get("settings_path")
+        hooks = await asyncio.to_thread(
+            hook_status, runtime, cwd, Path(settings) if settings else None
+        )
+        hooks["connection"] = hook_connection.status(row, int(time.time() * 1000))
         transcript = "unknown"
         if value["native_id"] and Path(cwd).is_absolute():
             try:
@@ -251,13 +260,24 @@ class ConversationRecovery:
         lock = self.hook_installs.setdefault(runtime, asyncio.Lock())
         async with lock:
             snapshot = native_identity.revision(row)
-            hooks = await asyncio.to_thread(hook_status, runtime, cwd)
+            settings = hook_connection.read(row).get("settings_path")
+            hooks = await asyncio.to_thread(
+                hook_status, runtime, cwd, Path(settings) if settings else None
+            )
             if native_identity.revision(self.row(key)) != snapshot:
                 raise APIError(409, "Session changed; review hook installation again")
             if not hooks["canInstall"]:
                 raise APIError(409, "Hooks are configured or their settings need manual review")
+            environment = dict(os.environ)
+            spec = REGISTRY[runtime].hook_spec
+            if settings and spec and spec.config_env:
+                environment[spec.config_env] = str(Path(settings).parent)
             await asyncio.to_thread(
-                hooks_install.install, global_scope=True, project_dir=Path(cwd), agent=runtime
+                hooks_install.install,
+                global_scope=True,
+                project_dir=Path(cwd),
+                agent=runtime,
+                environment=environment,
             )
         return await self.identity(key)
 
