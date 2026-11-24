@@ -11,10 +11,18 @@ import pytest
 from tests.runtime.test_agents_md import _request
 from tests.runtime.test_harness_suites import KITS_ON
 
+from duckterm import release_features
 from duckterm.helpers import instance
 from duckterm.kits import api
 from duckterm.persistence.history import HistoryStore
 from duckterm.server import Server
+
+
+# Skill kits are also a release flag (#427); turn it on as test_harness_suites does.
+@pytest.fixture(autouse=True)
+def enabled_feature(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(release_features, "overrides", lambda: ({"skill_kits": True}, None))
+
 
 SAMPLE = Path(__file__).resolve().parents[2] / "examples" / "skill-kits" / "sample-kit"
 
