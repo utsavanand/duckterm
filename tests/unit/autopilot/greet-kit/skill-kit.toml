@@ -1,0 +1,22 @@
+manifest_version = 1
+name        = "greet-kit"
+description = "Two steps for the autopilot end-to-end test: change the workspace, then decide"
+version     = "0.1.0"
+author      = "duckterm"
+license     = "MIT"
+conflicts_with = []
+
+[[components]]
+kind = "skill"
+path = "skills/write-greeting"
+effects = "workspace"
+
+[[components]]
+kind = "skill"
+path = "skills/check-greeting"
+effects = "read-only"
+outputs = { verdict = { choice = ["ok", "wrong"] } }
+
+[[components]]
+kind = "flow"
+path = "flows/greet.json"

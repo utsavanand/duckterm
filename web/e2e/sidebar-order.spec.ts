@@ -3,11 +3,22 @@ import { apiDelete, apiPost, base, expandFolder, seedSession } from "./helpers";
 
 async function drag(page: Page, source: Locator, target: Locator, after = false, cancel = false) {
   await source.scrollIntoViewIfNeeded();
-  // scrollIntoViewIfNeeded can leave the target at the tree's edge, inside the
-  // 28px auto-scroll band, so the list scrolls away under the pointer mid-drag.
-  await target.evaluate(el => el.scrollIntoView({ block: "center" }));
+  // Put the target just below the tree's top edge: outside the 28px auto-scroll
+  // band (an edge target scrolls away under the pointer mid-drag), and with the
+  // most room below it, so a source further down still fits in a short window.
+  await target.evaluate(el => {
+    el.scrollIntoView({ block: "start" });
+    let list = el.parentElement;
+    while (list && !(list.scrollHeight > list.clientHeight && /auto|scroll/.test(getComputedStyle(list).overflowY))) list = list.parentElement;
+    list?.scrollBy(0, -40);
+  });
+  // Then reveal the source with minimal scrolling before a real pointer drag.
+  await source.scrollIntoViewIfNeeded();
+  await expect(source).toBeInViewport();
+  await expect(target).toBeInViewport();
   const from = await source.boundingBox(), to = await target.boundingBox();
   if (!from || !to) throw new Error("Missing drag geometry");
+
   await page.mouse.move(from.x + 100, from.y + from.height / 2);
   await page.mouse.down();
   await page.mouse.move(to.x + 100, to.y + (after ? to.height - 3 : 3), { steps: 12 });
@@ -55,3 +66,8 @@ test("session order survives reload, preserves forks and selection, and still al
     for(const f of [folder,other]) await apiDelete(`/folders/${encodeURIComponent(f)}`);
   }
 });
+
+// Exercise real overflow in a short window, independently of test ordering.
+test.use({ viewport: { width: 1280, height: 652 } });
+test.beforeAll(async () => { for(let i=0;i<18;i++) await seedSession(`scroll-filler-${i}`, {name:`Filler ${i}`,group:`A filler ${String(i).padStart(2,"0")}`}); });
+test.afterAll(async () => { for(let i=0;i<18;i++){ await apiDelete(`/sessions/scroll-filler-${i}`);await apiDelete(`/folders/${encodeURIComponent(`A filler ${String(i).padStart(2,"0")}`)}`); } });

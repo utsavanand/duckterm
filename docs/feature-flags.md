@@ -63,6 +63,7 @@ Skill kits remain experimental, but their row is listed only above.
 |------|---------------|-------|------------|
 | `home` | The Home page: the first page the dashboard opens on, a 12-column grid of movable widgets (Ask Oracle chat, Teams, Autopilot, pull requests, usage, Needs you), and `GET`/`PUT /layouts/home`. Layout is saved in `home-layout.json`. The Control Tower stays until Home replaces it. | 2026-11-19 | Owner has used it on real data, Autopilot has a backend to open, and the Control Tower is folded in. Owner's call. |
 | `background_rule_suggestions` | Reconcile original observations after checkpoints in Code/Full. Off by default; pending proposals and capture fingerprints stay in DuckTerm home under `rule-reviews/`, keyed by canonical directory path. The manual Suggest button is independent. | 2026-11-21 | Security and QA approve background capture. Owner’s call. |
+| `autopilot` | The Autopilot sidebar row and page, putting a flow on autopilot, and the `/api/autopilot` routes. Runs flows in Docker sandboxes on this Mac with the owner's Claude subscription; the GitHub issues trigger is polled every 2 minutes. | 2026-11-22 | Runs open pull requests and merge behind the approval gates, and the owner has used it on a real repository. Owner's call. |
 
 ## Graduated
 
