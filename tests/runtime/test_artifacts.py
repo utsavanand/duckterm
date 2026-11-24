@@ -149,6 +149,9 @@ def test_cli_parser_and_automatic_registration_instructions():
 
 
 def test_real_cli_upload_and_backup_restore(app, tmp_path, monkeypatch):
+    from duckterm import release_features
+
+    monkeypatch.setattr(release_features, "overrides", lambda: ({"backup": True}, None))
     import asyncio
     import os
     import subprocess

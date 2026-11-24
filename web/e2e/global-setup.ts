@@ -43,10 +43,14 @@ export default async function globalSetup() {
 
   const home = mkdtempSync(join(runRoot, "state-"));
   // Development flags are off for everyone by default; the e2e server turns
-  // them all on so flagged surfaces stay covered until they ship. Except
-  // `home`: it replaces the page the dashboard opens on, which every spec
-  // starts from. Home is covered by Home.test.tsx and homeGrid.test.ts.
+  // them on except Home, which replaces the starting page for these tests.
   writeFileSync(join(home, "flags.json"), JSON.stringify({ enabled: DEVELOPMENT.filter(flag => flag !== "home") }));
+
+  // Existing integration workflows deliberately exercise opt-in features.
+  // The separate default-off run passes an empty list and tests real defaults.
+  const flagNames = (process.env.RD_TEST_FEATURE_FLAGS ?? "cross_computer_collaboration,skill_kits,harness_management,byok,byoc,backup").split(",").filter(Boolean);
+  writeFileSync(join(home, "feature-flags.json"), JSON.stringify({ flags: Object.fromEntries(flagNames.map(name => [name, true])) }));
+
   // Backup UI tests must never collect the developer's actual agent transcripts.
   const testClaudeRoot = join(home, "test-claude");
   const testCodexRoot = join(home, "test-codex");

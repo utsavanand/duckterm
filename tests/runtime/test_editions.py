@@ -90,11 +90,12 @@ def test_edition_route_is_owner_read_only_and_preserves_data(memory_rig):
     from duckterm import __version__
 
     expected = {
-        **FULL.description(),
+        **server.edition.description(),
         "instance": instance.description(),
         "runtime_version": __version__,
         "app_update_blocked": None,
     }
+    assert "remote_workspaces" not in expected["features"]
     assert dispatch(server, "GET", "/edition", owner) == (200, expected)
     assert status(server, "POST", owner, json.dumps({"id": "lite"}).encode()) == 404
     assert dispatch(server, "GET", "/edition", owner) == (200, expected)

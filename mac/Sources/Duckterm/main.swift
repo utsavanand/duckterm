@@ -31,6 +31,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var capturingReport = false
     private var notified: [String: Set<String>] = [:]
     private var edition: DesktopEdition?
+    let remoteSettings = RemoteSettingsControls()
     private let launchAdmission: WorkspaceLaunchAdmission
     private let editionRequest: ((URL) async throws -> Any)?
     private let localServerReadiness: (() async -> Bool)?
@@ -71,7 +72,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 if let bound = try ApprovalSigner.bindIfUnbound() { AppDiagnostics.shared.record("Approval key bound: \(bound)") }
             } catch { AppDiagnostics.shared.record("Approval key not bound") }
         }
-        window = DashboardWindow(url: server.url)
+        window = DashboardWindow(url: server.url, remoteSettings: remoteSettings)
         appUpdater.onChange = { [weak self] state in self?.window?.dispatch(name: "app-update", detail: state) }
         appUpdater.preflight = { [weak self] in
             guard let self else { throw LaunchDestination.Failure.message("App is closing") }
@@ -101,7 +102,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             // Keystrokes and cancellation must not wait on independent HTTP
             // probes, which could reorder input or prevent stopping setup.
             if !["input", "resize", "cancel"].contains(operation) {
-                try await self.requireFeature("terminal")
+                try await self.requireFeature("harness_management")
             }
             guard isCurrent() else { throw RuntimeSetupController.Failure.stale }
             return try await self.runtimeSetup.perform(operation: operation, params: params)
@@ -390,7 +391,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func flushCollaboration(source: URL? = nil) async {
-        guard (try? await refreshEdition())?.includes("inbox") == true else { return }
+        guard (try? await refreshEdition())?.includes("cross_computer_collaboration") == true else { return }
         guard let target = UserDefaults.standard.string(forKey: "collaborationCoordinatorTarget"),
               let host = hosts.first(where: { $0.target == target }) else { return }
         if launchConnections[target] == nil {
@@ -538,9 +539,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func applyEdition(_ current: DesktopEdition?) {
         guard edition != current else { return }
         edition = current
-        if current?.includes("terminal") != true { runtimeSetup.reset() }
-        window?.canSetUpAgents = current?.includes("terminal") == true
-        window?.agentSetupState = current == nil ? nil : runtimeSetup.state
+        remoteSettings.update(allowed: current?.includes("remote_workspaces") == true)
+        if current?.includes("harness_management") != true { runtimeSetup.reset() }
+        window?.canSetUpAgents = current?.includes("harness_management") == true
+        window?.agentSetupState = current?.includes("harness_management") == true ? runtimeSetup.state : nil
         window?.desktopHosts = current?.includes("remote_workspaces") == true ? hosts : []
         if current?.includes("remote_workspaces") != true {
             sessionTransport.close()
@@ -681,6 +683,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
 extension AppDelegate: NSMenuItemValidation {
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        if menuItem.action == #selector(showSettings(_:)) {
+            return edition?.includes("remote_workspaces") == true
+        }
         if menuItem.action == #selector(pairIPhone(_:)) {
             return launchAdmission.canStart
         }
@@ -693,13 +698,13 @@ extension AppDelegate: NSMenuItemValidation {
 // was dead. The standard selectors route through the responder chain to the
 // web view, which forwards them to the page (xterm handles the events).
 @MainActor
-private func buildMainMenu() -> NSMenu {
+private func buildMainMenu(remoteSettings: RemoteSettingsControls) -> NSMenu {
     let main = NSMenu()
 
     let appItem = NSMenuItem()
     main.addItem(appItem)
     let appMenu = NSMenu()
-    appMenu.addItem(withTitle: "Settings…", action: #selector(AppDelegate.showSettings(_:)), keyEquivalent: ",")
+    appMenu.addItem(remoteSettings.menuItem)
     appMenu.addItem(withTitle: "Pair iPhone…", action: #selector(AppDelegate.pairIPhone(_:)), keyEquivalent: "")
     appMenu.addItem(.separator())
     appMenu.addItem(
@@ -751,6 +756,6 @@ let app = NSApplication.shared
 let delegate = AppDelegate()
 app.delegate = delegate
 app.setActivationPolicy(.regular)  // a normal app: Dock icon + windows
-app.mainMenu = buildMainMenu()
+app.mainMenu = buildMainMenu(remoteSettings: delegate.remoteSettings)
 app.run()
 }

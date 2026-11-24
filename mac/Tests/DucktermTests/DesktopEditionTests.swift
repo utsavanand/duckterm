@@ -23,7 +23,7 @@ final class DesktopEditionTests: XCTestCase {
             XCTAssertEqual(DesktopEdition.requiredFeature(target: "remote", operation: operation), "remote_workspaces")
         }
         XCTAssertEqual(DesktopEdition.requiredFeature(target: "local", operation: "project-preview"), "remote_workspaces")
-        XCTAssertEqual(DesktopEdition.requiredFeature(target: "remote", operation: "collaboration-connect"), "inbox")
+        XCTAssertEqual(DesktopEdition.requiredFeature(target: "remote", operation: "collaboration-connect"), "cross_computer_collaboration")
         XCTAssertNil(DesktopEdition.requiredFeature(target: "local", operation: "launch"))
         XCTAssertNil(DesktopEdition.requiredFeature(target: "local", operation: "terminal-open"))
     }

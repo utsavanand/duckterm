@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, type AiProvider, type AiSettings, type AiState } from "./api";
 import { Button, inputStyle, Modal } from "./ui";
 import "./aiModels.css";
+import { useFeature } from "./edition";
 
 const PROVIDERS: { id: AiProvider; label: string; env: string }[] = [
   { id: "anthropic", label: "Anthropic", env: "ANTHROPIC_API_KEY" },
@@ -14,6 +15,7 @@ const DEEP_USE = "Oracle, PR review, rule suggestions";
 const HARNESS_NAME = { "claude-code": "Claude Code", codex: "Codex" } as const;
 
 export function AiModelsModal({ onClose }: { onClose: () => void }) {
+  const byok = useFeature("byok");
   const [state, setState] = useState<AiState | null>(null);
   const [settings, setSettings] = useState<AiSettings | null>(null);
   const [key, setKey] = useState("");
@@ -87,17 +89,18 @@ export function AiModelsModal({ onClose }: { onClose: () => void }) {
             <span><b>Your {harness ?? "Claude Code"} login {harness ? <span className="rd-ai-chip is-ok">detected</span> : <span className="rd-ai-chip">not installed</span>}</b>
               <small>Free on your subscription. Counts toward its usage limit.</small></span>
           </label>
-          <label className={`rd-ai-option${settings.backend === "api" ? " is-on" : ""}`}>
+          {byok && <label className={`rd-ai-option${settings.backend === "api" ? " is-on" : ""}`}>
             <input type="radio" name="ai-backend" checked={settings.backend === "api"} onChange={() => change({ backend: "api" })} />
             <span><b>Your API key</b>
               <small>Anthropic, OpenAI, OpenRouter or any OpenAI-compatible server. About 1 s faster per call, billed per token by your provider.</small></span>
-          </label>
+          </label>}
           <label className="rd-ai-option is-off">
             <input type="radio" name="ai-backend" disabled checked={settings.backend === "duckterm"} />
             <span><b>DuckTerm models <span className="rd-ai-chip">coming soon</span></b>
               <small>Pay with DuckTerm credits; no key needed.</small></span>
           </label>
 
+          {!byok && settings.backend === "api" && <p role="alert">The saved API backend is disabled on this installation. Select your harness login to change it.</p>}
           {settings.backend !== "api" && <>
             <label htmlFor="ai-harness">Harness</label>
             <select id="ai-harness" style={inputStyle} value={settings.harness} onChange={e => change({ harness: e.target.value as AiSettings["harness"] })}>
@@ -117,7 +120,7 @@ export function AiModelsModal({ onClose }: { onClose: () => void }) {
             <small>Model choices apply when Claude Code serves the call. Codex uses its default model.</small>
           </>}
 
-          {settings.backend === "api" && <>
+          {byok && settings.backend === "api" && <>
             <label htmlFor="ai-provider">Provider</label>
             <select id="ai-provider" style={inputStyle} value={settings.provider} onChange={e => change({ provider: e.target.value as AiProvider })}>
               {PROVIDERS.map(p => <option key={p.id} value={p.id}>{p.label}</option>)}
@@ -147,7 +150,7 @@ export function AiModelsModal({ onClose }: { onClose: () => void }) {
           </>}
 
           <footer><span role="status">{saved ? "Settings saved" : busy ? "Working…" : ""}</span>
-            {settings.backend === "api" && keyInfo?.saved && keyInfo.source === "stored" && <button type="button" className="rd-btn rd-btn-ghost" onClick={() => void forget()}>Forget key</button>}
+            {byok && settings.backend === "api" && keyInfo?.saved && keyInfo.source === "stored" && <button type="button" className="rd-btn rd-btn-ghost" onClick={() => void forget()}>Forget key</button>}
             <button type="button" className="rd-btn rd-btn-ghost" onClick={onClose}>Cancel</button>
             <button className="rd-btn rd-btn-primary" type="submit">Save</button>
           </footer>

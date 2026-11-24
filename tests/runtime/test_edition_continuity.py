@@ -9,6 +9,7 @@ from tests.runtime import test_memory as memory_cases
 from tests.runtime.test_memory import memory_rig
 from tests.runtime.test_saved_checkpoint import rig
 
+from duckterm import release_features
 from duckterm.editions import CODE, FULL, LITE
 
 __all__ = ["memory_rig", "rig"]
@@ -24,8 +25,8 @@ def edition(request, monkeypatch, tmp_path):
 
 
 def assert_edition(server, edition):
-    assert server.edition is edition
-    assert server.history.session_api.edition is edition
+    assert server.edition == release_features.apply(edition)
+    assert server.history.session_api.edition is server.edition
 
 
 def test_checkpoint_plan_and_selected_summary_preserve_http_auth(memory_rig, monkeypatch, edition):

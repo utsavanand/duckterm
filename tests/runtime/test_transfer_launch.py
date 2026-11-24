@@ -10,7 +10,7 @@ import uuid
 
 import pytest
 
-from duckterm import transfer_api, transfers
+from duckterm import release_features, transfer_api, transfers
 from duckterm.agents import tmux
 from duckterm.persistence.history import HistoryStore
 from duckterm.server import Server
@@ -92,3 +92,8 @@ def test_source_resume_requires_explicit_continuation(tmp_path, monkeypatch):
     assert "Continue locally" in json.loads(writer.data.split(b"\r\n\r\n")[1])["error"]
     asyncio.run(transfer_api.dispatch(server, "continue", {"source_session": "source"}))
     assert transfers.session_transfer("source") is None
+
+
+@pytest.fixture(autouse=True)
+def enabled_feature(monkeypatch):
+    monkeypatch.setattr(release_features, "overrides", lambda: ({"byoc": True}, None))

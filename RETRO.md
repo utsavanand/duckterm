@@ -1,3 +1,11 @@
+## 2026-11-22 — Reconcile flags through real entry points after integration
+
+A branch that passed against an older main contained a duplicate CLI gate and a
+test that stopped before the newly shipped kit handler. Merge checks must exercise
+the real command and retain newer development flags. The inventory and public
+table list each feature once, with skill-kit legacy precedence explicit.
+
+
 ## 2026-11-23 — A path check cannot see through a symlink the same commit adds
 
 Autopilot refused to push a run that touched CI configuration by matching the
@@ -411,6 +419,15 @@ The browser job also exhausted its fifteen-minute budget after cold Playwright
 dependencies took six minutes. Account for installation and all edition runs in
 the job budget; a cancelled run is not passing evidence.
 
+## 2026-11-21 — Flag enforcement must match every entry point
+
+The dashboard hid disabled cloud controls, but the native menu and titlebar
+still offered them. They now start hidden and follow the same verified server
+capability, including revocation on a failed refresh. Optional CLI commands also
+apply release switches before dispatch, so legacy opt-ins cannot override an
+explicit off. Verify transitions on actual native controls and both flag states
+in every edition; Full-only test expectations hid the Lite/Code difference.
+
 ## 2026-11-21 — Check a format against real files before anchoring on it
 
 #414 skipped an oversized Codex line when `"type":"compacted"` appeared anywhere
@@ -459,6 +476,14 @@ without a local preference. Bundle the owner-approved public support address for
 every edition and retain the custom-build override. Test the actual plist-writing
 steps with the variable absent, empty, and overridden. Report creation still opens
 only a draft in the user's mail app; the user must review it and press Send.
+
+## 2026-11-20 — Rebased release flags must preserve existing opt-ins
+
+The release-switch branch predated the shipped skill-kit development flag.
+Keep the current Skill kits label and default-off coverage, reuse the existing
+parser for legacy opt-ins only when the new configuration is absent, and let
+explicit release settings win. Rebase checks must exercise both old and new
+configuration paths; resolving textual conflicts alone is insufficient.
 
 ## 2026-11-19 — Tests kept an unreachable harness-switch path alive
 
@@ -523,6 +548,18 @@ A generated-file banner is not evidence that its source and export still agree.
 Compare both before saving, reject stale revisions, and preserve a backup when
 the owner explicitly reconciles external edits. Tests cover both Markdown and
 JSON drift as well as review-before-activation.
+
+## 2026-11-17 — Release flags must gate execution as well as menus
+
+Edition membership alone left experimental cloud, collaboration, installer,
+API-key and backup controls available in distributed apps. A local, default-off
+registry now determines the server capabilities, native admission checks and
+visible controls. Personal opt-ins live in the instance home, outside builds.
+
+Test both states explicitly: old integration fixtures must opt in to the
+features they exercise, and a separate default-off run must prove that local
+sessions and checkpointing remain available. Never treat hiding a button as
+backend enforcement, and never delete stored work when disabling a feature.
 
 ## 2026-11-07 — Folder chat had a message broker its answer path could never reach
 

@@ -403,7 +403,7 @@ def test_kit_cli_is_behind_the_skill_kits_flag(tmp_path, monkeypatch, capsys):
     for var in ("DUCKTERM_EDITION", "DUCKTERM_DESKTOP_PROFILE", "DUCKTERM_INSTANCE"):
         monkeypatch.delenv(var, raising=False)
     assert cli.main(["kit", "validate", str(SAMPLE)]) == 1
-    assert "skill_kits is unavailable" in capsys.readouterr().err
+    assert "skill_kits is disabled by its feature flag" in capsys.readouterr().err
     (tmp_path / "flags.json").write_text(json.dumps({"enabled": ["skill_kits"]}))
     assert cli.main(["kit", "validate", str(SAMPLE)]) == 0
     assert "13 components" in capsys.readouterr().out

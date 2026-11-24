@@ -22,6 +22,8 @@ def source(tmp_path, monkeypatch):
     root = tmp_path / "duckterm"
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("DUCKTERM_HOME", str(root))
+    (root / "feature-flags.json").parent.mkdir(parents=True, exist_ok=True)
+    (root / "feature-flags.json").write_text(json.dumps({"flags": {"backup": True, "byoc": True}}))
     monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(tmp_path / "claude"))
     monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex"))
     history = HistoryStore(root / "db.sqlite")

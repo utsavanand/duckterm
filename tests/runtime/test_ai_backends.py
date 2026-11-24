@@ -15,7 +15,7 @@ import pytest
 from test_memory import memory_rig
 from test_session_api import dispatch
 
-from duckterm import memory_provider
+from duckterm import memory_provider, release_features
 from duckterm.core.session_api import APIError
 from duckterm.llm import ai_settings, api, backend
 
@@ -28,6 +28,11 @@ class _Response(io.BytesIO):
 
     def __exit__(self, *exc):
         return False
+
+
+@pytest.fixture(autouse=True)
+def enabled_byok(monkeypatch):
+    monkeypatch.setattr(release_features, "overrides", lambda: ({"byok": True}, None))
 
 
 @pytest.fixture

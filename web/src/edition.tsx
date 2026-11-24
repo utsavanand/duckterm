@@ -8,7 +8,8 @@ export type Feature =
   | "explorer" | "file_editing" | "git_changes" | "inbox" | "folder_chat" | "checkpoints"
   | "summaries" | "context" | "handoff" | "connectors" | "oracle" | "remote_workspaces"
   | "artifacts" | "pr_review" | "overview" | "rule_suggestions"
-  | "skill_kits" | "home" | "background_rule_suggestions" | "autopilot"; // development flags, see docs/feature-flags.md
+  | "cross_computer_collaboration" | "skill_kits" | "harness_management" | "byok" | "byoc" | "backup"
+  | "home" | "background_rule_suggestions" | "autopilot";
 
 export type EditionState =
   | { status: "loading" }
@@ -59,7 +60,7 @@ export function EditionProvider({ children, onError }: { children: ReactNode; on
   const reload = useCallback(() => refresh.current(), []);
   const remote = state.status === "ready" ? state.description.features.includes("remote_workspaces") : null;
   useEffect(() => allowRemoteWorkspaces(remote), [remote]);
-  const collaboration = state.status === "ready" && state.description.features.includes("inbox");
+  const collaboration = state.status === "ready" && state.description.features.includes("cross_computer_collaboration");
   useEffect(() => {
     allowCollaboration(collaboration);
     return () => allowCollaboration(false);
