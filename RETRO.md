@@ -1,3 +1,11 @@
+## 2026-11-24 — Valid JSON is not necessarily a transcript record
+
+A JSON array in a Claude transcript made the whole sessions endpoint return 500.
+Moving parsing off the event loop kept other requests responsive but did not
+protect the agent list. Validate record, message and usage shapes before field
+access; skip invalid usage values and retain earlier valid evidence. Exercise
+malformed but valid JSON as well as interrupted JSON and unreadable files.
+
 ## 2026-11-24 — Concurrent callers don't overlap a read that runs on the loop
 
 Fleet digests started reading four sessions at a time, but Claude transcript
