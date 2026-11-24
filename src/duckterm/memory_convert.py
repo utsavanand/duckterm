@@ -4,7 +4,8 @@ Owner-run, once. Each raw version a checkpoint or summary still cites is read
 and verified against its native digest, saved as records (one whole copy per
 growing conversation, older versions as pointers into it), read back and
 compared, and then every database reference to it gains its records digest.
-Only after that commit do the raw files move to the Trash. Raw files nothing
+Only after that commit do the raw files move to a holding folder the owner
+deletes once satisfied. Raw files nothing
 cites are reported and left alone. A run interrupted after the commit leaves
 bound versions whose raw copy is still in place; the next run checks those
 again and finishes moving them.
@@ -183,13 +184,11 @@ def _still_needed(root: Path, converted: set[str]) -> set[str]:
     return needed
 
 
-def convert(
-    conn: sqlite3.Connection, key: str, trash: Path, anchor: Path | None = None
-) -> dict[str, Any]:
+def convert(conn: sqlite3.Connection, key: str, trash: Path, anchor: Path) -> dict[str, Any]:
     """Convert one agent's cited raw versions; the raw files go to `trash`.
 
-    `trash` must lie under `anchor` (the home folder by default); every folder
-    below the anchor is opened without following symlinks.
+    `trash` must lie under `anchor`; every folder below the anchor is opened
+    without following symlinks.
     """
     root = memory_sources.directory(key)
     report: dict[str, Any] = {
@@ -197,12 +196,12 @@ def convert(
         "converted": 0,
         "resumed": 0,
         "unreadable": [],
-        "trashed": [],
+        "removed": [],
     }
-    # Opened before anything changes: a Trash that can't be reached (a
-    # symlink, or macOS privacy protection on ~/.Trash) must stop the run
+    # Opened before anything changes: a holding folder that can't be reached
+    # (a symlink, or macOS privacy protection) must stop the run
     # here, not after every reference has been rebound.
-    trash_fd = open_below(anchor or Path.home(), trash)
+    trash_fd = open_below(anchor, trash)
     try:
         return _convert(conn, key, root, trash_fd, report)
     finally:
@@ -335,7 +334,7 @@ def _convert(
             if (root / (snapshot + suffix)).is_file()
         ]
         if names:
-            report["trashed"] = _move_to_trash(root, names, trash_fd, key)
+            report["removed"] = _move_to_trash(root, names, trash_fd, key)
     return report
 
 
@@ -343,15 +342,15 @@ def open_below(anchor: Path, target: Path) -> int:
     """Open (creating as needed) target, one folder at a time below anchor.
 
     O_NOFOLLOW on a whole path only checks its last component, so a symlinked
-    ~/.Trash would still be followed. The anchor itself is trusted as given.
+    parent would still be followed. The anchor itself is trusted as given.
     """
     if not target.is_relative_to(anchor):
-        raise APIError(409, f"The Trash folder must be inside {anchor}")
+        raise APIError(409, f"The holding folder must be inside {anchor}")
     fd = os.open(anchor, os.O_RDONLY | os.O_DIRECTORY)
     try:
         for part in target.relative_to(anchor).parts:
             if part in {"", ".", ".."} or "/" in part:
-                raise APIError(409, "Invalid Trash folder")
+                raise APIError(409, "Invalid holding folder")
             with contextlib.suppress(FileExistsError):
                 os.mkdir(part, 0o700, dir_fd=fd)
             child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
@@ -365,8 +364,8 @@ def open_below(anchor: Path, target: Path) -> int:
 
 def _move_to_trash(root: Path, names: list[str], trash_fd: int, key: str) -> list[dict[str, Any]]:
     """Move files by hard link and unlink, through directories opened without
-    following symlinks, so nothing in the Trash is replaced and nothing lands
-    outside it. A Trash on another volume is refused rather than copied."""
+    following symlinks, so nothing in the holding folder is replaced and
+    nothing lands outside it. One on another volume is refused, not copied."""
     moved = []
     fds = [os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)]
     try:
@@ -386,10 +385,14 @@ def _move_to_trash(root: Path, names: list[str], trash_fd: int, key: str) -> lis
                 there = os.stat(name, dir_fd=destination, follow_symlinks=False)
                 # The same file is already linked there by an interrupted run.
                 if (there.st_dev, there.st_ino) != (info.st_dev, info.st_ino):
-                    raise APIError(409, f"The Trash already has {name}; nothing replaced") from exc
+                    raise APIError(
+                        409, f"The holding folder already has {name}; nothing replaced"
+                    ) from exc
             except OSError as exc:
                 if exc.errno == errno.EXDEV:
-                    raise APIError(409, "The Trash is on another volume; nothing moved") from exc
+                    raise APIError(
+                        409, "The holding folder is on another volume; nothing moved"
+                    ) from exc
                 raise
             os.unlink(name, dir_fd=source)
             moved.append({"file": name, "bytes": info.st_size})

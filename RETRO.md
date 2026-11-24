@@ -5,8 +5,9 @@ the last component, so a symlinked ~/.Trash was still followed. Checking that
 by hand turned up a bigger gap: macOS refuses to let this process open
 ~/.Trash at all without Full Disk Access. The conversion rebinds every reference first and
 moves files last, so a real run would have changed the database and then failed
-on every agent. No test or rehearsal used the real Trash. The Trash folder is
-now opened one component at a time below the home folder, before anything
+on every agent. No test or rehearsal used the real Trash. The owner chose a
+holding folder, ~/.duckterm/removed/<date>, which they delete when satisfied.
+It is opened one component at a time below ~/.duckterm, before anything
 changes, and the CLI stops up front if it can't open it. Lesson: rehearse
 against the real destination too, not only a stand-in for it; OS protections
 live there.

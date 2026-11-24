@@ -263,7 +263,7 @@ def test_a_dry_run_creates_no_folders_and_reports_a_bad_session(legacy):
     assert not (root.parent.parent / "elsewhere").exists()
     assert [s["session"] for s in plan["sessions"] if "error" in s] == ["bad/key"]
     with pytest.raises(APIError):
-        memory_convert.convert(conn, "../outside", root.parent.parent / "Trash")
+        memory_convert.convert(conn, "../outside", root.parent.parent / "Trash", root.parent.parent)
 
 
 def test_the_cli_dry_run_does_not_set_up_the_database(tmp_path, monkeypatch):

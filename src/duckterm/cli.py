@@ -101,7 +101,9 @@ def build_parser() -> argparse.ArgumentParser:
         help="replace raw conversation copies from older versions with extracted text",
     )
     convert.add_argument(
-        "--apply", action="store_true", help="convert and move the raw copies to the Trash"
+        "--apply",
+        action="store_true",
+        help="convert and move the raw copies to ~/.duckterm/removed",
     )
     sub.add_parser("doctor", help="check deps, server, hooks, and trust; print what's missing")
 
@@ -971,23 +973,27 @@ def _convert_memory_copies(apply: bool) -> int:
         return 1
     conn = HistoryStore()._conn
     DigestStore(conn=conn)
-    trash = Path.home() / ".Trash" / time.strftime("DuckTerm memory copies %Y-%m-%d %H.%M.%S")
+    # Not ~/.Trash: macOS refuses it unless the terminal has Full Disk Access.
+    # The owner deletes this folder once satisfied (owner, 2026-11-24).
+    trash = paths.home() / "removed" / time.strftime("memory copies %Y-%m-%d %H.%M.%S")
     try:
-        os.close(memory_convert.open_below(Path.home(), trash))
+        os.close(memory_convert.open_below(paths.home(), trash))
     except (APIError, OSError) as exc:
-        # macOS protects ~/.Trash unless the terminal has Full Disk Access.
         print(f"Can't open {trash} ({exc}); nothing was changed.")
         return 1
     failed = moved = 0
     for key in sorted(memory_convert.pending(conn)):
         try:
-            report = memory_convert.convert(conn, key, trash)
+            report = memory_convert.convert(conn, key, trash, paths.home())
         except (APIError, OSError) as exc:
             failed += 1
             report = {"session": key, "error": str(exc)}
-        moved += len(report.get("trashed", []))
+        moved += len(report.get("removed", []))
         print(json.dumps(report))
-    print(f"{moved} raw copies moved to {trash}" if moved else "No raw copies were moved.")
+    if moved:
+        print(f"{moved} raw copies moved to {trash}. Delete that folder once you're satisfied.")
+    else:
+        print("No raw copies were moved.")
     return 1 if failed else 0
 
 
