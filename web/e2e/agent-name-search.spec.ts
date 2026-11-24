@@ -1,0 +1,64 @@
+import { expect, test } from "@playwright/test";
+import { apiDelete, apiPost, base, expandFolder, postEvent, seedSession } from "./helpers";
+
+test("agent-name search combines filters, highlights matches, and restores workspace navigation", async ({ page }) => {
+  const keys = ["name-search-ui", "name-search-qa", "name-search-docs"];
+  const folders = ["Search review", "Search review/QA", "dev workspace"];
+  try {
+    for (const name of folders) await apiPost("/folders", { name });
+    await seedSession(keys[0], { name: "UI-dev", group: folders[0], runtime: "codex", test: true });
+    await seedSession(keys[1], { name: "Main-QA", group: folders[1], runtime: "claude-code", test: true });
+    await postEvent({ session_key: keys[1], event_type: "PermissionRequest", runtime: "claude-code" });
+    await seedSession(keys[2], { name: "Docs", group: folders[2], runtime: "codex", test: true });
+    await page.setViewportSize({ width: 1440, height: 950 });
+    await page.goto(base());
+    await page.evaluate(() => document.documentElement.dataset.theme = "dark");
+    await expandFolder(page, folders[0]);
+    await page.locator('.rd-row-name', { hasText: 'UI-dev' }).click();
+    const search = page.getByRole('searchbox', { name: 'Search agents by name' });
+    const toggle = page.getByRole('button', { name: /^Filters(?:,|$)/ });
+    const rows = page.locator('.rd-agents .rd-row');
+    await expect(toggle).toHaveAttribute('aria-expanded', 'false');
+    await search.fill(' DEV ');
+    await expect(rows).toHaveCount(1);
+    await expect(rows.locator('mark')).toHaveText('dev');
+    await expect(rows).toContainText('UI-dev');
+    await toggle.click();
+    await expect(page.getByRole('button', { name: 'Working 1', exact: true })).toBeVisible();
+    await page.getByRole('button', { name: 'Waiting 0', exact: true }).click();
+    await expect(rows).toHaveCount(0);
+    await expect(page.getByText('No agents match “DEV” with these filters.')).toBeVisible();
+    await search.fill('qa');
+    await expect(rows).toHaveCount(1);
+    await expect(rows.locator('mark')).toHaveText('QA');
+    await expect(rows.locator('.rd-row-folder')).toContainText(folders[1]);
+    await toggle.click();
+    await expect(search).toBeVisible();
+    await search.press('Escape');
+    await expect(search).toHaveValue('');
+    await expect(rows).toHaveCount(1);
+    await expect(toggle).toHaveAccessibleName('Filters, 1 active');
+    await search.fill('main');
+    await page.getByRole('region', { name: 'Session filters' }).getByRole('button', { name: 'Clear filters' }).click();
+    await expect(search).toHaveValue('main');
+    await expect(rows).toHaveCount(1);
+    await page.getByRole('search', { name: 'Find agents' }).getByRole('button', { name: 'Clear search' }).click();
+    await expect(search).toBeFocused();
+    await expect(page.getByRole('button', { name: `Collapse ${folders[0]}`, exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: `Expand ${folders[1]}`, exact: true })).toBeVisible();
+    await expect(page.locator('.rd-row.selected')).toContainText('UI-dev');
+    await search.fill('qa');
+    await toggle.click();
+    await page.screenshot({ path: '/tmp/agent-search-implemented-dark.png' });
+    await page.evaluate(() => { document.documentElement.dataset.theme = 'light'; document.documentElement.style.setProperty('--ui-scale', '1.5'); });
+    await page.screenshot({ path: '/tmp/agent-search-implemented-light-large.png' });
+    const bounds = await page.locator('.rd-agent-search').evaluate(el => ({ width: el.clientWidth, scroll: el.scrollWidth }));
+    expect(bounds.scroll).toBeLessThanOrEqual(bounds.width);
+    await search.fill('');
+    await search.press('Escape');
+    await expect(search).toBeFocused();
+  } finally {
+    for (const key of keys) await apiDelete(`/sessions/${key}`);
+    for (const folder of folders.reverse()) await apiDelete(`/folders/${encodeURIComponent(folder)}`);
+  }
+});

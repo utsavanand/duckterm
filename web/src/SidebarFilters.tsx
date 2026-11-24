@@ -11,9 +11,9 @@ export function SidebarFilterToggle({ filters, expanded, onToggle }: {
     Filters{count > 0 && <span className="rd-filter-badge" aria-hidden="true">{count}</span>}
   </button>;
 }
-export function SidebarFilters({ sessions, now, filters, onToggle, onClear, saveError, expanded }: {
+export function SidebarFilters({ sessions, now, filters, onToggle, onClear, saveError, expanded, query = "", totalSessions = sessions.length }: {
   sessions: SessionView[]; now: number; filters: SidebarFilterState;
-  expanded: boolean;
+  expanded: boolean; query?: string; totalSessions?: number;
   onToggle: (group: FilterGroup, value: string) => void; onClear: () => void; saveError: boolean;
 }) {
   const groups: { key: FilterGroup; label: string; values: string[] }[] = [
@@ -24,7 +24,7 @@ export function SidebarFilters({ sessions, now, filters, onToggle, onClear, save
   const selected = (Object.keys(filters) as FilterGroup[]).flatMap(g => filters[g].map(v => filterLabel(g, v)));
   const count = sessions.filter(s => matchesFilters(s, filters, now)).length;
   const active = hasFilters(filters);
-  return <section className="rd-sidebar-filters" aria-label="Session filters" hidden={!expanded && !active && !saveError}>
+  return <section className="rd-sidebar-filters" aria-label="Session filters" hidden={!expanded && !active && !saveError && !query}>
     <div id="rd-filter-options" className="rd-filter-options" hidden={!expanded}>
     {groups.map(group => <div className="rd-filter-group" role="group" aria-label={group.label} key={group.key}>
       <span className="rd-filter-group-label" aria-hidden="true">{group.label}</span>
@@ -39,7 +39,7 @@ export function SidebarFilters({ sessions, now, filters, onToggle, onClear, save
       })}</div>
     </div>)}
     </div>
-    {(expanded || active) && <div className="rd-filter-summary"><span role="status" title={selected.join(" · ")}>{active ? `${count} of ${sessions.length} · across all workspaces` : `${sessions.length} sessions · all workspaces`}</span>{active && <button type="button" onClick={onClear}>Clear filters</button>}</div>}
+    {(expanded || active || query) && <div className="rd-filter-summary"><span role="status" title={selected.join(" · ")}>{(active || query) ? `${count} of ${totalSessions} · across all workspaces` : `${sessions.length} sessions · all workspaces`}</span>{active && <button type="button" onClick={onClear}>Clear filters</button>}</div>}
     {saveError && <p className="rd-filter-storage" role="alert">Filters work here, but could not be saved for next time.</p>}
   </section>;
 }

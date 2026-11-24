@@ -6,7 +6,7 @@ import { edition, FULL } from "./test/editions";
 import { viewFromPersisted } from "./types";
 import { readSidebarOrder, SIDEBAR_ORDER_KEY } from "./sidebarOrder";
 const session = (key: string) => viewFromPersisted({ session_key: key, name: key, state: "idle", event_count: 1, started_at: 1, updated_at: 2 });
-const filters = { filters: EMPTY_FILTERS, toggle: vi.fn(), clear: vi.fn(), saveError: false, expanded: false, toggleExpanded: vi.fn() };
+const filters = { query: "", setQuery: vi.fn(), filters: EMPTY_FILTERS, toggle: vi.fn(), clear: vi.fn(), saveError: false, expanded: false, toggleExpanded: vi.fn() };
 const props = { now: 3, folders: [], selectedKey: "a", filterControls: filters, onOpen: vi.fn(), onFoldersChanged: vi.fn(), onSessionMoved: vi.fn(), onOpenGrid: vi.fn(), onNewSessionIn: vi.fn(), folderThemes: {} };
 const keys = (container: HTMLElement) => [...container.querySelectorAll('.rd-row')].map(r => r.getAttribute('data-session-key'));
 afterEach(() => { cleanup(); localStorage.clear(); vi.restoreAllMocks(); });

@@ -32,3 +32,12 @@
   .rd-sidebar-content { overflow-y:auto; }
   .rd-sidebar-content > .rd-tree { flex:none; overflow:visible; }
 }
+.rd-agent-search { flex:none; display:flex; align-items:center; gap:8px; margin:10px 12px 14px; padding:7px 9px; min-width:0; border:1px solid var(--border-strong); border-radius:6px; background:var(--bg-soft); color:var(--text-soft); }
+.rd-agent-search:focus-within { border-color:var(--brand-green); outline:1px solid var(--brand-green); }
+.rd-agent-search svg { flex:none; }
+.rd-agent-search input { min-width:0; width:100%; padding:0; border:0; outline:none; background:transparent; color:var(--text); font:inherit; font-size:0.8125rem; }
+.rd-agent-search input::placeholder { color:var(--text-soft); opacity:1; }
+.rd-agent-search input::-webkit-search-cancel-button { -webkit-appearance:none; }
+.rd-agent-search button { flex:none; padding:0 3px; border:0; background:transparent; color:var(--text-soft); font:inherit; cursor:pointer; }
+.rd-agent-search button:focus-visible { outline:2px solid var(--brand-green); outline-offset:2px; }
+.rd-row-name mark { background:color-mix(in srgb, var(--brand-green) 22%, transparent); color:inherit; border-radius:2px; }

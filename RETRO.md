@@ -1,3 +1,10 @@
+## 2026-11-24 — Search must compose with filters without changing navigation
+
+Agent-name search must apply to the same session set as filter counts, retain
+filter choices when cleared, and leave workspace expansion and selection intact.
+Keep its input outside the collapsible filter controls and verify those behaviors
+with real sidebar rows, including forks inside collapsed workspaces.
+
 ## 2026-11-24 — Unread inbox items are not all unanswered requests
 
 Sidebar inbox badges include informational owner notices. A filter for unanswered
