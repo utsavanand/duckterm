@@ -1868,9 +1868,10 @@ class Server:
     async def _review_author(self, repo: str, branch: str) -> dict[str, Any] | None:
         """The session that made this PR's head branch, with its digest: the
         session that first pushed it (the PR lists' rule), else a live session
-        whose checkout is on it. Every review page waits on this, and asking
-        git about every session's checkout took seconds, so ended sessions
-        are skipped and checkouts are looked up through the lists' cache."""
+        whose checkout is on it in this repository. Every review page waits on
+        this, and asking git about every session's checkout took seconds, so
+        ended sessions are skipped. Checkouts are asked fresh each time: a
+        cached answer went stale when a session switched branches."""
         from duckterm.review import lists
 
         sessions = self.history.sessions()
@@ -1882,14 +1883,13 @@ class Server:
                 for r in sessions
                 if not r.get("ended_at") and (r.get("worktree_path") or r.get("cwd"))
             ]
+            # A recorded branch is only a hint (it can be stale, or name the
+            # same branch in another repository), so it orders the checks.
+            live.sort(key=lambda r: r.get("branch") != branch)
 
             def find() -> dict[str, Any] | None:
                 for candidate in live:
-                    if candidate.get("branch") == branch:
-                        return candidate
-                for candidate in live:
-                    found = lists._worktree_branch(candidate)
-                    if found and found == (repo, branch):
+                    if lists._worktree_branch(candidate) == (repo, branch):
                         return candidate
                 return None
 

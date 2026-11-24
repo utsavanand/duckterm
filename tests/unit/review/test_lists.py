@@ -71,7 +71,6 @@ def clone(git_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Pa
     )
     monkeypatch.setattr(lists.github, "review_state", lambda *a: "none")
     lists._cache.clear()
-    lists._checkouts.clear()
     return clone
 
 
@@ -133,7 +132,6 @@ def test_no_pr_and_nothing_pushed_shows_unpushed_only_when_ahead(
     assert lists.build([session("s3", clone)])["rows"] == []
     commit(clone, "w.txt", "w\n", "work")
     lists._cache.clear()
-    lists._checkouts.clear()
     rows = lists.build([session("s3", clone)])["rows"]
     assert [(r["status"], r["label"]) for r in rows] == [("unpushed", "Not pushed")]
     assert rows[0]["compare_url"] is None
@@ -445,27 +443,12 @@ def test_folder_members_leave_out_test_sessions(tmp_path: Path) -> None:
     assert [row["session_key"] for row in lists.folder_members(history, "team")] == ["real"]
 
 
-def test_review_author_prefers_the_pusher_and_skips_ended_checkouts(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    """The review page waits on this look-up: it must not ask git about
-    every session (owner report: a PR took 6-8 s to open)."""
+def review_author(sessions: list[dict], owners: dict, repo: Path, branch: str) -> str | None:
+    """Server._review_author against these sessions and first-push owners,
+    with real git for every checkout."""
     import asyncio
 
     from duckterm.server import Server
-
-    asked: list[str] = []
-
-    def worktree_branch(row: dict) -> tuple[str, str] | None:
-        asked.append(row["session_key"])
-        return ("/repo", "topic")
-
-    monkeypatch.setattr(lists, "_worktree_branch", worktree_branch)
-    sessions = [
-        {"session_key": "ended", "cwd": "/a", "ended_at": 1},
-        {"session_key": "live", "cwd": "/b"},
-        {"session_key": "pusher", "cwd": "/c", "name": "dev"},
-    ]
 
     class History:
         def sessions(self) -> list[dict]:
@@ -473,11 +456,50 @@ def test_review_author_prefers_the_pusher_and_skips_ended_checkouts(
 
     class Subject:
         history = History()
-        _branch_owners_cache = (float("inf"), {("/repo", "pushed"): "pusher"})
+        _branch_owners_cache = (float("inf"), owners)
         _branch_owners = Server._branch_owners
 
-    subject = Subject()
-    found = asyncio.run(Server._review_author(subject, "/repo", "pushed"))  # type: ignore[arg-type]
-    assert found is not None and found["key"] == "pusher" and asked == []
-    found = asyncio.run(Server._review_author(subject, "/repo", "topic"))  # type: ignore[arg-type]
-    assert found is not None and found["key"] == "live" and asked == ["live"]
+    root = lists.git.repo_root(str(repo))
+    found = asyncio.run(Server._review_author(Subject(), root, branch))  # type: ignore[arg-type]
+    return found["key"] if found else None
+
+
+def test_review_author_is_the_first_pusher_even_after_it_ended(git_repo: Path) -> None:
+    run(git_repo, "checkout", "-q", "-b", "topic")
+    sessions = [
+        {"session_key": "pusher", "cwd": "/gone", "ended_at": 1},
+        {"session_key": "sitter", "cwd": str(git_repo), "branch": "topic"},
+    ]
+    owners = {(lists.git.repo_root(str(git_repo)), "topic"): "pusher"}
+    assert review_author(sessions, owners, git_repo, "topic") == "pusher"
+    assert review_author(sessions, {}, git_repo, "topic") == "sitter"
+    sessions[1]["ended_at"] = 2
+    assert review_author(sessions, {}, git_repo, "topic") is None
+
+
+def test_review_author_follows_the_checkout_as_it_changes(git_repo: Path, tmp_path: Path) -> None:
+    """No answer outlives the checkout: switching branches moves the author
+    at once, and a checkout made after a miss is found on the next look."""
+    run(git_repo, "checkout", "-q", "-b", "topic")
+    sessions = [{"session_key": "s", "cwd": str(git_repo), "branch": "topic"}]
+    assert review_author(sessions, {}, git_repo, "topic") == "s"
+    run(git_repo, "checkout", "-q", "-b", "other")
+    assert review_author(sessions, {}, git_repo, "topic") is None
+    assert review_author(sessions, {}, git_repo, "other") == "s"
+
+    later = tmp_path / "later"
+    sessions = [{"session_key": "late", "cwd": str(later)}]
+    assert review_author(sessions, {}, git_repo, "main") is None
+    later.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main", str(later)], check=True)
+    assert review_author(sessions, {}, later, "main") == "late"
+
+
+def test_review_author_must_be_in_the_reviewed_repository(git_repo: Path, tmp_path: Path) -> None:
+    run(git_repo, "checkout", "-q", "-b", "topic")
+    elsewhere = tmp_path / "elsewhere"
+    subprocess.run(["git", "init", "-q", "-b", "topic", str(elsewhere)], check=True)
+    sessions = [{"session_key": "b", "cwd": str(elsewhere), "branch": "topic"}]
+    assert review_author(sessions, {}, git_repo, "topic") is None
+    sessions.append({"session_key": "a", "cwd": str(git_repo), "branch": "main"})
+    assert review_author(sessions, {}, git_repo, "topic") == "a"

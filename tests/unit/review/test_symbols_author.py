@@ -75,7 +75,6 @@ def repo(git_repo: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(lists.git, "github_slug", lambda repo: None)
     monkeypatch.setattr(lists.git, "remote_heads", lambda repo: None)
     lists._cache.clear()
-    lists._checkouts.clear()
     write(git_repo, "src/duckterm/core.py", PY_BASE)
     write(
         git_repo,
