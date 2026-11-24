@@ -43,6 +43,12 @@ def test_stop_with_background_shell_stays_busy_until_empty_snapshot(world):
     assert history.session("test-bg")["state"] == "busy"
     idle = emit(server, "Notification", notification_type="idle_prompt")
     assert idle["background_tasks"] == RUNNING
+    stored = json.loads(
+        history._conn.execute(
+            "SELECT payload_json FROM events WHERE id = ?", (idle["_id"],)
+        ).fetchone()[0]
+    )
+    assert "background_tasks" not in stored
     assert history.session("test-bg")["state"] == "busy"
     emit(server, "Stop", background_tasks=[])
     assert history.session("test-bg")["state"] == "idle"

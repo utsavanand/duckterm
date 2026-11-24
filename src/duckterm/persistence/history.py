@@ -453,10 +453,6 @@ class HistoryStore:
             # Also sanitize the live event fan-out: a supervisor retains its
             # original launch metadata after its parent has been removed.
             event["parent_session_key"] = None
-        if key and _is_idle_notice(event) and "background_tasks" not in event:
-            tasks = self.background_tasks(key)
-            if tasks:
-                event["background_tasks"] = tasks
         self._conn.execute(
             "INSERT OR IGNORE INTO events (id, session_key, event_type, ts, payload_json) "
             "VALUES (?, ?, ?, ?, json(?))",
@@ -468,6 +464,12 @@ class HistoryStore:
                 json.dumps(event),
             ),
         )
+        # Enrich only the state fold and live stream. The stored idle observation
+        # stays metadata-only: repeating a known task snapshot is not new memory.
+        if key and _is_idle_notice(event) and "background_tasks" not in event:
+            tasks = self.background_tasks(key)
+            if tasks:
+                event["background_tasks"] = tasks
         etype = event.get("event_type")
         if etype == events.MERGE_DELIVERED:
             # Server bookkeeping for the merge checkpoint, not agent activity:
