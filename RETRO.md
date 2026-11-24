@@ -1,3 +1,13 @@
+## 2026-11-24 — Concurrent callers don't overlap a read that runs on the loop
+
+Fleet digests started reading four sessions at a time, but Claude transcript
+parsing still ran synchronously inside the coroutine, so only tmux and Codex
+reads actually overlapped. Moving a read to a thread opens an await, and that
+await is a window in which the session can be rebound, moved or have its
+transcript replaced. Recheck binding and file identity after the await, as the
+Codex path already did.
+
+
 ## 2026-11-23 — Measure the gap between an AI answer and CLI exit
 
 A short internal Claude call kept waiting after its final result because the CLI
