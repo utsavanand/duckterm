@@ -1,3 +1,10 @@
+## 2026-11-24 — Scope searches and wait for terminal checkpoint receipts
+
+Adding a second search box exposed an unlabelled Inbox test locator. Target the
+named control. Checkpoint recovery polls may return a valid running receipt
+before completion; wait for the completed receipt, then retain exact request and
+result identity assertions instead of assuming the first HTTP 200 is final.
+
 ## 2026-11-24 — Search must compose with filters without changing navigation
 
 Agent-name search must apply to the same session set as filter counts, retain
