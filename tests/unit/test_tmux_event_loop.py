@@ -84,7 +84,10 @@ def test_request_tmux_wait_leaves_event_loop_available(tmp_path, monkeypatch, op
         monkeypatch.setattr(tmux, "kill_session", response)
         capture, captures = dependent_response(asyncio.get_running_loop(), b"working")
         monkeypatch.setattr(tmux, "capture_screen", capture)
-        server = SimpleNamespace(orchestrator=SimpleNamespace(get=lambda key: sup))
+        server = SimpleNamespace(
+            orchestrator=SimpleNamespace(get=lambda key: sup),
+            _owner_question_pending=lambda key: False,
+        )
         if operation == "resize":
             await Server._handle_terminal_frame(sup, (1, b'{"resize":{"cols":100,"rows":30}}'))
         elif operation == "input":

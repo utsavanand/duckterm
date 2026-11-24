@@ -323,3 +323,27 @@ describe("context duck tint", () => {
     }
   });
 });
+
+
+describe("background work and owner waits", () => {
+  const tasks = [{ id: "shell-1", type: "shell", status: "running" }];
+  it("does not settle a background shell to idle", () => {
+    let sessions = applyAll([ev({ event_type: "SessionStart" }), ev({ event_type: "Stop", background_tasks: tasks })]);
+    expect(effectiveState(sessions.get("s1")!, 999999)).toBe("busy");
+    sessions = applyEvent(sessions, ev({ event_type: "Notification", notification_type: "idle_prompt", background_tasks: tasks }));
+    expect(effectiveState(sessions.get("s1")!, 999999)).toBe("busy");
+    sessions = applyEvent(sessions, ev({ event_type: "Stop", background_tasks: [] }));
+    expect(effectiveState(sessions.get("s1")!, 999999)).toBe("idle");
+  });
+  it("keeps a pending owner question ahead of background work", () => {
+    const sessions = applyAll([ev({ event_type: "SessionStart" }), ev({ event_type: "Stop", background_tasks: tasks, owner_waiting: true })]);
+    expect(effectiveState(sessions.get("s1")!, 999999)).toBe("waiting");
+    const answered = applyEvent(sessions, ev({ event_type: "UserPromptSubmit" }));
+    expect(effectiveState(answered.get("s1")!, 999999)).toBe("busy");
+  });
+  it("does not let a child event erase the parent's idle clock", () => {
+    const sessions = applyAll([ev({ event_type: "Stop" })]);
+    const after = applyEvent(sessions, ev({ event_type: "SubagentStop" }));
+    expect(after).toBe(sessions);
+  });
+});
