@@ -211,6 +211,7 @@ def test_question_expires_while_stopped(store: HistoryStore, monkeypatch) -> Non
     store.set_state("b", "stopped")
     monkeypatch.setattr("duckterm.core.session_api.time.time", lambda: 1400)
     assert store.session_api.pending_counts() == {}
+    assert store.session_api.pending_counts(requires_reply=True) == {}
     store.set_state("b", "busy")
     b = enroll(store, "b")
     path = f"/questions/{question['id']}"
@@ -499,3 +500,21 @@ def test_mail_analytics_owner_route_and_range_validation(store: HistoryStore) ->
         assert status == 200 and result["days"] == days
         assert result["timezone"] == "UTC" and result["version"] == 1
         assert result["daily"] == []  # Fixture sessions are explicitly test:true.
+
+
+@pytest.mark.parametrize("action", ["answer", "decline", "cancel"])
+def test_reply_required_counts_follow_request_lifecycle(store: HistoryStore, action: str) -> None:
+    a, b = token_for(store, "a"), token_for(store, "b")
+    q = ask(store, a)
+    assert store.session_api.pending_counts(requires_reply=True) == {"b": 1}
+    call(store, b, "GET", "/inbox")
+    call(store, b, "POST", f"/questions/{q['id']}/accept")
+    assert store.session_api.pending_counts(requires_reply=True) == {"b": 1}
+    call(
+        store,
+        a if action == "cancel" else b,
+        "POST",
+        f"/questions/{q['id']}/{action}",
+        {"text": "Done"},
+    )
+    assert store.session_api.pending_counts(requires_reply=True) == {}

@@ -550,13 +550,14 @@ class SessionAPI:
         ).fetchone()
         return {"sent": int(row["sent"]), "answered": int(row["answered"])}
 
-    def pending_counts(self) -> dict[str, int]:
+    def pending_counts(self, *, requires_reply: bool = False) -> dict[str, int]:
         self._sweep()
+        predicate = _inbox_view("pending") if requires_reply else "status IN ('queued', 'accepted')"
         return {
             row["recipient"]: row["n"]
             for row in self.conn.execute(
                 "SELECT recipient, COUNT(*) AS n FROM session_questions "
-                "WHERE status IN ('queued', 'accepted') GROUP BY recipient"
+                f"WHERE {predicate} GROUP BY recipient"
             ).fetchall()
         }
 

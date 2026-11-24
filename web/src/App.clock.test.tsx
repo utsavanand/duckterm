@@ -9,7 +9,7 @@ import { FULL } from "./test/editions";
 
 const probe = vi.hoisted(() => ({
   terminal: vi.fn(), connectors: vi.fn(), voice: [] as VoiceSession[],
-  sessions: [] as SessionView[], hosts: ["local"], folders: ["Team"], counts: {},
+  sessions: [] as SessionView[], hosts: ["local"], folders: ["Team"], counts: { pending: {}, unanswered: {} },
   refresh: vi.fn(), remove: vi.fn(), patch: vi.fn(), notes: [],
   requests: [] as { id: string; session_key: string; name: string; deadline: number; status: string }[],
 }));

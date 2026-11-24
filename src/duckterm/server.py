@@ -1303,9 +1303,12 @@ class Server:
             await _write_json(writer, 401, {"error": "owner credential required"})
             return
         counts = self.history.session_api.pending_counts()
+        unanswered = self.history.session_api.pending_counts(requires_reply=True)
+        # Cross-computer pending mail consists of questions requiring replies.
         for key, count in self.collaboration.pending_counts().items():
             counts[key] = counts.get(key, 0) + count
-        await _write_json(writer, 200, {"counts": counts})
+            unanswered[key] = unanswered.get(key, 0) + count
+        await _write_json(writer, 200, {"counts": counts, "unanswered_counts": unanswered})
 
     async def _session_inbox(
         self, writer: asyncio.StreamWriter, session_key: str, headers: dict[str, str], query: str

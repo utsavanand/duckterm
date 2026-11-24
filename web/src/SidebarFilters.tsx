@@ -1,8 +1,8 @@
-import { FilterGroup, SidebarFilterState, filterLabel, filterValue, hasFilters, matchesFilters, STATUS_FILTERS } from "./sidebarFilterState";
+import { FilterGroup, SidebarFilterState, filterLabel, filterValue, hasFilters, matchesFilters, matchesFilterValue, STATUS_FILTERS } from "./sidebarFilterState";
 import { SessionView } from "./types";
 import "./sidebarFilters.css";
 
-const symbols: Record<string, string> = { busy: "●", waiting: "◷", idle: "○", stopped: "■", "claude-code": "C", codex: "⌘", copilot: "◉", opencode: "O", generic: "›_", local: "⌂", remote: "☁" };
+const symbols: Record<string, string> = { busy: "●", waiting: "◷", idle: "○", stopped: "■", unanswered: "✉", "claude-code": "C", codex: "⌘", copilot: "◉", opencode: "O", generic: "›_", local: "⌂", remote: "☁" };
 export function SidebarFilterToggle({ filters, expanded, onToggle }: {
   filters: SidebarFilterState; expanded: boolean; onToggle: () => void;
 }) {
@@ -32,7 +32,7 @@ export function SidebarFilters({ sessions, now, filters, onToggle, onClear, save
       {group.values.map(value => {
         const label = filterLabel(group.key, value);
         // Faceted counts: apply the OTHER groups, then count this chip's value.
-        const total = sessions.filter(s => matchesFilters(s, filters, now, group.key) && filterValue(s, group.key, now) === value).length;
+        const total = sessions.filter(s => matchesFilters(s, filters, now, group.key) && matchesFilterValue(s, group.key, value, now)).length;
         return <button key={value} type="button" className="rd-filter-chip" aria-label={`${label} ${total}`} aria-pressed={filters[group.key].includes(value)} title={`${label}: ${total}`} onClick={() => onToggle(group.key, value)}>
           <span aria-hidden="true">{symbols[value] ?? value.slice(0, 2)}</span><span className="rd-filter-chip-label" aria-hidden="true">{label}</span><span className="rd-filter-count" aria-hidden="true">{total}</span>
         </button>;

@@ -1,3 +1,10 @@
+## 2026-11-24 — Unread inbox items are not all unanswered requests
+
+Sidebar inbox badges include informational owner notices. A filter for unanswered
+requests needs explicit reply-required counts, retaining read/accepted requests
+and excluding informational notices and closed requests. Keep the existing badge
+count intact, count matching sessions once, and test live answers plus status unions.
+
 ## 2026-11-24 — A completed response does not mean completed work
 
 The status fold treated every Stop as idle and the hook discarded Claude's

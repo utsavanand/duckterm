@@ -7,11 +7,11 @@ export type SidebarFilterState = Record<FilterGroup, string[]>;
 export const FILTER_KEY = "rd.sidebarFilters";
 export const FILTER_PANEL_KEY = "rd.sidebarFiltersExpanded";
 export const EMPTY_FILTERS: SidebarFilterState = { status: [], runtime: [], location: [] };
-export const STATUS_FILTERS = ["busy", "waiting", "idle", "stopped"];
+export const STATUS_FILTERS = ["busy", "waiting", "idle", "stopped", "unanswered"];
 const RUNTIME_LABELS: Record<string, string> = { "claude-code": "Claude Code", codex: "Codex", copilot: "Copilot", opencode: "OpenCode", generic: "Shell" };
 export function filterLabel(group: FilterGroup, value: string): string {
   if (group === "runtime") return RUNTIME_LABELS[value] ?? value;
-  return ({ busy: "Working", waiting: "Waiting", idle: "Idle", stopped: "Stopped", local: "Local", remote: "Remote" } as Record<string, string>)[value] ?? value;
+  return ({ busy: "Working", waiting: "Waiting", idle: "Idle", stopped: "Stopped", unanswered: "Unanswered inbox", local: "Local", remote: "Remote" } as Record<string, string>)[value] ?? value;
 }
 export function sidebarSessions(sessions: SessionView[]): SessionView[] {
   return sessions.filter(s => !["archived", "merged"].includes(s.state));
@@ -22,9 +22,13 @@ export function filterValue(session: SessionView, group: FilterGroup, now: numbe
   const state = effectiveState(session, now);
   return ["stopped", "interrupted", "terminated"].includes(state) ? "stopped" : state;
 }
+export function matchesFilterValue(session: SessionView, group: FilterGroup, value: string, now: number): boolean {
+  if (group === "status" && value === "unanswered") return (session.inboxUnanswered ?? 0) > 0;
+  return filterValue(session, group, now) === value;
+}
 export function matchesFilters(session: SessionView, filters: SidebarFilterState, now: number, except?: FilterGroup): boolean {
   if (["archived", "merged"].includes(session.state)) return false;
-  return (Object.keys(filters) as FilterGroup[]).every(group => group === except || !filters[group].length || filters[group].includes(filterValue(session, group, now)));
+  return (Object.keys(filters) as FilterGroup[]).every(group => group === except || !filters[group].length || filters[group].some(value => matchesFilterValue(session, group, value, now)));
 }
 export function hasFilters(filters: SidebarFilterState): boolean {
   return Object.values(filters).some(values => values.length > 0);
