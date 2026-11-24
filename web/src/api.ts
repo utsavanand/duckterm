@@ -163,6 +163,13 @@ export interface FolderMessagePlan {
 
 export interface FleetAnswer { answer: string; exchange: OracleExchange; sessions: string[] }
 
+// Ask Oracle reading a message as a send to one agent (flag oracle_messages).
+export interface OracleAgent { id: string; name: string; folder: string }
+export type OracleRouted =
+  | FleetAnswer
+  | { plan: OracleAgent & { text: string } }
+  | { clarify: { text: string; candidates: OracleAgent[] } };
+
 export interface FolderRecipients {
   identity: string;
   sessions: BroadcastTarget[];
@@ -679,13 +686,14 @@ export const api = {
   folderDispatch: (folder: string, request: { assign?: boolean; identity: string; target: { kind: "session" | "folder"; id: string }; text: string; request_key: string; recipients: string[] }) =>
     post<{ exchange: OracleExchange }>(`/folders/${encodeURIComponent(folder)}/dispatch`, request),
   folderChat: (folder: string) => artifactRequest<{ messages: OracleExchange[] }>(`/folders/${encodeURIComponent(folder)}/chat`),
-  // Only a folder request with a request key can come back as a message plan.
+  // Only a request with a request key can come back as a message plan.
   fleetAsk: ((question: string, folder?: string, requestKey?: string) =>
     post<FleetAnswer | { plan: FolderMessagePlan }>(
       "/fleet/ask",
       { question, ...(folder !== undefined ? { folder } : {}), ...(requestKey !== undefined ? { request_key: requestKey } : {}) },
     )) as {
     (question: string): Promise<FleetAnswer>;
+    (question: string, folder: undefined, requestKey: string): Promise<OracleRouted>;
     (question: string, folder: string, requestKey?: string): Promise<FleetAnswer | { plan: FolderMessagePlan }>;
   },
   oracleChat: () => get<{ messages: OracleExchange[] }>("/oracle/chat"),
@@ -725,10 +733,10 @@ export const api = {
   },
   // The owner has looked at this session: lower its raised hand.
   sessionAttended: (key: string) => post<{ attended: boolean }>(`/sessions/${encodeURIComponent(key)}/attended`),
-  messageSession: (key: string, text: string, mode: "inbox" | "prompt") =>
+  messageSession: (key: string, text: string, mode: "inbox" | "prompt", requestKey?: string) =>
     post<{ delivered: "inbox" | "prompt" | null }>(
       `/sessions/${encodeURIComponent(key)}/message`,
-      { text, mode },
+      { text, mode, ...(requestKey !== undefined ? { request_key: requestKey } : {}) },
     ),
   clearOracleChat: () =>
     fetch("/oracle/chat", { method: "DELETE", headers: authHeaders() }).then(

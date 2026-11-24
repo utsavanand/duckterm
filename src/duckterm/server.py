@@ -68,7 +68,7 @@ from duckterm import bug_reports, connectors, editions, release_features, suites
 from duckterm.agents import tmux
 from duckterm.agents.terminal import available_terminals, open_in_terminal
 from duckterm.autopilot import api as ap_api
-from duckterm.core import events, fleet_questions, oracle
+from duckterm.core import events, fleet_questions, oracle, oracle_intent
 from duckterm.core.approvals import Approval, ApprovalRegistry
 from duckterm.core.backup_jobs import BackupJobs
 from duckterm.core.eventbus import EventBus
@@ -4281,6 +4281,48 @@ class Server:
             }
         }
 
+    async def _oracle_message(self, question: str, request_key: str) -> dict[str, Any] | None:
+        """An Ask Oracle message that tells one agent something. Sent at once
+        only when it is the owner's own words to exactly one agent; reworded
+        text comes back as a plan and an unclear recipient as candidates, both
+        for the owner to confirm. None means it is a question to answer."""
+        agents = [
+            {
+                "id": str(r["session_key"]),
+                "name": str(r.get("name") or r["session_key"]),
+                "folder": str(r.get("grp") or ""),
+            }
+            for r in self.history.sessions()
+            if r.get("state") not in AT_REST_STATES
+        ]
+        if not agents:
+            return None
+        result = await asyncio.to_thread(
+            summarize, oracle_intent.routing_prompt(question, agents), tier="fast"
+        )
+        if not result.text:
+            return None
+        by_id = {a["id"]: a for a in agents}
+        intent = oracle_intent.parse_intent(result.text, set(by_id))
+        if intent["action"] == "answer":
+            return None
+        if intent["action"] == "clarify":
+            return {
+                "clarify": {
+                    "text": intent["text"],
+                    "candidates": [by_id[c] for c in intent["candidates"]],
+                }
+            }
+        agent, text = by_id[intent["session_id"]], intent["text"]
+        if not oracle_intent.verbatim(text, question):
+            return {"plan": {**agent, "text": text}}
+        self.history.session_api.owner_message(agent["id"], text, request_key=request_key)
+        answer = f"Sent to **{agent['name']}**: \u201c{text}\u201d. It's in its inbox."
+        exchange = oracle.append_chat(
+            paths.home() / "oracle-chat.json", question, answer, int(time.time() * 1000)
+        )
+        return {"answer": answer, "exchange": exchange, "sessions": [agent["id"]]}
+
     async def _fleet_ask(self, writer: asyncio.StreamWriter, body: bytes) -> None:
         """Route explicit folder messages; answer other questions from session digests."""
         try:
@@ -4308,6 +4350,19 @@ class Server:
         if not question:
             await _write_json(writer, 400, {"error": "question required"})
             return
+        if folder is None and "request_key" in req and self.edition.includes("oracle_messages"):
+            key = req["request_key"]
+            if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,59}", key):
+                await _write_json(writer, 400, {"error": "Invalid request_key"})
+                return
+            try:
+                routed = await self._oracle_message(question, "oracle:" + key)
+            except APIError as exc:
+                await _write_json(writer, exc.status, {"error": str(exc)})
+                return
+            if routed is not None:
+                await _write_json(writer, 200, routed)
+                return
         if folder is not None and "request_key" in req:
             key = req["request_key"]
             if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,59}", key):

@@ -1,12 +1,22 @@
 import { useEffect, useRef, useState } from "react";
-import { api, OracleExchange, RelayNote, RelayRule, RelayState } from "./api";
+import { api, OracleAgent, OracleExchange, RelayNote, RelayRule, RelayState } from "./api";
+import { useEdition } from "./edition";
 import { html } from "./render";
 import { NoteCard, ProposalCard, RuleFields } from "./RelayNotes";
 
 // Chat-only entries: rule proposals and short replies to rule commands.
 type Local =
   | { at: number; kind: "proposal"; rule: RelayRule; state: "open" | "created" | "cancelled"; id?: string }
-  | { at: number; kind: "info"; text: string; rules?: RelayRule[] };
+  | { at: number; kind: "info"; text: string; rules?: RelayRule[] }
+  // A message Oracle will send only after the owner confirms it.
+  | { at: number; kind: "send"; agent: OracleAgent; text: string; key: string; state: "open" | "sending" | "sent" | "cancelled"; error?: string }
+  | { at: number; kind: "clarify"; question: string; text: string; candidates: OracleAgent[]; state: "open" | "done" };
+
+const requestKey = () => crypto.randomUUID().replace(/-/g, "");
+const sameWords = (text: string, question: string) => {
+  const norm = (t: string) => t.split(/\s+/).filter(Boolean).join(" ").toLowerCase();
+  return norm(text) !== "" && norm(question).includes(norm(text));
+};
 
 type Entry =
   | { at: number; type: "exchange"; exchange: OracleExchange }
@@ -34,12 +44,18 @@ export function OracleChat({
   onRelayChange,
   onClose,
   onOpenTerminal,
+  agents = [],
 }: {
   relay: RelayState;
   onRelayChange: () => void;
   onClose?: () => void;
   onOpenTerminal?: (key: string) => void;
+  agents?: OracleAgent[];
 }) {
+  const messaging = useEdition().has("oracle_messages");
+  const [recipient, setRecipient] = useState<OracleAgent | null>(null);
+  const [picking, setPicking] = useState(false);
+  const [filter, setFilter] = useState("");
   const [locals, setLocals] = useState<Local[]>([]);
   const [log, setLog] = useState<OracleExchange[]>([]);
   const [loaded, setLoaded] = useState(false);
@@ -74,7 +90,11 @@ export function OracleChat({
     if (log) log.scrollTop = log.scrollHeight;
   }, [log, pending, error, locals.length, relay.notes.length]);
 
-  const addLocal = (l: Local) => setLocals((ls) => [...ls, l]);
+  const localCount = useRef(0);
+  const addLocal = (l: Local) => {
+    setLocals((ls) => [...ls, l]);
+    return localCount.current++;
+  };
 
   async function propose(text: string) {
     setPending(text);
@@ -108,8 +128,30 @@ export function OracleChat({
       addLocal({ at: Date.now(), kind: "info", text: relay.rules.length ? "Your rules:" : "No rules yet. Start one with \"always …\" or \"when an agent asks …\".", rules: relay.rules });
       return;
     }
+    if (recipient) {
+      const key = requestKey();
+      return deliver(addLocal({ at: Date.now(), kind: "send", agent: recipient, text: t, key, state: "open" }), recipient, t, key);
+    }
     if (RULE_WORDS.test(t)) return propose(t);
     return ask(t);
+  }
+
+  // The owner's click, or their own words to one chosen agent, is the send.
+  async function deliver(index: number, agent: OracleAgent, text: string, key: string) {
+    setLocal(index, { state: "sending", error: undefined });
+    try {
+      await api.messageSession(agent.id, text, "inbox", key);
+      setLocal(index, { state: "sent" });
+    } catch (e) {
+      setLocal(index, { state: "open", error: (e as Error).message });
+    }
+  }
+
+  function pick(index: number, local: Extract<Local, { kind: "clarify" }>, agent: OracleAgent) {
+    setLocal(index, { state: "done" });
+    const key = requestKey();
+    const card = addLocal({ at: Date.now(), kind: "send", agent, text: local.text, key, state: "open" });
+    if (local.text && sameWords(local.text, local.question)) void deliver(card, agent, local.text, key);
   }
 
   const entries: Entry[] = [
@@ -129,8 +171,20 @@ export function OracleChat({
     setQ("");
     setError("");
     try {
-      const r = await api.fleetAsk(question);
-      setLog((l) => [...l, r.exchange]);
+      if (!messaging) {
+        const r = await api.fleetAsk(question);
+        setLog((l) => [...l, r.exchange]);
+        return;
+      }
+      const r = await api.fleetAsk(question, undefined, requestKey());
+      if ("plan" in r) {
+        const { text, ...agent } = r.plan;
+        addLocal({ at: Date.now(), kind: "send", agent, text, key: requestKey(), state: "open" });
+      } else if ("clarify" in r) {
+        addLocal({ at: Date.now(), kind: "clarify", question, ...r.clarify, state: "open" });
+      } else {
+        setLog((l) => [...l, r.exchange]);
+      }
     } catch (e) {
       setError(`Oracle could not answer: ${(e as Error).message}`);
       setQ(question);
@@ -211,6 +265,26 @@ export function OracleChat({
                   : "Rule not created."}
               </p>
             )
+          ) : e.local.kind === "send" ? (
+            <SendCard
+              key={`l-${e.index}`}
+              local={e.local}
+              onSend={(l) => void deliver(e.index, l.agent, l.text, l.key)}
+              onCancel={() => setLocal(e.index, { state: "cancelled" })}
+            />
+          ) : e.local.kind === "clarify" ? (
+            <div key={`l-${e.index}`} className="rd-relay-info rd-oracle-clarify" role="group" aria-label="Which agent did you mean?">
+              <p>{e.local.candidates.length ? "Which agent did you mean? Nothing was sent." : "I couldn't tell which agent you mean. Nothing was sent. Pick one with @."}</p>
+              {e.local.state === "open" && e.local.candidates.length > 0 && (
+                <div className="rd-relay-actions">
+                  {e.local.candidates.map((a) => (
+                    <button key={a.id} className="rd-btn rd-btn-ghost rd-btn-sm" onClick={() => pick(e.index, e.local as Extract<Local, { kind: "clarify" }>, a)}>
+                      {a.name}{a.folder ? <small> · {a.folder.split("/").pop()}</small> : null}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
           ) : (
             <div key={`l-${e.index}`} className="rd-relay-info">
               <p>{e.local.text}</p>
@@ -233,13 +307,33 @@ export function OracleChat({
         )}
         {error && <p className="rd-oracle-error" role="alert">{error}</p>}
       </div>
+      {picking && (
+        <div className="rd-oracle-picker" role="listbox" aria-label="Choose an agent">
+          <input autoFocus aria-label="Find an agent" placeholder="Find an agent" value={filter} onChange={(e) => setFilter(e.target.value)}
+            onKeyDown={(e) => { if (e.key === "Escape") { e.stopPropagation(); setPicking(false); } }} />
+          {agents.filter((a) => `${a.name} ${a.folder}`.toLowerCase().includes(filter.toLowerCase())).map((a) => (
+            <button key={a.id} role="option" aria-selected={recipient?.id === a.id} onClick={() => { setRecipient(a); setPicking(false); setFilter(""); input.current?.focus(); }}>
+              <b>{a.name}</b> <small>{a.folder}</small>
+            </button>
+          ))}
+        </div>
+      )}
+      {recipient && (
+        <div className="rd-oracle-to">
+          To <b>{recipient.name}</b>, sent as you wrote it
+          <button className="rd-btn rd-btn-ghost rd-btn-sm" aria-label={`Stop messaging ${recipient.name}`} onClick={() => setRecipient(null)}>✕</button>
+        </div>
+      )}
       <div className="rd-oracle-compose">
+        {messaging && (
+          <button className="rd-btn rd-btn-ghost rd-btn-sm rd-oracle-at" aria-label="Message one agent" aria-expanded={picking} onClick={() => setPicking((p) => !p)}>@</button>
+        )}
         <textarea
           ref={input}
           aria-label="Message Oracle"
           value={q}
           rows={1}
-          placeholder="Answer a note, ask about your sessions, or make a rule"
+          placeholder={recipient ? `Message ${recipient.name}` : messaging ? "Ask about your sessions, tell an agent something, or make a rule" : "Answer a note, ask about your sessions, or make a rule"}
           onChange={(e) => setQ(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing) {
@@ -257,5 +351,23 @@ export function OracleChat({
         </button>
       </div>
     </aside>
+  );
+}
+
+function SendCard({ local, onSend, onCancel }: { local: Extract<Local, { kind: "send" }>; onSend: (l: Extract<Local, { kind: "send" }>) => void; onCancel: () => void }) {
+  const { agent, text, state, error } = local;
+  return (
+    <div className={`rd-relay-note rd-oracle-send${state === "open" ? " open" : ""}`} role="group" aria-label={`Message to ${agent.name}`}>
+      <span className="rd-relay-meta">{state === "sent" ? "Sent to" : state === "cancelled" ? "Not sent to" : "Send to"} <b>{agent.name}</b>{agent.folder ? ` · ${agent.folder}` : ""}</span>
+      <blockquote className="rd-relay-quote">{text}</blockquote>
+      {(state === "open" || state === "sending") && (
+        <div className="rd-relay-actions">
+          <button className="rd-btn rd-btn-primary rd-btn-sm" disabled={state === "sending"} onClick={() => onSend(local)}>Send</button>
+          <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={state === "sending"} onClick={onCancel}>Cancel</button>
+        </div>
+      )}
+      {state === "sent" && <span className="rd-relay-status">In {agent.name}'s inbox.</span>}
+      {error && <span className="rd-oracle-error" role="alert">{error}</span>}
+    </div>
   );
 }
