@@ -1,3 +1,15 @@
+## 2026-11-24 — A cache budget applied after parsing cannot bound read memory
+
+Reading an entire transcript suffix, decoding it and splitting all its lines
+created several large simultaneous copies before cache eviction ran. Read fixed
+chunks, keep only the unfinished line between them, and evict unrelated LRU
+records before the next allocation. Preserve the old Unicode splitlines semantics
+because annotation identities include line indices. An unchanged partial tail
+must still avoid parsing, and a failed read must not commit a partial append.
+This bounds temporary source buffers by chunk plus longest line, not total memory:
+parsed records, oversized individual lines and full response serialization still
+need explicit paging and record-size policies.
+
 ## 2026-11-24 — Exercise empty-input keys and Unicode highlight boundaries
 
 Search must release Escape to sidebar navigation after clearing its own value.
