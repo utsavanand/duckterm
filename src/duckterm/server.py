@@ -7398,14 +7398,14 @@ class Server:
             if not text:
                 continue
             status = await self._submit_prompt(key, text, source="oracle")
-            if status == "failed":
-                continue
             if pinned and status == "submitted":
                 # A stuck paste isn't delivery: the status stays "pending
                 # next turn" and the Stop-hook notice still carries it.
                 self._delivered(key, pinned[1])
             ids = sorted(str(m["id"]) for m in picked)
-            nudge = oracle.record_nudge(previous, picked, mail, now)
+            nudge = oracle.record_nudge(
+                previous, picked, mail, now, delivered=status == "submitted"
+            )
             self._oracle_nudges[key] = nudge
             self.bus.publish(
                 {
@@ -7413,6 +7413,7 @@ class Server:
                     "session_key": key,
                     "text": text,
                     "submitted": status == "submitted",
+                    "delivery": status,
                     "mail_ids": ids,
                     "seen_mail_ids": sorted(nudge.ids),
                     "read_reminder_ids": sorted(nudge.read_ids),
@@ -7431,6 +7432,7 @@ class Server:
             frozenset(str(i) for i in event.get("seen_mail_ids", event["mail_ids"])),
             ts,
             frozenset(str(i) for i in event.get("read_reminder_ids", [])),
+            undelivered=event.get("submitted") is False,
         )
 
     def _archive_swept(self, key: str) -> None:
