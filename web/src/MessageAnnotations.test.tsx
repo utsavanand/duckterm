@@ -26,3 +26,24 @@ it("loads existing notes, counts only truly unlocated quotes and keeps notes esc
   expect(container.querySelector("mark")).toBeNull();
   expect(screen.queryByText("3 comments · 1 not located in transcript")).toBeNull();
 });
+
+for (const anchored of [false, true]) {
+  it(`does not copy ${anchored ? "anchored" : "ambiguous legacy"} highlights into later replies`, async () => {
+    vi.stubGlobal("fetch", async (url: string) => ({ ok: true, json: async () => String(url).endsWith("annotations") ? { annotations: [
+      { id: "repeated", quote: "same words", note: "Original feedback", created_at: 1,
+        ...(anchored ? { message_key: "original" } : {}) },
+    ] } : { messages: [
+      { id: 1, role: "user", blocks: [{ type: "text", text: "First" }] },
+      { id: 2, message_key: "original", role: "assistant", blocks: [{ type: "text", text: "same words" }] },
+      { id: 3, role: "user", blocks: [{ type: "text", text: "Next" }] },
+      { id: 4, message_key: "later", role: "assistant", blocks: [{ type: "text", text: "same words again" }] },
+    ] } }));
+    const { container } = render(<Messages sessionKey={`repeat-${anchored}`} />);
+    await waitFor(() => expect(container.querySelector(".rd-msg-text")?.textContent?.trim()).toBe("same words again"));
+    expect(container.querySelector("mark")).toBeNull();
+    fireEvent.click(screen.getByRole("button", { name: "Previous turn" }));
+    await waitFor(() => expect(container.querySelector(".rd-msg-text")?.textContent?.trim()).toBe("same words"));
+    expect(container.querySelectorAll("mark")).toHaveLength(anchored ? 1 : 0);
+    expect(screen.getByText("Original feedback")).toBeTruthy();
+  });
+}

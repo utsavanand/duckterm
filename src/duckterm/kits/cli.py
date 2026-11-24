@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -21,7 +22,9 @@ def add_parser(sub: Any) -> None:
 
     def common(p: argparse.ArgumentParser, *, kit: bool = True) -> None:
         if kit:
-            p.add_argument("kit", help="path to the kit folder (holds skill-kit.toml)")
+            p.add_argument(
+                "kit", help="path to the kit folder (holds skill-kit.toml), or to a manifest file"
+            )
         p.add_argument("--project", default=".", help="repository to install into (default: cwd)")
         p.add_argument(
             "--harness",
@@ -203,7 +206,120 @@ def main(args: argparse.Namespace) -> int:
     return 2
 
 
+def _server_run(args: argparse.Namespace) -> int | None:
+    """Inside a DuckTerm session, a run goes through the server so each step
+    shows as a child session; the terminal watches the run file through the
+    session API and prints what it sees. Returns None only when there is no
+    session at all (no DUCKTERM_SESSION_KEY), so the local runner takes over;
+    with a key set, a missing credential is an error, never a way back to the
+    local runner and its permission flags."""
+    import os
+    import time
+    import urllib.error
+    import urllib.request
+
+    from duckterm.helpers import session_credentials
+
+    if not os.environ.get("DUCKTERM_SESSION_KEY"):
+        return None
+    if args.yolo or args.codex_trusted:
+        print(
+            "duckterm kit: --yolo and --codex-trusted are not available through the DuckTerm"
+            " server; run this outside a DuckTerm session to use them",
+            file=sys.stderr,
+        )
+        return 1
+    if args.gate:
+        print(
+            "duckterm kit: a gate is answered by the owner in DuckTerm (the session's Flows"
+            f" tab), not from a session; run {args.resume} keeps waiting",
+            file=sys.stderr,
+        )
+        return 1
+    try:
+        url, token = session_credentials.client_credentials()
+    except ValueError as exc:
+        print(
+            f"duckterm kit: this is a DuckTerm session but its credential is not available ({exc});"
+            " runs from a session go through the server. Run it from a terminal outside the"
+            " session, or start the session again from DuckTerm",
+            file=sys.stderr,
+        )
+        return 1
+    headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
+
+    def call(route: str, body: dict[str, Any]) -> dict[str, Any]:
+        req = urllib.request.Request(
+            f"{url}/api/v1/session/kits/{route}",
+            data=json.dumps(body).encode(),
+            headers=headers,
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=30) as resp:
+            data = json.loads(resp.read().decode())
+        return data if isinstance(data, dict) else {}
+
+    project = str(Path(args.project).resolve())
+    try:
+        if args.resume:
+            run_id = args.resume
+        else:
+            if not args.flow:
+                raise SystemExit("duckterm kit run: give <kit>/<flow> or --resume RUN_ID")
+            started = call(
+                "run",
+                {
+                    "project": project,
+                    "flow": args.flow,
+                    "harness": args.harness,
+                    "inputs": _options(args.input),
+                },
+            )
+            run_id = str(started["run_id"])
+            print(f"{run_id}  {args.flow}  started through the DuckTerm server")
+            print("  each step runs as a child session of this one")
+        seen = 0
+        while True:
+            detail = call("run-detail", {"project": project, "run_id": run_id})
+            state = detail["run"]
+            for a in state["attempts"][seen:]:
+                if a["status"] != "started":
+                    choice = f"  → {a['choice']}" if a.get("choice") else ""
+                    head = f"  {a['step']:<14} attempt {a['attempt']}  {a['kind']:<9} "
+                    print(head + a["status"] + choice)
+            seen = len([a for a in state["attempts"] if a["status"] != "started"])
+            if state["state"] in ("succeeded", "failed", "waiting_gate", "cancelled"):
+                break
+            time.sleep(2)
+    except urllib.error.HTTPError as exc:
+        try:
+            message = json.loads(exc.read().decode()).get("error", str(exc))
+        except ValueError:
+            message = str(exc)
+        print(f"duckterm kit: {message}", file=sys.stderr)
+        return 1
+    except (urllib.error.URLError, OSError, KeyError, ValueError) as exc:
+        print(f"duckterm kit: {exc}", file=sys.stderr)
+        return 1
+    if state["state"] == "waiting_gate":
+        gate = [g for g in state["gates"] if g["response"] is None][-1]
+        print(
+            f"gate {gate['step']!r} (visit {gate['visit']}): {gate.get('question') or 'approve?'}"
+        )
+        print("  the owner answers it in DuckTerm, in this session's Flows tab")
+        return 3
+    if state.get("failure"):
+        f = state["failure"]
+        print(f"failed at {f['step']} (attempt {f['attempt']}): {f['reason']}")
+    else:
+        print(f"succeeded; run file {runner.RUNS}/{run_id}/run.json")
+    return 0 if state["state"] == "succeeded" else 1
+
+
 def _run(args: argparse.Namespace) -> int:
+    served = _server_run(args)
+    if served is not None:
+        return served
     project = Path(args.project)
     limits = runner.Limits(yolo=args.yolo, codex_trusted=args.codex_trusted)
     if args.step_limit:
@@ -219,8 +335,14 @@ def _run(args: argparse.Namespace) -> int:
         )
         if not harness:
             raise SystemExit("no supported harness on PATH (claude-code, codex); pass --harness")
+        session = os.environ.get("DUCKTERM_SESSION_KEY", "")
         run = runner.start(
-            project, args.flow, harness=harness, inputs=_options(args.input), limits=limits
+            project,
+            args.flow,
+            harness=harness,
+            inputs=_options(args.input),
+            limits=limits,
+            executor_state={"session": session} if session else None,
         )
     if args.json:
         print(json.dumps(run.state, indent=2, sort_keys=True, default=str))

@@ -36,7 +36,8 @@ def test_feedback_cannot_overtake_pending_keyboard_input(tmp_path, monkeypatch):
         async def respond(*args):
             pass
 
-        def annotation(*args):
+        def annotation(*args, **kwargs):
+            assert kwargs == {"message_key": None}
             feedback_started.set()
 
         monkeypatch.setattr(sup, "write_bytes", write)

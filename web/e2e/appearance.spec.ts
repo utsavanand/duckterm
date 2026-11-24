@@ -85,7 +85,7 @@ test("folder colors inherit, session overrides persist, and explicit program col
     const originalWhite = await color("FIXED_WHITE");
     const originalGreen = await color("INDEX_GREEN");
     await page.getByRole("button", { name: `Terminal colors for ${group}`, exact: true }).click();
-    await page.getByRole("combobox", { name: "Folder theme", exact: true }).selectOption("gruvbox-dark");
+    await page.getByRole("combobox", { name: "Workspace theme", exact: true }).selectOption("gruvbox-dark");
     await expect.poll(() => color("FIXED_WHITE")).toBe("rgb(235, 219, 178)");
     expect(await color("FIXED_WHITE")).not.toBe(originalWhite);
     await expect.poll(() => color("INDEX_GREEN")).not.toBe(originalGreen);
@@ -102,7 +102,7 @@ test("folder colors inherit, session overrides persist, and explicit program col
     await expect(bold).toHaveCSS("color", "rgb(131, 165, 152)");
     await expect.poll(() => color("BOLD_RED")).toBe(explicitRed);
     expect(explicitRed).not.toBe(await color("BOLD_TEXT"));
-    await page.getByRole("combobox", { name: "Folder theme", exact: true }).selectOption("nord");
+    await page.getByRole("combobox", { name: "Workspace theme", exact: true }).selectOption("nord");
     await expect.poll(() => color("FIXED_WHITE")).toBe("rgb(216, 222, 233)");
     expect(connections).toBe(initialConnections);
     await page.getByRole("button", { name: "Settings", exact: true }).click();
@@ -113,7 +113,7 @@ test("folder colors inherit, session overrides persist, and explicit program col
     await page.getByRole("combobox", { name: "Text contrast", exact: true }).selectOption("preserve");
     await expect.poll(() => color("FIXED_WHITE")).toBe("rgb(255, 255, 255)");
     await page.getByRole("combobox", { name: "Text contrast", exact: true }).selectOption("readable");
-    await page.getByRole("combobox", { name: "Folder theme", exact: true }).selectOption("solarized-light");
+    await page.getByRole("combobox", { name: "Workspace theme", exact: true }).selectOption("solarized-light");
     await page.getByRole("button", { name: "View session override →" }).click();
     await page.getByRole("tab", { name: "Session", exact: true }).click();
     await page.locator(".rd-session-section > summary").filter({ hasText: /^Terminal appearance/ }).click();

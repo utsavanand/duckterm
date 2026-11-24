@@ -35,8 +35,10 @@ import { CheckpointDialogHost } from "./CheckpointDialog";
 import { BackupModal } from "./BackupModal";
 import { BugReport } from "./BugReport";
 import { DashboardMenus } from "./DashboardMenus";
-import { LiveAgentTree, LiveControlTower, LiveContextPanel, LiveInboxView, LiveSessionCard } from "./liveSessionViews";
+import { LiveAgentTree, LiveControlTower, LiveHome, LiveContextPanel, LiveInboxView, LiveSessionCard } from "./liveSessionViews";
 import { HarnessesModal } from "./HarnessesModal";
+import { SkillKitsPage } from "./SkillKitsPage";
+import { FlowsView } from "./FlowsView";
 import { MemoryView } from "./MemoryView";
 import { TimelineView } from "./TimelineView";
 import { SessionFilesView } from "./SessionFilesView";
@@ -132,6 +134,9 @@ function Dashboard() {
   }, []);
   const [bugSession, setBugSession] = useState<string | null>(null);
   const [towerChosen, setTowerOpen] = useState(false);
+  // Home is where the dashboard opens; choosing a session or Teams leaves it.
+  const [homeChosen, setHomeOpen] = useState(true);
+  const homeOpen = homeChosen && has("home");
   const towerOpen = towerChosen && has("overview");
   const sidebarOracle = editionId === "full" && has("oracle") && has("overview");
   // Autopilot shares the Oracle layer: a sidebar row above Oracle opens it.
@@ -148,6 +153,7 @@ function Dashboard() {
   const selectedFolder = has("overview") ? chosenFolder : null;
   const setSelectedKey = useCallback((key: string | null) => {
     setTowerOpen(false);
+    setHomeOpen(false);
     setSelectedFolder(null);
     setAppearanceFolder(null);
     selectSession(key);
@@ -202,12 +208,12 @@ function Dashboard() {
   const [launchGroup, setLaunchGroup] = useState<string | undefined>(undefined);
   const [checkpointTarget, setCheckpointTarget] = useState<{ key: string; request: number } | null>(null);
   const [memoryTarget, setMemoryTarget] = useState<{ key: string; revision: string; checkpoint?: string } | null>(null);
-  const [chosenView, setView] = useState<"terminal" | "messages" | "history" | "inbox" | "artifacts" | "memory" | "prs">(
+  const [chosenView, setView] = useState<"terminal" | "messages" | "history" | "inbox" | "artifacts" | "memory" | "prs" | "flows">(
     "terminal",
   );
   // Coding editions combine files and saved artifacts; Lite shows saved outputs.
   const viewFeature = { history: has("checkpoints") || has("context"), memory: has("context"), inbox: has("inbox"),
-    artifacts: has("explorer") || has("artifacts"), prs: has("pr_review") } as Record<string, boolean>;
+    artifacts: has("explorer") || has("artifacts"), prs: has("pr_review"), flows: has("skill_kits") } as Record<string, boolean>;
   const view = viewFeature[chosenView] === false ? "terminal" : chosenView;
   const [messageFolder, setMessageFolder] = useState<string | null>(null);
   // The PR open in the review workspace (PRs view); null shows the list.
@@ -348,6 +354,7 @@ function Dashboard() {
   }, [candidates, agentsMdDir, modal, selected?.key]);
 
   const towerVisible = towerOpen && !focusOpen && gridFolder === null;
+  const closeHome = useCallback(() => setHomeOpen(false), []);
   const towerLayer = towerVisible && <div className="rd-tower-layer">
     {towerMode === "autopilot" && sidebarAutopilot ? <AutopilotPage /> : analyticsTab ? <Analytics initialTab={analyticsTab} sessions={agents} onBack={() => setAnalyticsTab(null)} /> : <LiveControlTower
       onAnalytics={setAnalyticsTab}
@@ -376,16 +383,20 @@ function Dashboard() {
           {connected ? "Live" : "Disconnected"}
         </span>
         <span className="rd-spacer" />
+        {has("home") && <button className={`rd-btn rd-btn-ghost rd-btn-sm${homeOpen ? " rd-btn-active" : ""}`} aria-pressed={homeOpen}
+          onClick={() => { setHomeOpen(open => !open); setTowerOpen(false); setFocusOpen(false); setGridFolder(null); }}>
+          Home
+        </button>}
         <button className={`rd-btn rd-btn-ghost rd-btn-sm${focusOpen ? " rd-btn-active" : ""}`}
           disabled={!pinnedSessions.length} aria-pressed={focusOpen}
           title={pinnedSessions.length ? "Open pinned terminals" : "Pin a session to open Focus"}
-          onClick={() => { setFocusOpen((open) => !open); setTowerOpen(false); }}>
+          onClick={() => { setFocusOpen((open) => !open); setTowerOpen(false); setHomeOpen(false); }}>
           Focus · {pinnedSessions.length}
         </button>
         {has("overview") && <button
           className={`rd-btn rd-btn-ghost rd-btn-sm${towerOpen ? " rd-btn-active" : ""}`}
           aria-pressed={towerOpen}
-          onClick={() => { setTowerMode("oracle"); setTowerOpen((o) => !o); setFocusOpen(false); setGridFolder(null); }}
+          onClick={() => { setTowerMode("oracle"); setTowerOpen((o) => !o); setFocusOpen(false); setGridFolder(null); setHomeOpen(false); }}
           title={has("oracle") ? "Control tower: fleet insights, every agent at a glance, and Oracle chat" : "Control tower: fleet insights and every agent at a glance"}
         >
           {has("oracle") ? "Oracle" : "Overview"}
@@ -423,8 +434,12 @@ function Dashboard() {
       <div className="rd-workspace">
       {/* Keep terminals mounted at their existing size beneath the tower. Full
           leaves Agents interactive; other editions retain the fleet overview. */}
+      {homeOpen && <div className="rd-home-layer">
+        <LiveHome agents={agents} onTeams={closeHome} onOpenTerminal={key => { setSelectedKey(key); setView("terminal"); }}
+          onAnalytics={tab => { setHomeOpen(false); setTowerOpen(true); setAnalyticsTab(tab); }} />
+      </div>}
       {!sidebarOracle && towerLayer}
-      <div className="rd-workspace-panes" {...(towerVisible && !sidebarOracle ? { inert: "" } : {})}>
+      <div className="rd-workspace-panes" {...((towerVisible && !sidebarOracle) || homeOpen ? { inert: "" } : {})}>
       {focusOpen ? (
         <GridView key="focus" title="Focus" focus
           agents={pinnedSessions} folders={[]} themeFor={themeFor}
@@ -464,7 +479,7 @@ function Dashboard() {
               {sidebarOracle && <button className="rd-oracle-row" type="button" aria-label="Oracle main chat" aria-pressed={towerVisible && towerMode === "oracle"}
                 onClick={() => { setTowerMode("oracle"); setTowerOpen(true); setAnalyticsTab(null); }}>
                 <img src={fullDuckMark} alt="" />
-                <span>Oracle<small>All folders</small></span>
+                <span>Oracle<small>All workspaces</small></span>
               </button>}
             </div>
             {sessions.length === 0 && folders.length === 0 ? (
@@ -537,6 +552,9 @@ function Dashboard() {
               {viewFeature.prs && <button className={view === "prs" ? "active" : ""} onClick={() => setView("prs")}>
                 PRs
               </button>}
+              {viewFeature.flows && <button className={view === "flows" ? "active" : ""} onClick={() => setView("flows")}>
+                Flows
+              </button>}
               <span id="rd-shell-toggle" />
             </div>
             {selected && (view === "terminal" || view === "messages") && (
@@ -577,6 +595,11 @@ function Dashboard() {
               <div className="rd-messages-wrap rd-files-wrap">
                 {selected ? has("explorer") ? <SessionFilesView session={selected} artifacts={has("artifacts")} /> : <ArtifactsView key={selected.key} sessionKey={selected.key} sessionName={selected.label} />
                   : <p className="rd-panel-empty">Select a session to see its artifacts.</p>}
+              </div>
+            )}
+            {view === "flows" && (
+              <div className="rd-messages-wrap">
+                {selected ? <FlowsView key={selected.key} project={agentsMdDir} sessionKey={selected.key} context={selected.key} /> : <p className="rd-panel-empty">Select a session to see its flows.</p>}
               </div>
             )}
             {view === "prs" && (
@@ -621,7 +644,7 @@ function Dashboard() {
 
           <section className={`rd-context-pane${sidePanels.collapsed.right ? " rd-side-collapsed" : ""}`} style={selectedFolder !== null ? { display: "none" } : undefined}>
             <div className="rd-panel-head">
-              <span>{appearanceFolder ? `${appearanceFolder} · Folder` : selected ? selected.label : "Context"}</span>
+              <span>{appearanceFolder ? `${appearanceFolder} · Workspace` : selected ? selected.label : "Context"}</span>
               <PanelToggle side="right" collapsed={sidePanels.collapsed.right} onToggle={() => sidePanels.toggle("right")} />
             </div>
             {appearanceFolder ? <>
@@ -630,7 +653,7 @@ function Dashboard() {
               <button className="rd-btn rd-btn-ghost" style={{ margin: "0 18px 18px" }} onClick={() => setAppearanceFolder(null)}>View session override →</button>
             </> : <ContextViews session={<>
               {selected && <LiveContextPanel key={`context-${selected.key}`} session={selected} onMemory={revision => { setMemoryTarget(revision ? { key: selected.key, revision } : null); setView("memory"); }} onCheckpointMemory={checkpoint => { setMemoryTarget({ key: selected.key, revision: "", checkpoint }); setView("memory"); }} onCheckpointTimeline={() => { setCheckpointTarget(n => ({ key: selected.key, request: (n?.request ?? 0) + 1 })); setView("history"); }} active={!towerOpen && selectedFolder === null && !sidePanels.collapsed.right} />}
-              {selected && selected.ptyOwned && <SessionPanelSection key={`appearance-${selected.key}`} title="Terminal appearance" status={themeOverrides.sessions[selected.key] || "Folder default"}>
+              {selected && selected.ptyOwned && <SessionPanelSection key={`appearance-${selected.key}`} title="Terminal appearance" status={themeOverrides.sessions[selected.key] || "Workspace default"}>
                 <TerminalAppearance scope="sessions" target={selected.key} mode={mode} theme={themeOverrides.sessions[selected.key]} effectiveTheme={themeFor(selected)} onTheme={pick => setSessionTheme(selected.key, pick)} />
               </SessionPanelSection>}
               {selected && <LiveSessionCard key={selected.key} session={selected} active={!towerOpen && selectedFolder === null && !sidePanels.collapsed.right}
@@ -680,9 +703,11 @@ function Dashboard() {
       {modal === "agentsetup" && <RuntimeSetupWizard onClose={() => setModal(null)} />}
       {modal === "aimodels" && <AiModelsModal onClose={() => setModal(null)} />}
       {modal === "harnesses" && (
-        <HarnessesModal
+        <SkillKitsPage
           sessionKey={selected?.key}
           onClose={() => setModal(null)}
+          fallback={<HarnessesModal sessionKey={selected?.key} onClose={() => setModal(null)} />}
+          onTeamCreated={(folder) => { refreshFolders(); setModal(null); setSelectedFolder(folder); }}
         />
       )}
       {actionAnchor && actionSession && <SessionActions key={actionSession.key + ":" + actionAnchor.x + ":" + actionAnchor.y} anchor={actionAnchor} session={actionSession}

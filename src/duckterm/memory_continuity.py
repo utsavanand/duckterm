@@ -406,7 +406,10 @@ async def retain(key: str, captured: dict[str, Any], plan: dict[str, Any]) -> di
             saved = await asyncio.to_thread(memory_sources.read_native, key, source, retain=True)
             if saved["version"] != source["version"]:
                 raise APIError(409, "Conversation changed while retaining summary sources")
-            ref = {k: saved[k] for k in ("id", "runtime", "native_id", "cwd", "path", "snapshot")}
+            ref = {
+                k: saved[k]
+                for k in ("id", "runtime", "native_id", "cwd", "path", "snapshot", "records_sha256")
+            }
             ref["root"] = captured["memory_root"]
             native_refs[ref["id"] + ":" + ref["snapshot"]] = ref
         else:

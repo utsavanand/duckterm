@@ -368,6 +368,12 @@ def _check_flow(
     ]
     if len(set(ids) | {m for _, m in members}) != len(ids) + len(members):
         err(cid, "step ids must be unique")
+    declared = flow.get("inputs")
+    if declared is not None and not isinstance(declared, dict):
+        err(cid, "inputs must be a table of name = kind")
+    for name in declared if isinstance(declared, dict) else {}:
+        if not m.STEP_ID_RE.match(str(name)):
+            err(cid, f"input {name!r}: name must match {m.STEP_ID_RE.pattern}")
     # a parallel member sits at its group's position: a later step may read it
     order = {sid: i for i, sid in enumerate(ids)}
     order.update({m: i for i, m in members})

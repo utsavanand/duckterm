@@ -27,7 +27,7 @@ it("reviews eligibility and retains the idempotency key after an ambiguous send 
 it("blocks empty recipient lists and oversized UTF-8 messages", async () => {
   vi.mocked(api.broadcastTargets).mockResolvedValue({ targets: [] });
   render(<MessageFolderModal folder="Empty" onClose={() => {}} />);
-  await screen.findByText("No eligible sessions in this folder.");
+  await screen.findByText("No eligible sessions in this workspace.");
   expect(screen.getByRole("button", { name: "Send to 0 sessions" })).toBeDisabled();
   fireEvent.change(screen.getByLabelText("Message"), { target: { value: "😀".repeat(5000) } });
   expect(screen.getByRole("alert")).toHaveTextContent("16 KB");

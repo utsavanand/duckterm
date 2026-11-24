@@ -909,10 +909,54 @@ def place_settings(kit: m.Kit, c: m.Component, chosen: list[str]) -> list[Placem
     return out
 
 
-def place_flow(kit: m.Kit, c: m.Component) -> list[Placement]:
+def _flow_shortcut(kit: m.Kit, flow: str, spec: dict[str, Any]) -> bytes:
+    """A Claude Code project command, `/<flow>`, that starts the flow from the
+    session it is typed in. The command runs `duckterm kit run`, which hands
+    the run to the DuckTerm server when a session credential is present, so
+    the steps show as child sessions; the agent only relays the output."""
+    raw = spec.get("inputs")
+    # input names and the description come from the kit; both land in a file
+    # Claude Code reads as frontmatter, so names are identifiers (validate
+    # flags others) and the description is one quoted line
+    names = sorted(raw) if isinstance(raw, dict) else []
+    inputs = [n for n in names if m.STEP_ID_RE.match(str(n))]
+    fallback = f"Start the {flow} flow of {kit.name}"
+    desc = " ".join(str(spec.get("description") or fallback).split())
+    start = f"duckterm kit run {kit.name}/{flow}"
+    argv = start + "".join(f" --input {name}=<{name}>" for name in inputs)
+    lines = [
+        "---",
+        f"description: {json.dumps(desc)}",
+        # this flow's start only, never --gate or --yolo: exact when the flow takes
+        # no inputs, a prefix (for the --input pairs) when it does
+        f"allowed-tools: Bash({start}{':*' if inputs else ''})",
+        "---",
+        f"Start the `{kit.name}/{flow}` flow of the {kit.name} skill kit from this session:",
+        "",
+        f"    {argv}",
+        "",
+    ]
+    if inputs:
+        lines += [
+            "Fill each `<input>` from the arguments: $ARGUMENTS. Ask for any input"
+            " the arguments do not give.",
+            "",
+        ]
+    lines += [
+        "Relay what the command prints: the run id and each step as it finishes."
+        " A gate is answered by the owner in DuckTerm (the session's Flows tab),"
+        " not from here. Do not do the steps yourself; they run as child sessions"
+        " of this one.",
+        "",
+    ]
+    return "\n".join(lines).encode()
+
+
+def place_flow(kit: m.Kit, c: m.Component, active: list[str]) -> list[Placement]:
     """The flow file, plus what the runner needs beside it: `skills.json`
     (every skill's declared outputs and effects, every exec script's hash)
-    and the scripts flows `exec`. Shared across flows; the planner dedupes."""
+    and the scripts flows `exec`. Shared across flows; the planner dedupes.
+    For Claude Code, also the `/<flow>` command the kit page advertises."""
     from duckterm.kits import runner
 
     cid = kit.component_id(c)
@@ -925,6 +969,11 @@ def place_flow(kit: m.Kit, c: m.Component) -> list[Placement]:
             continue
     manifest = runner.skills_manifest(kit, flows, kit.root)
     folder = f"{runner.FLOWS}/{kit.name}"
+    run_name = f"{kit.name}/{source.stem}"
+    try:
+        spec = json.loads(source.read_text())
+    except (OSError, ValueError):
+        spec = {}
     out = [
         Placement(
             cid,
@@ -933,8 +982,22 @@ def place_flow(kit: m.Kit, c: m.Component) -> list[Placement]:
             "write",
             f"{folder}/{source.name}",
             content=source.read_bytes(),
-            note="run with `duckterm kit run " + f"{kit.name}/{source.stem}`",
+            note=f"/{source.stem} in a Claude Code session, or `duckterm kit run {run_name}`",
         ),
+    ]
+    if "claude-code" in active:
+        out.append(
+            Placement(
+                cid,
+                "claude-code",
+                "flow",
+                "write",
+                f".claude/commands/{source.stem}.md",
+                content=_flow_shortcut(kit, source.stem, spec if isinstance(spec, dict) else {}),
+                note=f"the /{source.stem} shortcut",
+            )
+        )
+    out += [
         Placement(
             cid,
             SHARED,
@@ -968,5 +1031,5 @@ def place_team(kit: m.Kit, team: str) -> Placement:
         "none",
         team,
         status=OFFERED,
-        note="a team template; New team instantiates it into a folder, install never does",
+        note="a team template; New team instantiates it into a workspace, install never does",
     )

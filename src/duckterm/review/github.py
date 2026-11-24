@@ -24,9 +24,11 @@ def token() -> tuple[str | None, str | None]:
     """The owner's GitHub token, or the reason there is none."""
     from duckterm import connectors
 
+    # No policy gate here. That flag governs whether agents may use the
+    # connector; pull request status is Duckterm reading the owner's own
+    # credential, so turning agents off used to blank this view with a message
+    # telling the owner to enable something they had deliberately turned off.
     state = connectors.policy("github")
-    if not state.get("enabled"):
-        return None, "Enable the GitHub connector to see pull request status"
     credential = connectors.github_token(str(state.get("source")))
     if not credential:
         return None, "Reconnect the GitHub connector to see pull request status"

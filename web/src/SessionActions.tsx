@@ -77,8 +77,8 @@ export function SessionActions({ session: s, anchor, onClose, onFork, onDelete, 
       <hr role="separator" />
       {!archived && !ended && item("Rename", () => setDialog("rename"))}
       {item("Notes", () => { onNotes(s.key); onClose(); })}
-      {onMoveFolder && !archived && item("Move to folder", () => setDialog("folder"))}
-      {onUngroup && !archived && item("Remove from folder", () => void act("Removed from folder", onUngroup))}
+      {onMoveFolder && !archived && item("Move to workspace", () => setDialog("folder"))}
+      {onUngroup && !archived && item("Remove from workspace", () => void act("Removed from workspace", onUngroup))}
       {canMove && <>
         <hr role="separator" />
         {item("Move to remote", () => { window.dispatchEvent(new CustomEvent("move-to-remote", { detail: s.key })); onClose(); })}

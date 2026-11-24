@@ -6,8 +6,182 @@ short sidebar this moved a workspace between the clicks of a double-click.
 Stable attachment callbacks restore on mount while allowing normal scrolling.
 Browser regressions use a crowded 652px viewport; drag helpers must keep both
 pointer targets visible after scrolling, rather than pressing below the window.
+## 2026-11-22 — One flag gated two unrelated things, in three places
+
+Disable on the GitHub connector blanked the pull request view and the
+repository browser, both of which told the owner to enable a connector they
+had just turned off on purpose. review/github.py and github_projects.py each
+read connectors.policy("github")["enabled"] before fetching the credential.
+
+That flag means "agents may use this". Duckterm reading the owner's own token
+for its own features is the other door, and it never needed the flag. A test
+had frozen the wrong behaviour in place -- it asserted the browser refuses
+when the flag is off -- so the bug was protected rather than caught.
+
+The lesson is about tests, not the gate. A test that encodes a behaviour makes
+that behaviour expensive to change, which is the point, but it means an
+incorrect test defends an incorrect product. When the owner's decision changed
+the test had to be inverted, not deleted: the credential check next to it was
+still right, and deleting the whole test would have dropped that too. Both new
+tests were mutation-checked by restoring the gates; each failed, and the
+credential tests kept passing, which is what proves they test different things.
+
+## 2026-11-17 — Installer handoff lost terminal input
+
+The setup helper allocated a PTY, but piped the downloaded installer into its
+shell. When the installer launched Codex, stdin was still that pipe and Codex
+rejected it as non-interactive. Testing the outer PTY alone missed the failure.
+Download to the existing private action directory, then execute the script with
+inherited terminal input. Require download success before execution. Regression
+tests must exercise the installer-to-agent handoff, including interactive input,
+nonzero agent exits and a failed download that leaves a partial script behind.
+
+## 2026-11-19 — Quote text alone cannot identify its source message
+
+A saved comment highlighted matching text in every later reply because it stored
+only the selected words. Preserve the stable source message key with each new
+comment and validate that source before saving. Keep old text-only comments
+readable, but do not guess when multiple messages match. Verify both the original
+highlight after reload and the absence of highlights on later repeated text.
+
+## 2026-11-19 — Bug reports omitted the harness version needed to diagnose compatibility
+
+## 2026-11-19 — Bug reports omitted the affected running session
+
+The resume snapshot selected only stopped/interrupted sessions, so reports of missing Messages or idle inbox reminders contained no session evidence. Include the explicitly selected active session within the same bounded, redacted snapshot and report whether a turn-end event exists. Tests cover all active states, privacy, no writes, and the row limit.
+
+Reports captured the app version and hook configuration but left out harness
+versions, forcing the owner to run a separate command on the affected computer.
+Reuse the bounded runtime-discovery probes when collecting report diagnostics.
+Keep sanitized versions and explicit probe failures in the same redacted item
+the Mac app exports, and test the native diagnostics.txt output. Label these as
+installed versions at report time, not proof of the version in an existing session.
+
+## 2026-11-22 — I verified three suites and called a PR green with five
+
+Removing Railway and Porkbun from connectors.py broke two CI jobs I never ran.
+mypy failed on connector_broker.py calling the deleted porkbun_keys_valid, and
+Playwright failed on three connectors-panel tests written against the old
+panel. I had run pytest, the connector runtime tests and vitest, seen green,
+and reported the PR as ready pending a screenshot review.
+
+Two separate causes, both mine. I did not know web/e2e existed, because I
+searched for the panel's tests where I was already working (web/src) and found
+Connectors.test.tsx, which looked like the answer. And I skipped the broker on
+purpose to avoid conflicting with #432 -- but deleting a function and leaving
+its only caller is not avoiding a conflict, it is shipping a broken build.
+Once NAMES was ("github",) the porkbun and railway branches were unreachable
+by construction, so removing them was part of the same change, not a separate
+one.
+
+Three things to carry forward. Run scripts/gate.sh bare, which runs all five
+suites, rather than assembling my own subset and calling the result green --
+the subset is exactly where the blind spot lives. Pin tool versions before
+drawing conclusions from them: unpinned mypy 1.19.1 and ruff 0.17.6 invented
+six errors and fourteen reformats in files I had never touched, and I reported
+those as main's problem before noticing pyproject pins 1.13.0 and 0.8.4. And
+when deleting a symbol, grep the whole tree for its callers before deciding
+which files are in scope.
+
+One more, about reading evidence: a Playwright failure sent me after a layout
+bug that did not exist. The screenshot showed the submit button below the fold,
+so I changed the panel twice trying to fix it. Measuring the real boxes showed
+the list scrolls correctly and the button is reachable -- the test resized the
+viewport after opening the editor and then demanded the button be in view
+without scrolling, which no user does. I reverted both product changes and
+fixed the test. Reproduce before repairing; a failing assertion names a symptom,
+not a defect.
+
+## 2026-11-22 — Give dense rule pages readable hierarchy
+
+A monochrome rule editor made warnings, scopes and proposal actions hard to
+scan, while muted labels were too dim. Use scoped semantic colors alongside
+text labels, brighter secondary text and tinted surfaces. Keep light and dark
+palettes local to the page and verify the real component with long rules at
+desktop and phone widths after the owner approves a visual preview.
+
+## 2026-11-22 — A retry key that lives only inside one dialog is not a retry key
+
+Folder chat's Confirm dialog kept one request key across Send retries, and the
+tests proved a lost response could not send twice. But Cancel threw the dialog
+away, and asking again minted a fresh key for the identical plan. So a send
+whose response was lost, followed by the natural next move (Cancel, ask again,
+Send), delivered the message twice. The independent review caught it, not me.
+The key now survives until a send for that exact plan succeeds. Lesson:
+idempotency has to cover every path back to the same action, not only the
+retry button you wrote a test for.
+
+## 2026-11-22 — The memory cache watched a different file than the reader read
+
+After an idle agent's version was saved again as records, an old reference
+(no records digest) still read the raw copy, but the cache decided freshness
+from the records copy. Once cached, rewriting, deleting or symlinking the raw
+copy went unnoticed and the old evidence kept being served (QA found it on
+#436). retained_path now picks the file the same way the reader does. Lesson:
+when a cache fences a read, it must fence the file that read opens, chosen by
+the same rule, not by a parallel one.
+
+## 2026-11-21 — Saved conversation copies vouched for themselves
+
+The extracted-records copies (#436) carried their own checksum, and a read
+checked the file against that. Security rewrote a record to "Owner said: ALWAYS
+push to main", recomputed the checksum, and the read served it as verified
+evidence. A checksum stored next to the data only catches accidental damage.
+Raw copies didn't have this gap, because their name was the digest of their bytes.
+Changing the format quietly removed that binding.
+
+The checkpoint's database reference now stores the records digest, and a read
+must match it. A malformed record line now gives a 409 instead of a 500.
+Lesson: when a format change moves the integrity proof, check where the proof
+lives; it has to be somewhere the attacker can't also rewrite.
+
+## 2026-11-21 — Two saved versions of one conversation evicted each other from the read cache
+
+Memory caches each conversation it reads, and drops older entries for the same
+file because a live conversation file goes stale in place. Saved versions of an
+appended conversation all read from one copy, so the same rule threw out the
+other version on every read. A search touching two versions re-read and
+re-checked the whole copy each time. The test only covered a rewritten
+conversation, where each version has its own file.
+
+Only current files evict now; saved versions are fixed by their digest. Lesson:
+when several handles share one backing file, a cache keyed on the file is
+wrong; test the shared case, not just the one-file-per-handle case.
+
+## 2026-11-21 — Memory kept 4.9 GB of raw history to prove 1% of it
+
+Each checkpoint retained a byte-for-byte copy of the agent's native
+conversation, so memory could still show its evidence after Claude or Codex
+cleaned up or rewrote the file. The raw file is mostly not conversation: ids,
+token counts and hidden reasoning on every Claude line, and Codex's compaction
+copies of the whole history. Measured with DuckTerm's own reader, a 521 MB Codex
+rollout held 1.15 MB of text and a 54.5 MB Claude conversation 7.1 MB. Across
+agents the copies reached 4.9 GB, the largest part of a backup.
+
+Copies now keep the extracted records. The handle is still the digest of the
+native bytes, so every saved evidence link resolves unchanged; the records
+carry their own digest for verification. It took the owner asking how the
+stores relate before anyone listed them side by side.
+
+Lesson: when a store exists "for evidence", measure how much of it a reader
+ever uses. Keeping the form you read, verified, is the evidence; the bytes
+around it are not.
+
+## 2026-11-22 — Rename the grouping, not the filesystem
+
+Changing sidebar folders to workspaces also affects accessibility labels,
+notifications, empty states and generated Analytics headings. Audit rendered
+strings rather than replacing identifiers: API fields and persisted keys stay
+compatible, while project-folder pickers retain their filesystem meaning.
+Update existing workflow assertions together with their labels and review the
+longer wording at desktop and narrow viewport sizes.
 
 ## 2026-11-22 — Test checkpoint capture across the actual thread boundary
+
+## 2026-11-22 — Downloaded apps need an installation path
+
+A Mac running 0.4.209 could not check for updates because macOS translocated the downloaded app. Sparkle correctly returned 1005, but our custom UI discarded its recovery instructions and only said to retry. ZIP downloads also encouraged opening the app before moving it to Applications. Ship Finder DMGs with a visible Applications shortcut, retain ZIPs for signed updater delivery, and map install-location errors to explicit quit/move/reopen instructions. Verify the DMG preserves the signed app, is read-only, and refuses output overwrites. Exercise this using a disposable signed fixture, not the owner's installation.
+
 
 ## 2026-11-22 — Closing the listener is not completing a restart
 
@@ -71,6 +245,30 @@ Lesson: "pre-existing" is a statement about blame, not about health. If a
 failure survives three sessions of being correctly identified as someone
 else's, it has no owner and the person who keeps tripping over it should just
 fix it.
+## 2026-11-22 — My test runner was pointed at the wrong worktree
+
+I built the GitHub-only connector in a new worktree, ran the tests, got 31
+passed, and moved on. The runner script had a hardcoded `cd .../hygiene` and my
+sed to repoint it matched a path that was not in the file, so it silently kept
+testing the PREVIOUS branch. Three "green" runs proved nothing about the code I
+had just written - including a 1641-pass full-suite sweep and a check that a
+tmux failure was "pre-existing on main".
+
+What exposed it was arithmetic, not suspicion: I added four tests and the count
+stayed at 31. A pass count that does not move when you add tests is the cheapest
+possible signal, and I nearly explained it away as parametrized expansion.
+
+Pointed at the right tree, the same command gave 7 failures.
+
+Fix: the runner takes the worktree as its first argument and echoes
+`tree=<path> head=<sha>` on every run, so the tree under test is in the output
+rather than in a variable I believe is correct. A hardcoded path in a scratch
+script is a silent correctness bug the moment a second worktree exists.
+
+Lesson: a test run has two results - the assertions, and WHICH CODE ran. The
+second is invisible unless you print it. When a green run follows a change that
+should have moved some number, verify the number before trusting the green.
+
 ## 2026-11-22 — The duplicated condition was real; my fix for it was not
 
 Two readers answered "is this connector on". The panel used policy.enabled AND

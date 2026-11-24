@@ -5,7 +5,7 @@ import { FolderView } from "./FolderView";
 import { edition, CODE, FULL, LITE } from "./test/editions";
 import { StaticEdition } from "./edition";
 vi.mock("./api", () => ({ api: { folderChat: vi.fn(), fleetAsk: vi.fn(), folderArtifacts: vi.fn(), folderRecipients: vi.fn(), folderDispatch: vi.fn() } }));
-vi.mock("./FolderDetails", () => ({ FolderDetails: ({ presentation }: { presentation?: string }) => <aside>{presentation === "overview" ? "Folder overview" : "Folder details"}</aside> }));
+vi.mock("./FolderDetails", () => ({ FolderDetails: ({ presentation }: { presentation?: string }) => <aside>{presentation === "overview" ? "Workspace overview" : "Workspace details"}</aside> }));
 vi.mock("./ArtifactsView", () => ({ ArtifactsView: ({ folder }: { folder: string }) => <p>Files from {folder}</p> }));
 beforeEach(() => { vi.stubGlobal("matchMedia", vi.fn(() => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() }))); });
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
@@ -13,7 +13,7 @@ it("opens Lite on Overview without mounting or requesting folder chat", async ()
   render(<FolderView folder="Website" />, { wrapper: edition(LITE, "lite") });
   await act(async () => {});
   expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
-  expect(screen.getByRole("tabpanel", { name: "Overview" })).toHaveTextContent("Folder overview");
+  expect(screen.getByRole("tabpanel", { name: "Overview" })).toHaveTextContent("Workspace overview");
   expect(screen.queryByRole("tab", { name: "Chat" })).toBeNull();
   expect(screen.queryByRole("textbox")).toBeNull();
   expect(screen.queryByRole("button", { name: /Details/ })).toBeNull();
@@ -45,7 +45,7 @@ it("hides a mounted chat and chooses an available tab after edition capabilities
   await act(async () => {});
   view.rerender(<StaticEdition features={LITE} id="lite"><FolderView folder="Website" /></StaticEdition>);
   expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
-  expect(screen.queryByLabelText("Ask this folder")).toBeNull();
+  expect(screen.queryByLabelText("Ask this workspace")).toBeNull();
   expect(api.folderChat).toHaveBeenCalledTimes(1);
 });
 it("sends only the selected folder and keeps the answer when switching tabs", async () => {
@@ -148,7 +148,7 @@ it("removing a mention restores natural-language routing", async () => {
   expect(api.folderDispatch).not.toHaveBeenCalled();
 });
 
-it("renders natural-language delivery receipts and retries with the same key", async () => {
+it("sends a natural-language message only after the owner confirms its plan", async () => {
   vi.mocked(api.folderChat).mockResolvedValue({ messages: [] });
   vi.mocked(api.fleetAsk).mockRejectedValueOnce(new Error("connection lost"));
   render(<FolderView folder="Website" />, { wrapper: edition(FULL) });
@@ -158,13 +158,52 @@ it("renders natural-language delivery receipts and retries with the same key", a
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Ask" })); });
   const first = vi.mocked(api.fleetAsk).mock.calls[0];
   expect(screen.getByRole("textbox")).toHaveValue(message);
-  vi.mocked(api.fleetAsk).mockResolvedValue({ answer: "", sessions: ["ui-1"], exchange: { q: message, a: "", at: 2, dispatch: { request_key: `chat:${first[2]}`, target: { kind: "session", id: "ui-1" }, label: "ui-dev", recipients: [{ session_id: "ui-1", name: "ui-dev", message_id: "q-test", status: "queued", answer: null }] } } });
+  const plan = { identity: "id-1", target: { kind: "session" as const, id: "ui-1" }, label: "ui-dev", text: "Please report your progress.", recipients: [{ session_id: "ui-1", name: "ui-dev" }] };
+  vi.mocked(api.fleetAsk).mockResolvedValue({ plan });
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Ask" })); });
   expect(vi.mocked(api.fleetAsk).mock.calls[1]).toEqual(first);
-  expect(screen.getByText("ui-dev · Queued in inbox")).toBeVisible();
-  fireEvent.change(screen.getByRole("textbox"), { target: { value: message } });
+  const dialog = screen.getByRole("dialog", { name: "Confirm message" });
+  expect(dialog).toHaveTextContent("Nothing has been sent yet");
+  expect(dialog).toHaveTextContent("Please report your progress.");
+  expect(api.folderDispatch).not.toHaveBeenCalled();
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  expect(screen.queryByRole("dialog", { name: "Confirm message" })).toBeNull();
+  expect(screen.getByRole("textbox")).toHaveValue(message);
+  expect(api.folderDispatch).not.toHaveBeenCalled();
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Ask" })); });
-  expect(vi.mocked(api.fleetAsk).mock.calls[2][2]).not.toEqual(first[2]);
+  vi.mocked(api.folderDispatch).mockRejectedValueOnce(new Error("Recipients changed"));
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Send to ui-dev" })); });
+  expect(screen.getByRole("alert")).toHaveTextContent("Recipients changed");
+  vi.mocked(api.folderDispatch).mockResolvedValue({ exchange: { q: plan.text, a: "", at: 2, dispatch: { request_key: "k", target: plan.target, label: "ui-dev", recipients: [{ session_id: "ui-1", name: "ui-dev", message_id: "q-test", status: "queued", answer: null }] } } });
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Send to ui-dev" })); });
+  const [sent, retried] = vi.mocked(api.folderDispatch).mock.calls;
+  expect(sent).toEqual(["Website", { identity: "id-1", target: plan.target, text: plan.text, request_key: expect.any(String), recipients: ["ui-1"] }]);
+  expect(retried[1].request_key).toBe(sent[1].request_key);
+  expect(screen.queryByRole("dialog", { name: "Confirm message" })).toBeNull();
+  expect(screen.getByText("ui-dev · Queued in inbox")).toBeVisible();
+});
+
+it("asking again after a lost send reuses the plan's key, and a later send gets a new one", async () => {
+  vi.mocked(api.folderChat).mockResolvedValue({ messages: [] });
+  const plan = { identity: "id-1", target: { kind: "session" as const, id: "ui-1" }, label: "ui-dev", text: "Please report your progress.", recipients: [{ session_id: "ui-1", name: "ui-dev" }] };
+  vi.mocked(api.fleetAsk).mockResolvedValue({ plan });
+  render(<FolderView folder="Website" />, { wrapper: edition(FULL) });
+  await act(async () => {});
+  const askAndSend = async () => {
+    fireEvent.change(screen.getByRole("textbox"), { target: { value: "Ask ui-dev to report progress" } });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Ask" })); });
+    await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Send to ui-dev" })); });
+  };
+  vi.mocked(api.folderDispatch).mockRejectedValueOnce(new Error("connection lost"));
+  await askAndSend();
+  fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+  vi.mocked(api.folderDispatch).mockResolvedValue({ exchange: { q: plan.text, a: "", at: 2, dispatch: { request_key: "k", target: plan.target, label: "ui-dev", recipients: [{ session_id: "ui-1", name: "ui-dev", message_id: "q-test", status: "queued", answer: null }] } } });
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Ask" })); });
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Send to ui-dev" })); });
+  await askAndSend();
+  const [lost, resent, repeat] = vi.mocked(api.folderDispatch).mock.calls.map(call => call[1].request_key);
+  expect(resent).toBe(lost);
+  expect(repeat).not.toBe(lost);
 });
 
 it("keeps suggestion buttons read-only even when a recipient is selected", async () => {

@@ -51,9 +51,23 @@ def test_kit_routes_belong_to_the_skill_kits_flag():
         ("POST", "/harnesses/register"),
         ("GET", "/harnesses/uv-suite/contents"),
         ("DELETE", "/harnesses/uv-suite"),
+        ("POST", "/kits/overview"),
+        ("POST", "/kits/plan"),
+        ("POST", "/kits/install"),
+        ("POST", "/kits/run"),
+        ("POST", "/kits/gate"),
+        ("POST", "/api/v1/session/kits/run"),
+        ("GET", "/api/v1/session/kits/runs"),
     ):
         assert editions.request_features(method, url) == ("skill_kits",), url
     assert "skill_kits" not in editions.request_features("GET", "/sessions")
+
+
+def test_home_layout_belongs_to_the_home_flag():
+    assert editions.request_features("GET", "/layouts/home") == ("home",)
+    assert editions.request_features("PUT", "/layouts/home") == ("home",)
+    assert editions.request_features("PUT", "/layouts/%68ome") == ("home",)
+    assert editions.request_features("GET", "/layouts/oracle") == ()
 
 
 def test_every_flag_has_a_row_in_the_feature_flags_doc():

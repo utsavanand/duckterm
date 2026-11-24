@@ -16,6 +16,12 @@ struct BugReportDataTests {
             catch { print("PASS: \(label)") }
         }
 
+        assert(BugReportData.contextPath(selectionJSON: #"{"host":"local","sessionKey":"session.id-1"}"#) == "/bugreport/context?session_key=session.id-1")
+        for selection in [nil, "{broken", #"{"host":"remote","sessionKey":"session.id-1"}"#, #"{"host":"local","sessionKey":"a&other=secret"}"#, #"{"host":"local","sessionKey":""}"#] as [String?] {
+            assert(BugReportData.contextPath(selectionJSON: selection) == "/bugreport/context")
+        }
+        print("PASS: native diagnostics select only a valid local session")
+
         var report = BugReportData()
         let selected = try write("notes.txt", Data("original selected content".utf8))
         try report.add(selected)
@@ -71,11 +77,18 @@ struct BugReportDataTests {
             let data = try JSONSerialization.data(withJSONObject: ["items": items])
             return ["status": status, "body": String(decoding: data, as: UTF8.self)]
         }
-        let readiness = ["id": "resume-readiness", "label": "Ignored title", "text": "Session 1: transcript missing"]
+        let diagnosticText = "Session 1: transcript missing\nInstalled harness versions (server PATH at report time):\nCodex: 0.169.0"
+        let readiness = ["id": "resume-readiness", "label": "Ignored title", "text": diagnosticText]
         let selectedReadiness = BugReportData.resumeReadiness(from: try context([
             ["id": "session", "text": "Private project name and path"], readiness
         ]))
-        assert(selectedReadiness == "Session 1: transcript missing")
+        assert(selectedReadiness == diagnosticText)
+        let versionReport = try BugReportData().write(
+            to: root.appendingPathComponent("versions"), summary: "Version report",
+            details: "", replyTo: "", screenshot: nil, diagnostics: selectedReadiness)
+        let versionFile = versionReport.first { $0.lastPathComponent == "diagnostics.txt" }!
+        let savedDiagnostics = try String(contentsOf: versionFile, encoding: .utf8)
+        assert(savedDiagnostics == diagnosticText)
         let invalidResponses: [[String: Any]] = [
             try context([]),
             try context([readiness], status: 500),

@@ -21,6 +21,7 @@ import subprocess
 import tempfile
 import time
 import uuid
+from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from pathlib import Path
@@ -363,7 +364,11 @@ def start(
     executor: Executor | None = None,
     limits: Limits | None = None,
     executor_state: dict[str, Any] | None = None,
+    on_start: Callable[[Run], None] | None = None,
 ) -> Run:
+    """Run a flow to its end, a gate or a failure. `on_start` is called once
+    the run file exists and before the first step, so a server can answer
+    with the run id while a model step is still working."""
     project = Path(project).resolve()
     flow, skills, flow_hash = load_flow(project, ref)
     if harness not in adapters.ADAPTERS:
@@ -399,6 +404,8 @@ def start(
     }
     run = Run(project, state, flow, skills)
     run.save()
+    if on_start is not None:
+        on_start(run)
     return _drive(run, flow["steps"][0]["id"], ex, limits or Limits())
 
 
@@ -529,17 +536,35 @@ def list_runs(project: Path) -> list[dict[str, Any]]:
     if root.is_dir():
         for d in sorted(root.iterdir()):
             f = d / "run.json"
-            if f.is_file():
+            if not f.is_file():
+                continue
+            try:
                 raw = f.read_bytes()
                 s = json.loads(raw)
-                summary = {
-                    k: s.get(k)
-                    for k in ("run_id", "flow", "state", "started_at", "current", "failure")
-                }
-                # a run file this machine did not write (a clone's, a commit's) is
-                # listed but offers nothing: it does not resume and has no gate
-                summary["recorded"] = _recorded(root.parent.parent, d.name, raw)
-                out.append(summary)
+            except ValueError:
+                continue
+            summary = {
+                k: s.get(k)
+                for k in (
+                    "run_id",
+                    "flow",
+                    "state",
+                    "started_at",
+                    "updated_at",
+                    "current",
+                    "failure",
+                    "executor_state",
+                )
+            }
+            summary["inputs"] = s.get("inputs", {})
+            summary["session"] = (s.get("executor_state") or {}).get("session")
+            summary["steps_done"] = len(
+                {a["step"] for a in s.get("attempts", []) if a.get("status") == "completed"}
+            )
+            # a run file this machine did not write (a clone's, a commit's) is
+            # listed but offers nothing: it does not resume and has no gate
+            summary["recorded"] = _recorded(root.parent.parent, d.name, raw)
+            out.append(summary)
     return out
 
 
@@ -896,6 +921,7 @@ def _harness(
     prompt = _prompt(run, step, skill_name, skill, attempt, outdir, last_error)
     env: dict[str, str] = {
         "SKILL_KIT_RUN": run.id,
+        "SKILL_KIT_FLOW": str(run.state["flow"]),
         "SKILL_KIT_STEP": step["id"],
         "SKILL_KIT_ATTEMPT": str(attempt["attempt"]),
         "SKILL_KIT_OUTPUT_DIR": str(outdir.relative_to(run.project)),
@@ -1304,8 +1330,15 @@ def skills_manifest(kit: Any, flows: list[dict[str, Any]], kit_root: Path) -> di
     skills: dict[str, Any] = {}
     for c in kit.by_kind("skill"):
         source = kit_root / str(c.path)
+        try:
+            from duckterm.kits import manifest as m
+
+            front = m.frontmatter((source / "SKILL.md").read_text())
+        except OSError:
+            front = {}
         skills[c.name] = {
             "installed_as": str(c.fields.get("replaces") or source.name),
+            "description": " ".join(str(front.get("description", "")).split()),
             "effects": c.fields.get("effects", "workspace"),
             "inputs": c.fields.get("inputs") or {},
             "outputs": c.fields.get("outputs") or {},

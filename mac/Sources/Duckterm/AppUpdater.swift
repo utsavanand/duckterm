@@ -124,9 +124,16 @@ final class AppUpdater: NSObject, SPUUserDriver, SPUUpdaterDelegate {
         else { fail("No compatible update is available for this Mac.") }
         acknowledgement()
     }
+    static func recoveryMessage(for error: NSError) -> String {
+        if error.domain == SUSparkleErrorDomain && [1003, 1005].contains(error.code) {
+            return "Move DuckTerm to Applications to update. Quit DuckTerm, use Finder to move it into Applications, then open it from there and try again."
+        }
+        return "Update failed (\(error.code)). Your installed app has not been confirmed updated. Try again."
+    }
+
     func showUpdaterError(_ error: Error, acknowledgement: @escaping () -> Void) {
         cancel = nil; choose = nil; installRequested = false
-        fail("Update failed (\((error as NSError).code)). Your installed app has not been confirmed updated. Try again.")
+        fail(Self.recoveryMessage(for: error as NSError))
         if serverWasStopped {
             serverWasStopped = false
             Task { await recoverServer?() }

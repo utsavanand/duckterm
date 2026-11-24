@@ -45,16 +45,26 @@ fi
 # a wheel-only latest release that drops all three edition feeds.
 MAC_ASSETS=()
 if [ "$CHANNEL" = prod ]; then
-  : "${DUCKTERM_MAC_RELEASE_DIR:?Supply the directory containing all three final signed/notarized Mac ZIPs}"
+  : "${DUCKTERM_MAC_RELEASE_DIR:?Supply the directory containing all three final signed/notarized Mac ZIPs and DMGs}"
   : "${DUCKTERM_SPARKLE_SIGN_TOOL:?Supply the absolute path to pinned Sparkle sign_update}"
   MAC_RELEASE_DIR="$(cd "$DUCKTERM_MAC_RELEASE_DIR" && pwd)"
   FEED_DIR="$(mktemp -d)/feeds"
   "$PY" scripts/build_update_feeds.py --archives "$MAC_RELEASE_DIR" --version "$VERSION" \
     --output "$FEED_DIR" --sign-tool "$DUCKTERM_SPARKLE_SIGN_TOOL" --account duckterm-updates
+  "$PY" scripts/verify_mac_installers.py --archives "$MAC_RELEASE_DIR" --version "$VERSION"
   MAC_ASSETS=("$MAC_RELEASE_DIR/DuckTerm-Lite-$VERSION-macos-arm64.zip"
               "$MAC_RELEASE_DIR/DuckTerm-Code-$VERSION-macos-arm64.zip"
               "$MAC_RELEASE_DIR/DuckTerm-Full-$VERSION-macos-arm64.zip"
               "$FEED_DIR/appcast-lite-arm64.xml" "$FEED_DIR/appcast-code-arm64.xml" "$FEED_DIR/appcast-full-arm64.xml")
+  for edition in Lite Code Full; do
+    MAC_ASSETS+=("$MAC_RELEASE_DIR/DuckTerm-$edition-$VERSION-macos-arm64.dmg")
+    # Website/email downloads use DMGs; retain existing ZIP aliases for older links.
+    for extension in dmg zip; do
+      cp "$MAC_RELEASE_DIR/DuckTerm-$edition-$VERSION-macos-arm64.$extension" \
+         "$FEED_DIR/DuckTerm-$edition-macos-arm64.$extension"
+      MAC_ASSETS+=("$FEED_DIR/DuckTerm-$edition-macos-arm64.$extension")
+    done
+  done
 fi
 
 echo "==> building wheel for $VERSION ($CHANNEL)"

@@ -19,6 +19,7 @@ let mermaidSeq = 0; // unique ids for mermaid.render across re-renders
 
 interface Selection {
   quote: string;
+  message_key?: string;
   x: number;
   y: number;
 }
@@ -134,7 +135,11 @@ export function Messages({ sessionKey, sessionName = "Messages", active = true, 
     }
     const rect = s.getRangeAt(0).getBoundingClientRect();
     const wrap = wrapRef.current?.getBoundingClientRect();
+    const node = s.getRangeAt(0).commonAncestorContainer;
+    const element = node instanceof Element ? node : node.parentElement;
+    const messageKey = element?.closest<HTMLElement>("[data-message-key]")?.dataset.messageKey;
     setSel({
+      ...(messageKey ? { message_key: messageKey } : {}),
       quote: text,
       x: rect.left - (wrap?.left ?? 0),
       y: rect.bottom - (wrap?.top ?? 0) + (wrapRef.current?.scrollTop ?? 0),
@@ -147,7 +152,7 @@ export function Messages({ sessionKey, sessionName = "Messages", active = true, 
       const res = await fetch(`/sessions/${sessionKey}/annotations`, {
         method: "POST",
         headers: authHeaders({ "Content-Type": "application/json" }),
-        body: JSON.stringify({ quote: sel.quote, note: note.trim() }),
+        body: JSON.stringify({ quote: sel.quote, note: note.trim(), ...(sel.message_key ? { message_key: sel.message_key } : {}) }),
       });
       const d = await res.json();
       if (!res.ok) throw new Error(d.error ?? "failed");
@@ -162,18 +167,33 @@ export function Messages({ sessionKey, sessionName = "Messages", active = true, 
     }
   }
 
-  // Check the whole transcript: a note on another turn is not an unlocated note.
-  const unlocated = useMemo(() => {
-    if (!annotations.length) return [];
-    const found = new Set<string>();
+  // Source-bound notes belong to one message. Legacy text-only notes may be
+  // located only when exactly one message matches; retain ambiguous notes in
+  // the comments list instead of guessing which repeated text was selected.
+  const annotationLocations = useMemo(() => {
+    if (!annotations.length) return { byMessage: new Map<Message, Annotation[]>(), unlocated: [] };
+    const candidates = new Map<string, Set<Message>>();
     for (const message of messages) for (const block of message.blocks) {
       if (block.type !== "text") continue;
       const element = document.createElement("div");
       element.innerHTML = messageMarkup(block.text, message.role === "user");
-      for (const id of locatedAnnotations(element, annotations)) found.add(id);
+      const eligible = annotations.filter(note => !note.message_key || note.message_key === message.message_key);
+      for (const id of locatedAnnotations(element, eligible)) {
+        if (!candidates.has(id)) candidates.set(id, new Set());
+        candidates.get(id)!.add(message);
+      }
     }
-    return annotations.filter(note => !found.has(note.id));
+    const byMessage = new Map<Message, Annotation[]>();
+    const unlocated: Annotation[] = [];
+    for (const note of annotations) {
+      const matches = candidates.get(note.id);
+      if (matches?.size !== 1) { unlocated.push(note); continue; }
+      const message = [...matches][0];
+      byMessage.set(message, [...(byMessage.get(message) ?? []), note]);
+    }
+    return { byMessage, unlocated };
   }, [messages, annotations]);
+  const unlocated = annotationLocations.unlocated;
   const comments = <>
     {annotationError && <div role="status" className="rd-comment-error">{annotationError}</div>}
     {!!annotations.length && <details className="rd-message-comments" onMouseUp={event => event.stopPropagation()}>
@@ -284,8 +304,8 @@ export function Messages({ sessionKey, sessionName = "Messages", active = true, 
             ? <div key={i} className="rd-message-tool">Tool: {block.name}</div>
             : message.role === "user" && block.type === "text"
               ? <div key={i} className="rd-turn-user">
-                <AnnotatedText className="rd-turn-prompt" source={block.text} plain annotations={annotations} /></div>
-              : <AnnotatedText key={i} className="rd-msg-text" source={block.text} annotations={annotations} />)}
+                <AnnotatedText className="rd-turn-prompt" source={block.text} plain annotations={annotationLocations.byMessage.get(message) ?? []} /></div>
+              : <AnnotatedText key={i} className="rd-msg-text" source={block.text} annotations={annotationLocations.byMessage.get(message) ?? []} />)}
         </article>;
       })}
       {latest.texts.length === 0 && (latest.prompt || latest.tools.length) && <div className="rd-msg-pending">

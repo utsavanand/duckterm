@@ -71,7 +71,7 @@ it("Lite exposes continuity, inbox, artifacts and folder overview without coding
   await act(async () => { (probe.tree.onOpenFolder as (folder: string) => void)("Team"); });
   expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
   expect(screen.queryByRole("tab", { name: "Chat" })).toBeNull();
-  expect(screen.getByRole("complementary", { name: "Folder overview" })).toBeVisible();
+  expect(screen.getByRole("complementary", { name: "Workspace overview" })).toBeVisible();
   expect(probe.requests.filter(path => LITE_UNAVAILABLE.some(pattern => pattern.test(path)))).toEqual([]);
 }, 10_000);
 
@@ -145,10 +145,10 @@ it("returns to the mounted terminal when a selected folder loses its overview ca
   await mount(LITE, "lite");
   const terminal = screen.getByLabelText("Terminal input");
   await act(async () => { (probe.tree.onOpenFolder as (folder: string) => void)("Team"); });
-  expect(screen.getByRole("region", { name: "Folder Team" })).toBeVisible();
+  expect(screen.getByRole("region", { name: "Workspace Team" })).toBeVisible();
   probe.edition = null;
   await act(async () => { window.dispatchEvent(new Event("focus")); });
-  expect(screen.queryByRole("region", { name: "Folder Team" })).toBeNull();
+  expect(screen.queryByRole("region", { name: "Workspace Team" })).toBeNull();
   expect(screen.getByLabelText("Terminal input")).toBe(terminal);
   expect(terminal).toBeVisible();
 });
@@ -160,7 +160,7 @@ it("Full Oracle keeps the live sidebar usable and terminals mounted underneath",
   const expansion = probe.tree.expansion as { folders: [Set<string>, (folders: Set<string>) => void] };
   await act(async () => { expansion.folders[1](new Set(["Team"])); });
   const row = screen.getByRole("button", { name: "Oracle main chat" });
-  expect(row).toHaveTextContent("All folders");
+  expect(row).toHaveTextContent("All workspaces");
   expect(row.querySelector("img")?.getAttribute("src")).toContain("duckmark.svg");
   await act(async () => { fireEvent.click(row); });
   expect(row).toHaveAttribute("aria-pressed", "true");
@@ -186,12 +186,12 @@ it("Full Oracle keeps the live sidebar usable and terminals mounted underneath",
 it("Full Oracle and folder navigation preserve folder state and block the covered folder", async () => {
   await mount(FULL);
   await act(async () => { (probe.tree.onOpenFolder as (folder: string) => void)("Team"); });
-  const folder = screen.getByRole("region", { name: "Folder Team" });
+  const folder = screen.getByRole("region", { name: "Workspace Team" });
   await act(async () => { fireEvent.click(tab("Oracle")!); });
   expect(folder.closest("[inert]")).not.toBeNull();
   expect(screen.getByRole("button", { name: "Oracle main chat" })).toHaveAttribute("aria-pressed", "true");
   await act(async () => { (probe.tree.onOpenFolder as (folder: string) => void)("Team"); });
-  expect(screen.getByRole("region", { name: "Folder Team" })).toBe(folder);
+  expect(screen.getByRole("region", { name: "Workspace Team" })).toBe(folder);
   expect(folder.closest("[inert]")).toBeNull();
   expect(screen.queryByRole("heading", { name: /Control tower/ })).toBeNull();
 });
