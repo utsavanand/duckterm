@@ -453,6 +453,8 @@ _ROUTES: list[Route] = [
           prefix="/api/autopilot/autopilots/"),
     Route("DELETE", "", lambda s, r, w, h, b, seg: s._autopilot(w, ap_api.delete, seg),
           prefix="/api/autopilot/autopilots/"),
+    Route("POST", "", lambda s, r, w, h, b, seg: s._autopilot(w, ap_api.answer, seg, body=b),
+          **_mid("/api/autopilot/runs/", "/gate")),
     Route("GET", "", lambda s, r, w, h, b, seg: s._autopilot(w, ap_api.run, seg),
           prefix="/api/autopilot/runs/"),
     # ── connectors (GitHub, Railway, … — credentials + MCP install) ──

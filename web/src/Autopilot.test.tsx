@@ -217,3 +217,20 @@ it("a page in use leads with counts, the waiting count marked, and lists each au
   await act(async () => { fireEvent.click(within(row).getByRole("button", { name: "Pause" })); });
   expect(sent.find(r => r.method === "PATCH")).toMatchObject({ path: "/api/autopilot/autopilots/ap-1", body: { on: false } });
 });
+
+it("a run waiting at its gate shows the spec as text and sends the answer to that gate", async () => {
+  overview.runs.unshift({ id: "r3", autopilot: "ap-1", autopilot_name: "duckterm issues", workspace: "Team", flow: "autopilot/issue-to-merge",
+    repo: "o/duckterm", trigger: "github-issue", item: { number: 43, title: "Row stuck" }, branch: "autopilot/r3", state: "waiting_gate",
+    started_at: Date.now(), gate: { step: "approve", question: "Build this fix?", choices: ["approve", "reject"], shown: "# Fix\n<img src=x onerror=alert(1)>" } });
+  await mount();
+  const card = screen.getByRole("heading", { name: "Build this fix?" }).closest("article")!;
+  expect(within(card).getByText(/<img src=x/).tagName).toBe("PRE");
+  expect(card.querySelector("img")).toBeNull();
+  await act(async () => { fireEvent.click(within(card).getByRole("button", { name: "Reject" })); });
+  expect(sent.find(r => r.method === "POST")).toEqual({ method: "POST", path: "/api/autopilot/runs/r3/gate", body: { step: "approve", answer: "reject" } });
+});
+
+it("shows no Needs you section when nothing waits", async () => {
+  await mount();
+  expect(screen.queryByRole("heading", { name: /Needs you/ })).toBeNull();
+});

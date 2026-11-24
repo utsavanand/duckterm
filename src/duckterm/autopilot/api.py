@@ -132,6 +132,10 @@ def run(run_id: str) -> dict[str, Any]:
     return runs.detail(run_id)
 
 
+def answer(run_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    return runs.answer(run_id, body)
+
+
 def summary() -> dict[str, Any]:
     return runs.summary()
 

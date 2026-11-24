@@ -44,7 +44,7 @@ const TRIGGERS: Record<TriggerType, { name: string; glyph: string; hint: string 
 
 const STATE_LABEL: Record<AutopilotRun["state"], string> = {
   starting: "Starting", running: "Running", waiting_gate: "Needs you", succeeded: "Done",
-  failed: "Failed", cancelled: "Cancelled", interrupted: "Interrupted",
+  rejected: "Rejected", failed: "Failed", cancelled: "Cancelled", interrupted: "Interrupted",
 };
 
 const flowTitle = (name: string) => name.charAt(0).toUpperCase() + name.slice(1).replace(/-/g, " ");
@@ -128,6 +128,7 @@ export function AutopilotPage() {
       <span className="ap-pill"><b>{done_today}</b> done today</span>
       <span className={`ap-pill${failed_today ? " ap-pill-bad" : ""}`}><b>{failed_today}</b> failed today</span>
     </div>}
+    <Waiting runs={data.runs} onAnswered={load} />
 
     {data.autopilots.length > 0 && <section className="ap-sec">
       <h2>On autopilot <small>{on} on{paused ? ` · ${paused} paused` : ""}</small></h2>
@@ -191,6 +192,48 @@ function RunTable({ runs, onOpen }: { runs: AutopilotRun[]; onOpen: (id: string)
     <thead><tr><th>Issue</th><th>Autopilot</th><th>Step</th><th>State</th><th className="ap-num-col">Tokens</th><th>Started</th></tr></thead>
     <tbody>{runs.map(run => <RunRow key={run.id} run={run} onOpen={() => onOpen(run.id)} />)}</tbody>
   </table></div>;
+}
+
+// Runs stopped at a gate, each with what it asks about. The shown text is
+// the model's output, so it is rendered as plain text, never as markup.
+function Waiting({ runs, onAnswered }: { runs: AutopilotRun[]; onAnswered: () => void | Promise<void> }) {
+  const waiting = runs.filter(r => r.state === "waiting_gate" && r.gate);
+  if (waiting.length === 0) return null;
+  return <>
+    <h2 className="ap-sec">Needs you <small>{waiting.length}</small></h2>
+    <div className="ap-gates">{waiting.map(run => <GateCard key={run.id} run={run} onAnswered={onAnswered} />)}</div>
+  </>;
+}
+
+function GateCard({ run, onAnswered }: { run: AutopilotRun; onAnswered: () => void | Promise<void> }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const gate = run.gate!;
+  async function answer(choice: string) {
+    setBusy(true);
+    try {
+      await autopilotApi.answer(run.id, gate.step, choice);
+      await onAnswered();
+    } catch (e) {
+      setError((e as Error).message);
+      setBusy(false);
+    }
+  }
+  return <article className="ap-gate">
+    <div className="ap-gate-top">
+      <h3>{gate.question || `Answer ${gate.step}`}</h3>
+      <span className="ap-muted ap-small">
+        {run.item.url ? <a href={run.item.url} target="_blank" rel="noreferrer">#{run.item.number}</a> : run.item.number ? `#${run.item.number}` : null}
+        {" "}{run.item.title} · {run.repo}
+      </span>
+    </div>
+    {gate.shown ? <pre className="ap-shown">{gate.shown}</pre> : <p className="ap-muted">The step wrote nothing to show.</p>}
+    {error && <p className="ap-error-text">{error}</p>}
+    <div className="ap-card-actions">
+      {gate.choices.map(choice => <Button key={choice} size="sm" variant={choice === "approve" ? undefined : "ghost"}
+        disabled={busy} onClick={() => void answer(choice)}>{choice.charAt(0).toUpperCase() + choice.slice(1)}</Button>)}
+    </div>
+  </article>;
 }
 
 function RunRow({ run, onOpen }: { run: AutopilotRun; onOpen: () => void }) {
@@ -642,6 +685,7 @@ export function WorkspaceFlows({ workspace }: { workspace: string }) {
   const flowsById = new Map(data.flows.map(f => [f.id, f]));
   return <div className="ap-page ap-embedded"><div className="ap-col">
     {error && <p className="ap-error" role="alert">{error}</p>}
+    <Waiting runs={data.runs} onAnswered={async () => setData(await autopilotApi.overview(workspace))} />
     <section className="ap-sec">
       <h2>On autopilot</h2>
       {data.autopilots.length === 0

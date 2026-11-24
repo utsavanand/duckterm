@@ -13,12 +13,13 @@ import subprocess
 import threading
 import time
 import uuid
+from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 from duckterm import github_projects
 from duckterm.autopilot import catalog, executor, github_push, sandbox, store
-from duckterm.autopilot.executor import AutopilotExecutor, prepare_github
+from duckterm.autopilot.executor import AutopilotExecutor, RunDirs, prepare_github
 from duckterm.autopilot.sandbox import Gateway, Sandbox
 from duckterm.kits import install, plan, runner
 from duckterm.kits import manifest as kit_manifest
@@ -27,6 +28,9 @@ KEYCHAIN_SERVICE = "duckterm-autopilot-claude"
 HARNESS = "claude-code"
 ACTIVE = frozenset({"starting", "running"})
 TOKEN_TTL = 6 * 3600
+LIMITS = runner.Limits(yolo=True)
+# What a gate shows the owner is a step's output; this much of it is plenty.
+SHOWN_CHARS = 20000
 
 
 def runs_root() -> Path:
@@ -74,6 +78,7 @@ def start(autopilot: dict[str, Any], trigger: str, item: dict[str, Any]) -> str:
         "flow": autopilot["flow"],
         "repo": autopilot["repo"],
         "issue_repo": store.issue_repo(autopilot),
+        "budget_m": autopilot["budget_m"],
         "trigger": trigger,
         "item": {k: item.get(k) for k in ("number", "title", "url", "started_by")},
         "branch": f"autopilot/{run_id}",
@@ -82,71 +87,150 @@ def start(autopilot: dict[str, Any], trigger: str, item: dict[str, Any]) -> str:
     }
     _write_meta(runs_root() / run_id, meta)
     threading.Thread(
-        target=_execute, args=(autopilot, meta, item), name=f"autopilot-{run_id}", daemon=True
+        target=_execute, args=(meta, item), name=f"autopilot-{run_id}", daemon=True
     ).start()
     return run_id
 
 
-def _execute(autopilot: dict[str, Any], meta: dict[str, Any], item: dict[str, Any]) -> None:
+def _execute(meta: dict[str, Any], item: dict[str, Any]) -> None:
     root = runs_root() / meta["id"]
-    box: Sandbox | None = None
-    gateway = Gateway(secret_path=store.root() / "gateway-secret")
-    token = None
     try:
         problems = readiness()
         if problems:
             raise RuntimeError("; ".join(problems))
-        flow = catalog.find(autopilot["flow"])
-        dirs = prepare_github(autopilot["repo"], "", meta["branch"], root)
-        base_sha = _git_out(dirs.project, "rev-parse", "HEAD")
-        _update(root, base_sha=base_sha)
+        flow = catalog.find(meta["flow"])
+        dirs = prepare_github(meta["repo"], "", meta["branch"], root)
+        _update(root, base_sha=_git_out(dirs.project, "rev-parse", "HEAD"))
         kit = kit_manifest.load(flow.kit_path)
         install.apply(plan.build(kit, dirs.project, [HARNESS]))
         executor.hide_install(dirs)
-        gateway.ensure(
-            anthropic_key=None, openai_key=None, anthropic_oauth_token=subscription_token()
-        )
-        box = Sandbox.create(meta["id"], gateway=gateway.name, mounts=dirs.mounts())
-        box.trust(str(dirs.project))
-        token = gateway.mint(meta["id"], budget=autopilot["budget_m"] * 1_000_000, ttl=TOKEN_TTL)
-        _update(root, state="running", sandbox=box.name)
         inputs = (
             {flow.triggers[meta["trigger"]]: json.dumps(item)}
             if flow.triggers.get(meta["trigger"])
             else {}
         )
-        run = runner.start(
-            dirs.project,
-            flow.id,
-            harness=HARNESS,
-            inputs=inputs,
-            executor=AutopilotExecutor(box, dirs, token, meta["branch"]),
-            limits=runner.Limits(yolo=True),
-            executor_state={"run_host": "mac", "branch": meta["branch"], "sandbox_id": box.name},
+        _in_sandbox(
+            root,
+            dirs,
+            lambda ex: runner.start(
+                dirs.project,
+                flow.id,
+                harness=HARNESS,
+                inputs=inputs,
+                executor=ex,
+                limits=LIMITS,
+                executor_state={
+                    "run_host": "mac",
+                    "branch": meta["branch"],
+                    "sandbox_id": ex.box.name,
+                },
+            ),
         )
-        _update(root, state=run.state["state"], runner_run=run.id)
-        if run.state["state"] == "succeeded":
-            _publish(root, autopilot, meta, item, dirs.project, base_sha, run.state)
     except Exception as exc:  # noqa: BLE001 — any failure ends the run with its reason
         _update(root, state="failed", error=str(exc)[:500])
+    _settle(root)
+
+
+def answer(run_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    """Answer the gate a run waits at, then carry the run on from it in a new
+    sandbox. The sandbox it asked from was removed when it stopped to wait."""
+    root = runs_root() / run_id
+    if "/" in run_id or not (root / "autopilot.json").is_file():
+        raise KeyError(run_id)
+    step, choice = str(body.get("step") or ""), str(body.get("answer") or "")
+    with _META_LOCK:
+        meta = json.loads((root / "autopilot.json").read_text())
+        gate = pending_gate(root)
+        if meta["state"] != "waiting_gate" or gate is None:
+            raise ValueError("This run is not waiting for an answer")
+        if step != gate["step"] or choice not in gate["choices"]:
+            raise ValueError(
+                f"The run waits at {gate['step']} for one of: {', '.join(gate['choices'])}"
+            )
+        # Only the owner reaches this API today; `by` is where a person's
+        # name goes once runs are shared (people-and-projects spec).
+        meta.setdefault("answers", []).append(
+            {"step": step, "answer": choice, "by": "owner", "at": int(time.time() * 1000)}
+        )
+        meta["state"] = "running"
+        _write_meta(root, meta)
+    threading.Thread(
+        target=_continue, args=(meta, step, choice), name=f"autopilot-{run_id}", daemon=True
+    ).start()
+    return {"ok": True}
+
+
+def _continue(meta: dict[str, Any], step: str, choice: str) -> None:
+    root = runs_root() / meta["id"]
+    dirs = RunDirs(root)
+    rejected = choice == "reject"
+    try:
+        run = _in_sandbox(
+            root,
+            dirs,
+            lambda ex: runner.resume(
+                dirs.project, meta["runner_run"], gate=(step, choice), executor=ex, limits=LIMITS
+            ),
+            publish=not rejected,
+        )
+        if rejected and run.state["state"] == "succeeded":
+            _update(root, state="rejected")
+    except Exception as exc:  # noqa: BLE001 — any failure ends the run with its reason
+        _update(root, state="failed", error=str(exc)[:500])
+    _settle(root)
+
+
+def _in_sandbox(
+    root: Path,
+    dirs: RunDirs,
+    drive: Callable[[AutopilotExecutor], runner.Run],
+    *,
+    publish: bool = True,
+) -> runner.Run:
+    """Give the run a sandbox and a model token for as long as `drive` takes:
+    to the end, a failure or a gate. Tokens a run used before a gate count
+    against its budget after it. A run that succeeds is published unless the
+    owner rejected it: rejecting routes the flow to its end, which the runner
+    records as success."""
+    meta = json.loads((root / "autopilot.json").read_text())
+    used = float(meta.get("tokens") or 0)  # the gateway weighs tokens, so a float
+    left = int(meta["budget_m"] * 1_000_000 - used)
+    if left <= 0:
+        raise RuntimeError("the run has used its token budget")
+    gateway = Gateway(secret_path=store.root() / "gateway-secret")
+    box: Sandbox | None = None
+    token = None
+    try:
+        gateway.ensure(
+            anthropic_key=None, openai_key=None, anthropic_oauth_token=subscription_token()
+        )
+        box = Sandbox.create(meta["id"], gateway=gateway.name, mounts=dirs.mounts())
+        box.trust(str(dirs.project))
+        token = gateway.mint(meta["id"], budget=left, ttl=TOKEN_TTL)
+        _update(root, state="running", sandbox=box.name)
+        run = drive(AutopilotExecutor(box, dirs, token, meta["branch"]))
+        _update(root, state=run.state["state"], runner_run=run.id)
+        if publish and run.state["state"] == "succeeded":
+            _publish(root, meta, dirs.project, meta["base_sha"], run.state)
+        return run
     finally:
         if token:
-            used = gateway.usage(token).get("used")
+            spent = gateway.usage(token).get("used")
+            used += spent if isinstance(spent, int | float) else 0
             gateway.revoke(token)
             _update(root, tokens=used)
         if box:
             box.destroy()
+
+
+def _settle(root: Path) -> None:
+    """A run waiting at a gate has not ended; anything else has."""
+    if json.loads((root / "autopilot.json").read_text())["state"] != "waiting_gate":
         _update(root, ended_at=int(time.time() * 1000))
 
 
 def _publish(
-    root: Path,
-    autopilot: dict[str, Any],
-    meta: dict[str, Any],
-    item: dict[str, Any],
-    project: Path,
-    base_sha: str,
-    state: dict[str, Any],
+    root: Path, meta: dict[str, Any], project: Path, base_sha: str, state: dict[str, Any]
 ) -> None:
     """Push the run branch and open a draft pull request for it. A run that
     changed nothing opens nothing. A failure here is recorded on the run; the
@@ -156,13 +240,13 @@ def _publish(
         return
     try:
         token, _ = github_projects.local_token()
-        github_push.push(project, autopilot["repo"], meta["branch"], token, base_sha)
+        github_push.push(project, meta["repo"], meta["branch"], token, base_sha)
         _update(root, pushed=True)
         pr = github_push.open_pull_request(
-            autopilot["repo"],
+            meta["repo"],
             meta["branch"],
-            pr_title(meta, item),
-            pr_body(meta, item, project, state),
+            pr_title(meta, meta["item"]),
+            pr_body(meta, meta["item"], project, state),
             token,
         )
         _update(root, pr=pr)
@@ -334,6 +418,8 @@ def list_runs() -> list[dict[str, Any]]:
                 meta["runner_state"] = receipt.get("state")
             if receipt.get("failure"):
                 meta["failure"] = receipt["failure"]
+            if meta["state"] == "waiting_gate":
+                meta["gate"] = pending_gate(meta_path.parent, receipt)
         out.append(meta)
     return sorted(out, key=lambda m: m["started_at"], reverse=True)
 
@@ -407,6 +493,28 @@ def summary() -> dict[str, Any]:
         "waiting_gate": sum(1 for m in runs if m["state"] == "waiting_gate"),
         "done_today": sum(1 for m in today if m["state"] == "succeeded"),
         "failed_today": sum(1 for m in today if m["state"] == "failed"),
+    }
+
+
+def pending_gate(root: Path, receipt: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    """The gate the run waits at: its question, the answers it takes and the
+    text of what it shows (a step's output file)."""
+    receipt = receipt if receipt is not None else _receipt(root)
+    pending = [g for g in (receipt or {}).get("gates") or [] if g.get("response") is None]
+    if not pending:
+        return None
+    g = pending[-1]
+    shown = ""
+    project = (root / "repo").resolve()
+    if isinstance(g.get("show"), dict) and g["show"].get("path"):
+        path = project / str(g["show"]["path"])
+        if path.is_file() and not path.is_symlink() and path.resolve().is_relative_to(project):
+            shown = path.read_text(errors="replace")[:SHOWN_CHARS]
+    return {
+        "step": g["step"],
+        "question": g.get("question") or "",
+        "choices": g["choices"],
+        "shown": shown,
     }
 
 

@@ -9,6 +9,8 @@
   ],
   "steps": [
     { "id": "spec", "run": "spec", "with": { "issue": "inputs.issue" } },
+    { "id": "approve", "gate": "Build this fix?", "show": "steps.spec.outputs.spec",
+      "routes": { "approve": "build", "reject": "end" } },
     { "id": "build", "run": "implement",
       "with": { "spec": "steps.spec.outputs.spec", "findings": "steps.check.outputs.findings?" } },
     { "id": "check", "decide": "review",
