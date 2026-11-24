@@ -52,7 +52,8 @@ test("Lite runs continuity, saved artifacts and factual overviews without coding
   await withSession("lite-agent", async folder => {
     await open(page, folder, "lite-agent");
     const views = page.locator(".rd-view-toggle");
-    await expect(views.getByRole("button")).toHaveText(["Terminal", "Messages", "Timeline", /^Inbox/, "Artifacts", /Shell/]);
+    // The e2e server runs with every development flag on, so the flagged Flows tab shows in Lite too.
+    await expect(views.getByRole("button")).toHaveText(["Terminal", "Messages", "Timeline", /^Inbox/, "Artifacts", "Flows", /Shell/]);
     await expect(page.getByRole("button", { name: "Oracle", exact: true })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "AGENTS.md", exact: true })).toBeVisible();
     await expect(page.getByRole("tab", { name: "Connectors" })).toHaveCount(0);

@@ -29,7 +29,7 @@ Claude/Codex sessions and their existing sign-in continue to work.
 | Flag | Controls hidden and operations blocked while off |
 |------|--------------------------------------------------|
 | `cross_computer_collaboration` | Cross-computer collaboration setup and exchange. Local inbox remains available. |
-| `skill_kits` | Skill-kit management, installation and removal; `/harnesses` routes and `duckterm kit` validate/plan/install/verify/uninstall. |
+| `skill_kits` | Settings → Skill kits (add, review, install, verify, Create team, uninstall), a session's Flows tab, the `/kits/*`, `/api/v1/session/kits/*` and legacy `/harnesses` routes, and `duckterm kit` validate/plan/install/verify/uninstall/run/runs. |
 | `harness_management` | Harness installation and setup. Existing local harnesses remain usable. |
 | `byok` | API-key configuration and use, including deleting a saved key. Existing keys are retained; enable the flag to remove one through DuckTerm. |
 | `byoc` | Cloud/remote workspace management, including native Mac Settings controls. Available only in Full even when opted in. |

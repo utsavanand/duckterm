@@ -38,6 +38,8 @@ import { BugReport } from "./BugReport";
 import { DashboardMenus } from "./DashboardMenus";
 import { LiveAgentTree, LiveControlTower, LiveHome, LiveContextPanel, LiveInboxView, LiveSessionCard } from "./liveSessionViews";
 import { HarnessesModal } from "./HarnessesModal";
+import { SkillKitsPage } from "./SkillKitsPage";
+import { FlowsView } from "./FlowsView";
 import { MemoryView } from "./MemoryView";
 import { TimelineView } from "./TimelineView";
 import { SessionFilesView } from "./SessionFilesView";
@@ -202,12 +204,12 @@ function Dashboard() {
   const [launchGroup, setLaunchGroup] = useState<string | undefined>(undefined);
   const [checkpointTarget, setCheckpointTarget] = useState<{ key: string; request: number } | null>(null);
   const [memoryTarget, setMemoryTarget] = useState<{ key: string; revision: string; checkpoint?: string } | null>(null);
-  const [chosenView, setView] = useState<"terminal" | "messages" | "history" | "inbox" | "artifacts" | "memory" | "prs">(
+  const [chosenView, setView] = useState<"terminal" | "messages" | "history" | "inbox" | "artifacts" | "memory" | "prs" | "flows">(
     "terminal",
   );
   // Coding editions combine files and saved artifacts; Lite shows saved outputs.
   const viewFeature = { history: has("checkpoints") || has("context"), memory: has("context"), inbox: has("inbox"),
-    artifacts: has("explorer") || has("artifacts"), prs: has("pr_review") } as Record<string, boolean>;
+    artifacts: has("explorer") || has("artifacts"), prs: has("pr_review"), flows: has("skill_kits") } as Record<string, boolean>;
   const view = viewFeature[chosenView] === false ? "terminal" : chosenView;
   const [messageFolder, setMessageFolder] = useState<string | null>(null);
   // The PR open in the review workspace (PRs view); null shows the list.
@@ -537,6 +539,9 @@ function Dashboard() {
               {viewFeature.prs && <button className={view === "prs" ? "active" : ""} onClick={() => setView("prs")}>
                 PRs
               </button>}
+              {viewFeature.flows && <button className={view === "flows" ? "active" : ""} onClick={() => setView("flows")}>
+                Flows
+              </button>}
               <span id="rd-shell-toggle" />
             </div>
             {selected && (view === "terminal" || view === "messages") && (
@@ -577,6 +582,11 @@ function Dashboard() {
               <div className="rd-messages-wrap rd-files-wrap">
                 {selected ? has("explorer") ? <SessionFilesView session={selected} artifacts={has("artifacts")} /> : <ArtifactsView key={selected.key} sessionKey={selected.key} sessionName={selected.label} />
                   : <p className="rd-panel-empty">Select a session to see its artifacts.</p>}
+              </div>
+            )}
+            {view === "flows" && (
+              <div className="rd-messages-wrap">
+                {selected ? <FlowsView key={selected.key} project={agentsMdDir} sessionKey={selected.key} context={selected.key} /> : <p className="rd-panel-empty">Select a session to see its flows.</p>}
               </div>
             )}
             {view === "prs" && (
@@ -681,9 +691,11 @@ function Dashboard() {
       {modal === "featureflags" && <FeatureFlagsModal onClose={() => setModal(null)} />}
       {modal === "aimodels" && <AiModelsModal onClose={() => setModal(null)} />}
       {modal === "harnesses" && has("skill_kits") && (
-        <HarnessesModal
+        <SkillKitsPage
           sessionKey={selected?.key}
           onClose={() => setModal(null)}
+          fallback={<HarnessesModal sessionKey={selected?.key} onClose={() => setModal(null)} />}
+          onTeamCreated={(folder) => { refreshFolders(); setModal(null); setSelectedFolder(folder); }}
         />
       )}
       {actionAnchor && actionSession && <SessionActions key={actionSession.key + ":" + actionAnchor.x + ":" + actionAnchor.y} anchor={actionAnchor} session={actionSession}

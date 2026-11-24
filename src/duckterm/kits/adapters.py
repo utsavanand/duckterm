@@ -404,7 +404,7 @@ def place_skill(
     name = c.fields.get("replaces") or source.name
     out: list[Placement] = []
     for root, served in roots.items():
-        variant_ok = [h for h in served if c.applies(h, {})] if c.only_harness else served
+        variant_ok = [h for h in served if h in c.only_harness] if c.only_harness else served
         if not variant_ok:
             continue
         out.append(
@@ -464,8 +464,6 @@ def place_agent(kit: m.Kit, c: m.Component, chosen: list[str]) -> list[Placement
     body = text.split("---", 2)[-1].lstrip("\n") if text.startswith("---") else text
     out: list[Placement] = []
     for h in chosen:
-        if not c.applies(h, {}):
-            continue
         a = ADAPTERS[h]
         if h == "copilot" and "claude-code" in chosen:
             out.append(
@@ -555,8 +553,6 @@ def place_hook(
     timeout = int(c.fields.get("timeout", 5))
     out: list[Placement] = []
     for h in chosen:
-        if not c.applies(h, {}):
-            continue
         a = ADAPTERS[h]
         if a.hook_format == "none":
             out.append(
@@ -673,8 +669,6 @@ def place_permission(kit: m.Kit, c: m.Component, chosen: list[str]) -> list[Plac
     rules = [r for r in c.fields.get("rules", []) if isinstance(r, dict)]
     out: list[Placement] = []
     for h in chosen:
-        if not c.applies(h, {}):
-            continue
         a = ADAPTERS[h]
         if a.permissions == "settings":
             perms: dict[str, list[str]] = {"allow": [], "ask": [], "deny": []}
@@ -799,8 +793,6 @@ def place_tool(kit: m.Kit, c: m.Component, chosen: list[str]) -> list[Placement]
     env = {str(k): str(v) for k, v in (mcp.get("env") or {}).items()}
     done_shared = False
     for h in chosen:
-        if not c.applies(h, {}):
-            continue
         a = ADAPTERS[h]
         if a.mcp_format == "mcp-json":
             if done_shared:
@@ -917,20 +909,117 @@ def place_settings(kit: m.Kit, c: m.Component, chosen: list[str]) -> list[Placem
     return out
 
 
-def place_flow(kit: m.Kit, c: m.Component) -> list[Placement]:
+def _flow_shortcut(kit: m.Kit, flow: str, spec: dict[str, Any]) -> bytes:
+    """A Claude Code project command, `/<flow>`, that starts the flow from the
+    session it is typed in. The command runs `duckterm kit run`, which hands
+    the run to the DuckTerm server when a session credential is present, so
+    the steps show as child sessions; the agent only relays the output."""
+    raw = spec.get("inputs")
+    # input names and the description come from the kit; both land in a file
+    # Claude Code reads as frontmatter, so names are identifiers (validate
+    # flags others) and the description is one quoted line
+    names = sorted(raw) if isinstance(raw, dict) else []
+    inputs = [n for n in names if m.STEP_ID_RE.match(str(n))]
+    fallback = f"Start the {flow} flow of {kit.name}"
+    desc = " ".join(str(spec.get("description") or fallback).split())
+    start = f"duckterm kit run {kit.name}/{flow}"
+    argv = start + "".join(f" --input {name}=<{name}>" for name in inputs)
+    lines = [
+        "---",
+        f"description: {json.dumps(desc)}",
+        # this flow's start only, never --gate or --yolo: exact when the flow takes
+        # no inputs, a prefix (for the --input pairs) when it does
+        f"allowed-tools: Bash({start}{':*' if inputs else ''})",
+        "---",
+        f"Start the `{kit.name}/{flow}` flow of the {kit.name} skill kit from this session:",
+        "",
+        f"    {argv}",
+        "",
+    ]
+    if inputs:
+        lines += [
+            "Fill each `<input>` from the arguments: $ARGUMENTS. Ask for any input"
+            " the arguments do not give.",
+            "",
+        ]
+    lines += [
+        "Relay what the command prints: the run id and each step as it finishes."
+        " A gate is answered by the owner in DuckTerm (the session's Flows tab),"
+        " not from here. Do not do the steps yourself; they run as child sessions"
+        " of this one.",
+        "",
+    ]
+    return "\n".join(lines).encode()
+
+
+def place_flow(kit: m.Kit, c: m.Component, active: list[str]) -> list[Placement]:
+    """The flow file, plus what the runner needs beside it: `skills.json`
+    (every skill's declared outputs and effects, every exec script's hash)
+    and the scripts flows `exec`. Shared across flows; the planner dedupes.
+    For Claude Code, also the `/<flow>` command the kit page advertises."""
+    from duckterm.kits import runner
+
     cid = kit.component_id(c)
     source = kit.root / str(c.path)
-    return [
+    flows = []
+    for f in kit.by_kind("flow"):
+        try:
+            flows.append(json.loads((kit.root / str(f.path)).read_text()))
+        except (OSError, ValueError):
+            continue
+    manifest = runner.skills_manifest(kit, flows, kit.root)
+    folder = f"{runner.FLOWS}/{kit.name}"
+    run_name = f"{kit.name}/{source.stem}"
+    try:
+        spec = json.loads(source.read_text())
+    except (OSError, ValueError):
+        spec = {}
+    out = [
         Placement(
             cid,
             SHARED,
             "flow",
             "write",
-            f".duckterm/flows/{kit.name}/{source.name}",
+            f"{folder}/{source.name}",
             content=source.read_bytes(),
-            note="flows need the DuckTerm runner (`duckterm kit run`), not yet built",
-        )
+            note=f"/{source.stem} in a Claude Code session, or `duckterm kit run {run_name}`",
+        ),
     ]
+    if "claude-code" in active:
+        out.append(
+            Placement(
+                cid,
+                "claude-code",
+                "flow",
+                "write",
+                f".claude/commands/{source.stem}.md",
+                content=_flow_shortcut(kit, source.stem, spec if isinstance(spec, dict) else {}),
+                note=f"the /{source.stem} shortcut",
+            )
+        )
+    out += [
+        Placement(
+            cid,
+            SHARED,
+            "flow",
+            "write",
+            f"{folder}/{runner.SKILLS_FILE}",
+            content=(json.dumps(manifest, indent=2, sort_keys=True) + "\n").encode(),
+        ),
+    ]
+    for rel in sorted(manifest["scripts"]):
+        out.append(
+            Placement(
+                cid,
+                SHARED,
+                "flow",
+                "write",
+                f"{folder}/{rel}",
+                content=(kit.root / rel).read_bytes(),
+                executable=True,
+            )
+        )
+    return out
 
 
 def place_team(kit: m.Kit, team: str) -> Placement:
@@ -942,5 +1031,5 @@ def place_team(kit: m.Kit, team: str) -> Placement:
         "none",
         team,
         status=OFFERED,
-        note="a team template; New team instantiates it into a folder, install never does",
+        note="a team template; New team instantiates it into a workspace, install never does",
     )

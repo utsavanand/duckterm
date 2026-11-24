@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { api, FolderMessagePlan, OracleExchange } from "./api";
+import { api, FolderMessagePlan, KitTeam, OracleExchange } from "./api";
 import { FolderRecipient, FolderRecipientPicker } from "./FolderRecipientPicker";
 import { Modal } from "./ui";
 import { ArtifactsView } from "./ArtifactsView";
@@ -21,6 +21,19 @@ const TAB_FEATURES: Record<Tab, Feature> = { overview: "overview", chat: "folder
 // Folder panels are ordinary internal components; sessions remain in the tree.
 export function FolderView({ folder, ...actions }: { folder: string } & FolderActions) {
   const [details, setDetails] = useState(() => window.innerWidth >= 1250);
+  const [team, setTeam] = useState<KitTeam | null>(null);
+  const { has } = useEdition();
+  useEffect(() => {
+    if (!has("skill_kits")) return;
+    let cancelled = false;
+    (async () => {
+      try {
+        const d = await api.kitsTeams();
+        if (!cancelled) setTeam(d.teams.find((t) => t.folder === folder) ?? null);
+      } catch { /* no teams yet, or an edition without kits */ }
+    })();
+    return () => { cancelled = true; };
+  }, [folder, has]);
   useEffect(() => {
     const media = window.matchMedia("(max-width: 1249px)");
     const collapse = () => { if (media.matches) setDetails(false); };
@@ -30,12 +43,12 @@ export function FolderView({ folder, ...actions }: { folder: string } & FolderAc
   const [review, setReview] = useState<{ repo: string; ref: string; from?: string } | null>(null);
   const openReview = (row: PrRow) => setReview({ repo: row.repo, ref: row.pr ? String(row.pr.number) : row.branch, from: row.session?.name });
   const tabs = useRef<HTMLDivElement>(null);
-  const { has } = useEdition();
   const shown = TABS.filter(name => has(TAB_FEATURES[name]));
   const tab = shown.includes(chosenTab) ? chosenTab : shown.includes("chat") ? "chat" : shown[0];
   const detailsAvailable = has("overview") && tab !== "overview";
   return <section className={`rd-folder-view rd-folder-with-details${details && detailsAvailable ? " details-open" : ""}`} aria-label={`Workspace ${folder}`}>
-    <div className="rd-folder-main"><header className="rd-folder-heading">{detailsAvailable && <button className="rd-btn rd-btn-ghost rd-btn-sm rd-folder-details-toggle" aria-expanded={details} onClick={() => setDetails(!details)}>{details ? "Hide details" : "Details"}</button>}<small>Workspace</small><h1>{folder.split("/").pop()}</h1><p>{folder} · Includes nested workspaces{desktop() ? " · This Mac" : ""}</p></header>
+    <div className="rd-folder-main"><header className="rd-folder-heading">{detailsAvailable && <button className="rd-btn rd-btn-ghost rd-btn-sm rd-folder-details-toggle" aria-expanded={details} onClick={() => setDetails(!details)}>{details ? "Hide details" : "Details"}</button>}<small>{team ? "Team" : "Workspace"}</small><h1>{folder.split("/").pop()}</h1><p>{folder}{team ? ` · ${team.team} from ${team.kit}` : ""} · Includes nested workspaces{desktop() ? " · This Mac" : ""}</p></header>
+    {team && <TeamRoles team={team} onNewSession={actions.onNewSession} />}
     <div ref={tabs} className="rd-folder-tabs" role="tablist" aria-label="Workspace views" onKeyDown={event => {
       if (!shown.length || !["ArrowLeft", "ArrowRight", "Home", "End"].includes(event.key)) return;
       event.preventDefault();
@@ -212,4 +225,27 @@ function FolderChat({ folder, active }: { folder: string; active: boolean }) {
       </section>
     </Modal>}
   </div>;
+}
+
+// A team is a workspace with a procedure: one card per role, with the skills
+// the role uses and the rules that bind it. Agents are started into the
+// workspace with New session; matching them to roles by name is next.
+function TeamRoles({ team, onNewSession }: { team: KitTeam; onNewSession?: () => void }) {
+  const rules = (role: string) => team.rules.filter((r) => r.role === role).map((r) => {
+    if (typeof r.review_by === "string") return `reviewed by ${r.review_by}`;
+    if (Array.isArray(r.may_not)) return `may not ${r.may_not.join(", ")}`;
+    return Object.entries(r).filter(([k]) => k !== "role").map(([k, v]) => `${k} ${String(v)}`).join(", ");
+  });
+  return (
+    <section className="rd-team-roles" aria-label="Team roles">
+      {Object.entries(team.roles).map(([role, spec]) => (
+        <div className="rd-team-role" key={role}>
+          <div className="rd-team-role-name">{role}</div>
+          {spec.purpose && <div className="rd-team-role-purpose">{spec.purpose}</div>}
+          <div className="rd-team-role-meta">{[...spec.skills.map((s) => `/${s}`), ...rules(role)].join(" · ")}</div>
+          {onNewSession && <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={onNewSession}>New session as {role}</button>}
+        </div>
+      ))}
+    </section>
+  );
 }

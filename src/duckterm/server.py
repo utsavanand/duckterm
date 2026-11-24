@@ -55,6 +55,7 @@ import socket
 import sqlite3
 import sys
 import tempfile
+import threading
 import time
 import traceback
 import urllib.parse
@@ -166,6 +167,58 @@ _RESUME_NUDGE = (
     "outside the conversation (dev servers, watchers, background jobs) died "
     "with it — re-verify before assuming, then continue where you left off."
 )
+
+
+class _FlowStepTracker:
+    """Each harness step of a flow run is a child session of the session that
+    started the flow, recorded the way a fork is: a SessionStart row with the
+    parent key, the step's hooks reporting under the child key, a SessionEnd
+    when the process exits. Called from the runner's thread, so every publish
+    hops onto the event loop."""
+
+    def __init__(self, server: "Server", loop: asyncio.AbstractEventLoop) -> None:
+        self.server = server
+        self.loop = loop
+
+    def _publish(self, event: dict[str, Any], intention: str = "") -> None:
+        done = threading.Event()
+
+        def go() -> None:
+            try:
+                self.server.bus.publish(event)
+                if intention:
+                    self.server.history.set_intention(str(event["session_key"]), intention)
+            finally:
+                done.set()
+
+        self.loop.call_soon_threadsafe(go)
+        done.wait(timeout=5)
+
+    def begin(self, child_key: str, info: dict[str, Any]) -> dict[str, str]:
+        cwd = str(info.get("cwd") or "")
+        flow = str(info.get("flow") or "").split("/")[-1]
+        self._publish(
+            {
+                "event_type": events.SESSION_START,
+                "session_key": child_key,
+                "source_app": Path(cwd).name if cwd else "flow",
+                "name": f"{flow} · {info.get('step')}",
+                "runtime": info.get("harness") or "claude-code",
+                "cwd": cwd,
+                "repo_path": cwd,
+                "parent_session_key": info.get("parent"),
+                "launched": True,
+                "pty_owned": False,
+                "command": shlex.join(list(info.get("command") or [])),
+            },
+            intention=(
+                f"flow {info.get('flow')} · step {info.get('step')} · attempt {info.get('attempt')}"
+            ),
+        )
+        return {**self.server._session_env(child_key), "DUCKTERM_SESSION_KEY": child_key}
+
+    def end(self, child_key: str, exit_code: int) -> None:
+        self._publish({"event_type": events.SESSION_END, "session_key": child_key})
 
 
 def _build_runtime(name: str | None, command: str) -> AgentRuntime:
@@ -343,6 +396,24 @@ _ROUTES: list[Route] = [
           **_mid("/harnesses/", "/contents")),
     Route("DELETE", "", lambda s, r, w, h, b, seg: s._deregister_harness(w, seg),
           prefix="/harnesses/"),
+    # ── skill kits: the engine behind `duckterm kit`, for the Skill kits page.
+    # All POST with the project in the body: route handlers do not see the query.
+    Route("POST", "/kits/overview", lambda s, r, w, h, b, seg: s._kits(w, "overview", b)),
+    Route("POST", "/kits/catalog", lambda s, r, w, h, b, seg: s._kits(w, "catalog", b)),
+    Route("POST", "/kits/register", lambda s, r, w, h, b, seg: s._kits(w, "register", b)),
+    Route("POST", "/kits/unregister", lambda s, r, w, h, b, seg: s._kits(w, "unregister", b)),
+    Route("POST", "/kits/enable", lambda s, r, w, h, b, seg: s._kits(w, "enable", b)),
+    Route("POST", "/kits/disable", lambda s, r, w, h, b, seg: s._kits(w, "disable", b)),
+    Route("POST", "/kits/plan", lambda s, r, w, h, b, seg: s._kits(w, "plan", b)),
+    Route("POST", "/kits/install", lambda s, r, w, h, b, seg: s._kits(w, "install", b)),
+    Route("POST", "/kits/uninstall", lambda s, r, w, h, b, seg: s._kits(w, "uninstall", b)),
+    Route("POST", "/kits/verify", lambda s, r, w, h, b, seg: s._kits(w, "verify", b)),
+    Route("POST", "/kits/run", lambda s, r, w, h, b, seg: s._kits(w, "start", b)),
+    Route("POST", "/kits/runs", lambda s, r, w, h, b, seg: s._kits(w, "runs", b)),
+    Route("POST", "/kits/run-detail", lambda s, r, w, h, b, seg: s._kits(w, "run", b)),
+    Route("POST", "/kits/gate", lambda s, r, w, h, b, seg: s._kits(w, "gate", b)),
+    Route("POST", "/kits/teams", lambda s, r, w, h, b, seg: s._kits(w, "teams", b)),
+    Route("POST", "/kits/team", lambda s, r, w, h, b, seg: s._kits(w, "team", b)),
     # ── connectors (GitHub, Railway, … — credentials + MCP install) ──
     Route("POST", "", lambda s, r, w, h, b, seg: s._forget_connector(w, seg),
           **_mid("/connectors/", "/forget")),
@@ -660,6 +731,8 @@ class Server:
                 if urllib.parse.urlsplit(path).path.startswith("/api/v1/session/memory/"):
                     result = await self.memory.session_request(method, path, headers, body)
                     status = 200
+                elif urllib.parse.urlsplit(path).path.startswith("/api/v1/session/kits/"):
+                    status, result = await self._session_kits(method, path, headers, body)
                 else:
                     federated = await collaboration_session(
                         self.collaboration, method, path, headers, body
@@ -1128,7 +1201,16 @@ class Server:
         # Check before publishing Stop: folding that event changes waiting to idle.
         hook_output = self._inbox_hook_output(raw, str(key or ""))
         raw["hook_event"] = True
+        # the row before this event names the repository DuckTerm launched the
+        # session in; the event itself may carry a child process's cwd
+        before = (
+            self.history.session(str(key))
+            if key and raw.get("event_type") == events.SESSION_START
+            else None
+        )
         event = self.bus.publish(raw)
+        if event.get("event_type") == events.SESSION_START:
+            self._apply_kit_policies(event, before)
         response = dict(event)
         if hook_output:
             response["hook_output"] = hook_output
@@ -1641,9 +1723,7 @@ class Server:
                 from duckterm import resume_diagnostics
 
                 readiness = resume_diagnostics.snapshot(self.history, keys[0] if keys else None)
-                result["items"].append(
-                    await asyncio.to_thread(resume_diagnostics.render, readiness)
-                )
+                result["items"].append(await resume_diagnostics.collect(readiness))
             elif parsed.path == "/bugreport/submit" and method == "POST":
                 if len(body) > bug_reports.MAX_REQUEST_BYTES:
                     await _write_json(writer, 413, {"error": "report request too large"})
@@ -2370,8 +2450,24 @@ class Server:
         if not note:
             await _write_json(writer, 400, {"error": "note is required"})
             return
+        message_key = req.get("message_key")
+        if message_key is not None:
+            if not isinstance(message_key, str) or not re.fullmatch(r"[a-f0-9]{64}", message_key):
+                await _write_json(writer, 400, {"error": "invalid message_key"})
+                return
+            source = self._message_source(session_key)
+            messages = await asyncio.to_thread(self._read_messages, source)
+            if self._message_source(session_key) != source or not any(
+                m.get("message_key") == message_key for m in messages
+            ):
+                await _write_json(
+                    writer, 409, {"error": "message changed or is unavailable; refresh Messages"}
+                )
+                return
         ann_id = security.new_session_key("ann")
-        self.history.add_annotation(ann_id, session_key, quote, note, int(time.time() * 1000))
+        self.history.add_annotation(
+            ann_id, session_key, quote, note, int(time.time() * 1000), message_key=message_key
+        )
         # Compose the follow-up and write it to the agent's stdin (the same path
         # the terminal uses). Quote the span so the agent knows what it's about.
         supervisor = self.orchestrator.get(session_key)
@@ -2618,6 +2714,216 @@ class Server:
         self._context_cache[str(path)] = (mtime, stats)
         return stats
 
+    async def _session_kits(
+        self, method: str, path: str, headers: dict[str, str], body: bytes
+    ) -> tuple[int, dict[str, Any]]:
+        """A session starting or watching a flow of its own: the caller is the
+        session its credential names, its project is its own folder (the body
+        cannot name another), it sees only runs it started, and every harness
+        step of the run is a child session of it. Gates are the owner's:
+        there is no session gate route. `duckterm kit run` inside a session
+        uses this."""
+        from duckterm.kits import api as kits_api
+
+        key = self.history.session_api.authenticate(headers)
+        suffix = urllib.parse.urlsplit(path).path.removeprefix("/api/v1/session/kits/")
+        try:
+            payload: Any = json.loads(body or b"{}")
+        except json.JSONDecodeError:
+            return 400, {"error": "invalid JSON"}
+        if not isinstance(payload, dict):
+            return 400, {"error": "body must be an object"}
+        # the folder DuckTerm launched the session in; the row's cwd and
+        # repo_path follow the hooks and would let a child process move it
+        project = kits_api.launch_folder(key)
+        if not project:
+            return 409, {
+                "error": "this session has no launch folder recorded; start it from DuckTerm"
+            }
+        payload["project"] = project
+        payload["session"] = key
+        tracker = _FlowStepTracker(self, asyncio.get_running_loop())
+        run_id = str(payload.get("run_id") or "")
+        calls = {
+            ("POST", "run"): lambda: kits_api.start_run(payload, tracker),
+            ("GET", "runs"): lambda: kits_api.runs(project, session=key),
+            ("POST", "runs"): lambda: kits_api.runs(project, session=key),
+            ("POST", "run-detail"): lambda: kits_api.run_detail(project, run_id, session=key),
+        }
+        call = calls.get((method, suffix))
+        if call is None:
+            return 404, {"error": f"no session kit route {method} {suffix!r}"}
+        try:
+            return 200, await asyncio.to_thread(call)
+        except kits_api.KitApiError as exc:
+            return exc.status, {"error": str(exc)}
+
+    async def _kits(self, writer: asyncio.StreamWriter, action: str, body: bytes) -> None:
+        """The Skill kits page's calls, all answered by duckterm.kits.api over
+        the same engine `duckterm kit` uses. Install and uninstall write into
+        the project the body names; a flow run starts in a thread and is
+        watched through its run file."""
+        from duckterm.kits import api as kits_api
+
+        try:
+            payload: Any = json.loads(body or b"{}")
+        except json.JSONDecodeError:
+            await _write_json(writer, 400, {"error": "invalid JSON"})
+            return
+        if not isinstance(payload, dict):
+            await _write_json(writer, 400, {"error": "body must be an object"})
+            return
+        tracker = _FlowStepTracker(self, asyncio.get_running_loop())
+        # The history store is bound to this thread, so everything it answers
+        # is gathered here; only the kit engine's file work runs in a thread.
+        needs_registry = action in ("catalog", "enable")
+        registry = [dict(r) for r in self.history.harnesses()] if needs_registry else []
+        workspaces = self._kit_workspaces() if needs_registry else []
+        if action == "unregister":
+            try:
+                await _write_json(writer, 200, self._unregister_kit(payload))
+            except kits_api.KitApiError as exc:
+                await _write_json(writer, exc.status, {"error": str(exc)})
+            return
+        if action == "team":
+            try:
+                await _write_json(writer, 200, await self._create_team_record(kits_api, payload))
+            except kits_api.KitApiError as exc:
+                await _write_json(writer, exc.status, {"error": str(exc)})
+            return
+        calls = {
+            "overview": lambda: kits_api.overview(payload.get("project")),
+            "catalog": lambda: kits_api.catalog(registry, workspaces),
+            "register": lambda: kits_api.register(payload),
+            "enable": lambda: kits_api.enable(payload, registry, workspaces),
+            "disable": lambda: kits_api.disable(payload),
+            "runs": lambda: kits_api.runs(payload.get("project")),
+            "run": lambda: kits_api.run_detail(
+                payload.get("project"), str(payload.get("run_id") or "")
+            ),
+            "plan": lambda: kits_api.plan_for(payload),
+            "install": lambda: kits_api.install_kit(payload),
+            "uninstall": lambda: kits_api.uninstall_kit(payload),
+            "verify": lambda: kits_api.verify_kits(payload),
+            "start": lambda: kits_api.start_run(payload, tracker),
+            "gate": lambda: kits_api.answer_gate(
+                payload, str(payload.get("run_id") or ""), tracker
+            ),
+            "teams": lambda: kits_api.teams(),
+        }
+        try:
+            result = await asyncio.to_thread(calls[action])
+            if action == "register":
+                name, path = str(result["name"]), str(result["path"])
+                # kits share the harnesses table with suites, keyed by name; a
+                # second row of that name would silently repoint the first
+                for other in self.history.harnesses():
+                    if str(other.get("name")) == name and str(other.get("path")) != path:
+                        raise kits_api.KitApiError(
+                            409,
+                            f"{name!r} is already added from {other.get('path')}; remove it first",
+                        )
+                self.history.add_harness(name, path, int(time.time() * 1000))
+        except kits_api.KitApiError as exc:
+            await _write_json(writer, exc.status, {"error": str(exc)})
+            return
+        await _write_json(writer, 200, result)
+
+    def _remember_launch(self, key: str, folder: object) -> None:
+        """The launcher is the only writer of where a session lives (kits)."""
+        if not folder or not self.edition.includes("skill_kits"):
+            return
+        from duckterm.kits import api as kits_api
+
+        try:
+            kits_api.remember_launch(key, str(folder))
+        except (OSError, kits_api.KitApiError) as exc:  # never fail a launch over it
+            print(f"[duckterm] launch record for {key}: {exc}", file=sys.stderr)
+
+    def _apply_kit_policies(self, event: dict[str, Any], before: dict[str, Any] | None) -> None:
+        """A session started: kits enabled for its workspace (or for all) are
+        installed into its repository if missing. The target is the folder
+        DuckTerm launched the session in (`kits_api.launch_folder`, written by
+        the launcher only), never the hook's cwd or the row it updates;
+        `before` is the row as it stood before this event, for the workspace.
+        Registry and workspace are read here, on the store's thread; the file
+        work runs in a thread."""
+        if not self.edition.includes("skill_kits"):
+            return
+        from duckterm.kits import api as kits_api
+
+        key = str(event.get("session_key") or "")
+        project = kits_api.policy_target(kits_api.launch_folder(key), event)
+        if not project:
+            return
+        registry = [dict(r) for r in self.history.harnesses()]
+        if not registry or not kits_api.policies():
+            return
+        folder = str((before or {}).get("grp") or "")
+
+        async def run() -> None:
+            try:
+                done = await asyncio.to_thread(kits_api.apply_policies, registry, folder, project)
+            except Exception as exc:  # noqa: BLE001 - never fail a session start
+                print(f"[duckterm] kit policy for {project}: {exc}", file=sys.stderr)
+                return
+            if done:
+                print(f"[duckterm] installed {', '.join(done)} into {project}", file=sys.stderr)
+
+        asyncio.get_running_loop().create_task(run())
+
+    def _kit_workspaces(self) -> list[dict[str, Any]]:
+        """Every workspace with the repositories its sessions run in (the
+        worktree when there is one, else the repository, else the cwd). A
+        kit installs into those; a workspace with none cannot take a kit yet."""
+        repos: dict[str, set[str]] = {name: set() for name in self.history.folders()}
+        for row in self.history.sessions():
+            root = row.get("worktree_path") or row.get("repo_path") or row.get("cwd")
+            if not root:
+                continue
+            repos.setdefault(str(row.get("grp") or ""), set()).add(str(root))
+        return [
+            {"name": name, "repositories": sorted(paths)}
+            for name, paths in sorted(repos.items(), key=lambda kv: (kv[0] == "", kv[0]))
+        ]
+
+    def _unregister_kit(self, payload: dict[str, Any]) -> dict[str, Any]:
+        from duckterm.kits import api as kits_api
+
+        name = str(payload.get("name") or "").strip()
+        if not name:
+            raise kits_api.KitApiError(400, "name is required")
+        if not self.history.remove_harness(name):
+            raise kits_api.KitApiError(404, f"no kit named {name!r} is added")
+        return {"removed": name}
+
+    async def _create_team_record(self, kits_api: Any, payload: dict[str, Any]) -> dict[str, Any]:
+        """A team is a workspace with a procedure: the record first (it refuses
+        a bad request without touching anything), then the workspace itself,
+        registered like New workspace does so an empty one persists. The
+        history store is bound to the loop thread, so only the kit's file work
+        runs in a thread; a workspace that fails to register takes its record
+        back out, so the next attempt is not a 409."""
+        kit = str(payload.get("kit") or "")
+        kit_path = payload.get("kit_path") or next(
+            (r["path"] for r in self.history.harnesses() if str(r.get("name")) == kit), None
+        )
+        result: dict[str, Any] = await asyncio.to_thread(kits_api.create_team, payload)
+        folder = str(result["team"]["folder"])
+        try:
+            self.history.create_folder(folder, now=int(time.time() * 1000))
+        except Exception as exc:
+            await asyncio.to_thread(kits_api.remove_team, folder)
+            raise kits_api.KitApiError(
+                500, f"the workspace could not be registered: {exc}"
+            ) from exc
+        # The team's first session installs the kit if it is not there yet; the
+        # policy pins the kit tree the owner has just read on the kit page.
+        await asyncio.to_thread(
+            kits_api.add_policy_workspace, kit, folder, str(kit_path) if kit_path else None
+        )
+        return result
+
     def _suites_for(self, directory: object) -> list[str]:
         """Which installed skill kits (e.g. uv-suite) a
         session loads: each registered skill kit with a `detect` marker is
@@ -2694,6 +3000,8 @@ class Server:
                 self.history.set_meta(
                     key, name=name, notes=req.get("notes"), group=req.get("group")
                 )
+            launched = self.history.session(key) or {}
+            self._remember_launch(key, launched.get("worktree_path") or repo_path or cwd)
             await _write_json(writer, 200, {"session_key": key, "opened_in_terminal": False})
             return
 
@@ -2758,6 +3066,7 @@ class Server:
                 "command": command,
             }
         )
+        self._remember_launch(key, run_cwd)
         opened = open_in_terminal(
             str(run_cwd),
             argv,
@@ -2886,6 +3195,7 @@ class Server:
                 "command": shlex.join(argv),
             }
         )
+        self._remember_launch(child_key, str(worktree.path))
         opened = open_in_terminal(
             str(worktree.path),
             argv,

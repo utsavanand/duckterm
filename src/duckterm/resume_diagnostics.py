@@ -1,5 +1,6 @@
 """Bounded, read-only resume checks for owner-reviewed bug reports."""
 
+import asyncio
 import hashlib
 import json
 import re
@@ -12,8 +13,35 @@ from duckterm.agents.hooks_install import hook_script_path
 from duckterm.harnesses import REGISTRY
 from duckterm.persistence.history import HistoryStore
 from duckterm.runtimes.claude_code import project_slug
+from duckterm.runtimes.discovery import discover
 
 LIMIT = 50
+
+
+async def collect(data: dict[str, Any]) -> dict[str, str]:
+    """Include bounded, sanitized CLI probes in the native app's exported item."""
+    result = await asyncio.to_thread(render, data)
+    lines = [
+        "",
+        "Installed harness versions (server PATH at report time):",
+        "Running sessions may use a different version. Authentication is not checked.",
+    ]
+    try:
+        discovery = await discover()
+    except (OSError, RuntimeError):
+        lines.append("Unavailable — version discovery failed.")
+    else:
+        for runtime in discovery["runtimes"]:
+            version = runtime["version"]
+            if runtime["probe"] == "ok" and version:
+                status = version
+            elif runtime["probe"] == "missing":
+                status = "not found on server PATH"
+            else:
+                status = f"version unavailable ({runtime['probe']})"
+            lines.append(f"{runtime['label']}: {status}")
+    result["text"] += "\n" + "\n".join(lines)
+    return result
 
 
 def snapshot(history: HistoryStore, selected: str | None) -> dict[str, Any]:
@@ -23,9 +51,9 @@ def snapshot(history: HistoryStore, selected: str | None) -> dict[str, Any]:
     ).fetchone()[0]
     rows = history._conn.execute(
         "SELECT session_key,runtime,state,cwd,worktree_path,restart_json FROM sessions "
-        "WHERE state IN ('interrupted','stopped') "
+        "WHERE state IN ('interrupted','stopped') OR session_key=? "
         "ORDER BY session_key=? DESC, updated_at DESC, session_key LIMIT ?",
-        (selected or "", LIMIT),
+        (selected or "", selected or "", LIMIT),
     ).fetchall()
     inputs = []
     for row in rows:
@@ -68,7 +96,10 @@ def snapshot(history: HistoryStore, selected: str | None) -> dict[str, Any]:
         except (ValueError, TypeError, AttributeError):
             native_id, state = None, "unknown"
         row.update(
-            native_id=native_id, native_id_state=state, selected=row.pop("session_key") == selected
+            native_id=native_id,
+            native_id_state=state,
+            turn_end_recorded=history.last_event_ts(row["session_key"], "Stop") > 0,
+            selected=row.pop("session_key") == selected,
         )
         inputs.append(row)
     return {"total": count, "sessions": inputs}
@@ -127,7 +158,13 @@ def render(data: dict[str, Any]) -> dict[str, str]:
     for runtime in REGISTRY:
         if REGISTRY[runtime].hook_spec:
             lines.append(f"{runtime} global hooks: {hook_status(runtime, None)}")
-    lines.append(f"Interrupted/stopped sessions: {data['total']} (showing {len(data['sessions'])})")
+    stopped = sum(row["state"] in {"interrupted", "stopped"} for row in data["sessions"])
+    lines.append(f"Interrupted/stopped sessions: {data['total']} (showing {stopped})")
+    if any(
+        row["selected"] and row["state"] not in {"interrupted", "stopped"}
+        for row in data["sessions"]
+    ):
+        lines.append("Selected session also included below.")
     for index, row in enumerate(data["sessions"], 1):
         runtime = row["runtime"] if row["runtime"] in REGISTRY else "generic"
         source = "worktree" if row["worktree_path"] else "cwd" if row["cwd"] else "missing"
@@ -158,6 +195,7 @@ def render(data: dict[str, Any]) -> dict[str, str]:
             [
                 f"{label}: {runtime}; {row['state']}",
                 f"  native conversation ID: {row['native_id_state']}",
+                "  recorded turn-end event: " + ("yes" if row.get("turn_end_recorded") else "no"),
                 f"  directory source: {source}; exists: {exists}",
                 f"  expected transcript exists: {transcript}",
                 f"  Claude project slug fingerprint: {slug}",

@@ -5,6 +5,57 @@ test that stopped before the newly shipped kit handler. Merge checks must exerci
 the real command and retain newer development flags. The inventory and public
 table list each feature once, with skill-kit legacy precedence explicit.
 
+## 2026-11-22 — One flag gated two unrelated things, in three places
+
+Disable on the GitHub connector blanked the pull request view and the
+repository browser, both of which told the owner to enable a connector they
+had just turned off on purpose. review/github.py and github_projects.py each
+read connectors.policy("github")["enabled"] before fetching the credential.
+
+That flag means "agents may use this". Duckterm reading the owner's own token
+for its own features is the other door, and it never needed the flag. A test
+had frozen the wrong behaviour in place -- it asserted the browser refuses
+when the flag is off -- so the bug was protected rather than caught.
+
+The lesson is about tests, not the gate. A test that encodes a behaviour makes
+that behaviour expensive to change, which is the point, but it means an
+incorrect test defends an incorrect product. When the owner's decision changed
+the test had to be inverted, not deleted: the credential check next to it was
+still right, and deleting the whole test would have dropped that too. Both new
+tests were mutation-checked by restoring the gates; each failed, and the
+credential tests kept passing, which is what proves they test different things.
+
+## 2026-11-17 — Installer handoff lost terminal input
+
+The setup helper allocated a PTY, but piped the downloaded installer into its
+shell. When the installer launched Codex, stdin was still that pipe and Codex
+rejected it as non-interactive. Testing the outer PTY alone missed the failure.
+Download to the existing private action directory, then execute the script with
+inherited terminal input. Require download success before execution. Regression
+tests must exercise the installer-to-agent handoff, including interactive input,
+nonzero agent exits and a failed download that leaves a partial script behind.
+
+## 2026-11-19 — Quote text alone cannot identify its source message
+
+A saved comment highlighted matching text in every later reply because it stored
+only the selected words. Preserve the stable source message key with each new
+comment and validate that source before saving. Keep old text-only comments
+readable, but do not guess when multiple messages match. Verify both the original
+highlight after reload and the absence of highlights on later repeated text.
+
+## 2026-11-19 — Bug reports omitted the harness version needed to diagnose compatibility
+
+## 2026-11-19 — Bug reports omitted the affected running session
+
+The resume snapshot selected only stopped/interrupted sessions, so reports of missing Messages or idle inbox reminders contained no session evidence. Include the explicitly selected active session within the same bounded, redacted snapshot and report whether a turn-end event exists. Tests cover all active states, privacy, no writes, and the row limit.
+
+Reports captured the app version and hook configuration but left out harness
+versions, forcing the owner to run a separate command on the affected computer.
+Reuse the bounded runtime-discovery probes when collecting report diagnostics.
+Keep sanitized versions and explicit probe failures in the same redacted item
+the Mac app exports, and test the native diagnostics.txt output. Label these as
+installed versions at report time, not proof of the version in an existing session.
+
 ## 2026-11-22 — I verified three suites and called a PR green with five
 
 Removing Railway and Porkbun from connectors.py broke two CI jobs I never ran.
@@ -125,6 +176,11 @@ Update existing workflow assertions together with their labels and review the
 longer wording at desktop and narrow viewport sizes.
 
 ## 2026-11-22 — Test checkpoint capture across the actual thread boundary
+
+## 2026-11-22 — Downloaded apps need an installation path
+
+A Mac running 0.4.209 could not check for updates because macOS translocated the downloaded app. Sparkle correctly returned 1005, but our custom UI discarded its recovery instructions and only said to retry. ZIP downloads also encouraged opening the app before moving it to Applications. Ship Finder DMGs with a visible Applications shortcut, retain ZIPs for signed updater delivery, and map install-location errors to explicit quit/move/reopen instructions. Verify the DMG preserves the signed app, is read-only, and refuses output overwrites. Exercise this using a disposable signed fixture, not the owner's installation.
+
 
 ## 2026-11-22 — Closing the listener is not completing a restart
 

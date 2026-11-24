@@ -14,6 +14,8 @@ LEGACY_MANIFEST = "duckterm-harness.json"
 KINDS = ("knowledge", "tool", "skill", "agent", "hook", "permission", "flow", "settings")
 HARNESSES = ("claude-code", "codex", "copilot", "opencode")
 NAME_RE = re.compile(r"^[a-z0-9-]{1,64}$")
+# a flow step id names a folder under .duckterm/runs/<run>/, so it is a name, never a path
+STEP_ID_RE = re.compile(r"^[a-z0-9_-]{1,64}$")
 # Component names become path parts (skills/<name>, agents/<name>.md): one segment, no dots.
 COMPONENT_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,63}$")
 SEMVER_RE = re.compile(r"^\d+\.\d+\.\d+(?:[-+][0-9A-Za-z.-]+)?$")
@@ -43,15 +45,23 @@ class Component:
         return None
 
     @property
-    def when(self) -> dict[str, str]:
+    def when(self) -> dict[str, list[str]]:
+        """option → the choices this component installs for. A manifest may
+        write one choice (`when = { persona = "sport" }`) or several
+        (`when = { persona = ["professional", "auto"] }`)."""
         when = self.fields.get("when")
-        return {str(k): str(v) for k, v in when.items()} if isinstance(when, dict) else {}
+        if not isinstance(when, dict):
+            return {}
+        out: dict[str, list[str]] = {}
+        for k, v in when.items():
+            out[str(k)] = [str(x) for x in v] if isinstance(v, list) else [str(v)]
+        return out
 
     def applies(self, harness: str, options: dict[str, str]) -> bool:
         only = self.only_harness
         if only is not None and harness not in only:
             return False
-        return all(options.get(k) == v for k, v in self.when.items())
+        return all(options.get(k) in choices for k, choices in self.when.items())
 
 
 @dataclass
@@ -104,10 +114,15 @@ def component_name(kind: str, fields: dict[str, Any]) -> str:
 
 
 def load(root: Path) -> Kit:
-    """Read a kit from its directory. A legacy `duckterm-harness.json` is
-    accepted with `legacy=True` so callers can warn; it carries no components."""
+    """Read a kit from its directory, or from a manifest file named directly
+    (`uv-suite/skill-kit.fast.toml`: one repository, several kits sharing its
+    files; the kit root is the file's folder). A legacy `duckterm-harness.json`
+    is accepted with `legacy=True` so callers can warn; it carries no
+    components."""
     root = Path(root)
     manifest = root / MANIFEST
+    if root.is_file() and root.suffix == ".toml":
+        manifest, root = root, root.parent
     if manifest.is_file():
         try:
             raw = tomllib.loads(manifest.read_text())

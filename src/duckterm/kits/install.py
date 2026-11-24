@@ -206,6 +206,24 @@ def _save_home(project: Path, kits: dict[str, Any]) -> None:
         _unlink(home, path, missing_ok=True)
 
 
+def recorded_files(project: Path, kit_name: str) -> dict[str, str] | None:
+    """path → sha256 of every file this DuckTerm copied into `project` for
+    `kit_name`, from the home-side record. None when the kit was never
+    installed here: a clone that carries .duckterm/ was installed somewhere
+    else, by someone else, and the runner must not believe its files."""
+    entry = _load_home(project).get(kit_name)
+    if not isinstance(entry, dict):
+        return None
+    return {
+        e["path"]: e["sha256"]
+        for e in entry.get("entries", [])
+        if isinstance(e, dict)
+        and e.get("how") == "file"
+        and isinstance(e.get("path"), str)
+        and isinstance(e.get("sha256"), str)
+    }
+
+
 def _trusted(project: Path, kit_name: str, entry: dict[str, Any]) -> bool:
     """The repository's entry is only believed when this DuckTerm wrote it:
     its saved bytes, replaced values and list items are otherwise an
@@ -292,6 +310,8 @@ def apply(plan: Plan, *, replace: bool = False) -> Report:
         "options": plan.options,
         "installed_at": int(time.time()),
         "components": sorted({kit.component_id(c) for c in kit.components}),
+        "procedures": _procedures(kit),
+        "details": _details(kit),
         "entries": entries,
     }
     record_path = _target(project, RECORD)
@@ -304,6 +324,20 @@ def apply(plan: Plan, *, replace: bool = False) -> Report:
     _save_home(project, home)
     report.written.append(RECORD)
     return report
+
+
+def _procedures(kit: m.Kit) -> list[dict[str, Any]]:
+    """The team templates a kit ships, summarised into the record so the
+    Skill kits page can list them without the kit folder."""
+    from duckterm.kits import api
+
+    return api.procedures(kit)
+
+
+def _details(kit: m.Kit) -> dict[str, Any]:
+    from duckterm.kits import api
+
+    return api.details(kit)
 
 
 def _is_script(rel: str) -> bool:

@@ -169,6 +169,8 @@ def request_features(method: str, url: str, body: bytes = b"") -> tuple[str, ...
     paths = [urlsplit(url).path, url]
     if url == "/harnesses" or url.startswith("/harnesses/"):
         return ("skill_kits",)
+    if url == "/kits" or url.startswith("/kits/") or url.startswith("/kits?"):
+        return ("skill_kits",)
     if url.startswith("/sessions/"):
         # Prefix/suffix routes accept slashes inside the captured session key.
         # Check the final operation as well as nested routes such as /memory/*.
@@ -184,6 +186,8 @@ def _path_feature(method: str, path: str, body: bytes) -> str | None:
             return "artifacts"
         if suffix.startswith("memory/"):
             return "context"
+        if suffix.startswith("kits/"):
+            return "skill_kits"
         return "inbox"
     if path.startswith(("/api/v1/collaboration/", "/collaboration/")):
         return "cross_computer_collaboration"

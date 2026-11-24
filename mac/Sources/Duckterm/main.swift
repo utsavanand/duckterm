@@ -584,8 +584,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func reportResumeReadiness() async throws -> String? {
         // Native app diagnostics describe this Mac. Remote reports keep using
         // the web form's explicit selected-host context and transport.
+        let path = await window?.reportContextPath() ?? "/bugreport/context"
         let response = try await sessionTransport.perform(base: server.url, api: launchAPI,
-            params: ["method": "GET", "path": "/bugreport/context"])
+            params: ["method": "GET", "path": path])
         return BugReportData.resumeReadiness(from: response)
     }
 
