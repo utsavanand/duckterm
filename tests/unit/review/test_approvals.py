@@ -223,6 +223,7 @@ def fleet(git_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> di
     )
     monkeypatch.setattr(lists.github, "review_state", lambda *a: "none")
     lists._cache.clear()
+    lists._checkouts.clear()
 
     history = HistoryStore(tmp_path / "db.sqlite")
     for key, name, folder, worktree in (
@@ -328,6 +329,7 @@ def test_touch_id_approval_hands_the_pinned_head_to_the_release_session(
         run(clone, "push", "-q", "origin", "duckterm/feature")
         state["head"] = run(clone, "rev-parse", "HEAD")
         lists._cache.clear()
+        lists._checkouts.clear()
         out["moved"] = call(
             port,
             "POST",

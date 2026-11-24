@@ -71,6 +71,7 @@ def clone(git_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Pa
     )
     monkeypatch.setattr(lists.github, "review_state", lambda *a: "none")
     lists._cache.clear()
+    lists._checkouts.clear()
     return clone
 
 
@@ -132,6 +133,7 @@ def test_no_pr_and_nothing_pushed_shows_unpushed_only_when_ahead(
     assert lists.build([session("s3", clone)])["rows"] == []
     commit(clone, "w.txt", "w\n", "work")
     lists._cache.clear()
+    lists._checkouts.clear()
     rows = lists.build([session("s3", clone)])["rows"]
     assert [(r["status"], r["label"]) for r in rows] == [("unpushed", "Not pushed")]
     assert rows[0]["compare_url"] is None
@@ -441,3 +443,41 @@ def test_folder_members_leave_out_test_sessions(tmp_path: Path) -> None:
         )
         history.set_meta(key, group="team")
     assert [row["session_key"] for row in lists.folder_members(history, "team")] == ["real"]
+
+
+def test_review_author_prefers_the_pusher_and_skips_ended_checkouts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The review page waits on this look-up: it must not ask git about
+    every session (owner report: a PR took 6-8 s to open)."""
+    import asyncio
+
+    from duckterm.server import Server
+
+    asked: list[str] = []
+
+    def worktree_branch(row: dict) -> tuple[str, str] | None:
+        asked.append(row["session_key"])
+        return ("/repo", "topic")
+
+    monkeypatch.setattr(lists, "_worktree_branch", worktree_branch)
+    sessions = [
+        {"session_key": "ended", "cwd": "/a", "ended_at": 1},
+        {"session_key": "live", "cwd": "/b"},
+        {"session_key": "pusher", "cwd": "/c", "name": "dev"},
+    ]
+
+    class History:
+        def sessions(self) -> list[dict]:
+            return sessions
+
+    class Subject:
+        history = History()
+        _branch_owners_cache = (float("inf"), {("/repo", "pushed"): "pusher"})
+        _branch_owners = Server._branch_owners
+
+    subject = Subject()
+    found = asyncio.run(Server._review_author(subject, "/repo", "pushed"))  # type: ignore[arg-type]
+    assert found is not None and found["key"] == "pusher" and asked == []
+    found = asyncio.run(Server._review_author(subject, "/repo", "topic"))  # type: ignore[arg-type]
+    assert found is not None and found["key"] == "live" and asked == ["live"]

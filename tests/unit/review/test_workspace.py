@@ -30,6 +30,7 @@ def branch_repo(git_repo: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(lists.git, "github_slug", lambda repo: None)
     monkeypatch.setattr(lists.git, "remote_heads", lambda repo: None)
     lists._cache.clear()
+    lists._checkouts.clear()
     write(git_repo, "src/duckterm/app.py", "def main():\n    return 1\n")
     write(git_repo, "src/duckterm/persistence/db.py", "TABLES = []\n")
     write(git_repo, "docs/notes.md", "# Notes\n")
@@ -102,6 +103,7 @@ def test_diff_buckets_files_and_viewed_state_survives_a_whitespace_push(branch_r
     commit(branch_repo, "reindent and edit")
     run(branch_repo, "checkout", "-q", "main")
     lists._cache.clear()
+    lists._checkouts.clear()
     moved = workspace.resolve(str(branch_repo), "duckterm/feature")
     assert moved.head_sha != target.head_sha
     third = workspace.diff_payload(moved, since=None, whitespace=True)

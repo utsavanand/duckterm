@@ -43,6 +43,7 @@ def tagged(git_repo: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     monkeypatch.setattr(lists.git, "github_slug", lambda repo: None)
     monkeypatch.setattr(lists.git, "remote_heads", lambda repo: None)
     lists._cache.clear()
+    lists._checkouts.clear()
     write(git_repo, "src/duckterm/server.py", "from duckterm.persistence import history\n")
     write(git_repo, "src/duckterm/persistence/history.py", "X = 1\n")
     write(

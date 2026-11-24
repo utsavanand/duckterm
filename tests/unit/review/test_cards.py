@@ -45,6 +45,7 @@ def target(git_repo: Path, monkeypatch: pytest.MonkeyPatch) -> workspace.Target:
     monkeypatch.setattr(lists.git, "remote_heads", lambda repo: None)
     monkeypatch.setattr(backend, "ready", lambda: True)
     lists._cache.clear()
+    lists._checkouts.clear()
     write(git_repo, "src/duckterm/server.py", "def route():\n    return 1\n")
     write(git_repo, "src/duckterm/persistence/db.py", "TABLES = []\n")
     write(git_repo, "docs/notes.md", "# Notes\n")
@@ -255,6 +256,7 @@ def test_stale_head_marks_cards_for_regeneration(
     commit(repo, "more docs")
     run(repo, "checkout", "-q", "main")
     lists._cache.clear()
+    lists._checkouts.clear()
     moved = workspace.resolve(target.repo, "duckterm/feature")
     loaded = cards.load(moved)
     assert loaded["stale"] is True
@@ -389,6 +391,7 @@ def test_planted_trailer_and_truthy_matcher_are_caught(
     )
     run(repo, "checkout", "-q", "main")
     lists._cache.clear()
+    lists._checkouts.clear()
     moved = workspace.resolve(target.repo, "duckterm/feature")
     monkeypatch.setattr(backend, "ready", lambda: False)
     result = asyncio.run(cards.generate_all(moved, payload_for(moved), None))

@@ -1835,7 +1835,7 @@ class Server:
             target = await asyncio.to_thread(workspace.resolve, repo, ref, refresh=flag)
             if part == "":
                 result = await asyncio.to_thread(workspace.header, target)
-                result["session"] = await self._review_author(target.branch)
+                result["session"] = await self._review_author(target.repo, target.branch)
             elif part == "diff":
                 result = await asyncio.to_thread(
                     workspace.diff_payload,
@@ -1865,26 +1865,35 @@ class Server:
             return
         await _write_json(writer, 200, result)
 
-    async def _review_author(self, branch: str) -> dict[str, Any] | None:
-        """The session whose checkout is on this PR's head branch, with its
-        digest. Rows are read on the loop thread; the git look-ups run in a
-        worker, the same claim rule the PR lists use."""
+    async def _review_author(self, repo: str, branch: str) -> dict[str, Any] | None:
+        """The session that made this PR's head branch, with its digest: the
+        session that first pushed it (the PR lists' rule), else a live session
+        whose checkout is on it. Every review page waits on this, and asking
+        git about every session's checkout took seconds, so ended sessions
+        are skipped and checkouts are looked up through the lists' cache."""
         from duckterm.review import lists
 
-        rows = [r for r in self.history.sessions() if r.get("worktree_path") or r.get("cwd")]
-        rows.sort(key=lambda r: bool(r.get("ended_at")))
+        sessions = self.history.sessions()
+        owner = (await self._branch_owners(False)).get((repo, branch))
+        row = next((r for r in sessions if r["session_key"] == owner), None)
+        if row is None:
+            live = [
+                r
+                for r in sessions
+                if not r.get("ended_at") and (r.get("worktree_path") or r.get("cwd"))
+            ]
 
-        def find() -> dict[str, Any] | None:
-            for row in rows:
-                if row.get("branch") == branch:
-                    return row
-            for row in rows:
-                found = lists._worktree_branch(row)
-                if found and found[1] == branch:
-                    return row
-            return None
+            def find() -> dict[str, Any] | None:
+                for candidate in live:
+                    if candidate.get("branch") == branch:
+                        return candidate
+                for candidate in live:
+                    found = lists._worktree_branch(candidate)
+                    if found and found == (repo, branch):
+                        return candidate
+                return None
 
-        row = await asyncio.to_thread(find)
+            row = await asyncio.to_thread(find)
         if row is None:
             return None
         return {
@@ -1925,7 +1934,7 @@ class Server:
             if not isinstance(question, str) or not question.strip() or len(question) > 8000:
                 raise workspace.ReviewError(400, "question must be 1 to 8000 characters")
             hunk = payload.get("hunk")
-            author = await self._review_author(target.branch)
+            author = await self._review_author(target.repo, target.branch)
             digest = author.get("progress") if author else None
             diff = await asyncio.to_thread(
                 workspace.diff_payload, target, since=None, whitespace=True
@@ -1997,7 +2006,7 @@ class Server:
         from duckterm.review import approvals, cards, workspace
 
         header = await asyncio.to_thread(workspace.header, target)
-        author = await self._review_author(target.branch)
+        author = await self._review_author(target.repo, target.branch)
         release_row = (
             approvals.release_session(self.history.sessions(), author["folder"]) if author else None
         )
@@ -2202,7 +2211,7 @@ class Server:
         from duckterm.review import author, cards, lists, workspace
 
         # Session data is read here, on the loop thread, before the worker runs.
-        owner = await self._review_author(target.branch)
+        owner = await self._review_author(target.repo, target.branch)
         author_facts = author.facts(self.history, owner["key"]) if owner else None
 
         async def run() -> None:

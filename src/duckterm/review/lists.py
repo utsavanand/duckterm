@@ -45,6 +45,8 @@ _cache: dict[str, dict[str, Any]] = {}
 # and merged ones once a release tag contains them. A folder lists dozens of
 # these from its push history, and rebuilding them each poll cost seconds.
 _settled: dict[tuple[str, int, str], dict[str, Any]] = {}
+# (path, recorded branch) -> (when, (repository, branch) or None).
+_checkouts: dict[tuple[str, str], tuple[float, tuple[str, str] | None]] = {}
 
 
 def _iso_to_epoch(value: Any) -> int | None:
@@ -532,16 +534,29 @@ def _row(
 
 
 def _worktree_branch(row: dict[str, Any]) -> tuple[str, str] | None:
-    """(repository root, branch) for a session that works in a git checkout."""
+    """(repository root, branch) for a session that works in a git checkout.
+    Each answer takes three git calls and a folder list asks for every
+    session, so answers are kept for CACHE_SECONDS, as the PR data is."""
     path = row.get("worktree_path") or row.get("cwd")
-    if not path or not Path(str(path)).is_dir() or not git.is_repo(str(path)):
+    if not path:
         return None
-    try:
-        repo = git.repo_root(str(path))
-        branch = git.current_branch(str(path)) or str(row.get("branch") or "")
-    except git.ReviewGitError:
-        return None
-    return (repo, branch) if branch else None
+    key = (str(path), str(row.get("branch") or ""))
+    now = time.time()
+    with _lock:
+        cached = _checkouts.get(key)
+    if cached is not None and now - cached[0] < CACHE_SECONDS:
+        return cached[1]
+    found: tuple[str, str] | None = None
+    if Path(key[0]).is_dir() and git.is_repo(key[0]):
+        try:
+            repo = git.repo_root(key[0])
+            branch = git.current_branch(key[0]) or key[1]
+            found = (repo, branch) if branch else None
+        except git.ReviewGitError:
+            found = None
+    with _lock:
+        _checkouts[key] = (now, found)
+    return found
 
 
 def build(
