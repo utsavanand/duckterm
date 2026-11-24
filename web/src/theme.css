@@ -2845,15 +2845,12 @@ select {
 .rd-tower-ok { font-size: 0.75rem; color: var(--brand-green); }
 .rd-tower-error { font-size: 0.75rem; color: var(--danger); }
 .rd-tower-needs { margin-bottom: 16px; }
-.rd-tower-needs h2 { margin: 0 0 8px; font-size: 0.8125rem; font-weight: 600; }
+.rd-tower-needs h2 { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; font-size: 0.8125rem; font-weight: 600; }
+.rd-tower-needs h2 button { margin-left: auto; }
+.rd-tower-needs-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; align-items: start; }
+.rd-tower-need { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+.rd-tower-need > .rd-relay-note { flex: 1; min-width: 0; margin-bottom: 0; }
 .rd-tower-needs h2 span { color: var(--muted); font-weight: 400; margin-left: 6px; }
-.rd-tower-needs-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 8px; }
-.rd-tower-need { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 8px 12px; border: 1px solid var(--amber-border); border-radius: 10px; background: var(--amber-bg); color: inherit; text-align: left; cursor: pointer; }
-.rd-tower-need:hover { border-color: var(--wait); }
-.rd-tower-need-who { flex: 1; min-width: 0; }
-.rd-tower-need-who b { font-weight: 600; }
-.rd-tower-need-who small { display: block; color: var(--muted); font-size: 0.75rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.rd-tower-need-age { font-size: 0.75rem; color: var(--amber-text); white-space: nowrap; font-variant-numeric: tabular-nums; }
 
 /* Oracle Relay: notes for what needs the owner, inside the Oracle chat.
    Open notes are amber; closed ones go neutral but stay as a record. */

@@ -4,7 +4,7 @@ import { TowerAgent, ago, compact, teams } from "./tower";
 import { WidgetType } from "./Widgets";
 import { StreamState } from "./widgetStreams";
 function value<T>(state: StreamState): T { return state.status === "ready" ? state.value as T : undefined as T; }
-export function oracleWidgets(onAnalytics: (tab: AnalyticsTab) => void, { oracle = true, remote = true, backup = false }: { oracle?: boolean; remote?: boolean; backup?: boolean } = {}): WidgetType[] {
+export function oracleWidgets(onAnalytics: (tab: AnalyticsTab) => void, { oracle = true, remote = true, backup = false, onNeedsYou }: { oracle?: boolean; remote?: boolean; backup?: boolean; onNeedsYou?: () => void } = {}): WidgetType[] {
   const widgets: WidgetType[] = [
     { type: "agents", title: "Agents", slots: ["oracle"], streams: ["sessions"], render: ({ streams }) => {
       const agents = value<TowerAgent[]>(streams.sessions), count = (state: string) => agents.filter(a => a.shownState === state).length;
@@ -13,7 +13,7 @@ export function oracleWidgets(onAnalytics: (tab: AnalyticsTab) => void, { oracle
     } },
     { type: "needs-you", title: "Needs you", slots: ["oracle"], streams: ["needs-you"], render: ({ streams }) => {
       const { notes, now } = value<{ notes: RelayNote[]; now: number }>(streams["needs-you"]);
-      return <Tile label="Needs you" value={String(notes.length)} warn={notes.length > 0}>{notes.length ? `Oldest: ${notes[0].name}${notes[0].folder ? ` (${notes[0].folder.split("/")[0]})` : ""}, ${ago(now - notes[0].created_at)} ago` : "Nothing needs you"}</Tile>;
+      return <Tile label="Needs you" value={String(notes.length)} warn={notes.length > 0} onClick={onNeedsYou} action="Show everything that needs you">{notes.length ? `Oldest: ${notes[0].name}${notes[0].folder ? ` (${notes[0].folder.split("/")[0]})` : ""}, ${ago(now - notes[0].created_at)} ago` : "Nothing needs you"}</Tile>;
     } },
     { type: "tokens", title: "Tokens · 7 days", slots: ["oracle"], streams: ["tokens"], render: ({ streams }) => <TokensTile tokens={value(streams.tokens)} onClick={() => onAnalytics("tokens")} /> },
     { type: "mail", title: "Agent mail · 24h", slots: ["oracle"], streams: ["mail"], render: ({ streams }) => {
@@ -25,10 +25,10 @@ export function oracleWidgets(onAnalytics: (tab: AnalyticsTab) => void, { oracle
   ];
   return widgets.filter(widget => (oracle || widget.type !== "needs-you") && (remote || widget.type !== "remote") && (backup || widget.type !== "backup"));
 }
-export function Tile({ label, value, warn, children, onClick }: { label: string; value: string; warn?: boolean; children: React.ReactNode; onClick?: () => void }) {
+export function Tile({ label, value, warn, children, onClick, action }: { label: string; value: string; warn?: boolean; children: React.ReactNode; onClick?: () => void; action?: string }) {
   const Tag = onClick ? "button" : "div";
   return (
-    <Tag onClick={onClick} aria-label={onClick ? `Open ${label.startsWith("Tokens") ? "token" : "mail"} analytics` : undefined} className={`rd-tower-tile${warn ? " warn" : ""}${onClick ? " rd-tower-tile-button" : ""}`}>
+    <Tag onClick={onClick} aria-label={onClick ? action ?? `Open ${label.startsWith("Tokens") ? "token" : "mail"} analytics` : undefined} className={`rd-tower-tile${warn ? " warn" : ""}${onClick ? " rd-tower-tile-button" : ""}`}>
       <span className="rd-tower-label">{label}</span>
       <span className="rd-tower-num">{value}</span>
       <span className="rd-tower-sub">{children}</span>
