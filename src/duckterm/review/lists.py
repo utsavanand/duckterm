@@ -538,7 +538,7 @@ def _worktree_branch(row: dict[str, Any]) -> tuple[str, str] | None:
         return None
     try:
         repo = git.repo_root(str(path))
-        branch = git.current_branch(str(path)) or str(row.get("branch") or "")
+        branch = git.current_branch(str(path))
     except git.ReviewGitError:
         return None
     return (repo, branch) if branch else None

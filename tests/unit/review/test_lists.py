@@ -486,6 +486,10 @@ def test_review_author_follows_the_checkout_as_it_changes(git_repo: Path, tmp_pa
     run(git_repo, "checkout", "-q", "-b", "other")
     assert review_author(sessions, {}, git_repo, "topic") is None
     assert review_author(sessions, {}, git_repo, "other") == "s"
+    # A detached checkout is on no branch, whatever branch was recorded.
+    sessions[0]["branch"] = "other"
+    run(git_repo, "checkout", "-q", "--detach", "HEAD")
+    assert review_author(sessions, {}, git_repo, "other") is None
 
     later = tmp_path / "later"
     sessions = [{"session_key": "late", "cwd": str(later)}]
