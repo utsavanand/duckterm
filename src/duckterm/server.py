@@ -64,11 +64,20 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TextIO
 
-from duckterm import bug_reports, connectors, editions, release_features, suites, zsh_themes
+from duckterm import (
+    __version__,
+    bug_reports,
+    connectors,
+    doctor,
+    editions,
+    release_features,
+    suites,
+    zsh_themes,
+)
 from duckterm.agents import tmux
 from duckterm.agents.terminal import available_terminals, open_in_terminal
 from duckterm.autopilot import api as ap_api
-from duckterm.core import events, fleet_questions, oracle
+from duckterm.core import events, fleet_questions, oracle, support
 from duckterm.core.approvals import Approval, ApprovalRegistry
 from duckterm.core.backup_jobs import BackupJobs
 from duckterm.core.eventbus import EventBus
@@ -93,7 +102,7 @@ from duckterm.core.tokens import TokenLedger
 from duckterm.git import gitdetect
 from duckterm.git.spotlight import spotlight_to_main
 from duckterm.git.worktrees import GitError
-from duckterm.harnesses import infer_runtime, runtime_for
+from duckterm.harnesses import infer_runtime, installable_agents, runtime_for
 from duckterm.helpers import (
     browse,
     instance,
@@ -367,6 +376,9 @@ _ROUTES: list[Route] = [
     Route("POST", "/sessions/compare", lambda s, r, w, h, b, seg: s._compare(w, b)),
     Route("POST", "/fleet/ask", lambda s, r, w, h, b, seg: s._fleet_ask(w, b)),
     Route("GET", "/oracle/chat", lambda s, r, w, h, b, seg: s._oracle_chat(w)),
+    Route("POST", "/support/ask", lambda s, r, w, h, b, seg: s._support_ask(w, b)),
+    Route("GET", "/support/chat", lambda s, r, w, h, b, seg: s._support_chat(w)),
+    Route("DELETE", "/support/chat", lambda s, r, w, h, b, seg: s._support_chat(w, clear=True)),
     Route("GET", "/control-tower", lambda s, r, w, h, b, seg: s._control_tower(w)),
     Route("GET", "/relay", lambda s, r, w, h, b, seg: s._relay_list(w)),
     # ── Oracle voice: the optional local neural voice ──
@@ -5269,6 +5281,50 @@ class Server:
 
     async def _oracle_chat(self, writer: asyncio.StreamWriter, *, clear: bool = False) -> None:
         path = paths.home() / "oracle-chat.json"
+        if clear:
+            oracle.clear_chat(path)
+        await _write_json(writer, 200, {"messages": oracle.load_chat(path)})
+
+    async def _support_ask(self, writer: asyncio.StreamWriter, body: bytes) -> None:
+        try:
+            req: Any = json.loads(body or b"{}")
+        except json.JSONDecodeError:
+            await _write_json(writer, 400, {"error": "invalid JSON"})
+            return
+        question = str(req.get("question") or "").strip() if isinstance(req, dict) else ""
+        if not question:
+            await _write_json(writer, 400, {"error": "question required"})
+            return
+        if len(question) > 8000:
+            await _write_json(writer, 400, {"error": "question exceeds 8000 characters"})
+            return
+        chat_path = paths.home() / "support-chat.json"
+        # This process is the server, so doctor's reachability probe is skipped.
+        checks = await asyncio.to_thread(doctor.check_install, installable_agents())
+        prompt = support.prompt(
+            question,
+            version=__version__,
+            edition=self.edition.name,
+            features=sorted(self.edition.features),
+            checks=checks,
+            prior=oracle.load_chat(chat_path),
+        )
+        result = await asyncio.to_thread(summarize, prompt, tier="deep")
+        if not result.text:
+            await _write_json(
+                writer,
+                502,
+                {
+                    "error": "no summarizer backend — install claude/codex/copilot "
+                    "or set DUCKTERM_SUMMARIZER_CMD"
+                },
+            )
+            return
+        exchange = oracle.append_chat(chat_path, question, result.text, int(time.time() * 1000))
+        await _write_json(writer, 200, {"exchange": exchange, "backend": result.backend})
+
+    async def _support_chat(self, writer: asyncio.StreamWriter, *, clear: bool = False) -> None:
+        path = paths.home() / "support-chat.json"
         if clear:
             oracle.clear_chat(path)
         await _write_json(writer, 200, {"messages": oracle.load_chat(path)})
