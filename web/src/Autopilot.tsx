@@ -369,6 +369,7 @@ function SetupDialog({ overview, editing, onClose, onSaved }: {
         {draft.repo}{draft.workspace ? <span className="ap-muted"> · in {draft.workspace}</span> : null}
         <ul>{(Object.keys(finished().triggers) as TriggerType[]).map(k => <li key={k}>{triggerLine(k, finished().triggers[k])}</li>)}</ul>
         <div className="ap-small ap-muted">Each run works on its own branch. When it succeeds, DuckTerm pushes that branch and opens a draft pull request for you to review; nothing is merged. Pause any time from its card.</div>
+        <div className="ap-small ap-muted ap-secrets">Keep secrets and write permissions out of any {draft.repo || "repository"} workflow that runs on <code>autopilot/**</code> branches: what a run writes can be steered by the issue text, and a push runs that branch's workflows.</div>
       </div>
       <details className="ap-limits">
         <summary>Limits <span>{draft.budget_m}M tokens a run · {draft.max_runs} at once</span></summary>
