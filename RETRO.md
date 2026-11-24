@@ -1,3 +1,15 @@
+## 2026-11-24 — An interrupted conversion left raw copies no re-run would move
+
+Security found it on #461: the conversion binds every reference first, then
+moves the raw copies to the Trash. A crash between the two left raw files that
+the next run ignored, because it only looked for unbound references. The data
+was safe, but 4.4 GB could stay behind with nothing reporting it. A re-run (and
+the dry-run plan) now also picks up bound versions whose raw copy is still in
+place, checks them again and finishes the move, pointers before the copies
+they point into. The dry run also stopped creating empty folders. Lesson: a
+multi-step migration's "what's left" must be derived from what's on disk, not
+only from the step that marks progress.
+
 ## 2026-11-22 — Converting old memory copies needs every citation found first
 
 Converting raw conversation copies to extracted records means binding each

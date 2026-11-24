@@ -116,3 +116,64 @@ def test_a_raw_copy_an_unconverted_pointer_needs_stays(legacy, tmp_path):
     memory_convert.convert(conn, KEY, tmp_path / "Trash")
     assert (root / (snapshots[2] + ".jsonl")).is_file()
     assert (root / (stray + ".prefix")).is_file()
+
+
+def test_a_run_interrupted_while_trashing_is_finished_by_the_next(legacy, tmp_path, monkeypatch):
+    conn, root, ref, snapshots, orphan = legacy
+    before = {
+        v: memory_sources.read_native(KEY, {**ref, "snapshot": v})["records"] for v in snapshots
+    }
+    moved = []
+    original = memory_convert.shutil.move
+
+    def crash_after_one(src, dst):
+        if moved:
+            raise OSError("interrupted")
+        moved.append(src)
+        return original(src, dst)
+
+    monkeypatch.setattr(memory_convert.shutil, "move", crash_after_one)
+    with pytest.raises(OSError, match="interrupted"):
+        memory_convert.convert(conn, KEY, tmp_path / "Trash")
+    monkeypatch.setattr(memory_convert.shutil, "move", original)
+    assert all(r["records_sha256"] for r in saved_refs(conn))
+    left = memory_convert.pending(conn)[KEY]
+    assert len(left) == 2 and all(left.values())
+    assert memory_convert.plan(conn)["raw_bytes"] > 0
+
+    report = memory_convert.convert(conn, KEY, tmp_path / "Trash")
+
+    assert report["converted"] == 0 and report["resumed"] == 2 and not report["unreadable"]
+    assert not list(root.glob("*.prefix")) and list(root.glob("*.jsonl")) == [orphan]
+    assert len(list((tmp_path / "Trash" / KEY).iterdir())) == 3
+    for r in saved_refs(conn):
+        assert memory_sources.read_native(KEY, r)["records"] == before[r["snapshot"]]
+    assert memory_convert.pending(conn) == {}
+
+
+def test_a_resumed_raw_copy_that_changed_is_not_trashed(legacy, tmp_path, monkeypatch):
+    conn, root, _, snapshots, _ = legacy
+    original = memory_convert.shutil.move
+    monkeypatch.setattr(
+        memory_convert.shutil, "move", lambda *a: (_ for _ in ()).throw(OSError("interrupted"))
+    )
+    with pytest.raises(OSError):
+        memory_convert.convert(conn, KEY, tmp_path / "Trash")
+    monkeypatch.setattr(memory_convert.shutil, "move", original)
+    raw = root / (snapshots[2] + ".jsonl")
+    raw.write_bytes(raw.read_bytes().replace(b"third", b"fifth"))
+    report = memory_convert.convert(conn, KEY, tmp_path / "Trash")
+    assert [u["snapshot"] for u in report["unreadable"]] == [snapshots[2]]
+    assert raw.is_file() and not (tmp_path / "Trash" / KEY / raw.name).exists()
+
+
+def test_a_dry_run_creates_no_folders(legacy):
+    conn, root, ref, _, _ = legacy
+    conn.execute(
+        "INSERT INTO checkpoints (id, session_key, label, record_json, created_at) "
+        "VALUES ('cp2', 'elsewhere', 'manual', ?, 1)",
+        (json.dumps({"memory_source": {**ref, "snapshot": "d" * 64}}),),
+    )
+    conn.commit()
+    memory_convert.plan(conn)
+    assert not (root.parent.parent / "elsewhere").exists()

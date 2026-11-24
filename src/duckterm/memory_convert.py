@@ -5,7 +5,9 @@ and verified against its native digest, saved as records (one whole copy per
 growing conversation, older versions as pointers into it), read back and
 compared, and then every database reference to it gains its records digest.
 Only after that commit do the raw files move to the Trash. Raw files nothing
-cites are reported and left alone.
+cites are reported and left alone. A run interrupted after the commit leaves
+bound versions whose raw copy is still in place; the next run checks those
+again and finishes moving them.
 """
 
 from __future__ import annotations
@@ -68,29 +70,56 @@ def _rows(conn: sqlite3.Connection, key: str | None = None) -> list[tuple[str, i
     return result
 
 
-def pending(conn: sqlite3.Connection) -> dict[str, set[Version]]:
-    """Referenced versions per agent that have no records digest yet."""
-    result: dict[str, set[Version]] = defaultdict(set)
+def _root(key: str) -> Path:
+    # memory_sources.directory creates the folder; planning must not write.
+    return paths.home() / "checkpoints" / key / "memory"
+
+
+def _raw(root: Path, snapshot: str) -> list[Path]:
+    return [
+        root / (snapshot + suffix)
+        for suffix in (".jsonl", ".prefix")
+        if (root / (snapshot + suffix)).is_file()
+    ]
+
+
+def pending(conn: sqlite3.Connection) -> dict[str, dict[Version, str | None]]:
+    """Cited versions per agent still to convert.
+
+    None means no reference has a records digest yet. A digest means every
+    reference is bound but the raw copy is still in place (an interrupted run).
+    """
+    unbound: dict[str, set[Version]] = defaultdict(set)
+    bound: dict[str, dict[Version, str]] = defaultdict(dict)
     for _, _, session, value in _rows(conn):
         refs: list[dict[str, Any]] = []
         _walk(value, refs)
         for ref in refs:
-            if "records_sha256" not in ref:
-                result[session].add((ref["runtime"], ref["native_id"], ref["snapshot"]))
+            version = (ref["runtime"], ref["native_id"], ref["snapshot"])
+            if "records_sha256" in ref:
+                bound[session][version] = ref["records_sha256"]
+            else:
+                unbound[session].add(version)
+    result: dict[str, dict[Version, str | None]] = {}
+    for session in unbound.keys() | bound.keys():
+        root = _root(session)
+        versions: dict[Version, str | None] = {
+            v: d
+            for v, d in bound[session].items()
+            if v not in unbound[session] and _raw(root, v[2])
+        }
+        versions.update(dict.fromkeys(unbound[session]))
+        if versions:
+            result[session] = versions
     return result
 
 
 def plan(conn: sqlite3.Connection) -> dict[str, Any]:
     """What a conversion would do, without changing anything."""
     sessions = []
-    for key, versions in sorted(pending(conn).items()):
-        root = memory_sources.directory(key)
-        raw = [
-            root / (snapshot + suffix)
-            for _, _, snapshot in versions
-            for suffix in (".jsonl", ".prefix")
-            if (root / (snapshot + suffix)).is_file()
-        ]
+    todo = pending(conn)
+    for key, versions in sorted(todo.items()):
+        raw = [p for _, _, snapshot in versions for p in _raw(_root(key), snapshot)]
         sessions.append(
             {
                 "session": key,
@@ -98,7 +127,7 @@ def plan(conn: sqlite3.Connection) -> dict[str, Any]:
                 "raw_bytes": sum(p.stat().st_size for p in raw),
             }
         )
-    cited = {s for versions in pending(conn).values() for _, _, s in versions}
+    cited = {s for versions in todo.values() for _, _, s in versions}
     uncited = [
         p
         for p in (paths.home() / "checkpoints").glob("*/memory/*")
@@ -152,20 +181,32 @@ def _still_needed(root: Path, converted: set[str]) -> set[str]:
 def convert(conn: sqlite3.Connection, key: str, trash: Path) -> dict[str, Any]:
     """Convert one agent's cited raw versions; the raw files go to `trash`."""
     root = memory_sources.directory(key)
-    report: dict[str, Any] = {"session": key, "converted": 0, "unreadable": [], "trashed": []}
+    report: dict[str, Any] = {
+        "session": key,
+        "converted": 0,
+        "resumed": 0,
+        "unreadable": [],
+        "trashed": [],
+    }
     with (root / "latest.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         read: dict[Version, dict[str, Any]] = {}
-        for version in sorted(pending(conn).get(key, ())):
+        resumed: dict[Version, str] = {}
+        for version, digest in sorted(pending(conn).get(key, {}).items()):
             runtime, native_id, snapshot = version
             ref = {"runtime": runtime, "native_id": native_id, "snapshot": snapshot}
             try:
                 read[version] = memory_sources.read_native(key, ref)
             except APIError as exc:
                 report["unreadable"].append({"snapshot": snapshot, "reason": str(exc)})
+                continue
+            if digest is not None:
+                resumed[version] = digest
         # Longest first, so each shorter version can point into a whole copy.
         by_identity: dict[tuple[str, str], list[tuple[str, list[bytes]]]] = defaultdict(list)
         for (runtime, native_id, snapshot), value in read.items():
+            if (runtime, native_id, snapshot) in resumed:
+                continue
             lines = [memory_sources.record_line(r) for r in value["records"]]
             by_identity[(runtime, native_id)].append((snapshot, lines))
         bound: dict[Version, str] = {}
@@ -199,6 +240,9 @@ def convert(conn: sqlite3.Connection, key: str, trash: Path) -> dict[str, Any]:
                     }
                     private_write(root / (snapshot + ".records-prefix"), json.dumps(pointer))
                 bound[(*identity, snapshot)] = digest
+        report["converted"] = len(bound)
+        report["resumed"] = len(resumed)
+        bound.update(resumed)
         # Nothing is rebound or moved unless every version reads back the same.
         for version, digest in bound.items():
             runtime, native_id, snapshot = version
@@ -220,7 +264,6 @@ def convert(conn: sqlite3.Connection, key: str, trash: Path) -> dict[str, Any]:
                     conn.execute(
                         f"UPDATE {table} SET {column}=? WHERE rowid=?", (json.dumps(value), rowid)
                     )
-        report["converted"] = len(bound)
         index_path = root / "latest.json"
         try:
             index = json.loads(index_path.read_text())
@@ -249,8 +292,10 @@ def convert(conn: sqlite3.Connection, key: str, trash: Path) -> dict[str, Any]:
             os.replace(name, index_path)
         converted = {snapshot for _, _, snapshot in bound}
         needed = _still_needed(root, converted)
-        for snapshot in sorted(converted - needed):
-            for suffix in (".jsonl", ".prefix"):
+        # Pointers before the copies they point into, so an interrupted move
+        # never leaves a raw version that can't be read and checked again.
+        for suffix in (".prefix", ".jsonl"):
+            for snapshot in sorted(converted - needed):
                 path = root / (snapshot + suffix)
                 if path.is_file() and not path.is_symlink():
                     destination = trash / key / path.name
