@@ -9,6 +9,9 @@ host clone with DuckTerm's GitHub connection, and only ever:
   branch's own workflows with the repository's secrets, and a step's writes
   can be steered by the issue text (prompt injection), so a run must not be
   able to publish a workflow. Such a run stays on this Mac for a person.
+- never when the run added or changed a symlink: a linked directory (say
+  `.github/workflows` -> `ci/`) would carry CI files under paths the check
+  above cannot see.
 """
 
 import base64
@@ -38,18 +41,26 @@ class PushRefused(ValueError):
     pass
 
 
+SYMLINK = "120000"
+
+
 def ci_paths(paths: list[str]) -> list[str]:
-    return [p for p in paths if p.startswith(CI_DIRS) or p in CI_FILES]
+    # The bare directory names too: one committed as a symlink lists without a slash.
+    bare = {d.rstrip("/") for d in CI_DIRS} | {".github", ".gitlab"}
+    return [p for p in paths if p.startswith(CI_DIRS) or p in CI_FILES or p in bare]
 
 
-def changed_paths(project: Path, base: str) -> list[str]:
-    """Every path the run's commits touch, both sides of a rename."""
+def changes(project: Path, base: str) -> list[tuple[str, str]]:
+    """(new mode, path) for every path the run's commits touch, both sides of
+    a rename. A deleted path has mode 000000."""
     proc = subprocess.run(
-        ["git", "-C", str(project), "-c", "core.hooksPath=/dev/null", "diff", "--name-only",
-         "--no-renames", "-z", f"{base}..HEAD"],
+        ["git", "-C", str(project), "-c", "core.hooksPath=/dev/null", "diff", "--raw",
+         "--no-renames", "--no-abbrev", "-z", f"{base}..HEAD"],
         capture_output=True, text=True, timeout=60, check=True,
     )  # fmt: skip
-    return [p for p in proc.stdout.split("\0") if p]
+    fields = proc.stdout.split("\0")
+    # -z --raw: ":oldmode newmode oldsha newsha status" NUL path NUL, repeated.
+    return [(fields[i].split()[1], fields[i + 1]) for i in range(0, len(fields) - 1, 2)]
 
 
 def push(project: Path, repo: str, branch: str, token: str, base: str) -> None:
@@ -58,7 +69,14 @@ def push(project: Path, repo: str, branch: str, token: str, base: str) -> None:
     repository_name(repo)
     if not BRANCH.fullmatch(branch):
         raise PushRefused(f"refusing to push {branch!r}: not an autopilot run branch")
-    blocked = ci_paths(changed_paths(project, base))
+    changed = changes(project, base)
+    links = [path for mode, path in changed if mode == SYMLINK]
+    if links:
+        raise PushRefused(
+            "the run added or changed a symlink (" + ", ".join(links[:5]) + "), which could "
+            "carry CI configuration past the check; review the branch on this Mac"
+        )
+    blocked = ci_paths([path for _, path in changed])
     if blocked:
         raise PushRefused(
             "the run changed CI configuration (" + ", ".join(blocked[:5]) + "), which would run "

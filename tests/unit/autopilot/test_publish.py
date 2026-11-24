@@ -30,7 +30,7 @@ def test_push_names_the_repository_and_one_ref_and_keeps_the_token_out_of_argv(
         return subprocess.CompletedProcess(argv, 0, "", "")
 
     monkeypatch.setattr(github_push.subprocess, "run", run)
-    monkeypatch.setattr(github_push, "changed_paths", lambda project, base: ["src/a.py"])
+    monkeypatch.setattr(github_push, "changes", lambda project, base: [("100644", "src/a.py")])
     github_push.push(tmp_path, "o/r", BRANCH, "secret-token", "base")
     argv = seen["argv"]
     assert argv[-2:] == ["https://github.com/o/r.git", f"refs/heads/{BRANCH}:refs/heads/{BRANCH}"]
@@ -186,3 +186,32 @@ def test_an_ordinary_push_failure_is_recorded_and_the_run_stays_succeeded(
     runs._publish(root, {"repo": "o/r"}, {"id": "r1", "branch": BRANCH}, {}, repo, base, {})
     meta = json.loads((root / "autopilot.json").read_text())
     assert meta["state"] == "succeeded" and "network" in meta["pr_error"]
+
+
+@pytest.mark.parametrize("linked", [".github/workflows", ".circleci", ".gitlab/ci", "src/tools"])
+def test_a_run_that_committed_a_symlink_is_never_pushed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, linked: str
+) -> None:
+    # .github/workflows -> ../ci with ci/x.yml inside lists as ".github/workflows"
+    # and "ci/x.yml", neither under a CI directory; any added symlink is refused.
+    repo, base = _repo_with_change(tmp_path, "ci/x.yml")
+    (repo / linked).parent.mkdir(parents=True, exist_ok=True)
+    (repo / linked).symlink_to(Path("../" * linked.count("/")) / "ci")
+    git = ["git", "-C", str(repo), "-c", "user.name=t", "-c", "user.email=t@t",
+           "-c", "commit.gpgsign=false"]  # fmt: skip
+    subprocess.run([*git, "add", "-A"], check=True)
+    subprocess.run([*git, "commit", "-qm", "link"], check=True)
+    assert (github_push.SYMLINK, linked) in github_push.changes(repo, base)
+    real = subprocess.run
+    monkeypatch.setattr(
+        github_push.subprocess,
+        "run",
+        lambda argv, **kw: pytest.fail("pushed") if "push" in argv else real(argv, **kw),
+    )
+    with pytest.raises(github_push.PushRefused, match="symlink"):
+        github_push.push(repo, "o/r", BRANCH, "tok", base)
+
+
+def test_a_ci_directory_name_without_its_slash_is_still_ci() -> None:
+    names = [".github/workflows", ".github", ".circleci", ".buildkite", ".gitlab/ci", ".gitlab"]
+    assert github_push.ci_paths([*names, "src/.github.md", ".githubx"]) == names
