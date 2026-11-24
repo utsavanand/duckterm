@@ -159,7 +159,7 @@ def test_output_bounds_stop_and_reap_the_child(cli, monkeypatch, kind):
     processes = cli(emit(events, "time.sleep(30)"))
     with pytest.raises(APIError, match="too much output"):
         call()
-    assert processes[0].returncode is not None
+    assert processes[0].returncode not in (None, 0)
 
 
 def test_timeout_and_cancellation_are_recorded_and_reaped(cli, monkeypatch):

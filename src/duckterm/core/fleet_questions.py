@@ -233,8 +233,9 @@ async def collect_digests(
             await asyncio.gather(*tasks)
             return result
         finally:
-            # gather does not cancel siblings when one read fails. Drain them
-            # before the request exits so they cannot keep reading stale scope.
+            # gather does not cancel siblings when one read fails. Drain the
+            # workers so they start no further reads. In-flight to_thread reads
+            # finish in the pool; their results are discarded.
             for task in tasks:
                 task.cancel()
             await asyncio.gather(*tasks, return_exceptions=True)
