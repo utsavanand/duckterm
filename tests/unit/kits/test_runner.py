@@ -514,6 +514,58 @@ def test_a_forged_run_file_cannot_name_a_flow_outside_the_project(tmp_path):
     assert not (project / "PWNED").exists()
 
 
+def test_a_load_during_a_save_never_pairs_a_new_run_file_with_the_old_fingerprint(
+    tmp_path, monkeypatch
+):
+    """save writes run.json and then its fingerprint. A load_run that landed
+    between the two saw a live run as "changed outside the runner" (a CI
+    flake on test_start_run_returns_the_run_id_before_the_step_finishes).
+    The reader now waits for the save to finish, and the tamper check stays."""
+    import threading
+    import time
+
+    project = _project(tmp_path, FEATURE, "feature")
+    fake = Fake({"spec": [(0, {"status": "done", "_files": {"spec.md": "# s"}})]})
+    run = runner.start(
+        project, "flowkit/feature", harness="claude-code", inputs={"topic": "x"}, executor=fake
+    )
+    written = threading.Event()
+    attempting = threading.Event()
+    real = runner._write_text
+
+    def write_then_pause(path, text):
+        real(path, text)
+        if path.name == "run.json":
+            # The reader's turn: the old ordering let it in between the two writes.
+            written.set()
+            attempting.wait(2)
+            time.sleep(0.2)
+
+    monkeypatch.setattr(runner, "_write_text", write_then_pause)
+    result: dict = {}
+
+    def read():
+        written.wait(5)
+        attempting.set()
+        try:
+            result["run"] = runner.load_run(project, run.id)
+        except runner.RunRefused as exc:
+            result["error"] = str(exc)
+
+    reader = threading.Thread(target=read)
+    reader.start()
+    run.state["steps_taken"] = 7
+    run.save()
+    reader.join(5)
+    assert "error" not in result, result["error"]
+    assert result["run"].state["steps_taken"] == 7
+    # the check itself is unchanged: bytes this machine did not write still refuse
+    run_file = project / runner.RUNS / run.id / "run.json"
+    run_file.write_text(run_file.read_text().replace('"steps_taken": 7', '"steps_taken": 8'))
+    with pytest.raises(runner.RunRefused, match="changed outside the runner"):
+        runner.load_run(project, run.id)
+
+
 def test_a_run_file_committed_to_the_repository_cannot_resume_past_its_gate(tmp_path):
     """The run file is in the repository. A commit can carry one for the installed
     flow that is already past its gate, with a forged receipt whose output

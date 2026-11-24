@@ -173,7 +173,9 @@ notes the hash of every run file it writes (`<home>/kits/runs/<project
 key>/<run id>`), a run with no note "was not started on this machine", one
 whose file no longer matches "changed outside the runner", and `runs` marks
 such runs `recorded: false` so the Flows tab lists them without a gate or
-resume. A gate showing `workspace.diff` sees the worktree against HEAD with
+resume. The run file and its note are written, and read, under one lock
+per project (`<home>/kits/runs/<project key>/.lock`), so a load during a
+save never pairs a new run file with the previous note. A gate showing `workspace.diff` sees the worktree against HEAD with
 new files included (a temporary index after `git add -A`, the runs folder
 excluded) and records the worktree's tree id; the answer re-checks it and the
 next step checks it once more, so a worktree that changed after the owner

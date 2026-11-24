@@ -14,6 +14,7 @@ before the receipt is written. Everything here is standard library.
 
 from __future__ import annotations
 
+import fcntl
 import hashlib
 import json
 import os
@@ -21,8 +22,9 @@ import subprocess
 import tempfile
 import time
 import uuid
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -205,13 +207,14 @@ class Run:
             {k: v for k, v in a.items() if not k.startswith("_")} for a in self.state["attempts"]
         ]
         text = json.dumps(public, indent=2, sort_keys=True) + "\n"
-        _write_text(self.dir / "run.json", text)
         # The run file sits in the repository, so a commit can forge one that is
         # already past its gate. This machine notes the hash of every run file
-        # it writes; load_run believes a run file only while it matches.
-        ledger = _ledger(self.project, self.id)
-        ledger.parent.mkdir(parents=True, exist_ok=True)
-        ledger.write_text(sha256(text.encode()))
+        # it writes; load_run believes a run file only while it matches. Both
+        # writes happen under the ledger lock, so a load never pairs a new run
+        # file with the previous hash.
+        with _ledger_lock(self.project, shared=False):
+            _write_text(self.dir / "run.json", text)
+            _ledger(self.project, self.id).write_text(sha256(text.encode()))
 
     def step(self, sid: str) -> dict[str, Any]:
         for s in _all_steps(self.flow):
@@ -234,10 +237,30 @@ def _ledger(project: Path, run_id: str) -> Path:
     return instance.home() / "kits" / "runs" / key / run_id
 
 
-def _recorded(project: Path, run_id: str, raw: bytes) -> bool:
-    """Did this machine write these run file bytes?"""
+@contextmanager
+def _ledger_lock(project: Path, *, shared: bool) -> Iterator[None]:
+    """The run file and its ledger entry are two files. A save holds this
+    exclusively while it writes both; a read holds it shared while it reads
+    both; so the pair a reader sees is always one the runner wrote together."""
+    path = _ledger(project, ".lock")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_SH if shared else fcntl.LOCK_EX)
+        yield
+    finally:
+        os.close(fd)
+
+
+def _read_run(project: Path, run_id: str) -> tuple[bytes, bool, bool]:
+    """The run file's bytes, whether this machine started the run, and whether
+    it wrote these bytes; read together under the ledger lock."""
     ledger = _ledger(project, run_id)
-    return ledger.is_file() and ledger.read_text().strip() == sha256(raw)
+    with _ledger_lock(project, shared=True):
+        raw = _inside(project, f"{RUNS}/{run_id}/run.json").read_bytes()
+        started = ledger.is_file()
+        recorded = started and ledger.read_text().strip() == sha256(raw)
+    return raw, started, recorded
 
 
 def _write_text(path: Path, text: str) -> None:
@@ -416,10 +439,10 @@ def load_run(project: Path, run_id: str) -> Run:
     path = _inside(project, f"{RUNS}/{run_id}/run.json")
     if not path.is_file():
         raise RunRefused(f"no run {run_id} here")
-    raw = path.read_bytes()
-    if not _ledger(project, run_id).is_file():
+    raw, started, recorded = _read_run(project, run_id)
+    if not started:
         raise RunRefused(f"run {run_id} was not started on this machine; it does not resume here")
-    if not _recorded(project, run_id, raw):
+    if not recorded:
         raise RunRefused(f"run {run_id}: its run file changed outside the runner; start a new run")
     state = json.loads(raw)
     ref = str(state.get("flow") or "")
@@ -531,17 +554,17 @@ def resume(
 
 
 def list_runs(project: Path) -> list[dict[str, Any]]:
-    root = _inside(Path(project).resolve(), RUNS)
+    project = Path(project).resolve()
+    root = _inside(project, RUNS)
     out = []
     if root.is_dir():
         for d in sorted(root.iterdir()):
-            f = d / "run.json"
-            if not f.is_file():
+            if not (d / "run.json").is_file():
                 continue
             try:
-                raw = f.read_bytes()
+                raw, _, recorded = _read_run(project, d.name)
                 s = json.loads(raw)
-            except ValueError:
+            except (RunRefused, OSError, ValueError):
                 continue
             summary = {
                 k: s.get(k)
@@ -563,7 +586,7 @@ def list_runs(project: Path) -> list[dict[str, Any]]:
             )
             # a run file this machine did not write (a clone's, a commit's) is
             # listed but offers nothing: it does not resume and has no gate
-            summary["recorded"] = _recorded(root.parent.parent, d.name, raw)
+            summary["recorded"] = recorded
             out.append(summary)
     return out
 
