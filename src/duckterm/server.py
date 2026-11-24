@@ -83,6 +83,7 @@ from duckterm.core.relay import (
     choices_from,
     parse_ask,
     parse_rule_reply,
+    permission_question,
     question_from,
     validate_rule,
 )
@@ -2627,6 +2628,10 @@ class Server:
                 else []
             )
             await self._reconcile_waiting(s)
+            if s["state"] not in AT_REST_STATES and self._owner_question_pending(
+                str(s["session_key"])
+            ):
+                s["state"] = "waiting"
         await _write_json(
             writer,
             200,
@@ -2674,7 +2679,7 @@ class Server:
         with no prompt and visible work reports busy. A hook-driven wait
         (Claude Code, Copilot) is never overridden. The owner's raised hand is
         kept separately (attention_since) and isn't touched here."""
-        if row.get("state") != "waiting":
+        if row.get("state") != "waiting" or self._owner_question_pending(str(row["session_key"])):
             return
         runtime = _build_runtime(str(row.get("runtime") or "generic"), "")
         if not runtime.auto_approves_requests:
@@ -4453,7 +4458,7 @@ class Server:
             # only a submitted prompt (the answer, or one that discards it)
             # or the session ending closes that note.
             self.relay.close_for_session(key, {"choice"}, "handled", now)
-        if et in (events.USER_PROMPT_SUBMIT, events.SESSION_END):
+        if et in (events.USER_PROMPT_SUBMIT, events.SESSION_END, events.SESSION_START):
             kinds = {"question", "choice"}
             answered = (
                 self._answered_choice(key, str(event.get("prompt") or ""))
@@ -4467,14 +4472,55 @@ class Server:
                 self.relay.close(answered, "handled", closed_at=now)
                 kinds = {"question"}
             self.relay.close_for_session(key, kinds, "handled", now)
-        if et == events.STOP:
+        row = self.history.session(key)
+        if et == events.STOP and row and row["state"] not in AT_REST_STATES:
+            final = event.get("last_assistant_message")
+            final = final if isinstance(final, str) else None
+            direct = permission_question(final or "")
+            if direct and not self._owner_question_pending(key):
+                self.relay.add(
+                    {
+                        **self._relay_session_fields(key),
+                        "kind": "question",
+                        "urgency": "blocked",
+                        "created_at": now,
+                        "question": direct,
+                        "options": [],
+                        "excerpt": (final or "")[-1200:],
+                        "detected_without_model": True,
+                    }
+                )
             try:
                 loop = asyncio.get_running_loop()
             except RuntimeError:
                 loop = None
             if loop is not None:
-                loop.create_task(self._relay_detect_question(key, now))
+                loop.create_task(self._relay_detect_question(key, now, final))
         self._relay_sync_approvals()
+        row = self.history.session(key)
+        if row and row["state"] not in AT_REST_STATES and self._owner_question_pending(key):
+            event["owner_waiting"] = True
+            if row["state"] != "waiting":
+                self._mark_question_waiting(key)
+
+    def _owner_question_pending(self, key: str) -> bool:
+        return any(
+            n["session_key"] == key
+            and (
+                n["kind"] == "choice" or (n["kind"] == "question" and n.get("urgency") == "blocked")
+            )
+            for n in self.relay.open_notes()
+        )
+
+    def _mark_question_waiting(self, key: str) -> None:
+        self.bus.publish(
+            {
+                "event_type": events.NOTIFICATION,
+                "notification_type": "owner_question",
+                "session_key": key,
+                "reconciled": True,
+            }
+        )
 
     def _answered_choice(self, key: str, prompt: str) -> dict[str, Any] | None:
         first = prompt.split("\n", 1)[0]
@@ -4674,7 +4720,9 @@ class Server:
             if isinstance(b, dict) and b.get("type") == "text"
         ).strip()
 
-    async def _relay_detect_question(self, key: str, at: int) -> None:
+    async def _relay_detect_question(
+        self, key: str, at: int, final_message: str | None = None
+    ) -> None:
         """Did this turn end waiting on the owner? A word-cue filter, then one
         classifier call (core/relay.py documents both and how they measured)."""
         if not self.edition.includes("oracle"):
@@ -4682,12 +4730,25 @@ class Server:
         row = self.history.session(key)
         if row is None or (row.get("runtime") or "") not in self._RELAY_RUNTIMES:
             return
+        turn = self.history.latest_turn_event(key)
+
+        def still_current() -> bool:
+            current = self.history.session(key)
+            return bool(
+                current
+                and current["state"] not in AT_REST_STATES
+                and self.history.latest_turn_event(key) == turn
+                and self.history.last_event_ts(key, events.USER_PROMPT_SUBMIT) <= at
+            )
+
         await asyncio.sleep(self._RELAY_SETTLE_S)
-        if self.history.last_event_ts(key, events.USER_PROMPT_SUBMIT) > at:
+        if not still_current() or self._owner_question_pending(key):
             return
         messages = await asyncio.to_thread(self._read_messages, self._message_source(key))
+        if not still_current():
+            return
         last = next((m for m in reversed(messages) if m.get("role") == "assistant"), None)
-        final = self._message_text(last)
+        final = final_message if final_message is not None else self._message_text(last)
         if not final or not ASK_CUES.search(final[-900:]):
             return
         if any(
@@ -4706,6 +4767,8 @@ class Server:
         result = await asyncio.to_thread(
             summarize, ask_prompt(owner, final), tier="deep", claude_model="sonnet"
         )
+        if not still_current() or self._owner_question_pending(key):
+            return
         verdict = parse_ask(result.text) if result.text else None
         if verdict is None:
             fallback = question_from(final)
@@ -4726,6 +4789,8 @@ class Server:
                 "detected_without_model": bool(verdict.get("fallback")),
             }
         )
+        if verdict["kind"] == "blocked":
+            self._mark_question_waiting(key)
         rule = self.relay.answer_rule_for(f"{note['question']}\n{final[-600:]}")
         if rule is None:
             return
@@ -4741,7 +4806,7 @@ class Server:
         allow it; otherwise put it in the session's inbox for a nudge."""
         key = note["session_key"]
         now = int(time.time() * 1000)
-        refusal = await self._typing_refusal(key)
+        refusal = await self._typing_refusal(key, answering_question=True)
         if refusal is None:
             status = await self._submit_prompt(
                 key, text, source="owner" if answered_by == "owner" else "relay"
@@ -5136,7 +5201,9 @@ class Server:
                 return "submitted"
         return "stuck"
 
-    async def _typing_refusal(self, session_key: str) -> str | None:
+    async def _typing_refusal(
+        self, session_key: str, *, answering_question: bool = False
+    ) -> str | None:
         """Why owner text can't be typed into this session's prompt right now,
         or None. The same gates Oracle applies before pasting a nudge."""
         row = self.history.session(session_key)
@@ -5146,7 +5213,20 @@ class Server:
         if self.restarts.pending(session_key):
             return "A restart is pending. Cancel it before sending a new prompt."
         inbox = "Send it to the inbox instead."
-        if row.get("state") != "idle":
+        turn = self.history.latest_turn_event(session_key)
+        answering_completed_turn = (
+            answering_question
+            and row.get("state") == "waiting"
+            and self._owner_question_pending(session_key)
+            and turn is not None
+            and turn.get("event_type") == events.STOP
+            and not any(a.session_key == session_key for a in self.approvals.pending())
+            and not any(
+                n["session_key"] == session_key and n["kind"] == "choice"
+                for n in self.relay.open_notes()
+            )
+        )
+        if row.get("state") != "idle" and not answering_completed_turn:
             return f"It isn't idle, so typing could interrupt it. {inbox}"
         if time.time() * 1000 - sup.last_owner_input_ms < oracle.TYPING_QUIET_MS:
             return f"Someone typed in its terminal in the last 2 minutes. {inbox}"
@@ -7180,7 +7260,11 @@ class Server:
         waiting_on_approval = {a.session_key for a in self.approvals.pending()}
         for row in self.history.sessions():
             key = str(row["session_key"])
-            if row.get("state") != "waiting" or key in waiting_on_approval:
+            if (
+                row.get("state") != "waiting"
+                or key in waiting_on_approval
+                or self._owner_question_pending(key)
+            ):
                 continue
             if now - int(row.get("updated_at") or now) < 60_000:
                 continue  # a dialog may still be drawing

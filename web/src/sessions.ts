@@ -14,6 +14,13 @@ import {
 // so a pause inside a turn can't make a hook-driven duck look idle.
 export const IDLE_SETTLE_MS = 30_000;
 
+function hasBackgroundWork(e: DucktermEvent): boolean {
+  return Array.isArray(e.background_tasks) && e.background_tasks.some(
+    task => task && typeof task.id === "string" && task.id.length > 0 &&
+      (task.status === "running" || task.status === "pending"),
+  );
+}
+
 function deriveState(e: DucktermEvent, prev?: SessionState): SessionState {
   if (prev === "merged" || e.lifecycle === "merged") return "merged";
   // An explicit lifecycle marker (deliberate stop/archive/sweep) always wins.
@@ -31,6 +38,7 @@ function deriveState(e: DucktermEvent, prev?: SessionState): SessionState {
     return prev;
   if (e.lifecycle === "terminated" || e.event_type === "SessionEnd")
     return "terminated";
+  if (e.owner_waiting) return "waiting";
   // Mirrors the server's derive_state (persistence/history.py). The server
   // tags these events before they reach the stream, so the badge the stream
   // drives must read them the same way or the two disagree.
@@ -45,7 +53,7 @@ function deriveState(e: DucktermEvent, prev?: SessionState): SessionState {
       return e.auto_reviewed ? "busy" : "waiting";
     case "Notification":
       if (e.notification_type === "idle_prompt" || (e.message ?? "").startsWith("Claude is waiting for your input"))
-        return "idle";
+        return hasBackgroundWork(e) ? "busy" : "idle";
       if (e.notification_type === "auth_success") return prev ?? "busy";
       return "waiting";
     case "PreToolUse":
@@ -93,7 +101,7 @@ export function applyEvent(
   const prev = next.get(key);
   // Server bookkeeping for the merge checkpoint; not agent activity, so it
   // must not clear the settle time a Stop just set.
-  if (e.event_type === "MergeDelivered") return sessions;
+  if (["MergeDelivered", "SubagentStart", "SubagentStop"].includes(e.event_type ?? "")) return sessions;
   if (e.event_type === "Attended") {
     // The owner attended to it: only the raised hand drops. Not agent activity.
     if (prev) next.set(key, { ...prev, attentionSince: undefined });
@@ -133,7 +141,7 @@ export function applyEvent(
     // Stamp when the agent stopped; clear it on any new activity. effectiveState
     // uses this to settle to idle only after a quiet grace period.
     idleSince:
-      e.event_type === "Stop"
+      e.event_type === "Stop" && !hasBackgroundWork(e) && !e.owner_waiting
         ? e._ts
         : e.event_type === "SessionEnd"
           ? prev?.idleSince
