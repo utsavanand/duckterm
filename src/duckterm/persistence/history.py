@@ -454,7 +454,9 @@ class HistoryStore:
             # original launch metadata after its parent has been removed.
             event["parent_session_key"] = None
         if key and _is_idle_notice(event) and "background_tasks" not in event:
-            event["background_tasks"] = self.background_tasks(key)
+            tasks = self.background_tasks(key)
+            if tasks:
+                event["background_tasks"] = tasks
         self._conn.execute(
             "INSERT OR IGNORE INTO events (id, session_key, event_type, ts, payload_json) "
             "VALUES (?, ?, ?, ?, json(?))",
