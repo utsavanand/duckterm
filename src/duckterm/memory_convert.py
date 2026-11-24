@@ -12,13 +12,15 @@ again and finishes moving them.
 
 from __future__ import annotations
 
+import contextlib
+import errno
 import fcntl
 import hashlib
 import json
 import os
 import re
-import shutil
 import sqlite3
+import stat
 import tempfile
 from collections import defaultdict
 from pathlib import Path
@@ -70,11 +72,6 @@ def _rows(conn: sqlite3.Connection, key: str | None = None) -> list[tuple[str, i
     return result
 
 
-def _root(key: str) -> Path:
-    # memory_sources.directory creates the folder; planning must not write.
-    return paths.home() / "checkpoints" / key / "memory"
-
-
 def _raw(root: Path, snapshot: str) -> list[Path]:
     return [
         root / (snapshot + suffix)
@@ -102,11 +99,14 @@ def pending(conn: sqlite3.Connection) -> dict[str, dict[Version, str | None]]:
                 unbound[session].add(version)
     result: dict[str, dict[Version, str | None]] = {}
     for session in unbound.keys() | bound.keys():
-        root = _root(session)
+        try:
+            root: Path | None = memory_sources.location(session)
+        except APIError:
+            root = None  # Reported by plan() and refused by convert().
         versions: dict[Version, str | None] = {
             v: d
             for v, d in bound[session].items()
-            if v not in unbound[session] and _raw(root, v[2])
+            if root is not None and v not in unbound[session] and _raw(root, v[2])
         }
         versions.update(dict.fromkeys(unbound[session]))
         if versions:
@@ -119,7 +119,12 @@ def plan(conn: sqlite3.Connection) -> dict[str, Any]:
     sessions = []
     todo = pending(conn)
     for key, versions in sorted(todo.items()):
-        raw = [p for _, _, snapshot in versions for p in _raw(_root(key), snapshot)]
+        try:
+            root = memory_sources.location(key)
+        except APIError as exc:
+            sessions.append({"session": key, "versions": len(versions), "error": str(exc)})
+            continue
+        raw = [p for _, _, snapshot in versions for p in _raw(root, snapshot)]
         sessions.append(
             {
                 "session": key,
@@ -135,7 +140,7 @@ def plan(conn: sqlite3.Connection) -> dict[str, Any]:
     ]
     return {
         "sessions": sessions,
-        "raw_bytes": sum(s["raw_bytes"] for s in sessions),
+        "raw_bytes": sum(s.get("raw_bytes", 0) for s in sessions),
         "uncited_raw_files": len(uncited),
         "uncited_raw_bytes": sum(p.stat().st_size for p in uncited),
     }
@@ -255,7 +260,12 @@ def convert(conn: sqlite3.Connection, key: str, trash: Path) -> dict[str, Any]:
                     "records_sha256": digest,
                 },
             )
-            if again["records"] != read[version]["records"]:
+            # A bound reference falls back to the raw copy when no records file
+            # exists, which would make this comparison check nothing.
+            if (
+                Path(again["path"]).suffix != ".records"
+                or again["records"] != read[version]["records"]
+            ):
                 raise APIError(409, f"Converted copy {snapshot} does not read back the same")
         with transaction(conn):
             for table, rowid, _, value in _rows(conn, key):
@@ -270,18 +280,23 @@ def convert(conn: sqlite3.Connection, key: str, trash: Path) -> dict[str, Any]:
         except (OSError, ValueError):
             index = {}
         changed = False
-        for (runtime, native_id), kept in wholes.items():
+        # From every bound version, not only this run's, so a run interrupted
+        # before this point still gets its index entries updated on re-run.
+        for (runtime, native_id, snapshot), value in read.items():
             name = runtime + ":" + native_id
             entry = index.get(name)
-            names = {snapshot for snapshot, _ in kept}
-            if isinstance(entry, dict) and "format" not in entry and entry.get("digest") in names:
-                lines = dict(kept)[entry["digest"]]
-                value = read[(runtime, native_id, entry["digest"])]
+            if (
+                (runtime, native_id, snapshot) in bound
+                and isinstance(entry, dict)
+                and "format" not in entry
+                and entry.get("digest") == snapshot
+                and (root / (snapshot + ".records")).is_file()
+            ):
                 index[name] = {
                     "format": memory_sources.RECORDS_FORMAT,
-                    "digest": entry["digest"],
+                    "digest": snapshot,
                     "bytes": value["bytes"],
-                    "records": len(lines),
+                    "records": len(value["records"]),
                     "unprocessed_attachments": value["unprocessed_attachments"],
                 }
                 changed = True
@@ -292,15 +307,52 @@ def convert(conn: sqlite3.Connection, key: str, trash: Path) -> dict[str, Any]:
             os.replace(name, index_path)
         converted = {snapshot for _, _, snapshot in bound}
         needed = _still_needed(root, converted)
-        # Pointers before the copies they point into, so an interrupted move
-        # never leaves a raw version that can't be read and checked again.
-        for suffix in (".prefix", ".jsonl"):
-            for snapshot in sorted(converted - needed):
-                path = root / (snapshot + suffix)
-                if path.is_file() and not path.is_symlink():
-                    destination = trash / key / path.name
-                    destination.parent.mkdir(parents=True, exist_ok=True)
-                    size = path.stat().st_size
-                    shutil.move(path, destination)
-                    report["trashed"].append({"file": path.name, "bytes": size})
+        names = [
+            snapshot + suffix
+            # Pointers before the copies they point into, so an interrupted move
+            # never leaves a raw version that can't be read and checked again.
+            for suffix in (".prefix", ".jsonl")
+            for snapshot in sorted(converted - needed)
+            if (root / (snapshot + suffix)).is_file()
+        ]
+        if names:
+            report["trashed"] = _move_to_trash(root, names, trash, key)
     return report
+
+
+def _move_to_trash(root: Path, names: list[str], trash: Path, key: str) -> list[dict[str, Any]]:
+    """Move files by hard link and unlink, through directories opened without
+    following symlinks, so nothing in the Trash is replaced and nothing lands
+    outside it. A Trash on another volume is refused rather than copied."""
+    trash.mkdir(parents=True, exist_ok=True)
+    moved = []
+    fds = [os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)]
+    try:
+        fds.append(os.open(trash, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW))
+        with contextlib.suppress(FileExistsError):
+            os.mkdir(key, 0o700, dir_fd=fds[1])
+        fds.append(os.open(key, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fds[1]))
+        source, destination = fds[0], fds[2]
+        for name in names:
+            info = os.stat(name, dir_fd=source, follow_symlinks=False)
+            if not stat.S_ISREG(info.st_mode):
+                continue
+            try:
+                os.link(
+                    name, name, src_dir_fd=source, dst_dir_fd=destination, follow_symlinks=False
+                )
+            except FileExistsError as exc:
+                there = os.stat(name, dir_fd=destination, follow_symlinks=False)
+                # The same file is already linked there by an interrupted run.
+                if (there.st_dev, there.st_ino) != (info.st_dev, info.st_ino):
+                    raise APIError(409, f"The Trash already has {name}; nothing replaced") from exc
+            except OSError as exc:
+                if exc.errno == errno.EXDEV:
+                    raise APIError(409, "The Trash is on another volume; nothing moved") from exc
+                raise
+            os.unlink(name, dir_fd=source)
+            moved.append({"file": name, "bytes": info.st_size})
+    finally:
+        for fd in fds:
+            os.close(fd)
+    return moved

@@ -1,3 +1,15 @@
+## 2026-11-24 — Moving files to the Trash could overwrite through a symlink
+
+QA found it on #461: the conversion moved raw copies with mkdir(exist_ok) and
+shutil.move. If the Trash folder for an agent was a symlink, files landed
+wherever it pointed and replaced what was there. Moves now go through
+directories opened without following symlinks, as a hard link plus unlink, so
+an existing file is never replaced and a Trash on another volume is refused
+rather than copied. A re-run also recognises a file it already linked. The
+dry run now opens the database read-only, without schema setup. Lesson: a
+"safe" destination needs the same no-follow, no-clobber care as the source;
+moving to the Trash is still writing.
+
 ## 2026-11-24 — An interrupted conversion left raw copies no re-run would move
 
 Security found it on #461: the conversion binds every reference first, then

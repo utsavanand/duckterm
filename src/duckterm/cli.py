@@ -938,17 +938,19 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _convert_memory_copies(apply: bool) -> int:
+    import sqlite3
     import time
+    from contextlib import closing
 
     from duckterm import memory_convert
     from duckterm.core.session_api import APIError
-    from duckterm.helpers import security
+    from duckterm.helpers import paths, security
     from duckterm.persistence.digests import DigestStore
     from duckterm.persistence.history import HistoryStore
 
-    conn = HistoryStore()._conn
-    DigestStore(conn=conn)
-    print(json.dumps(memory_convert.plan(conn), indent=2))
+    # Read-only: opening HistoryStore would also run schema setup.
+    with closing(sqlite3.connect(paths.db_path().as_uri() + "?mode=ro", uri=True)) as readonly:
+        print(json.dumps(memory_convert.plan(readonly), indent=2))
     if not apply:
         print("Nothing changed. Run again with --apply to convert.")
         return 0
@@ -967,6 +969,8 @@ def _convert_memory_copies(apply: bool) -> int:
     if running != __version__:
         print(f"The running server is {running}; restart it on {__version__} first.")
         return 1
+    conn = HistoryStore()._conn
+    DigestStore(conn=conn)
     trash = Path.home() / ".Trash" / time.strftime("DuckTerm memory copies %Y-%m-%d %H.%M.%S")
     failed = 0
     for key in sorted(memory_convert.pending(conn)):
