@@ -22,7 +22,7 @@ from typing import Any
 
 from duckterm import memory_provider, release_features
 from duckterm.core.session_api import APIError
-from duckterm.llm import ai_settings, api
+from duckterm.llm import ai_settings, api, latency
 
 TIERS = ("fast", "deep")
 EFFORT = {"fast": "low", "deep": "medium"}
@@ -70,6 +70,24 @@ async def complete(
     checkpoint keeps the models captured with it); other backends use the
     tier's model. effort None uses the tier's; "" sends none, so the model's
     default applies (checkpoints were quality-measured that way)."""
+    with latency.measure("backend", tier=tier) as timing:
+        timing.input_bytes = len(prompt.encode())
+        reply = await _complete(
+            prompt, tier=tier, schema=schema, claude_model=claude_model, effort=effort
+        )
+        timing.backend = reply.detail if reply.backend == "harness" else "api"
+        timing.output_bytes = len(reply.text.encode())
+        return reply
+
+
+async def _complete(
+    prompt: str,
+    *,
+    tier: str,
+    schema: dict[str, Any] | None,
+    claude_model: str,
+    effort: str | None,
+) -> Reply:
     effort = EFFORT[tier] if effort is None else effort
     if os.environ.get("DUCKTERM_SUMMARIZER") == "off":
         raise APIError(503, "Automatic preparation is disabled on this host")

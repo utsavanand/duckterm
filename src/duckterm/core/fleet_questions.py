@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from duckterm import memory_provider
 from duckterm.core.session_api import APIError
-from duckterm.llm import backend
+from duckterm.llm import backend, latency
 from duckterm.llm.summarizer import Summary
 from duckterm.persistence import native_identity
 from duckterm.persistence.folder_chats import valid_folder, within
@@ -21,6 +21,7 @@ if TYPE_CHECKING:
     from duckterm.server import Server
 
 MAX_SOURCES = 40
+DIGEST_CONCURRENCY = 4
 MAX_DIGEST_BYTES = 6000
 MAX_PROMPT_BYTES = 256 * 1024
 
@@ -213,6 +214,30 @@ async def digest(
         if screen:
             lines.extend(["recent terminal output:", screen])
     return "\n".join(lines)
+
+
+async def collect_digests(
+    rows: list[dict[str, Any]], render: Callable[[dict[str, Any]], Awaitable[str]]
+) -> list[str]:
+    """Overlap local reads without flooding the shared thread pool or changing order."""
+    result = [""] * len(rows)
+    pending = iter(enumerate(rows))
+
+    async def worker() -> None:
+        for index, row in pending:
+            result[index] = await render(row)
+
+    with latency.measure("fleet_context"):
+        tasks = [asyncio.create_task(worker()) for _ in range(min(DIGEST_CONCURRENCY, len(rows)))]
+        try:
+            await asyncio.gather(*tasks)
+            return result
+        finally:
+            # gather does not cancel siblings when one read fails. Drain them
+            # before the request exits so they cannot keep reading stale scope.
+            for task in tasks:
+                task.cancel()
+            await asyncio.gather(*tasks, return_exceptions=True)
 
 
 def prompt(

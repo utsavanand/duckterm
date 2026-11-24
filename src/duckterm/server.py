@@ -4337,16 +4337,10 @@ class Server:
             )
             await _write_json(writer, 200, {"answer": answer, "exchange": exchange, "sessions": []})
             return
-        digests = "\n\n".join(
-            [
-                (
-                    (await self._fleet_digest(r, question))[:6000]
-                    if folder is not None
-                    else await self._fleet_digest(r, question)
-                )
-                for r in running
-            ]
+        texts = await fleet_questions.collect_digests(
+            running, lambda row: self._fleet_digest(row, question)
         )
+        digests = "\n\n".join(text[:6000] if folder is not None else text for text in texts)
         prompt = fleet_questions.prompt(
             question,
             digests,
@@ -6140,7 +6134,7 @@ class Server:
         await _write_json(writer, 200, {"automatic": automatic, "agents": agents})
 
     async def _ai_settings(self, writer: asyncio.StreamWriter, body: bytes | None = None) -> None:
-        from duckterm.llm import ai_settings, backend
+        from duckterm.llm import ai_settings, backend, latency
 
         def state(settings: dict[str, Any]) -> dict[str, Any]:
             keys = {}
@@ -6153,6 +6147,7 @@ class Server:
                 "keys": keys,
                 "harness": backend.harness(settings["harness"]),
                 "models": {t: ai_settings.model(settings, t) for t in backend.TIERS},
+                "recent_timings": latency.recent(),
             }
 
         try:

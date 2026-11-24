@@ -1,3 +1,14 @@
+## 2026-11-23 — Measure the gap between an AI answer and CLI exit
+
+A short internal Claude call kept waiting after its final result because the CLI
+was finishing nonessential background traffic. Separate first-text, final-result
+and process-exit timings before attributing the whole wait to the model. The
+documented nonessential-traffic switch removed the measured exit delay while
+preserving subscription login and normal zero-exit validation. Keep diagnostic
+records bounded and content-free; do not add blocking log writes to the loop.
+Local context reads can overlap, but preserve prompt order, bound concurrency,
+and cancel sibling readers on failure instead of leaving stale work running.
+
 ## 2026-11-22 — Reconcile flags through real entry points after integration
 
 A branch that passed against an older main contained a duplicate CLI gate and a
