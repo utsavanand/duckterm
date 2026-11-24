@@ -1,3 +1,12 @@
+## 2026-11-24 — Exercise empty-input keys and Unicode highlight boundaries
+
+Search must release Escape to sidebar navigation after clearing its own value.
+Assert the second Escape clears active filters, not just that focus remains.
+Lowercasing can expand characters, so map match positions back to original UTF-16
+boundaries and merge overlapping ranges before rendering the unchanged label.
+Include Unicode expansion, contextual casing, emoji, and literal punctuation in
+regression coverage.
+
 ## 2026-11-24 — Scope searches and wait for terminal checkpoint receipts
 
 Adding a second search box exposed an unlabelled Inbox test locator. Target the
