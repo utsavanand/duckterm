@@ -68,7 +68,7 @@ def test_conversion_rebinds_every_citation_and_trashes_only_cited_raw(legacy, tm
     plan = memory_convert.plan(conn)
     assert plan["sessions"][0]["versions"] == 3 and plan["uncited_raw_files"] == 1
 
-    report = memory_convert.convert(conn, KEY, tmp_path / "Trash")
+    report = memory_convert.convert(conn, KEY, tmp_path / "Trash", tmp_path)
 
     assert report["converted"] == 3 and not report["unreadable"]
     refs = saved_refs(conn)
@@ -104,9 +104,9 @@ def test_a_copy_that_reads_back_differently_changes_nothing(legacy, tmp_path, mo
 
     monkeypatch.setattr(memory_sources, "read_native", altered)
     with pytest.raises(APIError, match="does not read back the same"):
-        memory_convert.convert(conn, KEY, tmp_path / "Trash")
+        memory_convert.convert(conn, KEY, tmp_path / "Trash", tmp_path)
     assert not any("records_sha256" in r for r in saved_refs(conn))
-    assert not (tmp_path / "Trash").exists()
+    assert not [p for p in (tmp_path / "Trash").rglob("*") if p.is_file()]
     assert {p.name for p in root.iterdir()} >= set(before)
 
 
@@ -115,7 +115,7 @@ def test_a_raw_copy_an_unconverted_pointer_needs_stays(legacy, tmp_path):
     # A pointer nothing cites, into v3's raw copy, keeps that copy in place.
     stray = hashlib.sha256(b"stray").hexdigest()
     (root / (stray + ".prefix")).write_text(json.dumps({"of": snapshots[2], "bytes": 1}))
-    memory_convert.convert(conn, KEY, tmp_path / "Trash")
+    memory_convert.convert(conn, KEY, tmp_path / "Trash", tmp_path)
     assert (root / (snapshots[2] + ".jsonl")).is_file()
     assert (root / (stray + ".prefix")).is_file()
 
@@ -151,14 +151,14 @@ def test_a_run_interrupted_while_trashing_is_finished_by_the_next(
     }
     restore = interrupt(monkeypatch, call, after)
     with pytest.raises(OSError, match="interrupted"):
-        memory_convert.convert(conn, KEY, tmp_path / "Trash")
+        memory_convert.convert(conn, KEY, tmp_path / "Trash", tmp_path)
     restore()
     assert all(r["records_sha256"] for r in saved_refs(conn))
     left = memory_convert.pending(conn)[KEY]
     assert left and all(left.values())
     assert memory_convert.plan(conn)["raw_bytes"] > 0
 
-    report = memory_convert.convert(conn, KEY, tmp_path / "Trash")
+    report = memory_convert.convert(conn, KEY, tmp_path / "Trash", tmp_path)
 
     assert report["converted"] == 0 and report["resumed"] == len(left)
     assert not report["unreadable"]
@@ -183,9 +183,9 @@ def test_an_interrupted_run_still_updates_the_index(legacy, tmp_path, monkeypatc
 
     monkeypatch.setattr(memory_convert.tempfile, "mkstemp", crash_on_index)
     with pytest.raises(OSError):
-        memory_convert.convert(conn, KEY, tmp_path / "Trash")
+        memory_convert.convert(conn, KEY, tmp_path / "Trash", tmp_path)
     monkeypatch.setattr(memory_convert.tempfile, "mkstemp", original)
-    memory_convert.convert(conn, KEY, tmp_path / "Trash")
+    memory_convert.convert(conn, KEY, tmp_path / "Trash", tmp_path)
     entry = json.loads((root / "latest.json").read_text())["codex:fixture"]
     assert entry["format"] == memory_sources.RECORDS_FORMAT and entry["records"] == 3
 
@@ -194,11 +194,11 @@ def test_a_resumed_raw_copy_that_changed_is_not_trashed(legacy, tmp_path, monkey
     conn, root, _, snapshots, _ = legacy
     restore = interrupt(monkeypatch, "link", 0)
     with pytest.raises(OSError):
-        memory_convert.convert(conn, KEY, tmp_path / "Trash")
+        memory_convert.convert(conn, KEY, tmp_path / "Trash", tmp_path)
     restore()
     raw = root / (snapshots[2] + ".jsonl")
     raw.write_bytes(raw.read_bytes().replace(b"third", b"fifth"))
-    report = memory_convert.convert(conn, KEY, tmp_path / "Trash")
+    report = memory_convert.convert(conn, KEY, tmp_path / "Trash", tmp_path)
     assert [u["snapshot"] for u in report["unreadable"]] == [snapshots[2]]
     assert raw.is_file() and not (tmp_path / "Trash" / KEY / raw.name).exists()
 
@@ -213,8 +213,29 @@ def test_a_trash_folder_that_is_a_symlink_is_refused(legacy, tmp_path):
     trash.mkdir()
     (trash / KEY).symlink_to(external, target_is_directory=True)
     with pytest.raises(OSError):
-        memory_convert.convert(conn, KEY, trash)
+        memory_convert.convert(conn, KEY, trash, tmp_path)
     assert victim.read_bytes() == b"KEEP"
+    assert (root / (snapshots[2] + ".jsonl")).is_file()
+
+
+def test_a_symlinked_folder_above_the_trash_is_refused(legacy, tmp_path):
+    # As a symlinked ~/.Trash would be: only the last component was checked.
+    conn, root, _, snapshots, _ = legacy
+    external = tmp_path / "external"
+    external.mkdir()
+    (tmp_path / "alias").symlink_to(external, target_is_directory=True)
+    with pytest.raises(OSError):
+        memory_convert.convert(conn, KEY, tmp_path / "alias" / "dated-Trash", tmp_path)
+    assert not list(external.rglob("*"))
+    assert (root / (snapshots[2] + ".jsonl")).is_file()
+    # Refused before anything changed, not after the references were rebound.
+    assert not any("records_sha256" in r for r in saved_refs(conn))
+
+
+def test_a_trash_outside_the_anchor_is_refused(legacy, tmp_path):
+    conn, root, _, snapshots, _ = legacy
+    with pytest.raises(APIError, match="must be inside"):
+        memory_convert.convert(conn, KEY, tmp_path / "Trash", tmp_path / "home")
     assert (root / (snapshots[2] + ".jsonl")).is_file()
 
 
@@ -224,7 +245,7 @@ def test_a_file_already_in_the_trash_is_not_replaced(legacy, tmp_path):
     existing.parent.mkdir(parents=True)
     existing.write_bytes(b"KEEP")
     with pytest.raises(APIError, match="nothing replaced"):
-        memory_convert.convert(conn, KEY, tmp_path / "Trash")
+        memory_convert.convert(conn, KEY, tmp_path / "Trash", tmp_path)
     assert existing.read_bytes() == b"KEEP"
     assert (root / (snapshots[2] + ".jsonl")).is_file()
 

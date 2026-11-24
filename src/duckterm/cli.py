@@ -972,15 +972,22 @@ def _convert_memory_copies(apply: bool) -> int:
     conn = HistoryStore()._conn
     DigestStore(conn=conn)
     trash = Path.home() / ".Trash" / time.strftime("DuckTerm memory copies %Y-%m-%d %H.%M.%S")
-    failed = 0
+    try:
+        os.close(memory_convert.open_below(Path.home(), trash))
+    except (APIError, OSError) as exc:
+        # macOS protects ~/.Trash unless the terminal has Full Disk Access.
+        print(f"Can't open {trash} ({exc}); nothing was changed.")
+        return 1
+    failed = moved = 0
     for key in sorted(memory_convert.pending(conn)):
         try:
             report = memory_convert.convert(conn, key, trash)
         except (APIError, OSError) as exc:
             failed += 1
             report = {"session": key, "error": str(exc)}
+        moved += len(report.get("trashed", []))
         print(json.dumps(report))
-    print(f"Raw copies moved to {trash}" if trash.exists() else "No raw copies were moved.")
+    print(f"{moved} raw copies moved to {trash}" if moved else "No raw copies were moved.")
     return 1 if failed else 0
 
 

@@ -183,8 +183,14 @@ def _still_needed(root: Path, converted: set[str]) -> set[str]:
     return needed
 
 
-def convert(conn: sqlite3.Connection, key: str, trash: Path) -> dict[str, Any]:
-    """Convert one agent's cited raw versions; the raw files go to `trash`."""
+def convert(
+    conn: sqlite3.Connection, key: str, trash: Path, anchor: Path | None = None
+) -> dict[str, Any]:
+    """Convert one agent's cited raw versions; the raw files go to `trash`.
+
+    `trash` must lie under `anchor` (the home folder by default); every folder
+    below the anchor is opened without following symlinks.
+    """
     root = memory_sources.directory(key)
     report: dict[str, Any] = {
         "session": key,
@@ -193,6 +199,19 @@ def convert(conn: sqlite3.Connection, key: str, trash: Path) -> dict[str, Any]:
         "unreadable": [],
         "trashed": [],
     }
+    # Opened before anything changes: a Trash that can't be reached (a
+    # symlink, or macOS privacy protection on ~/.Trash) must stop the run
+    # here, not after every reference has been rebound.
+    trash_fd = open_below(anchor or Path.home(), trash)
+    try:
+        return _convert(conn, key, root, trash_fd, report)
+    finally:
+        os.close(trash_fd)
+
+
+def _convert(
+    conn: sqlite3.Connection, key: str, root: Path, trash_fd: int, report: dict[str, Any]
+) -> dict[str, Any]:
     with (root / "latest.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         read: dict[Version, dict[str, Any]] = {}
@@ -316,23 +335,45 @@ def convert(conn: sqlite3.Connection, key: str, trash: Path) -> dict[str, Any]:
             if (root / (snapshot + suffix)).is_file()
         ]
         if names:
-            report["trashed"] = _move_to_trash(root, names, trash, key)
+            report["trashed"] = _move_to_trash(root, names, trash_fd, key)
     return report
 
 
-def _move_to_trash(root: Path, names: list[str], trash: Path, key: str) -> list[dict[str, Any]]:
+def open_below(anchor: Path, target: Path) -> int:
+    """Open (creating as needed) target, one folder at a time below anchor.
+
+    O_NOFOLLOW on a whole path only checks its last component, so a symlinked
+    ~/.Trash would still be followed. The anchor itself is trusted as given.
+    """
+    if not target.is_relative_to(anchor):
+        raise APIError(409, f"The Trash folder must be inside {anchor}")
+    fd = os.open(anchor, os.O_RDONLY | os.O_DIRECTORY)
+    try:
+        for part in target.relative_to(anchor).parts:
+            if part in {"", ".", ".."} or "/" in part:
+                raise APIError(409, "Invalid Trash folder")
+            with contextlib.suppress(FileExistsError):
+                os.mkdir(part, 0o700, dir_fd=fd)
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = child
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def _move_to_trash(root: Path, names: list[str], trash_fd: int, key: str) -> list[dict[str, Any]]:
     """Move files by hard link and unlink, through directories opened without
     following symlinks, so nothing in the Trash is replaced and nothing lands
     outside it. A Trash on another volume is refused rather than copied."""
-    trash.mkdir(parents=True, exist_ok=True)
     moved = []
     fds = [os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)]
     try:
-        fds.append(os.open(trash, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW))
         with contextlib.suppress(FileExistsError):
-            os.mkdir(key, 0o700, dir_fd=fds[1])
-        fds.append(os.open(key, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fds[1]))
-        source, destination = fds[0], fds[2]
+            os.mkdir(key, 0o700, dir_fd=trash_fd)
+        fds.append(os.open(key, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=trash_fd))
+        source, destination = fds
         for name in names:
             info = os.stat(name, dir_fd=source, follow_symlinks=False)
             if not stat.S_ISREG(info.st_mode):

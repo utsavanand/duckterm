@@ -1,3 +1,16 @@
+## 2026-11-24 — The conversion's Trash was unreachable and only its last folder was checked
+
+QA's re-check of #461: O_NOFOLLOW on a whole path only refuses a symlink in
+the last component, so a symlinked ~/.Trash was still followed. Checking that
+by hand turned up a bigger gap: macOS refuses to let this process open
+~/.Trash at all without Full Disk Access. The conversion rebinds every reference first and
+moves files last, so a real run would have changed the database and then failed
+on every agent. No test or rehearsal used the real Trash. The Trash folder is
+now opened one component at a time below the home folder, before anything
+changes, and the CLI stops up front if it can't open it. Lesson: rehearse
+against the real destination too, not only a stand-in for it; OS protections
+live there.
+
 ## 2026-11-24 — Moving files to the Trash could overwrite through a symlink
 
 QA found it on #461: the conversion moved raw copies with mkdir(exist_ok) and
