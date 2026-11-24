@@ -274,6 +274,7 @@ def test_key_route_validates_saves_and_never_echoes(memory_rig, provider):
 
     status, state = dispatch(server, "GET", "/ai-settings", owner)
     assert status == 200 and state["keys"]["anthropic"] == {"saved": True, "source": "stored"}
+    assert isinstance(state["recent_timings"], list)
     assert "sk-new" not in json.dumps(state)
     assert "sk-new" not in (
         Path(ai_settings._path()).read_text() if ai_settings._path().exists() else ""

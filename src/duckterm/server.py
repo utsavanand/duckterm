@@ -2719,7 +2719,8 @@ class Server:
             return {"model": observation.get("model"), "context_tokens": None}
         if (row.get("runtime") or "") != "claude-code":
             return {}
-        sid = self.history.session_id_for(str(row.get("session_key") or ""))
+        key = str(row.get("session_key") or "")
+        sid = self.history.session_id_for(key)
         cwd = row.get("worktree_path") or row.get("cwd")
         if not sid or not cwd:
             return {}
@@ -2729,14 +2730,28 @@ class Server:
         if path is None:
             return {}
         try:
-            mtime = path.stat().st_mtime
+            before = path.stat()
         except OSError:
             return {}
         cached = self._context_cache.get(str(path))
-        if cached is not None and cached[0] == mtime:
+        if cached is not None and cached[0] == before.st_mtime:
             return cached[1]
-        stats = transcript_stats(path)
-        self._context_cache[str(path)] = (mtime, stats)
+        stats = await asyncio.to_thread(transcript_stats, path)
+        # The session may have been rebound or moved during the read.
+        current = self.history.session(key)
+        if (
+            current is None
+            or self.history.session_id_for(key) != sid
+            or any(current.get(k) != row.get(k) for k in ("runtime", "cwd", "worktree_path"))
+        ):
+            return {}
+        try:
+            after = path.stat()
+        except OSError:
+            return {}
+        if (after.st_dev, after.st_ino) != (before.st_dev, before.st_ino):
+            return {}
+        self._context_cache[str(path)] = (before.st_mtime, stats)
         return stats
 
     async def _session_kits(
@@ -4342,16 +4357,10 @@ class Server:
             )
             await _write_json(writer, 200, {"answer": answer, "exchange": exchange, "sessions": []})
             return
-        digests = "\n\n".join(
-            [
-                (
-                    (await self._fleet_digest(r, question))[:6000]
-                    if folder is not None
-                    else await self._fleet_digest(r, question)
-                )
-                for r in running
-            ]
+        texts = await fleet_questions.collect_digests(
+            running, lambda row: self._fleet_digest(row, question)
         )
+        digests = "\n\n".join(text[:6000] if folder is not None else text for text in texts)
         prompt = fleet_questions.prompt(
             question,
             digests,
@@ -6242,7 +6251,7 @@ class Server:
         await _write_json(writer, 200, {"automatic": automatic, "agents": agents})
 
     async def _ai_settings(self, writer: asyncio.StreamWriter, body: bytes | None = None) -> None:
-        from duckterm.llm import ai_settings, backend
+        from duckterm.llm import ai_settings, backend, latency
 
         def state(settings: dict[str, Any]) -> dict[str, Any]:
             keys = {}
@@ -6255,6 +6264,7 @@ class Server:
                 "keys": keys,
                 "harness": backend.harness(settings["harness"]),
                 "models": {t: ai_settings.model(settings, t) for t in backend.TIERS},
+                "recent_timings": latency.recent(),
             }
 
         try:
