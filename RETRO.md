@@ -1,3 +1,14 @@
+## 2026-11-24 — A completed response does not mean completed work
+
+The status fold treated every Stop as idle and the hook discarded Claude's
+native background_tasks snapshot and last_assistant_message. Oracle could
+recognize a blocking question without making the session appear under Waiting.
+Preserve those existing signals instead of inferring work from terminal prose.
+Background tasks keep Working; pending owner questions take priority. Ignore
+late classifier results after the turn changes, and keep reply delivery aware
+that Waiting can mean a completed turn asking a plain-text question. Regression
+tests cover task completion, restarts, replies, and the sidebar filters.
+
 ## 2026-11-22 — Reconcile flags through real entry points after integration
 
 A branch that passed against an older main contained a duplicate CLI gate and a

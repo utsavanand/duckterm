@@ -104,7 +104,7 @@ def test_explicit_permission_question_wins_over_background_work_until_answered(w
     assert history.session("test-bg")["state"] == "waiting"
     emit(server, "PostToolUse", tool_name="Bash")
     assert history.session("test-bg")["state"] == "waiting"
-    rows = dispatch(server, "GET", "/sessions", {})[1]["sessions"]
+    rows = dispatch(server, "GET", "/sessions", {"x-duckterm-token": server.token})[1]["sessions"]
     assert rows[0]["state"] == "waiting"
     emit(server, "UserPromptSubmit", prompt="Yes, push it")
     assert history.session("test-bg")["state"] == "busy"
@@ -189,4 +189,18 @@ def test_optional_offer_does_not_override_background_work(world, monkeypatch):
     )
     asyncio.run(server._relay_detect_question("test-bg", int(time.time() * 1000), "Want more?"))
     assert history.session("test-bg")["state"] == "busy"
+    assert not server._owner_question_pending("test-bg")
+
+
+def test_queued_detector_does_not_read_a_newer_turn(world, monkeypatch):
+    server, _ = world
+    old = emit(server, "Stop")
+    emit(server, "UserPromptSubmit", prompt="Already approved")
+    server._RELAY_SETTLE_S = 0
+
+    def unexpected(*args):
+        pytest.fail("stale detection must not read another turn")
+
+    monkeypatch.setattr(server, "_read_messages", unexpected)
+    asyncio.run(server._relay_detect_question("test-bg", old["_ts"], "Approve this?", old["_id"]))
     assert not server._owner_question_pending("test-bg")

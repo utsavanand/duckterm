@@ -4495,7 +4495,7 @@ class Server:
             except RuntimeError:
                 loop = None
             if loop is not None:
-                loop.create_task(self._relay_detect_question(key, now, final))
+                loop.create_task(self._relay_detect_question(key, now, final, str(event["_id"])))
         self._relay_sync_approvals()
         row = self.history.session(key)
         if row and row["state"] not in AT_REST_STATES and self._owner_question_pending(key):
@@ -4721,7 +4721,7 @@ class Server:
         ).strip()
 
     async def _relay_detect_question(
-        self, key: str, at: int, final_message: str | None = None
+        self, key: str, at: int, final_message: str | None = None, turn_id: str | None = None
     ) -> None:
         """Did this turn end waiting on the owner? A word-cue filter, then one
         classifier call (core/relay.py documents both and how they measured)."""
@@ -4731,6 +4731,8 @@ class Server:
         if row is None or (row.get("runtime") or "") not in self._RELAY_RUNTIMES:
             return
         turn = self.history.latest_turn_event(key)
+        if turn_id is not None and (not turn or turn.get("_id") != turn_id):
+            return
 
         def still_current() -> bool:
             current = self.history.session(key)
@@ -4742,7 +4744,24 @@ class Server:
             )
 
         await asyncio.sleep(self._RELAY_SETTLE_S)
-        if not still_current() or self._owner_question_pending(key):
+        if not still_current():
+            return
+        if self._owner_question_pending(key):
+            # A direct permission ask was already surfaced synchronously. Keep
+            # the existing owner-authored answer-rule path for that same note.
+            direct = next(
+                (
+                    n
+                    for n in self.relay.open_notes()
+                    if n["session_key"] == key
+                    and n["kind"] == "question"
+                    and n.get("created_at") == at
+                    and n.get("detected_without_model")
+                ),
+                None,
+            )
+            if direct is not None and final_message is not None:
+                await self._relay_question_rule(direct, final_message)
             return
         messages = await asyncio.to_thread(self._read_messages, self._message_source(key))
         if not still_current():
@@ -4791,6 +4810,9 @@ class Server:
         )
         if verdict["kind"] == "blocked":
             self._mark_question_waiting(key)
+        await self._relay_question_rule(note, final)
+
+    async def _relay_question_rule(self, note: dict[str, Any], final: str) -> None:
         rule = self.relay.answer_rule_for(f"{note['question']}\n{final[-600:]}")
         if rule is None:
             return
