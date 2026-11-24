@@ -100,7 +100,7 @@ function Dashboard() {
     if (connected && !wasConnected.current) refreshEdition();
     wasConnected.current = connected;
   }, [connected, refreshEdition]);
-  const inboxCounts = useInboxCounts(has("inbox"));
+  const { pending: inboxCounts, unanswered: unansweredCounts } = useInboxCounts(has("inbox"));
   const archives = useArchiveRequests();
   const sidePanels = useSidePanels();
   const sidebarFilters = useSidebarFilters();
@@ -110,8 +110,8 @@ function Dashboard() {
   const sidebarScroll = useRef({ tree: 0, content: 0 });
   const { preferences: shortcutPreferences } = useShortcutPreferences();
   const sessions = useMemo(
-    () => sourceSessions.filter(s => !archives.requests.some(r => r.session_key === s.key)).map((s) => ({ ...s, inboxPending: inboxCounts[s.key] ?? 0 })),
-    [sourceSessions, inboxCounts, archives.requests],
+    () => sourceSessions.filter(s => !archives.requests.some(r => r.session_key === s.key)).map((s) => ({ ...s, inboxPending: inboxCounts[s.key] ?? 0, inboxUnanswered: unansweredCounts[s.key] ?? 0 })),
+    [sourceSessions, inboxCounts, unansweredCounts, archives.requests],
   );
   const toast = useToast();
   const { theme, resolved: mode, setTheme } = useTheme();

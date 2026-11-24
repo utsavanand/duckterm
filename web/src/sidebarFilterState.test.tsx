@@ -127,3 +127,30 @@ it("keeps active counts and clear available while the chip panel is closed", () 
   view.rerender(<SidebarFilters sessions={[session("one")]} now={0} filters={EMPTY_FILTERS} onToggle={vi.fn()} onClear={onClear} saveError={false} expanded={false} />);
   expect(screen.queryByRole("region", { name: "Session filters" })).not.toBeInTheDocument();
 });
+
+it("unanswered inbox matches requests across states, unions with status, and persists", () => {
+  const unanswered = { ...EMPTY_FILTERS, status: ["unanswered"] };
+  for (const state of ["busy", "waiting", "idle", "stopped", "interrupted", "terminated"] as const) {
+    expect(matchesFilters(session(state, { state, inboxUnanswered: 2 }), unanswered, 0)).toBe(true);
+  }
+  expect(matchesFilters(session("notice", { inboxPending: 3 }), unanswered, 0)).toBe(false);
+  expect(matchesFilters(session("answered", { inboxUnanswered: 0 }), unanswered, 0)).toBe(false);
+  expect(matchesFilters(session("archived", { state: "archived", inboxUnanswered: 1 }), unanswered, 0)).toBe(false);
+  const union = { ...unanswered, status: ["busy", "unanswered"], runtime: ["codex"] };
+  expect(matchesFilters(session("working"), union, 0)).toBe(true);
+  expect(matchesFilters(session("idle", { state: "idle", inboxUnanswered: 1 }), union, 0)).toBe(true);
+  expect(matchesFilters(session("other", { runtime: "claude-code", inboxUnanswered: 1 }), union, 0)).toBe(false);
+  expect(readFilters(JSON.stringify(union))).toEqual(union);
+});
+
+it("counts unanswered sessions once, respects other facets, and refreshes after answers", () => {
+  const sessions = [session("one", { inboxUnanswered: 3 }), session("two", { state: "idle", inboxUnanswered: 1 }), session("other", { runtime: "claude-code", inboxUnanswered: 1 })];
+  const filters = { ...EMPTY_FILTERS, status: ["busy", "unanswered"], runtime: ["codex"] };
+  const props = { now: 0, filters, onToggle: vi.fn(), onClear: vi.fn(), saveError: false, expanded: true };
+  const view = render(<SidebarFilters {...props} sessions={sessions} />);
+  expect(screen.getByRole("button", { name: "Unanswered inbox 2" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByRole("status")).toHaveTextContent("2 of 3");
+  view.rerender(<SidebarFilters {...props} sessions={sessions.map(s => ({ ...s, inboxUnanswered: 0 }))} />);
+  expect(screen.getByRole("button", { name: "Unanswered inbox 0" })).toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent("1 of 3");
+});
