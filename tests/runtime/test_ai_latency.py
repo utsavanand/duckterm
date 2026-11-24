@@ -251,3 +251,12 @@ def test_streaming_arguments_preserve_schema_and_isolation(tmp_path):
     assert args[args.index("--json-schema") + 1] == '{"type":"object"}'
     assert args[args.index("--effort") + 1] == "low"
     assert "--bare" not in args
+
+
+def test_large_result_line_preserves_utf8_answer_under_reply_limit(cli):
+    text = "é" * 20000
+    # Escaped JSON is over the default 64-KiB asyncio line limit, while the
+    # decoded answer is only 40,000 bytes and must still be accepted.
+    cli(emit([result(text)]))
+    assert call() == text
+    assert latency.recent()[-1]["output_bytes"] == 40000
