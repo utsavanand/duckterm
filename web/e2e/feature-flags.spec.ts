@@ -14,7 +14,8 @@ test("Settings reflects server feature flags and preserves core controls", async
   await expect(page.getByRole("button", { name: "Checkpointing", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Feature flags", exact: true }).click();
   const table = page.getByRole("table").filter({ has: page.getByRole("columnheader", { name: "This installation", exact: true }) });
-  await expect(table.getByRole("row")).toHaveCount(9);
+  await expect(table.getByRole("row")).toHaveCount(10);
+  await expect(table.getByRole("cell", { name: "Autopilot", exact: true })).toHaveCount(1);
   await expect(table.getByRole("cell", { name: "Home", exact: true })).toHaveCount(1);
   await expect(table.getByRole("cell", { name: "Background rule suggestions", exact: true })).toHaveCount(1);
   await expect(table.getByRole("cell", { name: optedIn ? "Local override" : "Release default", exact: true })).toHaveCount(supportsCloud ? 6 : 5);

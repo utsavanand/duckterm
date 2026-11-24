@@ -11,8 +11,8 @@ and restarting:
 
 The server adds enabled flags to the edition's feature list, so `GET /edition`
 and the inbox's `features` show them, the dashboard renders the gated surfaces,
-and the gated routes answer. Without the flag those routes return 403 with
-`code: feature_unavailable`. A name that is no longer under development is
+and the gated routes answer. Without the flag those routes return 403;
+dashboard routes also carry `code: feature_unavailable`. A name that is no longer under development is
 ignored, so a left-over file never blocks startup once a feature ships; a
 malformed file stops startup, like a bad `edition.json`.
 
