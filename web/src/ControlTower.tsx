@@ -1,5 +1,5 @@
 import { tasksWidget } from "./FolderTasks";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useEdition } from "./edition";
 import { AnalyticsTab } from "./analyticsData";
 import { api } from "./api";
@@ -142,6 +142,8 @@ export function ControlTower({
 
   if (fleet) {
     const TABS = [["chat", "Ask Oracle"], ["fleet", "Agent fleet"], ["analytics", "Analytics"]] as const;
+    const panel = (id: typeof tab) => ({ id: `rd-fleet-panel-${id}`, role: "tabpanel", "aria-labelledby": `rd-fleet-tab-${id}`, hidden: tab !== id });
+    const needAgents = new Set(needs.map((n) => n.session_key)).size;
     return (
       <div className="rd-tower rd-tower-widgets rd-fleet">
         <div className="rd-tower-bar">
@@ -152,47 +154,44 @@ export function ControlTower({
             Fleet monitor <small>Oracle · all workspaces</small>
           </h1>
         </div>
-        <div className="rd-fleet-tabs" role="tablist" aria-label="Fleet monitor">
+        <div className="rd-fleet-tabs" role="tablist" aria-label="Fleet monitor" onKeyDown={(e) => {
+          const step = { ArrowRight: 1, ArrowLeft: -1 }[e.key];
+          if (!step) return;
+          const next = TABS[(TABS.findIndex(([id]) => id === tab) + step + TABS.length) % TABS.length][0];
+          setTab(next);
+          e.currentTarget.querySelector<HTMLElement>(`#rd-fleet-tab-${next}`)?.focus();
+        }}>
           {TABS.map(([id, label]) => (
-            <button key={id} role="tab" aria-selected={tab === id} className={tab === id ? "on" : ""} onClick={() => setTab(id)}>{label}</button>
+            <button key={id} id={`rd-fleet-tab-${id}`} role="tab" aria-selected={tab === id} aria-controls={`rd-fleet-panel-${id}`} tabIndex={tab === id ? 0 : -1} className={tab === id ? "on" : ""} onClick={() => setTab(id)}>{label}</button>
           ))}
         </div>
-        <div className="rd-fleet-body" role="tabpanel" aria-label={TABS.find(([id]) => id === tab)?.[1]}>
-          {tab === "chat" && (
-            <div className="rd-tower-oracle rd-fleet-chat">
+        {/* Every tab stays mounted, so an unsent draft or a pending Send card
+            survives a look at another tab. */}
+        <div className="rd-fleet-body">
+          <div {...panel("chat")} className="rd-tower-oracle rd-fleet-chat">
               {needs.length > 0 && (
                 <div className="rd-fleet-needsbar">
                   <span className="rd-fleet-needsbar-ducks" aria-hidden="true">
                     {needs.slice(0, 4).map((n) => <OracleDuck key={n.id} agent={agents.find((a) => a.key === n.session_key)} pose="waiting" size={22} />)}
                   </span>
                   <span className="rd-fleet-needsbar-text">
-                    <b>{needs.length}</b> {needs.length === 1 ? "agent needs" : "agents need"} you. Oldest: {needs[0].name}, {ago(now - needs[0].created_at)} ago
+                    <b>{needs.length}</b> {needs.length === 1 ? "request" : "requests"} from {needAgents} {needAgents === 1 ? "agent" : "agents"}. Oldest: {needs[0].name}, {ago(now - needs[0].created_at)} ago
                   </span>
                   <button className="rd-btn rd-btn-sm rd-fleet-needsbar-open" onClick={() => setNeedsOpen(true)}>Open Needs you</button>
                 </div>
               )}
               <OracleChat relay={relay} onRelayChange={relay.refresh} onOpenTerminal={onOpenTerminal} />
-            </div>
-          )}
-          {tab === "fleet" && <div className="rd-tower-scroll">{teamsSection}{factsSection}</div>}
-          {tab === "analytics" && (
-            <div className="rd-tower-scroll">
-              {widgets}
-              <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={() => onAnalytics("tokens")}>Full analytics ↗</button>
-            </div>
-          )}
+          </div>
+          <div {...panel("fleet")} className="rd-tower-scroll">{teamsSection}{factsSection}</div>
+          <div {...panel("analytics")} className="rd-tower-scroll">
+            {widgets}
+            <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={() => onAnalytics("tokens")}>Full analytics ↗</button>
+          </div>
         </div>
         {needsOpen && (
           <>
             <div className="rd-fleet-scrim" onClick={() => setNeedsOpen(false)} />
-            <section className="rd-fleet-needs-window" role="dialog" aria-label="Needs you">
-              <header>
-                <h2>Needs you</h2>
-                <span>{needs.length} open, oldest first</span>
-                <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={() => setNeedsOpen(false)}>Close</button>
-              </header>
-              <div className="rd-fleet-needs-cards">{needsCards}</div>
-            </section>
+            <NeedsWindow count={needs.length} onClose={() => setNeedsOpen(false)}>{needsCards}</NeedsWindow>
           </>
         )}
         {agentCard}
@@ -233,6 +232,34 @@ export function ControlTower({
 
       {agentCard}
     </div>
+  );
+}
+
+// Focus moves in on open, Tab stays inside, and closing returns focus to
+// whatever opened it (the banner button or the Analytics tile). Escape is
+// handled by the tower's key listener.
+function NeedsWindow({ count, onClose, children }: { count: number; onClose: () => void; children: ReactNode }) {
+  const box = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const previous = document.activeElement;
+    box.current?.focus();
+    return () => { if (previous instanceof HTMLElement && previous.isConnected) previous.focus(); };
+  }, []);
+  return (
+    <section ref={box} className="rd-fleet-needs-window" role="dialog" aria-label="Needs you" aria-modal="true" tabIndex={-1} onKeyDown={(e) => {
+      if (e.key !== "Tab") return;
+      const items = [...e.currentTarget.querySelectorAll<HTMLElement>("button:not(:disabled),input:not(:disabled),textarea:not(:disabled),select:not(:disabled),a[href]")];
+      const first = items[0], last = items[items.length - 1];
+      if (e.shiftKey && (document.activeElement === first || document.activeElement === e.currentTarget)) { e.preventDefault(); last?.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
+    }}>
+      <header>
+        <h2>Needs you</h2>
+        <span>{count} open, oldest first</span>
+        <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={onClose}>Close</button>
+      </header>
+      <div className="rd-fleet-needs-cards">{children}</div>
+    </section>
   );
 }
 

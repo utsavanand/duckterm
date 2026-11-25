@@ -199,24 +199,73 @@ it("with fleet_monitor, opens on Ask Oracle with tabs for the fleet and analytic
   expect(screen.queryByRole("region", { name: "Teams" })).toBeNull();
   fireEvent.click(screen.getByRole("tab", { name: "Agent fleet" }));
   expect(screen.getByRole("region", { name: "Teams" })).toBeVisible();
-  expect(screen.queryByLabelText("Message Oracle")).toBeNull();
+  expect(screen.getByLabelText("Message Oracle")).not.toBeVisible();
   fireEvent.click(screen.getByRole("tab", { name: "Analytics" }));
   expect(await screen.findByRole("button", { name: "Show everything that needs you" })).toBeVisible();
+});
+
+it("with fleet_monitor, an unsent Oracle draft survives a look at the other tabs", async () => {
+  fleetMonitor();
+  fireEvent.change(screen.getByLabelText("Message Oracle"), { target: { value: "Unsent owner draft" } });
+  for (const other of ["Agent fleet", "Analytics"]) {
+    fireEvent.click(screen.getByRole("tab", { name: other }));
+    fireEvent.click(screen.getByRole("tab", { name: "Ask Oracle" }));
+    expect(screen.getByLabelText("Message Oracle")).toHaveValue("Unsent owner draft");
+  }
+});
+
+it("with fleet_monitor, arrow keys move between tabs and only the selected tab is a tab stop", () => {
+  fleetMonitor();
+  const chat = screen.getByRole("tab", { name: "Ask Oracle" });
+  expect(screen.getAllByRole("tab").map((t) => t.tabIndex)).toEqual([0, -1, -1]);
+  fireEvent.keyDown(chat, { key: "ArrowRight" });
+  const fleet = screen.getByRole("tab", { name: "Agent fleet" });
+  expect(fleet).toHaveAttribute("aria-selected", "true");
+  expect(document.activeElement).toBe(fleet);
+  fireEvent.keyDown(fleet, { key: "ArrowLeft" });
+  fireEvent.keyDown(chat, { key: "ArrowLeft" });
+  expect(screen.getByRole("tab", { name: "Analytics" })).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByRole("tabpanel", { name: "Analytics" })).toBeVisible();
 });
 
 it("with fleet_monitor, the banner and the tile open one Needs you window that Escape closes", async () => {
   fleetMonitor();
   const open = await screen.findByRole("button", { name: "Open Needs you" });
-  expect(open.parentElement).toHaveTextContent("1 agent needs you. Oldest: qa, 4 days ago");
+  expect(open.parentElement).toHaveTextContent("1 request from 1 agent. Oldest: qa, 4 days ago");
+  open.focus();
   fireEvent.click(open);
   const win = screen.getByRole("dialog", { name: "Needs you" });
+  expect(win).toHaveAttribute("aria-modal", "true");
+  expect(document.activeElement).toBe(win);
   expect(within(win).getByText("Deploy now?")).toBeVisible();
   expect(within(win).getByRole("textbox", { name: "Reply to qa" })).toBeVisible();
+  // Tab wraps inside the window instead of leaving it.
+  const close = within(win).getByRole("button", { name: "Close" });
+  const controls = win.querySelectorAll<HTMLElement>("button:not(:disabled),textarea:not(:disabled)");
+  controls[controls.length - 1].focus();
+  fireEvent.keyDown(controls[controls.length - 1], { key: "Tab" });
+  expect(document.activeElement).toBe(close);
+  fireEvent.keyDown(close, { key: "Tab", shiftKey: true });
+  expect(document.activeElement).toBe(controls[controls.length - 1]);
   fireEvent.keyDown(window, { key: "Escape" });
   expect(screen.queryByRole("dialog", { name: "Needs you" })).toBeNull();
+  expect(document.activeElement).toBe(open);
   fireEvent.click(screen.getByRole("tab", { name: "Analytics" }));
-  fireEvent.click(await screen.findByRole("button", { name: "Show everything that needs you" }));
-  expect(screen.getByRole("dialog", { name: "Needs you" })).toBeVisible();
+  const tile = await screen.findByRole("button", { name: "Show everything that needs you" });
+  tile.focus();
+  fireEvent.click(tile);
+  expect(document.activeElement).toBe(screen.getByRole("dialog", { name: "Needs you" }));
+  fireEvent.click(within(screen.getByRole("dialog", { name: "Needs you" })).getByRole("button", { name: "Close" }));
+  expect(document.activeElement).toBe(tile);
+});
+
+it.each([
+  [["qa", "qa", "qa"], "3 requests from 1 agent."],
+  [["qa", "architect", "main-qa"], "3 requests from 3 agents."],
+])("with fleet_monitor, the banner counts requests and the agents they come from (%j)", async (from, text) => {
+  vi.mocked(api.relay).mockResolvedValue({ notes: from.map((key, i) => ({ id: `n${i}`, session_key: key, name: key, folder: "Duckterm", runtime: "claude-code", kind: "question", status: "open", created_at: NOW - (3 - i) * 60_000, question: `Q${i}?` })), rules: [], open: 3 });
+  fleetMonitor();
+  expect((await screen.findByRole("button", { name: "Open Needs you" })).parentElement).toHaveTextContent(text);
 });
 
 it("without fleet_monitor, the page is still the Control tower", async () => {
