@@ -380,7 +380,7 @@ class HistoryStore:
         # refused. (Can't parameterize a PRAGMA; the value is our own int.)
         self._conn.execute(f"PRAGMA user_version = {_SCHEMA_VERSION}")
         if self.session_api.edition.includes("inbox"):
-            self.session_api._sweep()
+            self.session_api._sweep(force_retire=True)
         # Retention: hooks write thousands of event rows a day and nothing
         # else ever deletes them — sweep everything older than 30 days at
         # startup so the DB doesn't grow without bound. Session rows stay.

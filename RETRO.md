@@ -1,3 +1,13 @@
+## 2026-11-25 — Foreground inbox reads must not repeat historical retirement
+
+Badge counts invoked full cleanup twice, and protected old mail made that work
+repeat indefinitely. Expire deadlines on every read, but schedule physical
+retirement with a monotonic interval and force it at startup. Keep preservation
+callbacks before retirement and advance the interval only after a successful
+commit. Extract checkpoint retention metadata once per statement; malformed
+markers must still protect history. Test scheduling, immediate expiry, retries,
+SELECT/DELETE parity and exactly-once analytics separately.
+
 ## 2026-11-24 — A cache budget applied after parsing cannot bound read memory
 
 Reading an entire transcript suffix, decoding it and splitting all its lines

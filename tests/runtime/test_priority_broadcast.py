@@ -147,7 +147,7 @@ def test_open_priority_is_never_swept_but_a_replied_one_is(scenario, monkeypatch
     call(history, creds["claude"], "POST", f"/questions/{ids['claude']}/answer", {"text": "ok"})
     later = time.time() + 30 * 86400
     monkeypatch.setattr("duckterm.core.session_api.time.time", lambda: later)
-    history.session_api.pending_counts()  # runs the sweep
+    history.session_api._sweep(force_retire=True)  # force physical retention in this test
     remaining = {
         r[0]
         for r in history._conn.execute(
