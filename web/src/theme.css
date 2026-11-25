@@ -918,7 +918,16 @@ code,
   gap: 6px;
   flex-wrap: wrap;
 }
+/* The status is two clauses of prose and will not share 420px with a button,
+   so the button wraps. Right-aligning it makes that wrap look intended and
+   puts the action at the edge the eye returns to, rather than stranded mid-row
+   under the sentence it belongs to. */
+.rd-connector-proof > span {
+  flex: 1 1 100%;
+  min-width: 0;
+}
 .rd-connector-proof button {
+  flex-shrink: 0;
   margin-left: auto;
 }
 .rd-connector-harnesses {
@@ -938,12 +947,18 @@ code,
 .rd-connector-harnesses .dim {
   color: var(--muted);
 }
+/* The editor is a mode, not more of the same list. A card marks where the
+   status ends and the settings begin; flush-left it read as one long column. */
 .rd-connector-token {
   display: flex;
   flex-direction: column;
   align-items: stretch;
-  gap: 8px;
-  margin: 8px 0 0 15px;
+  gap: 10px;
+  margin: 10px 0 0 15px;
+  padding: 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg-soft);
 }
 .rd-connector-token select, .rd-connector-token input, .rd-connector-token fieldset {
   max-width: 100%;
@@ -951,7 +966,7 @@ code,
 }
 .rd-connector-token input {
   flex: 1;
-  background: var(--bg-soft);
+  background: var(--bg);
   border: 1px solid var(--border-strong);
   border-radius: 6px;
   color: var(--text);
@@ -961,6 +976,88 @@ code,
 .rd-connector-token input:focus {
   outline: none;
   border-color: var(--brand-green);
+}
+/* The connector <select> had no per-control rule, so the global `appearance:
+   none` reset stripped its chrome and left browser-default font and padding.
+   These are the same values as .rd-origin select. */
+.rd-connector-token select {
+  border: 1px solid var(--border-strong);
+  border-radius: 6px;
+  /* --bg, not --bg-soft: the card behind it is already --bg-soft. */
+  background-color: var(--bg);
+  color: var(--text);
+  font: inherit;
+  font-size: 0.75rem;
+  padding: 5px 26px 5px 8px;
+  cursor: pointer;
+  width: 100%;
+}
+.rd-connector-token select:focus {
+  outline: none;
+  border-color: var(--brand-green);
+}
+/* Used by SessionFilesView and the credential label but never defined, so the
+   text meant for screen readers was rendering on screen. */
+.rd-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+/* Label above its control, matching every other form in the app. */
+.rd-connector-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.rd-connector-field > label {
+  font-size: 0.6875rem;
+  color: var(--muted);
+}
+/* Checkboxes drew the OS blue against a green theme. */
+.rd-connector-harnesses input[type="checkbox"] {
+  accent-color: var(--brand-green);
+}
+.rd-connector-harnesses label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.75rem;
+}
+/* Buttons share a row and keep their intrinsic width; stacking them full-bleed
+   turned a two-option choice into something that looked sequential. */
+.rd-connector-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+/* A refresh hint, not an action: the control reads inline in the sentence. */
+.rd-linkbtn {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--brand-green-strong);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: color-mix(in srgb, var(--brand-green-strong) 45%, transparent);
+  cursor: pointer;
+}
+.rd-linkbtn:hover {
+  text-decoration-color: var(--brand-green-strong);
+}
+.rd-connector-hint {
+  margin-top: 2px;
+}
+/* A state, not a value: no monospace. */
+.rd-connector-state {
+  font-family: inherit;
 }
 
 /* Skill kits modal: one card per registered kit. */

@@ -69,7 +69,7 @@ it("accepts a pasted token and says a fine-grained one can be narrower", async (
   vi.mocked(api.connectors).mockResolvedValue({ connectors: [row] });
   vi.mocked(api.enableConnector).mockResolvedValue({ ...live, credential: "stored" });
   render(<Connectors />);
-  fireEvent.click(await screen.findByText("Paste a token instead"));
+  fireEvent.click(await screen.findByText("Paste a token"));
   // gh cannot drop below repo + read:org + gist, so this is the only way to
   // hand agents less than full repo write.
   expect(screen.getByText(/cannot go narrower than full/)).toBeVisible();
@@ -141,7 +141,7 @@ it("sends only the agents left checked, and refuses to send none", async () => {
   vi.mocked(api.connectors).mockResolvedValue({ connectors: [row] });
   vi.mocked(api.enableConnector).mockResolvedValue({ ...live, harnesses: ["claude-code"] });
   render(<Connectors />);
-  fireEvent.click(await screen.findByText("Paste a token instead"));
+  fireEvent.click(await screen.findByText("Paste a token"));
   fireEvent.change(screen.getByLabelText("GitHub personal access token"), { target: { value: "k" } });
   fireEvent.click(screen.getByLabelText("Codex"));
   fireEvent.click(screen.getByText("Verify and share"));
@@ -151,7 +151,7 @@ it("sends only the agents left checked, and refuses to send none", async () => {
 it("cannot submit with no agent selected", async () => {
   vi.mocked(api.connectors).mockResolvedValue({ connectors: [row] });
   render(<Connectors />);
-  fireEvent.click(await screen.findByText("Paste a token instead"));
+  fireEvent.click(await screen.findByText("Paste a token"));
   fireEvent.change(screen.getByLabelText("GitHub personal access token"), { target: { value: "k" } });
   fireEvent.click(screen.getByLabelText("Codex"));
   fireEvent.click(screen.getByLabelText("Claude Code"));

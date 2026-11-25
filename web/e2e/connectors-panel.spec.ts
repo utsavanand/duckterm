@@ -148,7 +148,7 @@ test("the connect flow and its editor fit the sidebar", async ({ page }, testInf
 
     // The CLI login is the primary path and needs no editor at all.
     await expect(row.getByRole("button", { name: "Use my GitHub CLI login" })).toBeVisible();
-    await row.getByRole("button", { name: "Paste a token instead" }).click();
+    await row.getByRole("button", { name: "Paste a token" }).click();
 
     for (const width of [1440, 1024]) {
       await page.setViewportSize({ width, height: 900 });

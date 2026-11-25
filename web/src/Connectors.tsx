@@ -157,7 +157,9 @@ export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
         <div className="rd-connector-row">
           <span className={`dot ${c.agents_use ? "on" : connected ? "part" : "off"}`} />
           <span className="rd-connector-title">{c.title}</span>
-          <span className="rd-connector-cred">
+          {/* An identity is a value and stays monospace; "Not connected" is a
+              state, and monospace made it read as returned output. */}
+          <span className={`rd-connector-cred${connected ? "" : " rd-connector-state"}`}>
             {connected
               ? c.identity ?? "Identity not verified — reconnect to verify"
               : "Not connected"}
@@ -197,13 +199,14 @@ export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
           Agents also need the server to run: {c.detail}
         </div>}
 
+        {/* One span, not two: as separate flex items the status and the usage
+            could not share a line with the button at panel width. */}
         {c.agents_use && <div className="rd-connector-desc rd-connector-proof">
           <span>{checks[c.name]
             ? (checks[c.name].ok
                 ? `✓ Verified — ${checks[c.name].tools} tools available`
                 : `✗ ${checks[c.name].detail ?? "Verification failed"}`)
-            : "Configured · not verified this session"}</span>
-          <span> · {lastUsedLabel(c)}</span>
+            : "Configured · not verified this session"} · {lastUsedLabel(c)}</span>
           <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy !== null} onClick={() => verify(c)}>
             {busy === c.name ? "Checking…" : "Check now"}
           </button>
@@ -217,20 +220,28 @@ export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
             {c.runner_ready === false
               ? <div className="rd-connector-desc rd-connector-warn">Before connecting: {c.detail}</div>
               : <div className="rd-connector-desc">✓ Found the GitHub MCP server, so agents can run it.</div>}
-            {(c.sources ?? []).includes("gh-cli") && <button className="rd-btn rd-btn-sm rd-btn-primary" disabled={busy !== null} onClick={() => { setSource("gh-cli"); setToken(""); setHarnesses(c.harnesses ?? HARNESS_ORDER); void change({ ...c, credential: "gh-cli" }, "enable", c.harnesses ?? HARNESS_ORDER); }}>
-              Use my GitHub CLI login
-            </button>}
-            <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy !== null} onClick={() => { setEditing(c.name); setSource("stored"); setToken(""); setHarnesses(c.harnesses ?? HARNESS_ORDER); }}>
-              Paste a token instead
-            </button>
-            <div className="rd-connector-desc">Finished signing in elsewhere? <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={refresh}>Refresh credentials</button></div>
+            {/* Both ways in sit on one row at equal weight: stacking them
+                full-bleed made a two-option choice look like a wizard. */}
+            <div className="rd-connector-actions">
+              {(c.sources ?? []).includes("gh-cli") && <button className="rd-btn rd-btn-sm rd-btn-primary" disabled={busy !== null} onClick={() => { setSource("gh-cli"); setToken(""); setHarnesses(c.harnesses ?? HARNESS_ORDER); void change({ ...c, credential: "gh-cli" }, "enable", c.harnesses ?? HARNESS_ORDER); }}>
+                Use my GitHub CLI login
+              </button>}
+              <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy !== null} onClick={() => { setEditing(c.name); setSource("stored"); setToken(""); setHarnesses(c.harnesses ?? HARNESS_ORDER); }}>
+                Paste a token
+              </button>
+            </div>
+            {/* A recovery hint, not a third way in: it reads as one sentence
+                with an inline link rather than a button of its own. */}
+            <div className="rd-connector-desc rd-connector-hint">Signed in elsewhere? <button className="rd-linkbtn" onClick={refresh}>Refresh credentials</button></div>
           </div>}
 
           {connected && <div className="rd-connector-installed">
-            {c.agents_use
-              ? <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy !== null} onClick={() => change(c, "disable")}>Stop sharing with agents</button>
-              : <button className="rd-btn rd-btn-sm rd-btn-primary" disabled={busy !== null} onClick={() => change(c, "enable", c.harnesses ?? HARNESS_ORDER)}>Share with agents</button>}
-            <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy !== null} onClick={() => change(c, "forget")}>Sign out</button>
+            <div className="rd-connector-actions">
+              {c.agents_use
+                ? <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy !== null} onClick={() => change(c, "disable")}>Stop sharing with agents</button>
+                : <button className="rd-btn rd-btn-sm rd-btn-primary" disabled={busy !== null} onClick={() => change(c, "enable", c.harnesses ?? HARNESS_ORDER)}>Share with agents</button>}
+              <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy !== null} onClick={() => change(c, "forget")}>Sign out</button>
+            </div>
             {/* Revoking lives in the sentence, not the button row: it happens on
                 github.com, so offering it beside Sign out read as a third thing
                 Duckterm does. */}
@@ -238,11 +249,20 @@ export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
           </div>}
 
           {editing === c.name && <div className="rd-connector-token">
-            <label>Credential
-              <select aria-label={`${c.title} credential source`} value={source} onChange={e => { setSource(e.target.value); setToken(""); }}>
+            {/* Label above the control, as every other form in the app does.
+                Wrapping the select inside the label put the two on one line
+                with no gap, and the select kept the browser's own font. */}
+            <div className="rd-connector-field">
+              {/* The visible word is "Credential"; the accessible name keeps
+                  the connector in it, since the panel can list more than one. */}
+              <label htmlFor={`cred-${c.name}`}>
+                <span aria-hidden="true">Credential</span>
+                <span className="rd-sr-only">{c.title} credential source</span>
+              </label>
+              <select id={`cred-${c.name}`} value={source} onChange={e => { setSource(e.target.value); setToken(""); }}>
                 {(c.sources ?? []).map(s => <option key={s} value={s}>{sourceNames[s] ?? s}</option>)}
               </select>
-            </label>
+            </div>
             {source === "stored" && <>
               <input aria-label={`${c.title} personal access token`} type="password" autoComplete="off" value={token} placeholder={c.credential === "stored" ? "Leave blank to reuse the stored token" : "ghp_… or github_pat_…"} onChange={e => setToken(e.target.value)} />
               {/* A gh token cannot go below repo + read:org + gist, so a

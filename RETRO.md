@@ -1,3 +1,23 @@
+## 2026-11-25 — A global appearance reset needs a per-control rule to match
+
+The stylesheet resets `select { appearance: none }` so WebKit stops drawing the
+aqua dropdown, and leaves colors, border and padding to each control's own rule.
+A select without one renders chrome-less in the browser's default font, which is
+worse than the native widget it replaced. The connector select had only
+`max-width`, so it shipped looking unstyled. A blanket reset is a contract: every
+control it strips needs a rule, or the reset is a regression.
+
+Two neighbouring lessons from the same pass. `accent-color` was absent from the
+whole stylesheet, so every checkbox drew macOS blue inside a green theme. And
+`.rd-sr-only` was used in `SessionFilesView` but never defined, so text meant
+only for screen readers was rendering on screen -- a class that does not exist
+fails silently and looks like content.
+
+When a flex row cannot fit its items, `margin-left: auto` does not center the
+overflow, it strands it: `Check now` dropped to its own line, right-aligned
+away from the text it acts on. Decide where a wrap lands rather than letting the
+leftover margin decide.
+
 ## 2026-11-24 — Exercise empty-input keys and Unicode highlight boundaries
 
 Search must release Escape to sidebar navigation after clearing its own value.
