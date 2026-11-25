@@ -1,3 +1,10 @@
+## 2026-11-25 — Finish a tooltip interaction before testing the next control
+
+A browser check left a keyboard-focused Oracle tooltip open and then tried to
+click a button beneath it. The CI trace showed pointer interception, not a slow
+backend. Move focus to the next control and assert the tooltip closes before
+clicking; do not force the click or raise the timeout to conceal the obstruction.
+
 ## 2026-11-25 — Foreground inbox reads must not repeat historical retirement
 
 Badge counts invoked full cleanup twice, and protected old mail made that work
