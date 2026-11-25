@@ -110,6 +110,8 @@ def test_durable_idempotent_batch_and_no_peer_budget(scenario, tmp_path, monkeyp
     finally:
         reopened.close()
     monkeypatch.setattr("duckterm.core.session_api.time.time", lambda: future + 8 * 86400)
+    # The wall-clock jump must include a due physical-retirement pass.
+    history.session_api._sweep(force_retire=True)
     page = history.session_api.inbox("b", owner=True)["messages"]
     assert [m["kind"] for m in page] == ["question"]
 
