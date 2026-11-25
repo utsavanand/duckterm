@@ -34,3 +34,10 @@ configuration and event-path check, not a guarantee that a model is available.
 Already-running sessions are not restarted or modified automatically. Their
 existing Install hooks action remains available, and their next supervised
 launch uses the automatic setup path.
+
+Session details displays Activity tracking independently from conversation identity.
+It shows Awaiting first event, Connected, Not confirmed, Not running, or Not verified
+from the server's evidence. Existing recovery polling refreshes the state; older
+servers without this field do not receive an invented status. First-time setup
+says the harness is installed, and explains that activity tracking connects when
+a session starts.

@@ -8,15 +8,26 @@ import type { SessionView } from "./types";
 import { identityPresentation, launchIdentity } from "./conversationRecoveryState";
 import "./conversationRecovery.css";
 
-export function ConversationIdentityNotice({ identity, computer, stopped, busy, onInstall, onChoose, onDetach }: {
-  identity: ConversationIdentity; computer: string; stopped: boolean; busy: boolean;
+export function ConversationIdentityNotice({ identity, computer, stopped, busy, runtime, onInstall, onChoose, onDetach }: {
+  identity: ConversationIdentity; computer: string; stopped: boolean; busy: boolean; runtime?: string;
   onInstall?: () => void; onChoose?: () => void; onDetach?: () => void;
 }) {
   const view = identityPresentation(identity);
+  const connection = identity.hooks.connection;
+  const tracking = connection && {
+    awaiting: "Awaiting first event", connected: "Connected", unconfirmed: "Not confirmed",
+    inactive: "Not running", unknown: "Not verified",
+  }[connection.state];
+  const trackingHint = connection?.state === "awaiting" ? "Hooks configured. Waiting for this session to connect."
+    : connection?.state === "unconfirmed" ? `Hooks are configured, but this session has not sent an event. ${runtime === "claude-code" ? "Check /hooks in Claude Code." : runtime === "codex" ? "Check /hooks and trust DuckTerm’s hooks." : "Check the harness’s hook configuration."}` : null;
   return <section className="rd-conversation-health" aria-label="Conversation recovery" aria-live="polite">
     <h3 className={identity.status !== "recorded" ? "rd-conversation-warning" : ""}>{view.title}</h3>
     <p>{view.detail}</p>
     {identity.reason && <p>{identity.reason}</p>}
+    {tracking && <div className="rd-activity-tracking">
+      <dl><dt>Activity tracking</dt><dd className={`rd-activity-tracking-${connection?.state}`}>{tracking}</dd></dl>
+      {trackingHint && <p className="hint">{trackingHint}</p>}
+    </div>}
     <div className="rd-conversation-actions">
       {onInstall && identity.hooks.canInstall && identity.hooks.status === "missing" && <button className="rd-btn rd-btn-primary" disabled={busy} onClick={onInstall}>Install hooks</button>}
       {onChoose && stopped && identity.canAdopt && identity.status === "missing" && <button className="rd-btn rd-btn-ghost" disabled={busy} onClick={onChoose}>Choose a conversation</button>}
@@ -155,7 +166,7 @@ export function SessionConversationRecovery({ session, stopped, onIdentity }: {
   }
   const computer = session.hostLabel || hostName(session.key);
   return <>
-    {identity && <ConversationIdentityNotice identity={identity} computer={computer} stopped={stopped} busy={busy || uncertain || undoPending} onDetach={() => void detach()} onChoose={() => { generation.current += 1; setChoosing(true); }} onInstall={() => void install()} />}
+    {identity && <ConversationIdentityNotice identity={identity} computer={computer} runtime={session.runtime} stopped={stopped} busy={busy || uncertain || undoPending} onDetach={() => void detach()} onChoose={() => { generation.current += 1; setChoosing(true); }} onInstall={() => void install()} />}
     {notice && <p className="hint" role="status">{notice}</p>}
     {error && session.conversationIdentity && <p className="rd-conversation-error" role="status">{error}<button className="rd-btn rd-btn-ghost" onClick={() => setRetry(n => n + 1)}>Check again</button></p>}
     {choosing && <ConversationRecoveryDialog service={service} sessionName={session.label} computer={computer} project={session.worktreePath || session.cwd} onClose={() => setChoosing(false)} onAdopted={update} />}

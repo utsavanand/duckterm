@@ -283,8 +283,8 @@ export function RuntimeSetupWizard({ onClose }: { onClose: () => void }) {
       {step === 0 && stage === "manual" && <><h1 id="rd-setup-heading">Set up {label} yourself</h1><p>{runtime ? "Run these commands in your terminal, then return here." : `Use ${label}’s own installation and sign-in instructions, then select it when creating a session.`}</p>
         {runtime && <pre className="rd-setup-command">{installCommand}{"\n\n"}{loginCommand}</pre>}{source}
         {footer(native && runtime ? "Check again" : "Continue", native && runtime ? checkAgain : () => setStep(1), true, busy)}</>}
-      {step === 0 && stage === "ready" && <><h1 id="rd-setup-heading">{label} is ready</h1><div className="rd-setup-status">✓ Installed · Credentials found</div>
-        <p>You can select it when creating a session.</p><p className="rd-setup-caption">Account limits and model access are checked by the agent when you use it.</p>{footer("Continue", () => setStep(1))}</>}
+      {step === 0 && stage === "ready" && <><h1 id="rd-setup-heading">{label} is installed</h1><div className="rd-setup-status">✓ Installed · Credentials found</div>
+        <p>DuckTerm connects activity tracking when you start a session.</p><p className="rd-setup-caption">Account limits and model access are checked by the agent when you use it.</p>{footer("Continue", () => setStep(1))}</>}
       {step === 0 && (stage === "failed" || stage === "stopped" || stage === "unknown") && <>
 {minor}
         {stage === "unknown" && runtime && status?.installed && <div className="rd-setup-minor"><button onClick={() => setStage("signin")}>Sign in</button><button onClick={() => setStep(1)}>Continue without checking</button></div>}

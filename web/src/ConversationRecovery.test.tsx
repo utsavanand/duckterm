@@ -154,3 +154,26 @@ it("keeps Undo pending across a recovery-card remount even when the old binding 
     expect(api.detach).toHaveBeenCalledOnce();
   } finally { cleanup(); spy.mockRestore(); }
 });
+
+// Configured hook files alone are not evidence that this launch is connected.
+it("shows activity delivery separately from conversation identity and refreshes its state", () => {
+  const identity: ConversationIdentity = { ...recorded, hooks: { status: "configured", canInstall: false, connection: { state: "awaiting" } } };
+  const props = { identity, computer: "Build Mac", runtime: "claude-code", busy: false, stopped: false };
+  const { rerender } = render(<ConversationIdentityNotice {...props} />);
+  expect(screen.getByText("Awaiting first event")).toBeVisible();
+  expect(screen.queryByText("Connected")).toBeNull();
+  rerender(<ConversationIdentityNotice {...props} identity={{ ...identity, hooks: { ...identity.hooks, connection: { state: "unconfirmed" } } }} />);
+  expect(screen.getByText("Not confirmed")).toBeVisible();
+  expect(screen.getByText(/Check \/hooks in Claude Code/)).toBeVisible();
+  rerender(<ConversationIdentityNotice {...props} identity={{ ...identity, hooks: { ...identity.hooks, connection: { state: "connected" } } }} />);
+  expect(screen.getByText("Connected")).toBeVisible();
+  expect(screen.queryByText(/Check \/hooks/)).toBeNull();
+  // An older server supplies no delivery evidence: do not invent a status.
+  rerender(<ConversationIdentityNotice {...props} identity={recorded} />);
+  expect(screen.queryByText("Activity tracking")).toBeNull();
+});
+it.each(["unknown", "inactive"] as const)("does not call %s activity connected", state => {
+  render(<ConversationIdentityNotice identity={{ ...recorded, hooks: { status: "configured", canInstall: false, connection: { state } } }} computer="Build Mac" stopped={state === "inactive"} busy={false} />);
+  expect(screen.getByText(state === "inactive" ? "Not running" : "Not verified")).toBeVisible();
+  expect(screen.queryByText("Connected")).toBeNull();
+});
