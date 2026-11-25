@@ -53,7 +53,12 @@ test("location icons preserve names and expose remote identity, disconnection an
     await page.mouse.move(0,0);
     await oracleRemote.focus();
     await expect(page.getByRole('tooltip')).toContainText('Remote · Build server');
-    await page.getByRole('button', { name: 'Show everything that needs you' }).click();
+    const needsButton = page.getByRole('button', { name: 'Show everything that needs you' });
+    // Finish the keyboard-tooltip check before clicking another control that
+    // the focused card can cover when earlier tests leave a longer agent list.
+    await needsButton.focus();
+    await expect(page.getByRole('tooltip')).toHaveCount(0);
+    await needsButton.click();
     const need = page.locator('.rd-tower-need', {hasText:'remote-reviewer'});
     await expect(need.locator('.rd-location-cloud')).toBeVisible();
     await expect(need.locator('[tabindex]')).toHaveCount(0);

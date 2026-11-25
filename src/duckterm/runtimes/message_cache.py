@@ -14,6 +14,7 @@ Parser = Callable[[Iterable[str], int], list[dict[str, object]]]
 # Fast writes can share even nanosecond-valued mtime/ctime on Linux. Only
 # trust stat after checking the bytes beyond this filesystem timestamp window.
 STAMP_WINDOW_NS = 2_000_000_000
+READ_CHUNK = 1024 * 1024
 
 
 @dataclass
@@ -40,6 +41,8 @@ class MessageCache:
     Changed files verify the committed prefix before parsing the new suffix;
     a growing rewrite must not retain stale message contents or pin identities.
     Returned records are deeply detached, including nested tool input and blocks.
+    Raw input is buffered by chunk plus the longest unfinished line, rather than
+    the whole transcript. Parsed records and complete responses remain in memory.
     """
 
     def __init__(self, parser: Parser, max_files: int = 8, max_bytes: int = 128 << 20) -> None:
@@ -72,6 +75,18 @@ class MessageCache:
                 state.response_scope = scope
             return state.response
 
+    def _make_room(self, path: Path, size: int) -> None:
+        """Free unrelated LRU records before allocating the incoming transcript."""
+        other_bytes = sum(item.stamp[0] for key, item in self._states.items() if key != path)
+        other_files = len(self._states) - int(path in self._states)
+        for key in tuple(self._states):
+            if other_files + 1 <= self._max_files and other_bytes + size <= self._max_bytes:
+                break
+            if key != path:
+                other_bytes -= self._states[key].stamp[0]
+                other_files -= 1
+                del self._states[key]
+
     def _state(self, path: Path) -> _State | None:
         try:
             stat = path.stat()
@@ -87,7 +102,9 @@ class MessageCache:
                 self._states.move_to_end(path)
                 return state
             if state is None or state.identity != identity or stat.st_size < state.stamp[0]:
+                self._states.pop(path, None)
                 state = _State(identity)
+            self._make_room(path, stat.st_size)
             verified_at = time.time_ns()
             with path.open("rb") as source:
                 # Size growth alone does not establish an append: transcript
@@ -96,36 +113,53 @@ class MessageCache:
                 digest = hashlib.sha256()
                 remaining = state.offset
                 while remaining:
-                    chunk = source.read(min(remaining, 1024 * 1024))
+                    chunk = source.read(min(remaining, READ_CHUNK))
                     if not chunk:
                         break
                     digest.update(chunk)
                     remaining -= len(chunk)
                 if remaining or digest.digest() != state.digest:
+                    self._states.pop(path, None)
                     state = _State(identity)
                     digest = hashlib.sha256()
                     source.seek(0)
-                data = source.read(stat.st_size - state.offset)
-            content_digest = digest.copy()
-            content_digest.update(data)
+                content_digest = digest.copy()
+                remaining = stat.st_size - state.offset
+                tail = bytearray()
+                records: list[dict[str, object]] = []
+                offset, line_count = state.offset, state.lines
+                while remaining:
+                    chunk = source.read(min(remaining, READ_CHUNK))
+                    if not chunk:
+                        break
+                    remaining -= len(chunk)
+                    content_digest.update(chunk)
+                    end = chunk.rfind(b"\n") + 1
+                    if end:
+                        digest.update(tail)
+                        digest.update(chunk[:end])
+                        offset += len(tail) + end
+                        tail.extend(chunk[:end])
+                        # Keep splitlines' Unicode/CR semantics: annotations
+                        # use its line indices, including blanks and bad JSON.
+                        lines = tail.decode(errors="replace").splitlines()
+                        records.extend(self._parser(lines, line_count))
+                        line_count += len(lines)
+                        tail.clear()
+                    tail.extend(chunk[end:])
             state.verified_at = verified_at
             if content_digest.digest() == state.content_digest:
                 state.stamp = stamp
                 self._states.move_to_end(path)
                 return state
-            end = data.rfind(b"\n") + 1
-            lines = data[:end].decode(errors="replace").splitlines()
-            state.records.extend(self._parser(lines, state.lines))
-            state.lines += len(lines)
-            state.offset += end
-            digest.update(data[:end])
+            state.records.extend(records)
+            state.lines = line_count
+            state.offset = offset
             state.digest = digest.digest()
             state.content_digest = content_digest.digest()
             # Preserve the full parser's support for a valid final record
             # without a newline, but do not commit that potentially partial line.
-            state.trailing = self._parser(
-                data[end:].decode(errors="replace").splitlines(), state.lines
-            )
+            state.trailing = self._parser(tail.decode(errors="replace").splitlines(), state.lines)
             state.stamp = stamp
             state.response = None
             state.response_scope = None

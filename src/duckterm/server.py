@@ -1303,7 +1303,7 @@ class Server:
             await _write_json(writer, 401, {"error": "owner credential required"})
             return
         counts = self.history.session_api.pending_counts()
-        unanswered = self.history.session_api.pending_counts(requires_reply=True)
+        unanswered = self.history.session_api.pending_counts(requires_reply=True, sweep=False)
         # Cross-computer pending mail consists of questions requiring replies.
         for key, count in self.collaboration.pending_counts().items():
             counts[key] = counts.get(key, 0) + count
@@ -1800,6 +1800,8 @@ class Server:
             await self._folder_stats(writer, folder)
         elif view == "chat":
             self.history.session_api._sweep()
+            # Live replies must not wait for the historical-retirement interval.
+            self.history.folder_chats.refresh_dispatches(self.history._conn)
             _, messages = self.history.folder_chats.snapshot(folder)
             await _write_json(writer, 200, {"messages": messages})
         else:
