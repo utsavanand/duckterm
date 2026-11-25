@@ -96,6 +96,15 @@ def build_parser() -> argparse.ArgumentParser:
     voice.add_argument("action", choices=["status", "install", "remove"])
     sub.add_parser("dashboard", help="build (if needed) and open the dashboard in a browser")
     sub.add_parser("purge-test", help="delete all test/seed sessions and their data (test=1)")
+    convert = sub.add_parser(
+        "convert-memory-copies",
+        help="replace raw conversation copies from older versions with extracted text",
+    )
+    convert.add_argument(
+        "--apply",
+        action="store_true",
+        help="convert and move the raw copies to ~/.duckterm/removed",
+    )
     sub.add_parser("doctor", help="check deps, server, hooks, and trust; print what's missing")
 
     inst = sub.add_parser(
@@ -907,6 +916,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         return _doctor()
     if args.command == "purge-test":
         return _purge_test()
+    if args.command == "convert-memory-copies":
+        return _convert_memory_copies(args.apply)
     if args.command in (
         "connector-serve",
         "connector-service",
@@ -934,6 +945,64 @@ def main(argv: Sequence[str] | None = None) -> int:
         return 1
     print(f"command '{args.command}' is not implemented yet", file=sys.stderr)
     return 1
+
+
+def _convert_memory_copies(apply: bool) -> int:
+    import sqlite3
+    import time
+    from contextlib import closing
+
+    from duckterm import memory_convert
+    from duckterm.core.session_api import APIError
+    from duckterm.helpers import paths, security
+    from duckterm.persistence.digests import DigestStore
+    from duckterm.persistence.history import HistoryStore
+
+    # Read-only: opening HistoryStore would also run schema setup.
+    with closing(sqlite3.connect(paths.db_path().as_uri() + "?mode=ro", uri=True)) as readonly:
+        print(json.dumps(memory_convert.plan(readonly), indent=2))
+    if not apply:
+        print("Nothing changed. Run again with --apply to convert.")
+        return 0
+    # A server older than this command can't read records copies, so every
+    # converted citation would become unavailable until it was updated.
+    request = urllib.request.Request(
+        f"{_server_url()}/update/status",
+        headers={"X-Duckterm-Token": security.load_or_create_token()},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            running = json.loads(response.read()).get("installed_version")
+    except (OSError, ValueError) as exc:
+        print(f"Start DuckTerm {__version__} first; the server did not answer ({exc}).")
+        return 1
+    if running != __version__:
+        print(f"The running server is {running}; restart it on {__version__} first.")
+        return 1
+    conn = HistoryStore()._conn
+    DigestStore(conn=conn)
+    # Not ~/.Trash: macOS refuses it unless the terminal has Full Disk Access.
+    # The owner deletes this folder once satisfied (owner, 2026-11-24).
+    trash = paths.home() / "removed" / time.strftime("memory copies %Y-%m-%d %H.%M.%S")
+    try:
+        os.close(memory_convert.open_below(paths.home(), trash))
+    except (APIError, OSError) as exc:
+        print(f"Can't open {trash} ({exc}); nothing was changed.")
+        return 1
+    failed = moved = 0
+    for key in sorted(memory_convert.pending(conn)):
+        try:
+            report = memory_convert.convert(conn, key, trash, paths.home())
+        except (APIError, OSError) as exc:
+            failed += 1
+            report = {"session": key, "error": str(exc)}
+        moved += len(report.get("removed", []))
+        print(json.dumps(report))
+    if moved:
+        print(f"{moved} raw copies moved to {trash}. Delete that folder once you're satisfied.")
+    else:
+        print("No raw copies were moved.")
+    return 1 if failed else 0
 
 
 def _purge_test() -> int:

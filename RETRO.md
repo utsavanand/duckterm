@@ -1,3 +1,58 @@
+## 2026-11-24 — The conversion's Trash was unreachable and only its last folder was checked
+
+QA's re-check of #461: O_NOFOLLOW on a whole path only refuses a symlink in
+the last component, so a symlinked ~/.Trash was still followed. Checking that
+by hand turned up a bigger gap: macOS refuses to let this process open
+~/.Trash at all without Full Disk Access. The conversion rebinds every reference first and
+moves files last, so a real run would have changed the database and then failed
+on every agent. No test or rehearsal used the real Trash. The owner chose a
+holding folder, ~/.duckterm/removed/<date>, which they delete when satisfied.
+It is opened one component at a time below ~/.duckterm, before anything
+changes, and the CLI stops up front if it can't open it. Lesson: rehearse
+against the real destination too, not only a stand-in for it; OS protections
+live there.
+
+## 2026-11-24 — Moving files to the Trash could overwrite through a symlink
+
+QA found it on #461: the conversion moved raw copies with mkdir(exist_ok) and
+shutil.move. If the Trash folder for an agent was a symlink, files landed
+wherever it pointed and replaced what was there. Moves now go through
+directories opened without following symlinks, as a hard link plus unlink, so
+an existing file is never replaced and a Trash on another volume is refused
+rather than copied. A re-run also recognises a file it already linked. The
+dry run now opens the database read-only, without schema setup. Lesson: a
+"safe" destination needs the same no-follow, no-clobber care as the source;
+moving to the Trash is still writing.
+
+## 2026-11-24 — An interrupted conversion left raw copies no re-run would move
+
+Security found it on #461: the conversion binds every reference first, then
+moves the raw copies to the Trash. A crash between the two left raw files that
+the next run ignored, because it only looked for unbound references. The data
+was safe, but 4.4 GB could stay behind with nothing reporting it. A re-run (and
+the dry-run plan) now also picks up bound versions whose raw copy is still in
+place, checks them again and finishes the move, pointers before the copies
+they point into. The dry run also stopped creating empty folders. Lesson: a
+multi-step migration's "what's left" must be derived from what's on disk, not
+only from the step that marks progress.
+
+## 2026-11-22 — Converting old memory copies needs every citation found first
+
+Converting raw conversation copies to extracted records means binding each
+database reference to its new records digest before the raw file can go. The
+references live in three places (checkpoint `memory_sources`, checkpoint
+`memory_source`, and summary revisions), and that list came from scanning the
+real database, not from reading the writers. While tracing them, a #436 bug
+surfaced: an idle agent's next checkpoint re-saved an old version as records,
+and the references made before that (which have no digest) were refused.
+
+The conversion reads each cited version the old way, writes records, reads them
+back through the new reference and compares, and only then updates the rows and
+moves the raw files to the Trash. Rehearsed on clones of the real data: 839
+citations read back identically, and the 4.4 GB of cited raw copies became 87 MB.
+Lesson: before a migration that removes the old form, scan the live data for
+every reference to it, and rehearse on a clone of that data.
+
 ## 2026-11-25 — Finish a tooltip interaction before testing the next control
 
 A browser check left a keyboard-focused Oracle tooltip open and then tried to
