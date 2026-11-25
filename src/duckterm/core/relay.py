@@ -207,7 +207,13 @@ class Relay:
         self.rules: list[dict[str, Any]] = data.get("rules", []) if isinstance(data, dict) else []
 
     def _save(self) -> None:
-        self.notes = self.notes[-NOTE_LIMIT:]
+        # Only closed notes are evicted. Trimming the oldest regardless of
+        # status dropped questions still waiting on the owner.
+        excess = len(self.notes) - NOTE_LIMIT
+        if excess > 0:
+            closed = [n for n in self.notes if n["status"] != "open"][:excess]
+            dropped = {id(n) for n in closed}
+            self.notes = [n for n in self.notes if id(n) not in dropped]
         private_write(self.path, json.dumps({"notes": self.notes, "rules": self.rules}))
 
     def open_notes(self) -> list[dict[str, Any]]:

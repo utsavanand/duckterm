@@ -25,9 +25,6 @@
 .rd-tower-widgets .rd-tower-ducklings { left:22px; bottom:-2px }
 .rd-tower-widgets .rd-tower-fact { font-size:0.625rem; padding:3px 8px }
 .rd-tower-widgets .rd-tower-needs h2 { font-size:0.8125rem }
-.rd-tower-widgets .rd-tower-need { flex-wrap:wrap }
-.rd-tower-widgets .rd-tower-need-who { min-width:100px }
-.rd-tower-urgency { border:1px solid var(--amber-border); color:var(--amber-text); border-radius:4px; padding:2px 5px; font-size:0.5625rem }
 @media(max-width:900px) {
  .rd-tower.rd-tower-widgets { overflow-y:auto; display:block }
  .rd-tower-columns { display:flex; flex-direction:column }

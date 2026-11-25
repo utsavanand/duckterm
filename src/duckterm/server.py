@@ -4472,18 +4472,20 @@ class Server:
             events.PRE_TOOL_USE,
             events.POST_TOOL_USE,
             events.STOP,
-            events.SESSION_END,
         ):
             # The agent moved on, so the question was answered. An agent whose
             # question doesn't block (Codex) carries on with it still queued;
             # only a submitted prompt (the answer, or one that discards it)
-            # or the session ending closes that note.
+            # or the session ending (below) closes that note.
             self.relay.close_for_session(key, {"choice"}, "handled", now)
-        if et in (events.USER_PROMPT_SUBMIT, events.SESSION_END, events.SESSION_START):
+        if et in (events.SESSION_END, events.SESSION_START):
+            # A new or finished conversation means nobody answered these.
+            self.relay.close_for_session(key, {"question", "choice"}, "ended", now)
+        if et == events.USER_PROMPT_SUBMIT:
             kinds = {"question", "choice"}
             answered = (
                 self._answered_choice(key, str(event.get("prompt") or ""))
-                if et == events.USER_PROMPT_SUBMIT and not harness.owner_prompt_blocks
+                if not harness.owner_prompt_blocks
                 else None
             )
             if answered is not None:
@@ -4876,8 +4878,22 @@ class Server:
         )
         return note
 
+    def _relay_retire_ended(self) -> None:
+        """Close notes whose session stopped without a SessionEnd event: a
+        killed terminal or a server restart marks it interrupted, and its
+        questions otherwise stayed in Needs you for days."""
+        now = int(time.time() * 1000)
+        for key in {n["session_key"] for n in self.relay.open_notes() if n["kind"] != "approval"}:
+            row = self.history.session(key)
+            if row is None or row.get("state") in AT_REST_STATES:
+                self.relay.close_for_session(key, {"question", "choice"}, "ended", now)
+
     async def _relay_list(self, writer: asyncio.StreamWriter) -> None:
         self._relay_sync_approvals()
+        self._relay_retire_ended()
+        # Every open note, however old, plus recent history: the count below
+        # covers all open notes, so the list must too.
+        older_open = [n for n in self.relay.notes[:-200] if n["status"] == "open"]
         await _write_json(
             writer,
             200,
@@ -4891,7 +4907,7 @@ class Server:
                             else note.get("urgency", "blocked")
                         ),
                     }
-                    for note in self.relay.notes[-200:]
+                    for note in older_open + self.relay.notes[-200:]
                 ],
                 "rules": self.relay.rules,
                 "open": len(self.relay.needs_you()),
@@ -4900,6 +4916,7 @@ class Server:
 
     async def _relay_count(self, writer: asyncio.StreamWriter) -> None:
         self._relay_sync_approvals()
+        self._relay_retire_ended()
         await _write_json(writer, 200, {"open": len(self.relay.needs_you())})
 
     async def _relay_answer(self, writer: asyncio.StreamWriter, note_id: str, body: bytes) -> None:
@@ -7393,14 +7410,14 @@ class Server:
             if not text:
                 continue
             status = await self._submit_prompt(key, text, source="oracle")
-            if status == "failed":
-                continue
             if pinned and status == "submitted":
                 # A stuck paste isn't delivery: the status stays "pending
                 # next turn" and the Stop-hook notice still carries it.
                 self._delivered(key, pinned[1])
             ids = sorted(str(m["id"]) for m in picked)
-            nudge = oracle.record_nudge(previous, picked, mail, now)
+            nudge = oracle.record_nudge(
+                previous, picked, mail, now, delivered=status == "submitted"
+            )
             self._oracle_nudges[key] = nudge
             self.bus.publish(
                 {
@@ -7408,6 +7425,7 @@ class Server:
                     "session_key": key,
                     "text": text,
                     "submitted": status == "submitted",
+                    "delivery": status,
                     "mail_ids": ids,
                     "seen_mail_ids": sorted(nudge.ids),
                     "read_reminder_ids": sorted(nudge.read_ids),
@@ -7426,6 +7444,7 @@ class Server:
             frozenset(str(i) for i in event.get("seen_mail_ids", event["mail_ids"])),
             ts,
             frozenset(str(i) for i in event.get("read_reminder_ids", [])),
+            undelivered=event.get("submitted") is False,
         )
 
     def _archive_swept(self, key: str) -> None:

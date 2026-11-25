@@ -10,4 +10,4 @@
 .rd-session-location:focus-visible { outline: 2px solid var(--accent); border-radius: 4px; }
 
 /* Oracle rows own keyboard focus; the nested mascot adds no tab stop. */
-.rd-tower-need:focus .rd-session-location::after { visibility: visible; opacity: 1; }
+.rd-tower-need:focus-within .rd-session-location::after { visibility: visible; opacity: 1; }
