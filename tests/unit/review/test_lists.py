@@ -486,6 +486,10 @@ def test_review_author_follows_the_checkout_as_it_changes(git_repo: Path, tmp_pa
     run(git_repo, "checkout", "-q", "-b", "other")
     assert review_author(sessions, {}, git_repo, "topic") is None
     assert review_author(sessions, {}, git_repo, "other") == "s"
+    # A detached checkout is on no branch, whatever branch was recorded.
+    sessions[0]["branch"] = "other"
+    run(git_repo, "checkout", "-q", "--detach", "HEAD")
+    assert review_author(sessions, {}, git_repo, "other") is None
 
     later = tmp_path / "later"
     sessions = [{"session_key": "late", "cwd": str(later)}]
@@ -503,3 +507,30 @@ def test_review_author_must_be_in_the_reviewed_repository(git_repo: Path, tmp_pa
     assert review_author(sessions, {}, git_repo, "topic") is None
     sessions.append({"session_key": "a", "cwd": str(git_repo), "branch": "main"})
     assert review_author(sessions, {}, git_repo, "topic") == "a"
+
+
+@pytest.mark.parametrize("mode", ["detached", "rebase"])
+def test_a_detached_session_keeps_the_pr_it_pushed(
+    clone: Path, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    """Off any branch (mid-rebase too), a session claims no checkout branch
+    but still lists the PR it pushed, and drops nothing it didn't push."""
+    run(clone, "checkout", "-q", "-b", "topic")
+    tip = commit(clone, "README.md", "topic change\n", "topic work")
+    run(clone, "push", "-q", "-u", "origin", "topic")
+    monkeypatch.setattr(lists.github, "pulls", lambda *a: [pull(7, "topic", head_sha=tip)])
+    rows = [session("s", clone)]
+    owners = lists.branch_owners([("s", 1, "git push origin topic", str(clone))])
+    assert [r["branch"] for r in lists.build(rows, owners=owners)["rows"]] == ["topic"]
+    if mode == "detached":
+        run(clone, "checkout", "-q", "--detach", "HEAD")
+    else:
+        run(clone, "checkout", "-q", "main")
+        commit(clone, "README.md", "main change\n", "conflicting main work")
+        run(clone, "checkout", "-q", "topic")
+        rebase = subprocess.run(["git", "-C", str(clone), "rebase", "main"], capture_output=True)
+        assert rebase.returncode == 1
+    assert run(clone, "branch", "--show-current") == ""
+    built = lists.build(rows, owners=owners, refresh=True)
+    assert [(r["branch"], r["pr"]["number"]) for r in built["rows"]] == [("topic", 7)]
+    assert lists.build(rows, owners={}, refresh=True)["rows"] == []

@@ -53,6 +53,35 @@ citations read back identically, and the 4.4 GB of cited raw copies became 87 MB
 Lesson: before a migration that removes the old form, scan the live data for
 every reference to it, and rehearse on a clone of that data.
 
+## 2026-11-25 — Finish a tooltip interaction before testing the next control
+
+A browser check left a keyboard-focused Oracle tooltip open and then tried to
+click a button beneath it. The CI trace showed pointer interception, not a slow
+backend. Move focus to the next control and assert the tooltip closes before
+clicking; do not force the click or raise the timeout to conceal the obstruction.
+
+## 2026-11-25 — Foreground inbox reads must not repeat historical retirement
+
+Badge counts invoked full cleanup twice, and protected old mail made that work
+repeat indefinitely. Expire deadlines on every read, but schedule physical
+retirement with a monotonic interval and force it at startup. Keep preservation
+callbacks before retirement and advance the interval only after a successful
+commit. Extract checkpoint retention metadata once per statement; malformed
+markers must still protect history. Test scheduling, immediate expiry, retries,
+SELECT/DELETE parity and exactly-once analytics separately.
+
+## 2026-11-24 — A cache budget applied after parsing cannot bound read memory
+
+Reading an entire transcript suffix, decoding it and splitting all its lines
+created several large simultaneous copies before cache eviction ran. Read fixed
+chunks, keep only the unfinished line between them, and evict unrelated LRU
+records before the next allocation. Preserve the old Unicode splitlines semantics
+because annotation identities include line indices. An unchanged partial tail
+must still avoid parsing, and a failed read must not commit a partial append.
+This bounds temporary source buffers by chunk plus longest line, not total memory:
+parsed records, oversized individual lines and full response serialization still
+need explicit paging and record-size policies.
+
 ## 2026-11-24 — Exercise empty-input keys and Unicode highlight boundaries
 
 Search must release Escape to sidebar navigation after clearing its own value.

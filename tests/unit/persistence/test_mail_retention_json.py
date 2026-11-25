@@ -9,6 +9,20 @@ from duckterm.persistence.saved_state import MARKER_FORMAT, retention_predicate
 
 IDS = {"keep", "drop", 'quote"\\id', "郵件🦆", "1"}
 
+# Frozen original policy, independent of how the current query is structured.
+OLD = f"""NOT EXISTS (SELECT 1 FROM checkpoints c
+ WHERE (c.session_key=q.recipient OR c.session_key=q.sender) AND
+ CASE WHEN NOT json_valid(c.record_json) THEN 1
+ WHEN json_type(c.record_json) IS NOT 'object' THEN 1
+ WHEN json_type(c.record_json,'$.format') IS NULL THEN 0
+ WHEN json_extract(c.record_json,'$.format') = 'checkpoint_fork_merge_v1' THEN 0
+ WHEN json_extract(c.record_json,'$.format') != '{MARKER_FORMAT}' THEN 1
+ WHEN json_type(c.record_json,'$.events.first') IS NOT 'integer'
+   OR json_type(c.record_json,'$.events.last') IS NOT 'integer'
+   OR json_type(c.record_json,'$.mail_ids') IS NOT 'array' THEN 1
+ ELSE EXISTS (SELECT 1 FROM json_each(c.record_json,'$.mail_ids') m
+   WHERE m.value=q.id) END)"""
+
 
 def marker(**fields):
     return json.dumps(
@@ -76,14 +90,40 @@ def selected(conn, predicate):
 def test_exact_candidate_ids_match_old_query_and_policy(conn, scope, raw, protected):
     conn.execute("INSERT INTO checkpoints VALUES (?,?)", (scope, raw))
     predicate = retention_predicate("mail")
-    old = predicate.replace(
-        "json_each(json_extract(c.record_json,'$.mail_ids'))",
-        "json_each(c.record_json,'$.mail_ids')",
-    )
-    assert old != predicate
     expected = IDS - protected if scope != "unrelated" else IDS
-    assert selected(conn, predicate) == selected(conn, old)
+    assert selected(conn, predicate) == selected(conn, OLD)
     assert selected(conn, predicate) == expected
+
+
+@pytest.mark.parametrize(
+    "statement", ["SELECT q.id FROM session_questions q", "DELETE FROM session_questions AS q"]
+)
+def test_checkpoint_json_work_does_not_grow_with_old_mail(conn, statement):
+    conn.execute(
+        "INSERT INTO checkpoints VALUES('sender',?)",
+        (marker(evidence="x" * 100_000),),
+    )
+    calls = 0
+    with sqlite3.connect(":memory:") as json_db:
+
+        def counted_valid(value):
+            nonlocal calls
+            calls += 1
+            return json_db.execute("SELECT json_valid(?)", (value,)).fetchone()[0]
+
+        conn.create_function("json_valid", 1, counted_valid)
+        sql = statement + " WHERE " + retention_predicate("mail")
+        conn.execute(sql).fetchall()
+        small = calls
+        calls = 0
+        conn.executemany(
+            "INSERT INTO session_questions VALUES(?,'sender','recipient')",
+            [(f"old-{i}",) for i in range(500)],
+        )
+        conn.execute(sql).fetchall()
+        assert 0 < calls == small <= 3
+        if statement.startswith("DELETE"):
+            assert {r[0] for r in conn.execute("SELECT id FROM session_questions")} == {"keep"}
 
 
 def test_markers_only_protect_mail_in_their_sender_or_recipient_scope(conn):
@@ -133,10 +173,10 @@ def test_expiry_and_analytics_keep_pinned_mail_in_disposable_store(tmp_path):
             (marker(),),
         )
         store._conn.commit()
-        store.session_api._sweep()
+        store.session_api._sweep(force_retire=True)
         assert {r[0] for r in store._conn.execute("SELECT id FROM session_questions")} == {"keep"}
         assert store._conn.execute("SELECT count(*) FROM mail_rollup_v1").fetchone()[0] == 0
-        store.session_api._sweep()
+        store.session_api._sweep(force_retire=True)
         assert {r[0] for r in store._conn.execute("SELECT id FROM session_questions")} == {"keep"}
     finally:
         store.purge_test_sessions()
