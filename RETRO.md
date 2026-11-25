@@ -1,3 +1,31 @@
+## 2026-11-25 — Styling narration is not the same as removing it
+
+The connector panel was reviewed as "looks bad, not clean", so the first pass
+fixed how its prose looked: spacing, a muted colour, a bounded card. The owner's
+answer was "why do we need all of this narration?" -- the fault was the quantity
+of text, not its appearance. Styling a paragraph legitimises it; the question to
+ask first is whether the reader needs the sentence at all.
+
+What the cut removed, and the test each line failed: a description of what GitHub
+is (the reader already knows the service they are connecting). A tick confirming
+a prerequisite passed (only its failure is news; the warning stayed). A recovery
+hint for signing in elsewhere (a rare path holding permanent space). A paragraph
+restating the heading directly above it. An explanation of what sign-out deletes
+(the confirm dialog says it at the moment it matters). A note that both doors use
+the credential either way (the two door lines already say so). One paragraph was
+kept because it carries something the reader cannot infer: a CLI login cannot be
+scoped read-only or to one repo, a fine-grained token can.
+
+A state you can act on earns its words. "Codex has no entry for it, so that agent
+cannot reach it. Re-register below, or deselect it." names the agent and the fix,
+and stayed.
+
+Copy cuts break assertions, not behaviour. Nine tests failed on the new strings;
+each was checked individually to confirm the behavioural assertion beside it --
+both doors reported separately, a tool count claimed only after a check, the
+editor fitting the sidebar -- still passed. Keep the restyle and the copy cut in
+separate commits so one can be adjusted without losing the other.
+
 ## 2026-11-25 — A global appearance reset needs a per-control rule to match
 
 The stylesheet resets `select { appearance: none }` so WebKit stops drawing the

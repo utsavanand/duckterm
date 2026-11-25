@@ -56,11 +56,11 @@ test("a connector row proves what it serves and when it was last used", async ({
     const pane = await openPanel(page, "connector-proof-check");
     const row = pane.locator(".rd-connector", { hasText: "GitHub" });
     // Before checking, the panel must not imply it verified anything.
-    await expect(row.getByText(/not verified this session/)).toBeVisible();
+    await expect(row.getByText(/Not verified/)).toBeVisible();
     await expect(row.getByText(/Used 2h ago · 90 calls/)).toBeVisible();
 
     await row.getByRole("button", { name: "Check now" }).click();
-    await expect(row.getByText(/Verified — 45 tools available/)).toBeVisible();
+    await expect(row.getByText(/✓ 45 tools/)).toBeVisible();
   } finally {
     await apiDelete(`/sessions/${key}`);
   }
@@ -103,7 +103,6 @@ test("the two doors report independently when agents are turned off", async ({ p
     const row = pane.locator(".rd-connector", { hasText: "GitHub" });
     await expect(row.getByText("Duckterm uses it", { exact: true })).toBeVisible();
     await expect(row.getByText("Agents cannot use it", { exact: true })).toBeVisible();
-    await expect(row.getByText(/Your login stays saved/)).toBeVisible();
     // Sharing is the reversible half; the credential survives it.
     await expect(row.getByRole("button", { name: "Share with agents" })).toBeVisible();
   } finally {
@@ -147,7 +146,7 @@ test("the connect flow and its editor fit the sidebar", async ({ page }, testInf
     const row = pane.locator(".rd-connector", { hasText: "GitHub" });
 
     // The CLI login is the primary path and needs no editor at all.
-    await expect(row.getByRole("button", { name: "Use my GitHub CLI login" })).toBeVisible();
+    await expect(row.getByRole("button", { name: "Connect" })).toBeVisible();
     await row.getByRole("button", { name: "Paste a token" }).click();
 
     for (const width of [1440, 1024]) {

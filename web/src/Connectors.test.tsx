@@ -31,7 +31,6 @@ it("says Duckterm still uses the credential when agents are turned off", async (
   // facts read as Duckterm having dropped the credential too.
   expect(await screen.findByText("Duckterm uses it")).toBeVisible();
   expect(screen.getByText("Agents cannot use it")).toBeVisible();
-  expect(screen.getByText(/No agent session can reach GitHub/)).toBeVisible();
 });
 
 it("distinguishes a lost harness entry from the owner turning agents off", async () => {
@@ -51,9 +50,9 @@ it("connects straight from the CLI login without asking for a paste", async () =
   vi.mocked(api.connectors).mockResolvedValue({ connectors: [row] });
   vi.mocked(api.enableConnector).mockResolvedValue(live);
   render(<Connectors />);
-  fireEvent.click(await screen.findByText("Use my GitHub CLI login"));
+  fireEvent.click(await screen.findByText("Connect"));
   await waitFor(() => expect(api.enableConnector).toHaveBeenCalledWith("github", undefined, "gh-cli", "", ["claude-code", "codex"]));
-  expect(await screen.findByText("Agents use it")).toBeVisible();
+  expect(await screen.findByText(/^Agents use it/)).toBeVisible();
 });
 
 it("warns that agents get nothing when no MCP server can run here", async () => {
@@ -72,7 +71,7 @@ it("accepts a pasted token and says a fine-grained one can be narrower", async (
   fireEvent.click(await screen.findByText("Paste a token"));
   // gh cannot drop below repo + read:org + gist, so this is the only way to
   // hand agents less than full repo write.
-  expect(screen.getByText(/cannot go narrower than full/)).toBeVisible();
+  expect(screen.getByText(/A fine-grained token can be read-only/)).toBeVisible();
   fireEvent.change(screen.getByLabelText("GitHub personal access token"), { target: { value: "github_pat_x" } });
   fireEvent.click(screen.getByText("Verify and share"));
   await waitFor(() => expect(api.enableConnector).toHaveBeenCalledWith("github", "github_pat_x", "stored", "", ["claude-code", "codex"]));
@@ -93,7 +92,7 @@ it("does not expose secret administration on the hosted agent dashboard", async 
   vi.mocked(api.connectors).mockResolvedValue({ connectors: [{ ...row, managed: true }] });
   render(<Connectors />);
   expect(await screen.findByText("Managed through the remote connector administrator.")).toBeVisible();
-  expect(screen.queryByText("Use my GitHub CLI login")).toBeNull();
+  expect(screen.queryByText("Connect")).toBeNull();
 });
 
 it("picks up a connector that appears while the window regains focus", async () => {
@@ -110,9 +109,9 @@ it("claims verification only after a check, and reports the tool count it proved
   vi.mocked(api.connectors).mockResolvedValue({ connectors: [live] });
   vi.mocked(api.verifyConnector).mockResolvedValue({ name: "github", ok: true, tools: 25, detail: null });
   render(<Connectors />);
-  expect(await screen.findByText(/Configured · not verified this session/)).toBeVisible();
+  expect(await screen.findByText(/Not verified/)).toBeVisible();
   fireEvent.click(screen.getByText("Check now"));
-  expect(await screen.findByText(/✓ Verified — 25 tools available/)).toBeVisible();
+  expect(await screen.findByText(/✓ 25 tools/)).toBeVisible();
 });
 
 it("shows the server's own error when verification fails", async () => {
@@ -162,7 +161,7 @@ it("cannot submit with no agent selected", async () => {
 it("names the agents a connector reaches instead of reporting a config entry", async () => {
   vi.mocked(api.connectors).mockResolvedValue({ connectors: [{ ...live, harnesses: ["claude-code"] }] });
   render(<Connectors />);
-  expect(await screen.findByText(/Claude Code, through the GitHub MCP server/)).toBeVisible();
+  expect(await screen.findByText(/Agents use it — Claude Code/)).toBeVisible();
 });
 
 it("says an agent is missing rather than implying the connector serves it", async () => {

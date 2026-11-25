@@ -918,12 +918,11 @@ code,
   gap: 6px;
   flex-wrap: wrap;
 }
-/* The status is two clauses of prose and will not share 420px with a button,
-   so the button wraps. Right-aligning it makes that wrap look intended and
-   puts the action at the edge the eye returns to, rather than stranded mid-row
-   under the sentence it belongs to. */
+/* Short enough now to share the line with its button. If a long verification
+   error pushes past the width the span wraps and the button stays at the
+   right edge, rather than being stranded mid-row by `margin-left: auto`. */
 .rd-connector-proof > span {
-  flex: 1 1 100%;
+  flex: 1 1 auto;
   min-width: 0;
 }
 .rd-connector-proof button {
