@@ -275,10 +275,14 @@ def place_knowledge(
     cid = kit.component_id(c)
     text = (kit.root / str(c.path)).read_text()
     load = c.fields.get("load", "always")
-    out: list[Placement] = []
-    if load == "always" or (
+    every_file = isinstance(load, dict) and _every_file(load.get("paths"))
+    if every_file:
+        load = "always"
+    fell_back = (
         isinstance(load, dict) and c.fields.get("fallback") == "always" and _needs_fallback(chosen)
-    ):
+    )
+    out: list[Placement] = []
+    if load == "always" or fell_back:
         out.append(
             Placement(
                 cid,
@@ -331,11 +335,17 @@ def place_knowledge(
                     note="docs: AGENTS.md preferred over CLAUDE.md",
                 )
             )
-        if isinstance(load, dict):
+        if every_file or fell_back:
+            # AGENTS.md is read by every harness, so one harness without
+            # path scoping makes the text always-on for all of them.
+            why = (
+                "paths match every file, so this loads always"
+                if every_file
+                else ", ".join(h for h in chosen if ADAPTERS[h].knowledge_paths is None)
+                + " cannot scope by path, so this loads always, for every harness, from AGENTS.md"
+            )
             for p in out:
-                p.note = (
-                    p.note + "; " if p.note else ""
-                ) + "path scope not supported here, fell back to always"
+                p.note = (p.note + "; " if p.note else "") + why
         return out
     if isinstance(load, dict):
         paths = [str(p) for p in load.get("paths") or []]
@@ -394,6 +404,14 @@ def place_knowledge(
 
 def _needs_fallback(chosen: list[str]) -> bool:
     return any(ADAPTERS[h].knowledge_paths is None for h in chosen)
+
+
+EVERY_FILE = {"*", "**", "**/*", "./**", "./**/*"}
+
+
+def _every_file(paths: object) -> bool:
+    """A path scope that names every file is `always` under another name."""
+    return bool(paths) and isinstance(paths, list) and all(str(p) in EVERY_FILE for p in paths)
 
 
 def place_skill(

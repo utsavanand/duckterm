@@ -353,12 +353,52 @@ def register(body: dict[str, Any]) -> dict[str, Any]:
     kit = _kit(body.get("kit"))
     text = str(body.get("kit") or "").strip()
     path = Path(text).expanduser().resolve()
+    if kit.legacy:
+        raise KitApiError(
+            400,
+            f"{path} holds {m.LEGACY_MANIFEST}, the retired format, which lists no "
+            f"components; write a {m.MANIFEST} for it first",
+        )
     return {
         "name": kit.name,
         "path": str(path),
         "version": kit.version,
         "description": kit.description,
     }
+
+
+_REPO_OF: dict[str, str | None] = {}
+
+
+def repositories(paths: list[str]) -> list[str]:
+    """The repositories behind the folders a workspace's sessions ran in: a
+    worktree counts as its main repository (the kit reaches the worktree at
+    its next session start), a folder that is not a git repository or no
+    longer exists is left out. Kits install into repositories only."""
+    import subprocess
+
+    out: set[str] = set()
+    for raw in paths:
+        folder = str(raw)
+        if not os.path.isdir(folder):
+            continue
+        if folder not in _REPO_OF:
+            try:
+                args = ["git", "-C", folder, "rev-parse", "--path-format=absolute"]
+                proc = subprocess.run(
+                    [*args, "--git-common-dir"],
+                    capture_output=True,
+                    text=True,
+                    timeout=5,
+                )
+            except (OSError, subprocess.TimeoutExpired):
+                proc = None
+            common = proc.stdout.strip() if proc is not None and proc.returncode == 0 else ""
+            _REPO_OF[folder] = os.path.dirname(common) if common.endswith("/.git") else None
+        root = _REPO_OF[folder]
+        if root and os.path.isdir(root):
+            out.add(root)
+    return sorted(out)
 
 
 def catalog(entries: list[dict[str, Any]], workspaces: list[dict[str, Any]]) -> dict[str, Any]:

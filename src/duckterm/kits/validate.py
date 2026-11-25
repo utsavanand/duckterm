@@ -12,6 +12,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from duckterm.kits import adapters
 from duckterm.kits import manifest as m
 
 NEUTRAL_EVENTS = (
@@ -128,7 +129,7 @@ def validate(kit: m.Kit) -> list[Finding]:
                 continue
 
         if c.kind == "knowledge":
-            always_lines += _check_knowledge(kit, c, cid, err)
+            always_lines += _check_knowledge(kit, c, cid, err, warn)
         elif c.kind == "tool":
             _check_tool(kit, c, cid, err, warn)
         elif c.kind == "skill":
@@ -178,7 +179,7 @@ def _outside(kit: m.Kit, rel: str) -> str:
     return ""
 
 
-def _check_knowledge(kit: m.Kit, c: m.Component, cid: str, err: Report) -> int:
+def _check_knowledge(kit: m.Kit, c: m.Component, cid: str, err: Report, warn: Report) -> int:
     if not c.path:
         err(cid, "knowledge needs `path`")
         return 0
@@ -191,6 +192,8 @@ def _check_knowledge(kit: m.Kit, c: m.Component, cid: str, err: Report) -> int:
     if isinstance(load, dict) and isinstance(load.get("paths"), list):
         if c.fields.get("fallback") not in (None, "always"):
             err(cid, "fallback may only be 'always'")
+        if adapters._every_file(load.get("paths")):
+            warn(cid, "load.paths matches every file; that is load = 'always' and installs as such")
         return 0
     err(cid, f"load must be 'always', 'on-demand' or {{paths = [...]}}, not {load!r}")
     return 0
