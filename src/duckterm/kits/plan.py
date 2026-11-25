@@ -167,8 +167,14 @@ def detect_harnesses() -> list[str]:
 
 
 def build(
-    kit: m.Kit, project: Path, harnesses: list[str], options: dict[str, str] | None = None
+    kit: m.Kit,
+    project: Path,
+    harnesses: list[str],
+    options: dict[str, str] | None = None,
+    fallbacks: list[str] | None = None,
 ) -> Plan:
+    """`fallbacks`: component ids the owner chose to load always where a
+    harness cannot scope by path (the review's Fix); kept with the policy."""
     project = Path(project)
     unknown = [h for h in harnesses if h not in adapters.ADAPTERS]
     if unknown:
@@ -212,7 +218,9 @@ def build(
             )
             continue
         if c.kind == "knowledge":
-            placements += adapters.place_knowledge(kit, c, active, roots)
+            placements += adapters.place_knowledge(
+                kit, c, active, roots, force_fallback=kit.component_id(c) in (fallbacks or [])
+            )
         elif c.kind == "skill":
             placements += adapters.place_skill(kit, c, active, roots)
         elif c.kind == "agent":
