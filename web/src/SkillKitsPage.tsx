@@ -593,7 +593,7 @@ function EnableView({ kit, workspaces, busy, fromAdd, error, onBack, onReview }:
               <label className="rd-kits-check" key={w.name || "(ungrouped)"}>
                 <input type="checkbox" checked={chosen.has(w.name)} onChange={() => toggle(w.name)} aria-label={workspaceLabel(w.name)} />
                 <strong>{workspaceLabel(w.name)}</strong>
-                {w.repositories.length === 0 && <span className="rd-kits-sub">no session yet</span>}
+                {w.repositories.length === 0 && <span className="rd-kits-sub">no repository yet</span>}
               </label>
             ))}
           </div>

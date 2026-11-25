@@ -107,7 +107,7 @@ it("enables a kit for chosen workspaces: one matrix in sections, what each harne
   expect(screen.queryByText("/ws/payments")).toBeNull(); // workspaces only, no folders
   fireEvent.click(screen.getByLabelText("payments"));
   fireEvent.click(screen.getByLabelText("Ungrouped"));
-  expect(screen.getByText("no session yet")).toBeVisible();
+  expect(screen.getByText("no repository yet")).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Review what will change" }));
   await waitFor(() => expect(api.kitsReview).toHaveBeenCalledWith({ kit: "sample-kit", scope: "workspaces", workspaces: ["payments", ""], options: {}, fallbacks: [] }, ""));
   expect(await screen.findByText(/payments · every harness/)).toBeVisible();
