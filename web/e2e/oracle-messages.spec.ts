@@ -26,7 +26,7 @@ test("Ask Oracle sends to one agent by @ or plain language, and asks when unsure
   await box.press("Enter");
   const which = page.getByRole("group", { name: "Which agent did you mean?" });
   await which.getByRole("button", { name: /main-dev-2/ }).click();
-  await expect(page.getByRole("group", { name: "Message to main-dev-2" })).toContainText("In main-dev-2's inbox.");
+  await expect(page.getByText("Sent to main-dev-2:", { exact: false })).toBeVisible();
   expect(await inbox("main-dev-2")).toContain("rebase on main");
   expect(await inbox("main-dev")).toEqual([]);
 });

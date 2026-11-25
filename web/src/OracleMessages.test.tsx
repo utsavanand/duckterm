@@ -14,7 +14,8 @@ const AGENTS = [
 ];
 beforeEach(() => {
   vi.mocked(api.oracleChat).mockResolvedValue({ messages: [] });
-  vi.mocked(api.messageSession).mockResolvedValue({ delivered: "inbox" });
+  vi.mocked(api.messageSession).mockImplementation(async (key, text, _mode, _rk, question) =>
+    ({ delivered: "inbox", exchange: { q: question ?? "", a: `Sent to ${AGENTS.find(a => a.id === key)?.name}: ${text}`, at: Date.now() } }));
 });
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 
@@ -35,9 +36,11 @@ it("sends the owner's words unchanged to the agent picked with @, with no model 
   fireEvent.change(screen.getByLabelText("Find an agent"), { target: { value: "release" } });
   fireEvent.click(screen.getByRole("option", { name: /release-dev/ }));
   type(box, "Hold #470 until QA passes");
-  const card = await screen.findByRole("group", { name: "Message to release-dev" });
-  await within(card).findByText("In release-dev's inbox.");
-  expect(api.messageSession).toHaveBeenCalledWith("rel", "Hold #470 until QA passes", "inbox", expect.any(String));
+  // Saved to the chat history as the owner's @ line and Oracle's confirmation.
+  await screen.findByText("Sent to release-dev: Hold #470 until QA passes");
+  expect(screen.getByText("@release-dev Hold #470 until QA passes")).toBeVisible();
+  expect(screen.queryByRole("group", { name: "Message to release-dev" })).toBeNull();
+  expect(api.messageSession).toHaveBeenCalledWith("rel", "Hold #470 until QA passes", "inbox", expect.any(String), "@release-dev Hold #470 until QA passes");
   expect(api.fleetAsk).not.toHaveBeenCalled();
 });
 
@@ -48,8 +51,8 @@ it("waits for Send before delivering text the model reworded", async () => {
   expect(card).toHaveTextContent("Please hold PR #470.");
   expect(api.messageSession).not.toHaveBeenCalled();
   fireEvent.click(within(card).getByRole("button", { name: "Send" }));
-  await within(card).findByText("In release-dev's inbox.");
-  expect(api.messageSession).toHaveBeenCalledWith("rel", "Please hold PR #470.", "inbox", expect.any(String));
+  await screen.findByText("Sent to release-dev: Please hold PR #470.");
+  expect(api.messageSession).toHaveBeenCalledWith("rel", "Please hold PR #470.", "inbox", expect.any(String), "get release-dev to hold 470");
 });
 
 it("asks which agent when unsure, and sends the owner's own words once one is picked", async () => {
@@ -59,7 +62,7 @@ it("asks which agent when unsure, and sends the owner's own words once one is pi
   expect(ask).toHaveTextContent("Nothing was sent");
   expect(api.messageSession).not.toHaveBeenCalled();
   fireEvent.click(within(ask).getByRole("button", { name: /main-dev-2/ }));
-  await waitFor(() => expect(api.messageSession).toHaveBeenCalledWith("md2", "rebase on main", "inbox", expect.any(String)));
+  await waitFor(() => expect(api.messageSession).toHaveBeenCalledWith("md2", "rebase on main", "inbox", expect.any(String), "tell main-dev to rebase on main"));
   expect(within(ask).queryByRole("button")).toBeNull();
 });
 

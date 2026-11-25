@@ -9,7 +9,7 @@ type Local =
   | { at: number; kind: "proposal"; rule: RelayRule; state: "open" | "created" | "cancelled"; id?: string }
   | { at: number; kind: "info"; text: string; rules?: RelayRule[] }
   // A message Oracle will send only after the owner confirms it.
-  | { at: number; kind: "send"; agent: OracleAgent; text: string; key: string; state: "open" | "sending" | "sent" | "cancelled"; error?: string }
+  | { at: number; kind: "send"; agent: OracleAgent; text: string; question: string; key: string; state: "open" | "sending" | "logged" | "cancelled"; error?: string }
   | { at: number; kind: "clarify"; question: string; text: string; candidates: OracleAgent[]; state: "open" | "done" };
 
 const requestKey = () => crypto.randomUUID().replace(/-/g, "");
@@ -129,19 +129,21 @@ export function OracleChat({
       return;
     }
     if (recipient) {
-      const key = requestKey();
-      return deliver(addLocal({ at: Date.now(), kind: "send", agent: recipient, text: t, key, state: "open" }), recipient, t, key);
+      const key = requestKey(), question = `@${recipient.name} ${t}`;
+      return deliver(addLocal({ at: Date.now(), kind: "send", agent: recipient, text: t, question, key, state: "open" }), recipient, t, key, question);
     }
     if (RULE_WORDS.test(t)) return propose(t);
     return ask(t);
   }
 
   // The owner's click, or their own words to one chosen agent, is the send.
-  async function deliver(index: number, agent: OracleAgent, text: string, key: string) {
+  async function deliver(index: number, agent: OracleAgent, text: string, key: string, question: string) {
     setLocal(index, { state: "sending", error: undefined });
     try {
-      await api.messageSession(agent.id, text, "inbox", key);
-      setLocal(index, { state: "sent" });
+      const { exchange } = await api.messageSession(agent.id, text, "inbox", key, question);
+      // The saved exchange replaces the card, so the send is in the history.
+      if (exchange) setLog((l) => [...l, exchange]);
+      setLocal(index, { state: "logged" });
     } catch (e) {
       setLocal(index, { state: "open", error: (e as Error).message });
     }
@@ -150,8 +152,8 @@ export function OracleChat({
   function pick(index: number, local: Extract<Local, { kind: "clarify" }>, agent: OracleAgent) {
     setLocal(index, { state: "done" });
     const key = requestKey();
-    const card = addLocal({ at: Date.now(), kind: "send", agent, text: local.text, key, state: "open" });
-    if (local.text && sameWords(local.text, local.question)) void deliver(card, agent, local.text, key);
+    const card = addLocal({ at: Date.now(), kind: "send", agent, text: local.text, question: local.question, key, state: "open" });
+    if (local.text && sameWords(local.text, local.question)) void deliver(card, agent, local.text, key, local.question);
   }
 
   const entries: Entry[] = [
@@ -179,7 +181,7 @@ export function OracleChat({
       const r = await api.fleetAsk(question, undefined, requestKey());
       if ("plan" in r) {
         const { text, ...agent } = r.plan;
-        addLocal({ at: Date.now(), kind: "send", agent, text, key: requestKey(), state: "open" });
+        addLocal({ at: Date.now(), kind: "send", agent, text, question, key: requestKey(), state: "open" });
       } else if ("clarify" in r) {
         addLocal({ at: Date.now(), kind: "clarify", question, ...r.clarify, state: "open" });
       } else {
@@ -269,7 +271,7 @@ export function OracleChat({
             <SendCard
               key={`l-${e.index}`}
               local={e.local}
-              onSend={(l) => void deliver(e.index, l.agent, l.text, l.key)}
+              onSend={(l) => void deliver(e.index, l.agent, l.text, l.key, l.question)}
               onCancel={() => setLocal(e.index, { state: "cancelled" })}
             />
           ) : e.local.kind === "clarify" ? (
@@ -356,9 +358,10 @@ export function OracleChat({
 
 function SendCard({ local, onSend, onCancel }: { local: Extract<Local, { kind: "send" }>; onSend: (l: Extract<Local, { kind: "send" }>) => void; onCancel: () => void }) {
   const { agent, text, state, error } = local;
+  if (state === "logged") return null;
   return (
     <div className={`rd-relay-note rd-oracle-send${state === "open" ? " open" : ""}`} role="group" aria-label={`Message to ${agent.name}`}>
-      <span className="rd-relay-meta">{state === "sent" ? "Sent to" : state === "cancelled" ? "Not sent to" : "Send to"} <b>{agent.name}</b>{agent.folder ? ` · ${agent.folder}` : ""}</span>
+      <span className="rd-relay-meta">{state === "cancelled" ? "Not sent to" : "Send to"} <b>{agent.name}</b>{agent.folder ? ` · ${agent.folder}` : ""}</span>
       <blockquote className="rd-relay-quote">{text}</blockquote>
       {(state === "open" || state === "sending") && (
         <div className="rd-relay-actions">
@@ -366,7 +369,6 @@ function SendCard({ local, onSend, onCancel }: { local: Extract<Local, { kind: "
           <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={state === "sending"} onClick={onCancel}>Cancel</button>
         </div>
       )}
-      {state === "sent" && <span className="rd-relay-status">In {agent.name}'s inbox.</span>}
       {error && <span className="rd-oracle-error" role="alert">{error}</span>}
     </div>
   );

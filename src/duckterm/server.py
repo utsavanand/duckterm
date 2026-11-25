@@ -4317,7 +4317,7 @@ class Server:
         if not oracle_intent.verbatim(text, question):
             return {"plan": {**agent, "text": text}}
         self.history.session_api.owner_message(agent["id"], text, request_key=request_key)
-        answer = f"Sent to **{agent['name']}**: \u201c{text}\u201d. It's in its inbox."
+        answer = _sent_line(agent["name"], text)
         exchange = oracle.append_chat(
             paths.home() / "oracle-chat.json", question, answer, int(time.time() * 1000)
         )
@@ -5246,7 +5246,23 @@ class Server:
                 return
             if priority:
                 self._oracle_soon()  # an idle agent shouldn't wait for the next pass
-            await _write_json(writer, 200, {"delivered": "inbox", "message_id": message_id})
+            reply: dict[str, Any] = {"delivered": "inbox", "message_id": message_id}
+            asked = req.get("oracle_chat")
+            if (
+                isinstance(asked, str)
+                and asked.strip()
+                and self.edition.includes("oracle_messages")
+            ):
+                # Sent from Ask Oracle: keep it in the chat history like a
+                # plain-language send, so it survives a reload.
+                row = self.history.session(session_key) or {}
+                reply["exchange"] = oracle.append_chat(
+                    paths.home() / "oracle-chat.json",
+                    asked.strip()[:8000],
+                    _sent_line(str(row.get("name") or session_key), str(req.get("text"))),
+                    int(time.time() * 1000),
+                )
+            await _write_json(writer, 200, reply)
             return
         text = req.get("text")
         if not isinstance(text, str) or not text.strip() or len(text.encode()) > 16384:
@@ -7510,6 +7526,10 @@ class Server:
             return
         self._set_lifecycle(key, "archived")
         self.approvals.drop_session(key)
+
+
+def _sent_line(name: str, text: str) -> str:
+    return f"Sent to **{name}**: \u201c{text}\u201d. It's in its inbox."
 
 
 def _pid_alive(pid: int) -> bool:

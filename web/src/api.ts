@@ -733,10 +733,11 @@ export const api = {
   },
   // The owner has looked at this session: lower its raised hand.
   sessionAttended: (key: string) => post<{ attended: boolean }>(`/sessions/${encodeURIComponent(key)}/attended`),
-  messageSession: (key: string, text: string, mode: "inbox" | "prompt", requestKey?: string) =>
-    post<{ delivered: "inbox" | "prompt" | null }>(
+  // oracleChat: the Ask Oracle line that led to this send, saved with it in the chat history.
+  messageSession: (key: string, text: string, mode: "inbox" | "prompt", requestKey?: string, oracleChat?: string) =>
+    post<{ delivered: "inbox" | "prompt" | null; exchange?: OracleExchange }>(
       `/sessions/${encodeURIComponent(key)}/message`,
-      { text, mode, ...(requestKey !== undefined ? { request_key: requestKey } : {}) },
+      { text, mode, ...(requestKey !== undefined ? { request_key: requestKey } : {}), ...(oracleChat !== undefined ? { oracle_chat: oracleChat } : {}) },
     ),
   clearOracleChat: () =>
     fetch("/oracle/chat", { method: "DELETE", headers: authHeaders() }).then(

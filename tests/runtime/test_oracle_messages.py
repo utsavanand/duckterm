@@ -6,6 +6,7 @@ import json
 
 import pytest
 from tests.runtime.test_relay import post, world  # noqa: F401  (fixture)
+from tests.runtime.test_session_api import dispatch
 
 from duckterm.editions import EditionConfig
 from duckterm.llm.summarizer import Summary
@@ -98,3 +99,22 @@ def test_without_the_flag_every_message_is_a_question(world, monkeypatch) -> Non
     status, body = ask(server, owner, "Tell product-manager to rebase")
     assert status == 200 and "plan" not in body and "clarify" not in body
     assert mail(history) == [] and "Classify the owner's latest message" not in prompts[0]
+
+
+@pytest.mark.parametrize("flag", [True, False])
+def test_an_ask_oracle_send_is_saved_in_the_chat_history(world, flag) -> None:  # noqa: F811
+    server, owner, _, history = world
+    if flag:
+        features = server.edition.features | {"oracle_messages"}
+        server.edition = EditionConfig(server.edition.name, features)
+    body = {"text": "rebase #446", "mode": "inbox", "oracle_chat": "@product-manager rebase #446"}
+    status, reply = post(server, owner, "/sessions/pm/message", body)
+    assert status == 200 and mail(history) == ["rebase #446"]
+    chat = dispatch(server, "GET", "/oracle/chat", owner)[1]["messages"]
+    if flag:
+        assert reply["exchange"]["q"] == "@product-manager rebase #446"
+        assert [m["a"] for m in chat] == [
+            "Sent to **product-manager**: \u201crebase #446\u201d. It's in its inbox."
+        ]
+    else:
+        assert "exchange" not in reply and chat == []
