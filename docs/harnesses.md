@@ -240,9 +240,27 @@ repository yet gets the kit when a session starts in one. Adding is
 three steps: pick the kit (Browse marks kit folders and offers each kit of a
 multi-kit folder), read what it holds, enable it for all workspaces or chosen
 ones (`POST /kits/enable`; the choice lives in `<home>/kit-policy.json`).
-Enabling installs into every matching repository known now, after a dry run
-you can read, for every harness; the review names, per harness, the
-components the kit does not support. Enable pins a digest of the kit tree
+The chooser lists workspaces only, no folders: enabling is a workspace
+property. The review (`POST /kits/review`) is one matrix for the kit, since
+what each harness gets depends on the harness, not the folder: components in
+sections by kind, collapsed, a section with something a harness cannot take
+marked; above it, one strip with everything per repository that differs
+and can be put right from there, each with a Fix: Codex trust (hooks run
+only in a repository Codex trusts; `POST /kits/fix` with `codex-trust`
+writes `trust_level = "trusted"` for the repository into `~/.codex/config.toml`,
+the record Codex itself writes when the owner accepts its prompt, and one
+click covers every kit and session there; owner decision 2026-11-25, the
+only place DuckTerm writes trust, never at install or SessionStart), a
+knowledge file with a path scope on a harness without one (`fallbacks`:
+load it always there, kept with the policy so later SessionStart installs
+do the same), a file that exists and is not from a kit (replace). A kit's
+permission rules reach Copilot as `--allow-tool`/`--deny-tool` flags when
+DuckTerm launches a Copilot session in a repository whose record holds the
+kit, so they are never "not supported" there. OpenCode hooks (JS plugins)
+have no fix yet. Enabling installs into every matching repository known
+now, for every harness, with the options and fixes the review showed; the
+policy keeps them (`options`, `fallbacks`) for the installs SessionStart
+does later. Enable pins a digest of the kit tree
 the review showed (`digest` in the policy). On a SessionStart the server
 installs enabled kits the session's repository lacks, but only that pinned
 tree: a kit folder that changed since (a pull, an edit under ~/Downloads)

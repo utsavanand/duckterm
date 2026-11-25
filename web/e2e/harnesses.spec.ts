@@ -12,7 +12,7 @@ import { api, apiPost, postEvent, seedSession } from "./helpers";
 
 test("add a skill kit, install it into a workspace and read a skill; the kit's script never runs", async ({
   page,
-}) => {
+}, testInfo) => {
   const kit = mkdtempSync(join(tmpdir(), "rd-e2e-kit-"));
   const project = realpathSync(mkdtempSync(join(tmpdir(), "rd-e2e-kit-project-")));
   execFileSync("git", ["init", "-q"], { cwd: project }); // only repositories take kits
@@ -58,6 +58,8 @@ test("add a skill kit, install it into a workspace and read a skill; the kit's s
   await page.getByRole("button", { name: "Review what will change" }).click();
 
   await expect(page.getByText(/nothing is written until you press Enable/)).toBeVisible();
+  await expect(page.getByText("every harness takes everything")).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("review-1280.png"), fullPage: true });
   expect(existsSync(join(project, ".claude", "skills", "ship-it", "SKILL.md"))).toBe(false);
   await page.getByRole("button", { name: "Enable", exact: true }).click();
 
@@ -130,9 +132,10 @@ test("the dry-run matrix stays readable at 390px in both themes", async ({ page 
   await page.getByLabel(workspace, { exact: true }).check();
   await page.getByRole("button", { name: "Review what will change" }).click();
   await expect(page.getByText(/nothing is written until you press Enable/)).toBeVisible();
+  await page.locator(".rd-kits-sec > summary", { hasText: "Skills" }).click();
 
   const first = page.locator(".rd-kits-plan td").first();
-  await expect(first).toContainText("skill · review-and-ship");
+  await expect(first).toContainText("review-and-ship");
   const cell = await first.boundingBox();
   expect(cell?.width ?? 0).toBeGreaterThanOrEqual(150);
   const name = await first.locator(".rd-kits-mono").boundingBox();
@@ -149,10 +152,10 @@ test("the dry-run matrix stays readable at 390px in both themes", async ({ page 
   rmSync(kit, { recursive: true, force: true });
 });
 
-// A repository deleted between the page's catalog load and Review is refused
-// by the dry run (400). The Enable step shows the refusal with the full path,
-// and at 390px that path wraps instead of widening the page.
-test("a refused dry run is shown in the wizard at 390px without widening the page", async ({ page }) => {
+// A repository deleted between the page's catalog load and Review is left out
+// of the review (the next catalog load drops it); the matrix still shows and
+// at 390px nothing widens the page.
+test("a repository deleted after the catalog load is left out of the review at 390px", async ({ page }) => {
   const kit = mkdtempSync(join(tmpdir(), "rd-e2e-kit-"));
   const project = realpathSync(mkdtempSync(join(tmpdir(), "rd-e2e-kit-project-")));
   execFileSync("git", ["init", "-q"], { cwd: project }); // only repositories take kits
@@ -181,10 +184,9 @@ test("a refused dry run is shown in the wizard at 390px without widening the pag
   rmSync(project, { recursive: true, force: true });
   await page.getByRole("button", { name: "Review what will change" }).click();
 
-  const alert = page.getByRole("alert");
-  await expect(alert).toContainText(`${workspace} · ${project}: no such directory: ${project}`);
-  await expect(alert).toContainText("Nothing was written");
-  await expect(page.getByLabel(workspace, { exact: true })).toBeChecked();
+  await expect(page.getByText(/nothing is written until you press Enable/)).toBeVisible();
+  await expect(page.getByText("No repository yet")).toBeVisible();
+  await expect(page.locator(".rd-kits-sec > summary", { hasText: "Skills" })).toBeVisible();
   const widths = await page.locator(".rd-kits-page").evaluate((el) => [el.scrollWidth, el.clientWidth]);
   expect(widths[0]).toBeLessThanOrEqual(widths[1]);
   expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBe(390);
