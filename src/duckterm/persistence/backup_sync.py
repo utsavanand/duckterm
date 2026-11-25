@@ -72,6 +72,9 @@ def create(destination: str) -> SyncResult:
     A stable current tree is not a point-in-time historical backup. Never delete
     remote objects or change bucket lifecycle settings. Use a prefix per host.
     """
+    from duckterm.release_features import require_backup
+
+    require_backup(destination)
     validate_mode(destination, "sync")
     cli = shutil.which("gcloud")
     if not cli:

@@ -96,6 +96,10 @@ if [ -n "$JQ" ]; then
       tool_input: (.tool_input // .toolInput // .toolArgs),
       prompt: .prompt,
       stop_hook_active: .stop_hook_active,
+      last_assistant_message: (if .last_assistant_message | type == "string" then .last_assistant_message[-12000:] else null end),
+      background_tasks: (if .background_tasks | type == "array" then
+        [.background_tasks[] | select(type == "object") | {id, type, status}]
+        else null end),
       notification_type: .notification_type,
       message: (if .message | type == "string" then .message[0:200] else null end),
       runtime: $rt,

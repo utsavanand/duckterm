@@ -61,7 +61,7 @@ struct DesktopEdition: Equatable {
     }
 
     static func requiredFeature(target: String, operation: String, params: [String: Any] = [:]) -> String? {
-        if operation.hasPrefix("collaboration-") { return "inbox" }
+        if operation.hasPrefix("collaboration-") { return "cross_computer_collaboration" }
         if target != "local" { return "remote_workspaces" }
         if operation == "project-repositories" { return "connectors" }
         if operation == "project-clone", let repository = params["github_repository"],

@@ -1,0 +1,18 @@
+{
+  "name": "issue-to-merge",
+  "description": "Specs the fix for an issue, builds it on its own branch and checks it.",
+  "inputs": { "issue": "the issue: number, title, body, labels and URL, as JSON" },
+  "triggers": [
+    { "type": "github-issue", "input": "issue" },
+    { "type": "jira-issue", "input": "issue" },
+    { "type": "slack-message", "input": "issue" }
+  ],
+  "steps": [
+    { "id": "spec", "run": "spec-fix", "with": { "issue": "inputs.issue" } },
+    { "id": "build", "run": "build-fix",
+      "with": { "issue": "inputs.issue", "spec": "steps.spec.outputs.spec" } },
+    { "id": "check", "decide": "check-fix",
+      "with": { "spec": "steps.spec.outputs.spec", "diff": "workspace.diff" },
+      "routes": { "ok": "end", "broken": "fail" }, "default": "broken" }
+  ]
+}

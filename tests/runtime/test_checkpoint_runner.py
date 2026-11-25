@@ -34,7 +34,8 @@ else:
             'goals':[], 'constraints':[{'text':'Keep the owner constraint.',
                 'refs':[ref],'kind':'constraint','state':'open'}],
             'decisions':[], 'unfinished':[], 'questions':[], 'risks':[]}}
-print(json.dumps(result))
+print(json.dumps({'type':'result', 'subtype':'success', 'is_error':False,
+    'result':json.dumps(result)}))
 """
 
 

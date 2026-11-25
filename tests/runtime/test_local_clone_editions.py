@@ -284,6 +284,9 @@ def test_local_clone_routes_keep_owner_auth(clone_rig, operation):
 
 @pytest.mark.parametrize("operation", ["status", "launch"])
 def test_full_retains_imported_journal_access(clone_rig, tmp_path, monkeypatch, operation):
+    from duckterm import release_features
+
+    monkeypatch.setattr(release_features, "overrides", lambda: ({"byoc": True}, None))
     server, owner = clone_rig(editions.FULL)
     identifier = uuid.uuid4().hex
     state = {

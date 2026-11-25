@@ -7,9 +7,10 @@ import json
 import stat
 from pathlib import Path
 
+import pytest
 from tests.runtime.test_agents_md import _request
 
-from duckterm import editions
+from duckterm import editions, release_features
 from duckterm.persistence.history import HistoryStore
 from duckterm.server import Server
 
@@ -216,7 +217,10 @@ def test_harness_contents_lists_what_ships_with_descriptions(tmp_path: Path) -> 
     assert by_kind[("sub-agent", "reviewer")] == "Reviews diffs for correctness."
 
 
-def test_without_the_flag_every_kit_route_refuses_and_sessions_list_no_kits(tmp_path: Path) -> None:
+def test_without_the_flag_every_kit_route_refuses_and_sessions_list_no_kits(
+    tmp_path: Path, monkeypatch
+) -> None:
+    monkeypatch.setattr(release_features, "overrides", lambda: ({}, None))
     store = HistoryStore(tmp_path / "db.sqlite")
     store.record(
         {
@@ -243,6 +247,11 @@ def test_without_the_flag_every_kit_route_refuses_and_sessions_list_no_kits(tmp_
     (list_status, list_body), (reg_status, _), rows = asyncio.run(scenario())
     assert (list_status, reg_status) == (403, 403)
     assert list_body["code"] == "feature_unavailable"
-    assert "development" in list_body["error"]
+    assert "skill_kits is disabled by its feature flag" in list_body["error"]
     assert store.harnesses() == []
     assert rows[0]["suites"] == []
+
+
+@pytest.fixture(autouse=True)
+def enabled_feature(monkeypatch):
+    monkeypatch.setattr(release_features, "overrides", lambda: ({"skill_kits": True}, None))

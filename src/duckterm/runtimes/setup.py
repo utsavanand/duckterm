@@ -36,11 +36,13 @@ RUNTIMES = {"claude-code": "claude", "codex": "codex"}
 ACTIONS = {"status", "install", "login"}
 AUTH_TIMEOUT = 15.0
 INTERACTIVE_TIMEOUT = 600.0
+# Run downloaded scripts from the private action directory so launched agents
+# inherit the PTY on stdin instead of a curl-to-shell pipe.
 _INSTALL = {
     "claude-code": "/usr/bin/curl -q --proto '=https' --proto-redir '=https' -fsSL "
-    "https://claude.ai/install.sh | /bin/bash",
+    "https://claude.ai/install.sh --output installer.sh && /bin/bash ./installer.sh",
     "codex": "/usr/bin/curl -q --proto '=https' --proto-redir '=https' -fsSL "
-    "https://chatgpt.com/codex/install.sh | /bin/sh",
+    "https://chatgpt.com/codex/install.sh --output installer.sh && /bin/sh ./installer.sh",
 }
 _DROP = {
     "BASH_ENV",

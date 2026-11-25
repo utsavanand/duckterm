@@ -53,6 +53,207 @@ citations read back identically, and the 4.4 GB of cited raw copies became 87 MB
 Lesson: before a migration that removes the old form, scan the live data for
 every reference to it, and rehearse on a clone of that data.
 
+## 2026-11-24 — Exercise empty-input keys and Unicode highlight boundaries
+
+Search must release Escape to sidebar navigation after clearing its own value.
+Assert the second Escape clears active filters, not just that focus remains.
+Lowercasing can expand characters, so map match positions back to original UTF-16
+boundaries and merge overlapping ranges before rendering the unchanged label.
+Include Unicode expansion, contextual casing, emoji, and literal punctuation in
+regression coverage.
+
+## 2026-11-24 — Scope searches and wait for terminal checkpoint receipts
+
+Adding a second search box exposed an unlabelled Inbox test locator. Target the
+named control. Checkpoint recovery polls may return a valid running receipt
+before completion; wait for the completed receipt, then retain exact request and
+result identity assertions instead of assuming the first HTTP 200 is final.
+
+## 2026-11-24 — Search must compose with filters without changing navigation
+
+Agent-name search must apply to the same session set as filter counts, retain
+filter choices when cleared, and leave workspace expansion and selection intact.
+Keep its input outside the collapsible filter controls and verify those behaviors
+with real sidebar rows, including forks inside collapsed workspaces.
+
+## 2026-11-24 — Unread inbox items are not all unanswered requests
+
+Sidebar inbox badges include informational owner notices. A filter for unanswered
+requests needs explicit reply-required counts, retaining read/accepted requests
+and excluding informational notices and closed requests. Keep the existing badge
+count intact, count matching sessions once, and test live answers plus status unions.
+
+## 2026-11-24 — A completed response does not mean completed work
+
+The status fold treated every Stop as idle and the hook discarded Claude's
+native background_tasks snapshot and last_assistant_message. Oracle could
+recognize a blocking question without making the session appear under Waiting.
+Preserve those existing signals instead of inferring work from terminal prose.
+Background tasks keep Working; pending owner questions take priority. Ignore
+late classifier results after the turn changes, and keep reply delivery aware
+that Waiting can mean a completed turn asking a plain-text question. Regression
+tests cover task completion, restarts, replies, and the sidebar filters.
+
+## 2026-11-24 — Valid JSON is not necessarily a transcript record
+
+A JSON array in a Claude transcript made the whole sessions endpoint return 500.
+Moving parsing off the event loop kept other requests responsive but did not
+protect the agent list. Validate record, message and usage shapes before field
+access; skip invalid usage values and retain earlier valid evidence. Exercise
+malformed but valid JSON as well as interrupted JSON and unreadable files.
+
+## 2026-11-24 — Concurrent callers don't overlap a read that runs on the loop
+
+Fleet digests started reading four sessions at a time, but Claude transcript
+parsing still ran synchronously inside the coroutine, so only tmux and Codex
+reads actually overlapped. Moving a read to a thread opens an await, and that
+await is a window in which the session can be rebound, moved or have its
+transcript replaced. Recheck binding and file identity after the await, as the
+Codex path already did.
+
+
+## 2026-11-23 — Measure the gap between an AI answer and CLI exit
+
+A short internal Claude call kept waiting after its final result because the CLI
+was finishing nonessential background traffic. Separate first-text, final-result
+and process-exit timings before attributing the whole wait to the model. The
+documented nonessential-traffic switch removed the measured exit delay while
+preserving subscription login and normal zero-exit validation. Keep diagnostic
+records bounded and content-free; do not add blocking log writes to the loop.
+Local context reads can overlap, but preserve prompt order, bound concurrency,
+and cancel sibling readers on failure instead of leaving stale work running.
+
+## 2026-11-22 — Reconcile flags through real entry points after integration
+
+A branch that passed against an older main contained a duplicate CLI gate and a
+test that stopped before the newly shipped kit handler. Merge checks must exercise
+the real command and retain newer development flags. The inventory and public
+table list each feature once, with skill-kit legacy precedence explicit.
+
+
+## 2026-11-23 — A path check cannot see through a symlink the same commit adds
+
+Autopilot refused to push a run that touched CI configuration by matching the
+changed paths against CI directories with a trailing slash. A step could commit
+`.github/workflows` itself as a symlink to `ci/`, and the diff then listed
+`.github/workflows` and `ci/x.yml`, neither of which matched. A diff names the
+entries that changed, not what they resolve to. Refuse any symlink the run adds
+or changes (mode 120000 in `git diff --raw`) before checking names, and treat a
+bare CI directory name as CI too.
+
+## 2026-11-22 — Restore sidebar scroll only when its container mounts
+
+Inline ref callbacks reapplied saved scroll positions during selection and drag
+renders, before the browser delivered its latest scroll event. In a crowded
+short sidebar this moved a workspace between the clicks of a double-click.
+Stable attachment callbacks restore on mount while allowing normal scrolling.
+Browser regressions use a crowded 652px viewport; drag helpers must keep both
+pointer targets visible after scrolling, rather than pressing below the window.
+## 2026-11-22 — One flag gated two unrelated things, in three places
+
+Disable on the GitHub connector blanked the pull request view and the
+repository browser, both of which told the owner to enable a connector they
+had just turned off on purpose. review/github.py and github_projects.py each
+read connectors.policy("github")["enabled"] before fetching the credential.
+
+That flag means "agents may use this". Duckterm reading the owner's own token
+for its own features is the other door, and it never needed the flag. A test
+had frozen the wrong behaviour in place -- it asserted the browser refuses
+when the flag is off -- so the bug was protected rather than caught.
+
+The lesson is about tests, not the gate. A test that encodes a behaviour makes
+that behaviour expensive to change, which is the point, but it means an
+incorrect test defends an incorrect product. When the owner's decision changed
+the test had to be inverted, not deleted: the credential check next to it was
+still right, and deleting the whole test would have dropped that too. Both new
+tests were mutation-checked by restoring the gates; each failed, and the
+credential tests kept passing, which is what proves they test different things.
+
+## 2026-11-17 — Installer handoff lost terminal input
+
+The setup helper allocated a PTY, but piped the downloaded installer into its
+shell. When the installer launched Codex, stdin was still that pipe and Codex
+rejected it as non-interactive. Testing the outer PTY alone missed the failure.
+Download to the existing private action directory, then execute the script with
+inherited terminal input. Require download success before execution. Regression
+tests must exercise the installer-to-agent handoff, including interactive input,
+nonzero agent exits and a failed download that leaves a partial script behind.
+
+## 2026-11-19 — Quote text alone cannot identify its source message
+
+A saved comment highlighted matching text in every later reply because it stored
+only the selected words. Preserve the stable source message key with each new
+comment and validate that source before saving. Keep old text-only comments
+readable, but do not guess when multiple messages match. Verify both the original
+highlight after reload and the absence of highlights on later repeated text.
+
+## 2026-11-19 — Bug reports omitted the harness version needed to diagnose compatibility
+
+## 2026-11-19 — Bug reports omitted the affected running session
+
+The resume snapshot selected only stopped/interrupted sessions, so reports of missing Messages or idle inbox reminders contained no session evidence. Include the explicitly selected active session within the same bounded, redacted snapshot and report whether a turn-end event exists. Tests cover all active states, privacy, no writes, and the row limit.
+
+Reports captured the app version and hook configuration but left out harness
+versions, forcing the owner to run a separate command on the affected computer.
+Reuse the bounded runtime-discovery probes when collecting report diagnostics.
+Keep sanitized versions and explicit probe failures in the same redacted item
+the Mac app exports, and test the native diagnostics.txt output. Label these as
+installed versions at report time, not proof of the version in an existing session.
+
+## 2026-11-22 — I verified three suites and called a PR green with five
+
+Removing Railway and Porkbun from connectors.py broke two CI jobs I never ran.
+mypy failed on connector_broker.py calling the deleted porkbun_keys_valid, and
+Playwright failed on three connectors-panel tests written against the old
+panel. I had run pytest, the connector runtime tests and vitest, seen green,
+and reported the PR as ready pending a screenshot review.
+
+Two separate causes, both mine. I did not know web/e2e existed, because I
+searched for the panel's tests where I was already working (web/src) and found
+Connectors.test.tsx, which looked like the answer. And I skipped the broker on
+purpose to avoid conflicting with #432 -- but deleting a function and leaving
+its only caller is not avoiding a conflict, it is shipping a broken build.
+Once NAMES was ("github",) the porkbun and railway branches were unreachable
+by construction, so removing them was part of the same change, not a separate
+one.
+
+Three things to carry forward. Run scripts/gate.sh bare, which runs all five
+suites, rather than assembling my own subset and calling the result green --
+the subset is exactly where the blind spot lives. Pin tool versions before
+drawing conclusions from them: unpinned mypy 1.19.1 and ruff 0.17.6 invented
+six errors and fourteen reformats in files I had never touched, and I reported
+those as main's problem before noticing pyproject pins 1.13.0 and 0.8.4. And
+when deleting a symbol, grep the whole tree for its callers before deciding
+which files are in scope.
+
+One more, about reading evidence: a Playwright failure sent me after a layout
+bug that did not exist. The screenshot showed the submit button below the fold,
+so I changed the panel twice trying to fix it. Measuring the real boxes showed
+the list scrolls correctly and the button is reachable -- the test resized the
+viewport after opening the editor and then demanded the button be in view
+without scrolling, which no user does. I reverted both product changes and
+fixed the test. Reproduce before repairing; a failing assertion names a symptom,
+not a defect.
+
+## 2026-11-22 — Give dense rule pages readable hierarchy
+
+A monochrome rule editor made warnings, scopes and proposal actions hard to
+scan, while muted labels were too dim. Use scoped semantic colors alongside
+text labels, brighter secondary text and tinted surfaces. Keep light and dark
+palettes local to the page and verify the real component with long rules at
+desktop and phone widths after the owner approves a visual preview.
+
+## 2026-11-22 — A retry key that lives only inside one dialog is not a retry key
+
+Folder chat's Confirm dialog kept one request key across Send retries, and the
+tests proved a lost response could not send twice. But Cancel threw the dialog
+away, and asking again minted a fresh key for the identical plan. So a send
+whose response was lost, followed by the natural next move (Cancel, ask again,
+Send), delivered the message twice. The independent review caught it, not me.
+The key now survives until a send for that exact plan succeeds. Lesson:
+idempotency has to cover every path back to the same action, not only the
+retry button you wrote a test for.
+
 ## 2026-11-22 — The memory cache watched a different file than the reader read
 
 After an idle agent's version was saved again as records, an old reference
@@ -120,6 +321,11 @@ longer wording at desktop and narrow viewport sizes.
 
 ## 2026-11-22 — Test checkpoint capture across the actual thread boundary
 
+## 2026-11-22 — Downloaded apps need an installation path
+
+A Mac running 0.4.209 could not check for updates because macOS translocated the downloaded app. Sparkle correctly returned 1005, but our custom UI discarded its recovery instructions and only said to retry. ZIP downloads also encouraged opening the app before moving it to Applications. Ship Finder DMGs with a visible Applications shortcut, retain ZIPs for signed updater delivery, and map install-location errors to explicit quit/move/reopen instructions. Verify the DMG preserves the signed app, is read-only, and refuses output overwrites. Exercise this using a disposable signed fixture, not the owner's installation.
+
+
 ## 2026-11-22 — Closing the listener is not completing a restart
 
 A server released its dashboard port but stayed alive in shutdown. Cleanup awaited
@@ -182,6 +388,30 @@ Lesson: "pre-existing" is a statement about blame, not about health. If a
 failure survives three sessions of being correctly identified as someone
 else's, it has no owner and the person who keeps tripping over it should just
 fix it.
+## 2026-11-22 — My test runner was pointed at the wrong worktree
+
+I built the GitHub-only connector in a new worktree, ran the tests, got 31
+passed, and moved on. The runner script had a hardcoded `cd .../hygiene` and my
+sed to repoint it matched a path that was not in the file, so it silently kept
+testing the PREVIOUS branch. Three "green" runs proved nothing about the code I
+had just written - including a 1641-pass full-suite sweep and a check that a
+tmux failure was "pre-existing on main".
+
+What exposed it was arithmetic, not suspicion: I added four tests and the count
+stayed at 31. A pass count that does not move when you add tests is the cheapest
+possible signal, and I nearly explained it away as parametrized expansion.
+
+Pointed at the right tree, the same command gave 7 failures.
+
+Fix: the runner takes the worktree as its first argument and echoes
+`tree=<path> head=<sha>` on every run, so the tree under test is in the output
+rather than in a variable I believe is correct. A hardcoded path in a scratch
+script is a silent correctness bug the moment a second worktree exists.
+
+Lesson: a test run has two results - the assertions, and WHICH CODE ran. The
+second is invisible unless you print it. When a green run follows a change that
+should have moved some number, verify the number before trusting the green.
+
 ## 2026-11-22 — The duplicated condition was real; my fix for it was not
 
 Two readers answered "is this connector on". The panel used policy.enabled AND
@@ -314,6 +544,15 @@ The browser job also exhausted its fifteen-minute budget after cold Playwright
 dependencies took six minutes. Account for installation and all edition runs in
 the job budget; a cancelled run is not passing evidence.
 
+## 2026-11-21 — Flag enforcement must match every entry point
+
+The dashboard hid disabled cloud controls, but the native menu and titlebar
+still offered them. They now start hidden and follow the same verified server
+capability, including revocation on a failed refresh. Optional CLI commands also
+apply release switches before dispatch, so legacy opt-ins cannot override an
+explicit off. Verify transitions on actual native controls and both flag states
+in every edition; Full-only test expectations hid the Lite/Code difference.
+
 ## 2026-11-21 — Check a format against real files before anchoring on it
 
 #414 skipped an oversized Codex line when `"type":"compacted"` appeared anywhere
@@ -362,6 +601,14 @@ without a local preference. Bundle the owner-approved public support address for
 every edition and retain the custom-build override. Test the actual plist-writing
 steps with the variable absent, empty, and overridden. Report creation still opens
 only a draft in the user's mail app; the user must review it and press Send.
+
+## 2026-11-20 — Rebased release flags must preserve existing opt-ins
+
+The release-switch branch predated the shipped skill-kit development flag.
+Keep the current Skill kits label and default-off coverage, reuse the existing
+parser for legacy opt-ins only when the new configuration is absent, and let
+explicit release settings win. Rebase checks must exercise both old and new
+configuration paths; resolving textual conflicts alone is insufficient.
 
 ## 2026-11-19 — Tests kept an unreachable harness-switch path alive
 
@@ -426,6 +673,18 @@ A generated-file banner is not evidence that its source and export still agree.
 Compare both before saving, reject stale revisions, and preserve a backup when
 the owner explicitly reconciles external edits. Tests cover both Markdown and
 JSON drift as well as review-before-activation.
+
+## 2026-11-17 — Release flags must gate execution as well as menus
+
+Edition membership alone left experimental cloud, collaboration, installer,
+API-key and backup controls available in distributed apps. A local, default-off
+registry now determines the server capabilities, native admission checks and
+visible controls. Personal opt-ins live in the instance home, outside builds.
+
+Test both states explicitly: old integration fixtures must opt in to the
+features they exercise, and a separate default-off run must prove that local
+sessions and checkpointing remain available. Never treat hiding a button as
+backend enforcement, and never delete stored work when disabling a feature.
 
 ## 2026-11-07 — Folder chat had a message broker its answer path could never reach
 

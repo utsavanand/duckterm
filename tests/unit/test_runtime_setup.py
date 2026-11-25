@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 import os
+import shlex
 import signal
 import stat
 import subprocess
@@ -246,7 +247,9 @@ def test_fixed_install_actions_and_no_provider_keys_reach_installer(environment,
         assert invoke(env, runtime, "install")[-1]["exit_code"] == 0
         argv, child_env = commands[-1]
         assert argv[:6] == ["/bin/bash", "--noprofile", "--norc", "-o", "pipefail", "-c"]
-        assert argv[-1].endswith(url + " | " + interpreter)
+        assert argv[-1].endswith(
+            url + " --output installer.sh && " + interpreter + " ./installer.sh"
+        )
         assert argv[-1].startswith("/usr/bin/curl -q --proto '=https'")
         assert "SECRET" not in json.dumps(child_env)
 
@@ -676,3 +679,73 @@ def test_failed_version_cleanup_never_starts_authentication(environment, monkeyp
     with pytest.raises(setup.SetupFailure, match="^cleanup_failed$"):
         invoke(environment)
     assert len(calls) == 1 and calls[0][1:] == ["--version"]
+
+
+@pytest.mark.parametrize("runtime", ["claude-code", "codex"])
+@pytest.mark.parametrize("download_exit,agent_exit", [(0, 0), (0, 7), (22, 0)])
+def test_installer_handoff_preserves_terminal_and_failure_status(
+    environment, tmp_path, monkeypatch, runtime, download_exit, agent_exit
+):
+    marker = tmp_path / "input.txt"
+    agent = binary(
+        environment,
+        "fixture_agent",
+        f"""import os,sys
+assert all(os.isatty(fd) for fd in (0,1,2)), 'stdin is not a terminal'
+with open('/dev/tty', 'rb', buffering=0): pass
+print('AGENT_READY', flush=True)
+open({str(marker)!r}, 'w').write(input())
+sys.exit({agent_exit})
+""",
+    )
+    script = "exec " + shlex.quote(str(agent)) + "\n"
+    downloader = binary(
+        environment,
+        "fixture_download",
+        f"""import pathlib,sys
+script = {script!r}
+if '--output' in sys.argv:
+    pathlib.Path(sys.argv[sys.argv.index('--output') + 1]).write_text(script)
+else:
+    sys.stdout.write(script)
+sys.exit({download_exit})
+""",
+    )
+    monkeypatch.setitem(
+        setup._INSTALL,
+        runtime,
+        setup._INSTALL[runtime].replace("/usr/bin/curl", shlex.quote(str(downloader))),
+    )
+    monkeypatch.setattr(setup, "INTERACTIVE_TIMEOUT", 10.0)
+    incoming, outgoing = os.pipe()
+    events = []
+    output = bytearray()
+    sent = False
+
+    def emit(event):
+        nonlocal sent
+        events.append(event)
+        if event["type"] == "output":
+            output.extend(base64.b64decode(event["data"]))
+            if b"AGENT_READY" in output and not sent:
+                sent = True
+                frame = {"type": "input", "data": base64.b64encode(b"continue\n").decode()}
+                os.write(outgoing, json.dumps(frame).encode() + b"\n")
+
+    try:
+        setup.execute(
+            runtime,
+            "install",
+            environment=environment,
+            emit=emit,
+            control=setup_process.Control(incoming),
+        )
+    finally:
+        os.close(incoming)
+        os.close(outgoing)
+    assert events[-1]["exit_code"] == (download_exit or agent_exit), output.decode()
+    if download_exit:
+        assert not marker.exists()
+        assert not sent
+    else:
+        assert marker.read_text() == "continue"

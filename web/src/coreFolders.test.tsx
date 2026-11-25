@@ -5,7 +5,7 @@ import { EditionProvider, useEdition } from "./edition";
 
 function Status() {
   const { state, has } = useEdition();
-  return <><span>{state.status}</span><output>collaboration:{String(has("inbox"))}</output></>;
+  return <><span>{state.status}</span><output>collaboration:{String(has("cross_computer_collaboration"))}</output></>;
 }
 
 afterEach(() => {
@@ -42,7 +42,7 @@ it("uses core HTTP folder and session operations in Lite despite the native coll
 
 it.each(["code", "full"])("preserves coordinated folder actions and pending results in %s", async id => {
   const native = nativeBridge().mockResolvedValue({ handled: true, pending: true });
-  const http = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id, features: ["folders", "inbox"] })));
+  const http = vi.fn().mockResolvedValue(new Response(JSON.stringify({ id, features: ["folders", "inbox", "cross_computer_collaboration"] })));
   vi.stubGlobal("fetch", http);
   render(<EditionProvider><Status /></EditionProvider>);
   await screen.findByText("ready");
@@ -72,7 +72,7 @@ it("keeps core folder creation available while edition loading fails, then follo
   await screen.findByText("error");
   await api.createFolder("Local");
   expect(native).not.toHaveBeenCalled();
-  description = { id: "full", features: ["folders", "inbox"] };
+  description = { id: "full", features: ["folders", "inbox", "cross_computer_collaboration"] };
   act(() => window.dispatchEvent(new Event("focus")));
   await screen.findByText("ready");
   await api.createFolder("Shared");

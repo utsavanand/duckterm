@@ -33,7 +33,7 @@ test("Inbox beside Timeline shows real session questions and replies", async ({ 
   await page.locator(".rd-row-name", { hasText: "Client implementation" }).click();
   const tabs = page.locator(".rd-view-toggle > button");
   await expect(page.getByRole("button", { name: "Open Client implementation inbox, 1 pending" })).toBeVisible();
-  await expect(tabs).toHaveText(["Terminal", "Messages", "Timeline", "Inbox (1)", "Artifacts", "PRs"]);
+  await expect(tabs).toHaveText(["Terminal", "Messages", "Timeline", "Inbox (1)", "Artifacts", "PRs", "Flows"]);
   await page.getByRole("button", { name: "Open Client implementation inbox, 1 pending" }).click();
   await expect(page.locator(".rd-session-card")).not.toHaveAttribute("open", "");
   await page.locator(".rd-session-card > summary").click();
@@ -112,7 +112,7 @@ test("Inbox scrolls independently, preserves open replies on refresh, and adapts
   await page.getByRole("button", { name: "All 50" }).click();
   await page.getByRole("searchbox", { name: "Search loaded messages" }).fill("Release review");
   await expect(page.locator(".rd-inbox-message")).toHaveCount(1);
-  await page.getByRole("searchbox").fill("");
+  await page.getByRole("searchbox", { name: "Search loaded messages" }).fill("");
   await page.screenshot({ path: "/tmp/duckterm-inbox-layout-desktop.png" });
   await page.setViewportSize({ width: 1280, height: 900 });
   expect(await list.evaluate((e) => e.scrollWidth <= e.clientWidth)).toBe(true);

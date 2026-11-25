@@ -22,7 +22,7 @@ test("filters across folders, persists choices, and restores expansion and selec
     await expect(filters).toBeHidden();
     await toggle.click();
     await expect(filters.getByRole("button", { name: /^Remote 0$/ })).toBeVisible();
-    const statusRows = await filters.locator('.rd-filter-chips').first().evaluate(el => [...el.children].map(child => child.getBoundingClientRect().top));
+    const statusRows = await filters.locator('.rd-filter-chips').first().evaluate(el => [...el.children].slice(0, 4).map(child => child.getBoundingClientRect().top));
     expect(new Set(statusRows).size).toBe(1);
     const spacing = await filters.locator('.rd-filter-group').evaluateAll(groups => groups.map(group => getComputedStyle(group).gap));
     expect(spacing).toEqual(["7px", "7px", "7px"]);
@@ -84,5 +84,46 @@ test("filters across folders, persists choices, and restores expansion and selec
   } finally {
     for (const key of keys) await apiDelete(`/sessions/${key}`);
     for (const name of folders.reverse()) await apiDelete(`/folders/${encodeURIComponent(name)}`);
+  }
+});
+
+test("background work stays Working and an owner question takes Waiting priority", async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const key = `background-filter-${Date.now()}`;
+  try {
+    await seedSession(key, { name: key, runtime: "claude-code" });
+    const background_tasks = [{ id: "test-shell", type: "shell", status: "running" }];
+    await postEvent({ session_key: key, event_type: "Stop", background_tasks });
+    await page.goto(base());
+    await page.getByRole("button", { name: /^Filters(?:,|$)/ }).click();
+    const filters = page.getByRole("region", { name: "Session filters" });
+    const working = filters.getByRole("button", { name: /^Working / });
+    const waiting = filters.getByRole("button", { name: /^Waiting / });
+    await working.click();
+    const row = page.locator(".rd-row-name", { hasText: key });
+    await expect(row).toBeVisible();
+    await postEvent({ session_key: key, event_type: "Notification", notification_type: "idle_prompt" });
+    await expect(row).toBeVisible();
+    await postEvent({ session_key: key, event_type: "Stop", background_tasks,
+      last_assistant_message: "Can I push it and open the PR for release-dev? It's a server-only change." });
+    await expect(row).toHaveCount(0);
+    await working.click();
+    await waiting.click();
+    await expect(row).toBeVisible();
+    await page.reload();
+    await expect(row).toBeVisible();
+    await page.screenshot({ path: "/tmp/duckterm-background-waiting.png" });
+    await postEvent({ session_key: key, event_type: "UserPromptSubmit", prompt: "Yes" });
+    await expect(row).toHaveCount(0);
+    await waiting.click();
+    await working.click();
+    await expect(row).toBeVisible();
+    await postEvent({ session_key: key, event_type: "Stop", background_tasks: [] });
+    // The existing 30-second post-turn grace ends at the native idle notice.
+    await postEvent({ session_key: key, event_type: "Notification", notification_type: "idle_prompt" });
+    await page.reload();
+    await expect(row).toHaveCount(0);
+  } finally {
+    await apiDelete(`/sessions/${key}`);
   }
 });

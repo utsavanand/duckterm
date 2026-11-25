@@ -15,7 +15,7 @@ import pytest
 from test_memory import memory_rig
 from test_session_api import dispatch
 
-from duckterm import memory_provider
+from duckterm import memory_provider, release_features
 from duckterm.core.session_api import APIError
 from duckterm.llm import ai_settings, api, backend
 
@@ -28,6 +28,11 @@ class _Response(io.BytesIO):
 
     def __exit__(self, *exc):
         return False
+
+
+@pytest.fixture(autouse=True)
+def enabled_byok(monkeypatch):
+    monkeypatch.setattr(release_features, "overrides", lambda: ({"byok": True}, None))
 
 
 @pytest.fixture
@@ -269,6 +274,7 @@ def test_key_route_validates_saves_and_never_echoes(memory_rig, provider):
 
     status, state = dispatch(server, "GET", "/ai-settings", owner)
     assert status == 200 and state["keys"]["anthropic"] == {"saved": True, "source": "stored"}
+    assert isinstance(state["recent_timings"], list)
     assert "sk-new" not in json.dumps(state)
     assert "sk-new" not in (
         Path(ai_settings._path()).read_text() if ai_settings._path().exists() else ""

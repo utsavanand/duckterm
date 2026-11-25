@@ -20,9 +20,9 @@ import shutil
 from dataclasses import dataclass
 from typing import Any
 
-from duckterm import memory_provider
+from duckterm import memory_provider, release_features
 from duckterm.core.session_api import APIError
-from duckterm.llm import ai_settings, api
+from duckterm.llm import ai_settings, api, latency
 
 TIERS = ("fast", "deep")
 EFFORT = {"fast": "low", "deep": "medium"}
@@ -51,6 +51,8 @@ def ready() -> bool:
     if os.environ.get("DUCKTERM_SUMMARIZER") == "off":
         return False
     settings = ai_settings.load()
+    if settings["backend"] == "api" and not release_features.enabled("byok"):
+        return False
     if settings["backend"] == "api" and _api_key(settings) is not None:
         return True
     return harness(settings["harness"]) is not None
@@ -68,12 +70,31 @@ async def complete(
     checkpoint keeps the models captured with it); other backends use the
     tier's model. effort None uses the tier's; "" sends none, so the model's
     default applies (checkpoints were quality-measured that way)."""
+    with latency.measure("backend", tier=tier) as timing:
+        timing.input_bytes = len(prompt.encode())
+        reply = await _complete(
+            prompt, tier=tier, schema=schema, claude_model=claude_model, effort=effort
+        )
+        timing.backend = reply.detail if reply.backend == "harness" else "api"
+        timing.output_bytes = len(reply.text.encode())
+        return reply
+
+
+async def _complete(
+    prompt: str,
+    *,
+    tier: str,
+    schema: dict[str, Any] | None,
+    claude_model: str,
+    effort: str | None,
+) -> Reply:
     effort = EFFORT[tier] if effort is None else effort
     if os.environ.get("DUCKTERM_SUMMARIZER") == "off":
         raise APIError(503, "Automatic preparation is disabled on this host")
     settings = ai_settings.load()
     fallback = ""
     if settings["backend"] == "api":
+        release_features.require("byok")
         try:
             model = ai_settings.model(settings, tier)
             text = await asyncio.to_thread(_api, settings, model, effort, prompt, schema)
@@ -98,6 +119,7 @@ async def complete(
 
 
 def _api_key(settings: dict[str, Any]) -> str | None:
+    release_features.require("byok")
     secret, _source = ai_settings.key(settings["provider"], ai_settings.base_url(settings))
     # A local OpenAI-compatible server (Ollama, LM Studio) needs no key.
     return secret if secret or settings["provider"] != "custom" else ""

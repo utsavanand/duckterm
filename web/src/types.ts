@@ -26,6 +26,8 @@ export interface DucktermEvent {
   // Set by the server on a PermissionRequest from an agent that reviews its
   // own requests (Codex); it stays busy until its prompt shows on screen.
   auto_reviewed?: boolean;
+  background_tasks?: { id: string; type?: string; status?: string }[];
+  owner_waiting?: boolean;
   notification_type?: string;
   message?: string;
 }
@@ -36,6 +38,7 @@ export type WaitingCause = "approval" | "question" | "other";
 // arrives as a PermissionRequest but is a question.
 export function waitingCauseOf(eventType?: string, notificationType?: string, tool?: string): WaitingCause {
   if (eventType === "PermissionRequest") return tool === "AskUserQuestion" ? "question" : "approval";
+  if (notificationType === "owner_question") return "question";
   if (notificationType === "permission_prompt") return "approval";
   return "other";
 }
@@ -70,6 +73,7 @@ export interface SessionView {
   remoteTransfer?: { id: string; stage: string; target?: string; session_key?: string };
   celebration?: DuckCelebration; // browser-only; never restored from persisted rows
   inboxPending?: number;
+  inboxUnanswered?: number;
   pinned?: boolean;
   key: string;
   label: string;

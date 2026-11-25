@@ -127,6 +127,25 @@ def parse_ask(text: str) -> dict[str, Any] | None:
     }
 
 
+def permission_question(text: str) -> str | None:
+    """Recognize an explicit final permission request without an LLM round trip.
+
+    Only an unquoted final paragraph starting with a concrete permission ask;
+    general offers and rhetorical questions still use the existing classifier.
+    """
+    prose = re.sub(r"```.*?```", "", text, flags=re.DOTALL)
+    paragraphs = [p.strip() for p in re.split(r"\n\s*\n", prose) if p.strip()]
+    if not paragraphs or paragraphs[-1].startswith(">"):
+        return None
+    match = re.match(
+        r"(?:Can|May|Shall|Should) I (?:push|publish|merge|release|deploy|install|delete|"
+        r"remove|overwrite|restart|send)\b[^?\n]{1,500}\?",
+        paragraphs[-1],
+        re.IGNORECASE,
+    )
+    return match.group(0) if match else None
+
+
 def question_from(text: str) -> str | None:
     """Fallback when no model is available: the last paragraph, if it ends
     with "?". It catches few real asks (10% of blocking ones on the labeled
@@ -188,7 +207,13 @@ class Relay:
         self.rules: list[dict[str, Any]] = data.get("rules", []) if isinstance(data, dict) else []
 
     def _save(self) -> None:
-        self.notes = self.notes[-NOTE_LIMIT:]
+        # Only closed notes are evicted. Trimming the oldest regardless of
+        # status dropped questions still waiting on the owner.
+        excess = len(self.notes) - NOTE_LIMIT
+        if excess > 0:
+            closed = [n for n in self.notes if n["status"] != "open"][:excess]
+            dropped = {id(n) for n in closed}
+            self.notes = [n for n in self.notes if id(n) not in dropped]
         private_write(self.path, json.dumps({"notes": self.notes, "rules": self.rules}))
 
     def open_notes(self) -> list[dict[str, Any]]:

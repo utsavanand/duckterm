@@ -1,6 +1,8 @@
 """Resume reports expose readiness, never identities, transcript text or settings."""
 
+import asyncio
 import json
+import sys
 import threading
 
 import pytest
@@ -18,10 +20,73 @@ def history(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setenv("DUCKTERM_HOME", str(tmp_path / "state"))
     monkeypatch.setenv("DUCKTERM_SUPPORT_EMAIL", "")
+
+    async def no_installed_runtimes():
+        return {"version": 1, "runtimes": []}
+
+    monkeypatch.setattr(resume_diagnostics, "discover", no_installed_runtimes)
     store = HistoryStore(tmp_path / "history.sqlite")
     yield store
     store.purge_test_sessions()
     store.close()
+
+
+def test_report_probes_versions_without_exporting_raw_cli_output(history, tmp_path, monkeypatch):
+    from duckterm.runtimes.discovery import discover
+
+    binary = tmp_path / "codex"
+    binary.write_text(
+        f"#!{sys.executable}\n"
+        "import os, sys\n"
+        "assert sys.argv[1:] == ['--version']\n"
+        "assert 'PRIVATE_PROBE_SECRET' not in os.environ\n"
+        "print('codex-cli 0.169.0')\n"
+        "print('PRIVATE-PATH /Users/private/person/token')\n"
+    )
+    binary.chmod(0o700)
+    monkeypatch.setenv("PATH", str(tmp_path))
+    monkeypatch.setenv("PRIVATE_PROBE_SECRET", "private-value")
+    monkeypatch.setattr(resume_diagnostics, "discover", discover)
+    server = Server(history=history)
+    try:
+        status, context = dispatch(
+            server, "GET", "/bugreport/context", {"x-duckterm-token": server.token}
+        )
+        assert status == 200
+        text = next(i["text"] for i in context["items"] if i["id"] == "resume-readiness")
+        assert "Codex: 0.169.0" in text
+        assert "Claude Code: not found on server PATH" in text
+        assert "Running sessions may use a different version" in text
+        assert "PRIVATE" not in json.dumps(context)
+        assert "/Users/private" not in json.dumps(context)
+    finally:
+        server.digests.close()
+
+
+@pytest.mark.parametrize("probe", ["timeout", "failed", "unrecognized"])
+def test_version_probe_failure_preserves_other_diagnostics(history, monkeypatch, probe):
+    async def discovery():
+        return {"runtimes": [{"label": "Codex", "version": None, "probe": probe}]}
+
+    monkeypatch.setattr(resume_diagnostics, "discover", discovery)
+    text = asyncio.run(resume_diagnostics.collect(resume_diagnostics.snapshot(history, None)))[
+        "text"
+    ]
+    assert f"Codex: version unavailable ({probe})" in text
+    assert "Interrupted/stopped sessions: 0" in text
+
+
+def test_discovery_error_does_not_drop_report_or_export_exception(history, monkeypatch):
+    async def discovery():
+        raise OSError("PRIVATE-PATH /private/secret")
+
+    monkeypatch.setattr(resume_diagnostics, "discover", discovery)
+    text = asyncio.run(resume_diagnostics.collect(resume_diagnostics.snapshot(history, None)))[
+        "text"
+    ]
+    assert "version discovery failed" in text
+    assert "Interrupted/stopped sessions: 0" in text
+    assert "PRIVATE" not in text
 
 
 def seed(history, key, cwd, native_id=None, state="interrupted", runtime="claude-code"):
@@ -216,3 +281,47 @@ def test_empty_or_unrelated_hooks_are_not_reported_as_installed(history, tmp_pat
         json.dumps({"hooks": hooks, "unrelated": str(resume_diagnostics.hook_script_path())})
     )
     assert resume_diagnostics.hook_status("claude-code", None) == "not configured"
+
+
+@pytest.mark.parametrize("state", ["idle", "busy", "waiting"])
+def test_selected_active_session_is_included_without_other_live_sessions(history, tmp_path, state):
+    seed(history, "PRIVATE-selected", tmp_path, state=state, runtime="codex")
+    seed(history, "PRIVATE-other", tmp_path, state="idle")
+    before = history._conn.total_changes
+    data = resume_diagnostics.snapshot(history, "PRIVATE-selected")
+    assert data["total"] == 0
+    assert len(data["sessions"]) == 1
+    text = resume_diagnostics.render(data)["text"]
+    assert "Interrupted/stopped sessions: 0 (showing 0)" in text
+    assert "Selected session also included below" in text
+    assert f"Session 1 (selected): codex; {state}" in text
+    assert "native conversation ID: missing" in text
+    assert "recorded turn-end event: no" in text
+    assert "PRIVATE" not in text
+    assert str(tmp_path) not in text
+    assert history._conn.total_changes == before
+
+
+def test_selected_active_session_keeps_report_bounded_and_records_stop(
+    history, tmp_path, monkeypatch
+):
+    monkeypatch.setattr(resume_diagnostics, "LIMIT", 2)
+    for key in ("stopped-a", "stopped-b", "stopped-c"):
+        seed(history, key, tmp_path)
+    seed(history, "selected-live", tmp_path, state="idle")
+    history.record(
+        {
+            "_id": "stop-fixture",
+            "_ts": 2,
+            "session_key": "selected-live",
+            "event_type": "Stop",
+            "test": True,
+        }
+    )
+    data = resume_diagnostics.snapshot(history, "selected-live")
+    assert data["total"] == 3
+    assert len(data["sessions"]) == 2
+    assert data["sessions"][0]["selected"]
+    text = resume_diagnostics.render(data)["text"]
+    assert "Interrupted/stopped sessions: 3 (showing 1)" in text
+    assert "recorded turn-end event: yes" in text

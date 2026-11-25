@@ -55,6 +55,7 @@ import socket
 import sqlite3
 import sys
 import tempfile
+import threading
 import time
 import traceback
 import urllib.parse
@@ -63,9 +64,10 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TextIO
 
-from duckterm import bug_reports, connectors, editions, suites, zsh_themes
+from duckterm import bug_reports, connectors, editions, release_features, suites, zsh_themes
 from duckterm.agents import tmux
 from duckterm.agents.terminal import available_terminals, open_in_terminal
+from duckterm.autopilot import api as ap_api
 from duckterm.core import events, fleet_questions, oracle
 from duckterm.core.approvals import Approval, ApprovalRegistry
 from duckterm.core.backup_jobs import BackupJobs
@@ -81,6 +83,7 @@ from duckterm.core.relay import (
     choices_from,
     parse_ask,
     parse_rule_reply,
+    permission_question,
     question_from,
     validate_rule,
 )
@@ -166,6 +169,58 @@ _RESUME_NUDGE = (
     "outside the conversation (dev servers, watchers, background jobs) died "
     "with it — re-verify before assuming, then continue where you left off."
 )
+
+
+class _FlowStepTracker:
+    """Each harness step of a flow run is a child session of the session that
+    started the flow, recorded the way a fork is: a SessionStart row with the
+    parent key, the step's hooks reporting under the child key, a SessionEnd
+    when the process exits. Called from the runner's thread, so every publish
+    hops onto the event loop."""
+
+    def __init__(self, server: "Server", loop: asyncio.AbstractEventLoop) -> None:
+        self.server = server
+        self.loop = loop
+
+    def _publish(self, event: dict[str, Any], intention: str = "") -> None:
+        done = threading.Event()
+
+        def go() -> None:
+            try:
+                self.server.bus.publish(event)
+                if intention:
+                    self.server.history.set_intention(str(event["session_key"]), intention)
+            finally:
+                done.set()
+
+        self.loop.call_soon_threadsafe(go)
+        done.wait(timeout=5)
+
+    def begin(self, child_key: str, info: dict[str, Any]) -> dict[str, str]:
+        cwd = str(info.get("cwd") or "")
+        flow = str(info.get("flow") or "").split("/")[-1]
+        self._publish(
+            {
+                "event_type": events.SESSION_START,
+                "session_key": child_key,
+                "source_app": Path(cwd).name if cwd else "flow",
+                "name": f"{flow} · {info.get('step')}",
+                "runtime": info.get("harness") or "claude-code",
+                "cwd": cwd,
+                "repo_path": cwd,
+                "parent_session_key": info.get("parent"),
+                "launched": True,
+                "pty_owned": False,
+                "command": shlex.join(list(info.get("command") or [])),
+            },
+            intention=(
+                f"flow {info.get('flow')} · step {info.get('step')} · attempt {info.get('attempt')}"
+            ),
+        )
+        return {**self.server._session_env(child_key), "DUCKTERM_SESSION_KEY": child_key}
+
+    def end(self, child_key: str, exit_code: int) -> None:
+        self._publish({"event_type": events.SESSION_END, "session_key": child_key})
 
 
 def _build_runtime(name: str | None, command: str) -> AgentRuntime:
@@ -343,6 +398,43 @@ _ROUTES: list[Route] = [
           **_mid("/harnesses/", "/contents")),
     Route("DELETE", "", lambda s, r, w, h, b, seg: s._deregister_harness(w, seg),
           prefix="/harnesses/"),
+    # ── skill kits: the engine behind `duckterm kit`, for the Skill kits page.
+    # All POST with the project in the body: route handlers do not see the query.
+    Route("POST", "/kits/overview", lambda s, r, w, h, b, seg: s._kits(w, "overview", b)),
+    Route("POST", "/kits/catalog", lambda s, r, w, h, b, seg: s._kits(w, "catalog", b)),
+    Route("POST", "/kits/register", lambda s, r, w, h, b, seg: s._kits(w, "register", b)),
+    Route("POST", "/kits/unregister", lambda s, r, w, h, b, seg: s._kits(w, "unregister", b)),
+    Route("POST", "/kits/enable", lambda s, r, w, h, b, seg: s._kits(w, "enable", b)),
+    Route("POST", "/kits/disable", lambda s, r, w, h, b, seg: s._kits(w, "disable", b)),
+    Route("POST", "/kits/plan", lambda s, r, w, h, b, seg: s._kits(w, "plan", b)),
+    Route("POST", "/kits/install", lambda s, r, w, h, b, seg: s._kits(w, "install", b)),
+    Route("POST", "/kits/uninstall", lambda s, r, w, h, b, seg: s._kits(w, "uninstall", b)),
+    Route("POST", "/kits/verify", lambda s, r, w, h, b, seg: s._kits(w, "verify", b)),
+    Route("POST", "/kits/run", lambda s, r, w, h, b, seg: s._kits(w, "start", b)),
+    Route("POST", "/kits/runs", lambda s, r, w, h, b, seg: s._kits(w, "runs", b)),
+    Route("POST", "/kits/run-detail", lambda s, r, w, h, b, seg: s._kits(w, "run", b)),
+    Route("POST", "/kits/gate", lambda s, r, w, h, b, seg: s._kits(w, "gate", b)),
+    Route("POST", "/kits/teams", lambda s, r, w, h, b, seg: s._kits(w, "teams", b)),
+    Route("POST", "/kits/team", lambda s, r, w, h, b, seg: s._kits(w, "team", b)),
+    # ── autopilot: flows started by triggers, run in sandboxes (flag `autopilot`) ──
+    Route("GET", "/api/autopilot", lambda s, r, w, h, b, seg: s._autopilot(w, ap_api.overview)),
+    # Routes match the raw path, query included: one workspace's flows and runs.
+    Route("GET", "", lambda s, r, w, h, b, seg: s._autopilot(
+        w, ap_api.overview, urllib.parse.unquote(seg)), prefix="/api/autopilot?workspace="),
+    Route("GET", "/api/autopilot/summary",
+          lambda s, r, w, h, b, seg: s._autopilot(w, ap_api.summary)),
+    Route("GET", "/api/autopilot/repositories",
+          lambda s, r, w, h, b, seg: s._autopilot(w, ap_api.repositories)),
+    Route("POST", "/api/autopilot/autopilots",
+          lambda s, r, w, h, b, seg: s._autopilot(w, ap_api.create, body=b)),
+    Route("POST", "", lambda s, r, w, h, b, seg: s._autopilot(w, ap_api.run_once, seg, body=b),
+          **_mid("/api/autopilot/autopilots/", "/run")),
+    Route("PATCH", "", lambda s, r, w, h, b, seg: s._autopilot(w, ap_api.update, seg, body=b),
+          prefix="/api/autopilot/autopilots/"),
+    Route("DELETE", "", lambda s, r, w, h, b, seg: s._autopilot(w, ap_api.delete, seg),
+          prefix="/api/autopilot/autopilots/"),
+    Route("GET", "", lambda s, r, w, h, b, seg: s._autopilot(w, ap_api.run, seg),
+          prefix="/api/autopilot/runs/"),
     # ── connectors (GitHub, Railway, … — credentials + MCP install) ──
     Route("POST", "", lambda s, r, w, h, b, seg: s._forget_connector(w, seg),
           **_mid("/connectors/", "/forget")),
@@ -437,7 +529,9 @@ class Server:
         *,
         edition: editions.EditionConfig | None = None,
     ) -> None:
-        self.edition = edition or editions.configured()
+        flag_values, flag_error = release_features.overrides()
+        self.edition = release_features.apply(edition or editions.configured(), flag_values)
+        self.feature_flags = release_features.inventory(self.edition, flag_values, flag_error)
         instance.validate_desktop_context(self.edition.name)
         self._lifecycle_locks: dict[str, asyncio.Lock] = {}
         self._transfer_sources: set[str] = set()
@@ -500,7 +594,7 @@ class Server:
         from duckterm.collaboration.service import Service as CollaborationService
 
         self.collaboration = CollaborationService(
-            self.history, enabled=self.edition.includes("inbox")
+            self.history, enabled=self.edition.includes("cross_computer_collaboration")
         )
         self._context_cache: dict[str, tuple[float, dict[str, Any]]] = {}
         from duckterm.restarts import Restarts
@@ -630,7 +724,7 @@ class Server:
             from duckterm.collaboration.api import body_json
 
             try:
-                self.require_feature("inbox")
+                self.require_feature("cross_computer_collaboration")
                 if method != "POST" or not self.collaboration.store:
                     raise APIError(404, "Collaboration coordinator unavailable")
                 authorization = headers.get("authorization", "")
@@ -658,6 +752,8 @@ class Server:
                 if urllib.parse.urlsplit(path).path.startswith("/api/v1/session/memory/"):
                     result = await self.memory.session_request(method, path, headers, body)
                     status = 200
+                elif urllib.parse.urlsplit(path).path.startswith("/api/v1/session/kits/"):
+                    status, result = await self._session_kits(method, path, headers, body)
                 else:
                     federated = await collaboration_session(
                         self.collaboration, method, path, headers, body
@@ -712,17 +808,17 @@ class Server:
                     writer,
                     403,
                     {
-                        "error": (
-                            f"{feature} is still in development; see docs/feature-flags.md"
-                            if feature in editions.DEVELOPMENT
-                            else f"{feature} is unavailable in Duckterm {self.edition.name.title()}"
-                        ),
+                        "error": release_features.unavailable_message(feature, self.edition),
                         "code": "feature_unavailable",
                         "feature": feature,
                         "edition": self.edition.name,
                     },
                 )
                 return
+
+        if method == "GET" and urllib.parse.urlsplit(path).path == "/feature-flags":
+            await _write_json(writer, 200, self.feature_flags)
+            return
 
         if urllib.parse.urlsplit(path).path.startswith("/collaboration/"):
             from duckterm.collaboration.api import owner as collaboration_owner
@@ -990,7 +1086,7 @@ class Server:
 
     def require_feature(self, feature: str) -> None:
         if not self.edition.includes(feature):
-            raise APIError(403, f"{feature} is unavailable in Duckterm {self.edition.name.title()}")
+            raise APIError(403, release_features.unavailable_message(feature, self.edition))
 
     async def _login(
         self, writer: asyncio.StreamWriter, headers: dict[str, str], path: str
@@ -1126,7 +1222,16 @@ class Server:
         # Check before publishing Stop: folding that event changes waiting to idle.
         hook_output = self._inbox_hook_output(raw, str(key or ""))
         raw["hook_event"] = True
+        # the row before this event names the repository DuckTerm launched the
+        # session in; the event itself may carry a child process's cwd
+        before = (
+            self.history.session(str(key))
+            if key and raw.get("event_type") == events.SESSION_START
+            else None
+        )
         event = self.bus.publish(raw)
+        if event.get("event_type") == events.SESSION_START:
+            self._apply_kit_policies(event, before)
         response = dict(event)
         if hook_output:
             response["hook_output"] = hook_output
@@ -1198,9 +1303,12 @@ class Server:
             await _write_json(writer, 401, {"error": "owner credential required"})
             return
         counts = self.history.session_api.pending_counts()
+        unanswered = self.history.session_api.pending_counts(requires_reply=True)
+        # Cross-computer pending mail consists of questions requiring replies.
         for key, count in self.collaboration.pending_counts().items():
             counts[key] = counts.get(key, 0) + count
-        await _write_json(writer, 200, {"counts": counts})
+            unanswered[key] = unanswered.get(key, 0) + count
+        await _write_json(writer, 200, {"counts": counts, "unanswered_counts": unanswered})
 
     async def _session_inbox(
         self, writer: asyncio.StreamWriter, session_key: str, headers: dict[str, str], query: str
@@ -1479,9 +1587,10 @@ class Server:
             await _write_json(writer, 401, {"error": "owner credential required"})
             return
         surface = urllib.parse.unquote(surface)
+        store = self.history.home_layout if surface == "home" else self.history.layouts
         try:
             if method == "GET":
-                result = self.history.layouts.get(surface)
+                result = store.get(surface)
             else:
                 if len(body) > 16384:
                     await _write_json(writer, 413, {"error": "Layout is too large"})
@@ -1489,7 +1598,7 @@ class Server:
                 req = json.loads(body)
                 if not isinstance(req, dict) or set(req) != {"instances", "revision"}:
                     raise ValueError("Expected instances and revision")
-                result = self.history.layouts.put(surface, req["instances"], req["revision"])
+                result = store.put(surface, req["instances"], req["revision"])
         except FileExistsError as exc:
             await _write_json(writer, 409, {"error": str(exc)})
             return
@@ -1638,9 +1747,7 @@ class Server:
                 from duckterm import resume_diagnostics
 
                 readiness = resume_diagnostics.snapshot(self.history, keys[0] if keys else None)
-                result["items"].append(
-                    await asyncio.to_thread(resume_diagnostics.render, readiness)
-                )
+                result["items"].append(await resume_diagnostics.collect(readiness))
             elif parsed.path == "/bugreport/submit" and method == "POST":
                 if len(body) > bug_reports.MAX_REQUEST_BYTES:
                     await _write_json(writer, 413, {"error": "report request too large"})
@@ -1754,7 +1861,7 @@ class Server:
             target = await asyncio.to_thread(workspace.resolve, repo, ref, refresh=flag)
             if part == "":
                 result = await asyncio.to_thread(workspace.header, target)
-                result["session"] = await self._review_author(target.branch)
+                result["session"] = await self._review_author(target.repo, target.branch)
             elif part == "diff":
                 result = await asyncio.to_thread(
                     workspace.diff_payload,
@@ -1784,26 +1891,35 @@ class Server:
             return
         await _write_json(writer, 200, result)
 
-    async def _review_author(self, branch: str) -> dict[str, Any] | None:
-        """The session whose checkout is on this PR's head branch, with its
-        digest. Rows are read on the loop thread; the git look-ups run in a
-        worker, the same claim rule the PR lists use."""
+    async def _review_author(self, repo: str, branch: str) -> dict[str, Any] | None:
+        """The session that made this PR's head branch, with its digest: the
+        session that first pushed it (the PR lists' rule), else a live session
+        whose checkout is on it in this repository. Every review page waits on
+        this, and asking git about every session's checkout took seconds, so
+        ended sessions are skipped. Checkouts are asked fresh each time: a
+        cached answer went stale when a session switched branches."""
         from duckterm.review import lists
 
-        rows = [r for r in self.history.sessions() if r.get("worktree_path") or r.get("cwd")]
-        rows.sort(key=lambda r: bool(r.get("ended_at")))
+        sessions = self.history.sessions()
+        owner = (await self._branch_owners(False)).get((repo, branch))
+        row = next((r for r in sessions if r["session_key"] == owner), None)
+        if row is None:
+            live = [
+                r
+                for r in sessions
+                if not r.get("ended_at") and (r.get("worktree_path") or r.get("cwd"))
+            ]
+            # A recorded branch is only a hint (it can be stale, or name the
+            # same branch in another repository), so it orders the checks.
+            live.sort(key=lambda r: r.get("branch") != branch)
 
-        def find() -> dict[str, Any] | None:
-            for row in rows:
-                if row.get("branch") == branch:
-                    return row
-            for row in rows:
-                found = lists._worktree_branch(row)
-                if found and found[1] == branch:
-                    return row
-            return None
+            def find() -> dict[str, Any] | None:
+                for candidate in live:
+                    if lists._worktree_branch(candidate) == (repo, branch):
+                        return candidate
+                return None
 
-        row = await asyncio.to_thread(find)
+            row = await asyncio.to_thread(find)
         if row is None:
             return None
         return {
@@ -1844,7 +1960,7 @@ class Server:
             if not isinstance(question, str) or not question.strip() or len(question) > 8000:
                 raise workspace.ReviewError(400, "question must be 1 to 8000 characters")
             hunk = payload.get("hunk")
-            author = await self._review_author(target.branch)
+            author = await self._review_author(target.repo, target.branch)
             digest = author.get("progress") if author else None
             diff = await asyncio.to_thread(
                 workspace.diff_payload, target, since=None, whitespace=True
@@ -1916,7 +2032,7 @@ class Server:
         from duckterm.review import approvals, cards, workspace
 
         header = await asyncio.to_thread(workspace.header, target)
-        author = await self._review_author(target.branch)
+        author = await self._review_author(target.repo, target.branch)
         release_row = (
             approvals.release_session(self.history.sessions(), author["folder"]) if author else None
         )
@@ -2121,7 +2237,7 @@ class Server:
         from duckterm.review import author, cards, lists, workspace
 
         # Session data is read here, on the loop thread, before the worker runs.
-        owner = await self._review_author(target.branch)
+        owner = await self._review_author(target.repo, target.branch)
         author_facts = author.facts(self.history, owner["key"]) if owner else None
 
         async def run() -> None:
@@ -2367,8 +2483,24 @@ class Server:
         if not note:
             await _write_json(writer, 400, {"error": "note is required"})
             return
+        message_key = req.get("message_key")
+        if message_key is not None:
+            if not isinstance(message_key, str) or not re.fullmatch(r"[a-f0-9]{64}", message_key):
+                await _write_json(writer, 400, {"error": "invalid message_key"})
+                return
+            source = self._message_source(session_key)
+            messages = await asyncio.to_thread(self._read_messages, source)
+            if self._message_source(session_key) != source or not any(
+                m.get("message_key") == message_key for m in messages
+            ):
+                await _write_json(
+                    writer, 409, {"error": "message changed or is unavailable; refresh Messages"}
+                )
+                return
         ann_id = security.new_session_key("ann")
-        self.history.add_annotation(ann_id, session_key, quote, note, int(time.time() * 1000))
+        self.history.add_annotation(
+            ann_id, session_key, quote, note, int(time.time() * 1000), message_key=message_key
+        )
         # Compose the follow-up and write it to the agent's stdin (the same path
         # the terminal uses). Quote the span so the agent knows what it's about.
         supervisor = self.orchestrator.get(session_key)
@@ -2508,6 +2640,10 @@ class Server:
                 else []
             )
             await self._reconcile_waiting(s)
+            if s["state"] not in AT_REST_STATES and self._owner_question_pending(
+                str(s["session_key"])
+            ):
+                s["state"] = "waiting"
         await _write_json(
             writer,
             200,
@@ -2555,7 +2691,7 @@ class Server:
         with no prompt and visible work reports busy. A hook-driven wait
         (Claude Code, Copilot) is never overridden. The owner's raised hand is
         kept separately (attention_since) and isn't touched here."""
-        if row.get("state") != "waiting":
+        if row.get("state") != "waiting" or self._owner_question_pending(str(row["session_key"])):
             return
         runtime = _build_runtime(str(row.get("runtime") or "generic"), "")
         if not runtime.auto_approves_requests:
@@ -2595,7 +2731,8 @@ class Server:
             return {"model": observation.get("model"), "context_tokens": None}
         if (row.get("runtime") or "") != "claude-code":
             return {}
-        sid = self.history.session_id_for(str(row.get("session_key") or ""))
+        key = str(row.get("session_key") or "")
+        sid = self.history.session_id_for(key)
         cwd = row.get("worktree_path") or row.get("cwd")
         if not sid or not cwd:
             return {}
@@ -2605,15 +2742,239 @@ class Server:
         if path is None:
             return {}
         try:
-            mtime = path.stat().st_mtime
+            before = path.stat()
         except OSError:
             return {}
         cached = self._context_cache.get(str(path))
-        if cached is not None and cached[0] == mtime:
+        if cached is not None and cached[0] == before.st_mtime:
             return cached[1]
-        stats = transcript_stats(path)
-        self._context_cache[str(path)] = (mtime, stats)
+        stats = await asyncio.to_thread(transcript_stats, path)
+        # The session may have been rebound or moved during the read.
+        current = self.history.session(key)
+        if (
+            current is None
+            or self.history.session_id_for(key) != sid
+            or any(current.get(k) != row.get(k) for k in ("runtime", "cwd", "worktree_path"))
+        ):
+            return {}
+        try:
+            after = path.stat()
+        except OSError:
+            return {}
+        if (after.st_dev, after.st_ino) != (before.st_dev, before.st_ino):
+            return {}
+        self._context_cache[str(path)] = (before.st_mtime, stats)
         return stats
+
+    async def _session_kits(
+        self, method: str, path: str, headers: dict[str, str], body: bytes
+    ) -> tuple[int, dict[str, Any]]:
+        """A session starting or watching a flow of its own: the caller is the
+        session its credential names, its project is its own folder (the body
+        cannot name another), it sees only runs it started, and every harness
+        step of the run is a child session of it. Gates are the owner's:
+        there is no session gate route. `duckterm kit run` inside a session
+        uses this."""
+        from duckterm.kits import api as kits_api
+
+        key = self.history.session_api.authenticate(headers)
+        suffix = urllib.parse.urlsplit(path).path.removeprefix("/api/v1/session/kits/")
+        try:
+            payload: Any = json.loads(body or b"{}")
+        except json.JSONDecodeError:
+            return 400, {"error": "invalid JSON"}
+        if not isinstance(payload, dict):
+            return 400, {"error": "body must be an object"}
+        # the folder DuckTerm launched the session in; the row's cwd and
+        # repo_path follow the hooks and would let a child process move it
+        project = kits_api.launch_folder(key)
+        if not project:
+            return 409, {
+                "error": "this session has no launch folder recorded; start it from DuckTerm"
+            }
+        payload["project"] = project
+        payload["session"] = key
+        tracker = _FlowStepTracker(self, asyncio.get_running_loop())
+        run_id = str(payload.get("run_id") or "")
+        calls = {
+            ("POST", "run"): lambda: kits_api.start_run(payload, tracker),
+            ("GET", "runs"): lambda: kits_api.runs(project, session=key),
+            ("POST", "runs"): lambda: kits_api.runs(project, session=key),
+            ("POST", "run-detail"): lambda: kits_api.run_detail(project, run_id, session=key),
+        }
+        call = calls.get((method, suffix))
+        if call is None:
+            return 404, {"error": f"no session kit route {method} {suffix!r}"}
+        try:
+            return 200, await asyncio.to_thread(call)
+        except kits_api.KitApiError as exc:
+            return exc.status, {"error": str(exc)}
+
+    async def _kits(self, writer: asyncio.StreamWriter, action: str, body: bytes) -> None:
+        """The Skill kits page's calls, all answered by duckterm.kits.api over
+        the same engine `duckterm kit` uses. Install and uninstall write into
+        the project the body names; a flow run starts in a thread and is
+        watched through its run file."""
+        from duckterm.kits import api as kits_api
+
+        try:
+            payload: Any = json.loads(body or b"{}")
+        except json.JSONDecodeError:
+            await _write_json(writer, 400, {"error": "invalid JSON"})
+            return
+        if not isinstance(payload, dict):
+            await _write_json(writer, 400, {"error": "body must be an object"})
+            return
+        tracker = _FlowStepTracker(self, asyncio.get_running_loop())
+        # The history store is bound to this thread, so everything it answers
+        # is gathered here; only the kit engine's file work runs in a thread.
+        needs_registry = action in ("catalog", "enable")
+        registry = [dict(r) for r in self.history.harnesses()] if needs_registry else []
+        workspaces = self._kit_workspaces() if needs_registry else []
+        if action == "unregister":
+            try:
+                await _write_json(writer, 200, self._unregister_kit(payload))
+            except kits_api.KitApiError as exc:
+                await _write_json(writer, exc.status, {"error": str(exc)})
+            return
+        if action == "team":
+            try:
+                await _write_json(writer, 200, await self._create_team_record(kits_api, payload))
+            except kits_api.KitApiError as exc:
+                await _write_json(writer, exc.status, {"error": str(exc)})
+            return
+        calls = {
+            "overview": lambda: kits_api.overview(payload.get("project")),
+            "catalog": lambda: kits_api.catalog(registry, workspaces),
+            "register": lambda: kits_api.register(payload),
+            "enable": lambda: kits_api.enable(payload, registry, workspaces),
+            "disable": lambda: kits_api.disable(payload),
+            "runs": lambda: kits_api.runs(payload.get("project")),
+            "run": lambda: kits_api.run_detail(
+                payload.get("project"), str(payload.get("run_id") or "")
+            ),
+            "plan": lambda: kits_api.plan_for(payload),
+            "install": lambda: kits_api.install_kit(payload),
+            "uninstall": lambda: kits_api.uninstall_kit(payload),
+            "verify": lambda: kits_api.verify_kits(payload),
+            "start": lambda: kits_api.start_run(payload, tracker),
+            "gate": lambda: kits_api.answer_gate(
+                payload, str(payload.get("run_id") or ""), tracker
+            ),
+            "teams": lambda: kits_api.teams(),
+        }
+        try:
+            result = await asyncio.to_thread(calls[action])
+            if action == "register":
+                name, path = str(result["name"]), str(result["path"])
+                # kits share the harnesses table with suites, keyed by name; a
+                # second row of that name would silently repoint the first
+                for other in self.history.harnesses():
+                    if str(other.get("name")) == name and str(other.get("path")) != path:
+                        raise kits_api.KitApiError(
+                            409,
+                            f"{name!r} is already added from {other.get('path')}; remove it first",
+                        )
+                self.history.add_harness(name, path, int(time.time() * 1000))
+        except kits_api.KitApiError as exc:
+            await _write_json(writer, exc.status, {"error": str(exc)})
+            return
+        await _write_json(writer, 200, result)
+
+    def _remember_launch(self, key: str, folder: object) -> None:
+        """The launcher is the only writer of where a session lives (kits)."""
+        if not folder or not self.edition.includes("skill_kits"):
+            return
+        from duckterm.kits import api as kits_api
+
+        try:
+            kits_api.remember_launch(key, str(folder))
+        except (OSError, kits_api.KitApiError) as exc:  # never fail a launch over it
+            print(f"[duckterm] launch record for {key}: {exc}", file=sys.stderr)
+
+    def _apply_kit_policies(self, event: dict[str, Any], before: dict[str, Any] | None) -> None:
+        """A session started: kits enabled for its workspace (or for all) are
+        installed into its repository if missing. The target is the folder
+        DuckTerm launched the session in (`kits_api.launch_folder`, written by
+        the launcher only), never the hook's cwd or the row it updates;
+        `before` is the row as it stood before this event, for the workspace.
+        Registry and workspace are read here, on the store's thread; the file
+        work runs in a thread."""
+        if not self.edition.includes("skill_kits"):
+            return
+        from duckterm.kits import api as kits_api
+
+        key = str(event.get("session_key") or "")
+        project = kits_api.policy_target(kits_api.launch_folder(key), event)
+        if not project:
+            return
+        registry = [dict(r) for r in self.history.harnesses()]
+        if not registry or not kits_api.policies():
+            return
+        folder = str((before or {}).get("grp") or "")
+
+        async def run() -> None:
+            try:
+                done = await asyncio.to_thread(kits_api.apply_policies, registry, folder, project)
+            except Exception as exc:  # noqa: BLE001 - never fail a session start
+                print(f"[duckterm] kit policy for {project}: {exc}", file=sys.stderr)
+                return
+            if done:
+                print(f"[duckterm] installed {', '.join(done)} into {project}", file=sys.stderr)
+
+        asyncio.get_running_loop().create_task(run())
+
+    def _kit_workspaces(self) -> list[dict[str, Any]]:
+        """Every workspace with the repositories its sessions run in (the
+        worktree when there is one, else the repository, else the cwd). A
+        kit installs into those; a workspace with none cannot take a kit yet."""
+        repos: dict[str, set[str]] = {name: set() for name in self.history.folders()}
+        for row in self.history.sessions():
+            root = row.get("worktree_path") or row.get("repo_path") or row.get("cwd")
+            if not root:
+                continue
+            repos.setdefault(str(row.get("grp") or ""), set()).add(str(root))
+        return [
+            {"name": name, "repositories": sorted(paths)}
+            for name, paths in sorted(repos.items(), key=lambda kv: (kv[0] == "", kv[0]))
+        ]
+
+    def _unregister_kit(self, payload: dict[str, Any]) -> dict[str, Any]:
+        from duckterm.kits import api as kits_api
+
+        name = str(payload.get("name") or "").strip()
+        if not name:
+            raise kits_api.KitApiError(400, "name is required")
+        if not self.history.remove_harness(name):
+            raise kits_api.KitApiError(404, f"no kit named {name!r} is added")
+        return {"removed": name}
+
+    async def _create_team_record(self, kits_api: Any, payload: dict[str, Any]) -> dict[str, Any]:
+        """A team is a workspace with a procedure: the record first (it refuses
+        a bad request without touching anything), then the workspace itself,
+        registered like New workspace does so an empty one persists. The
+        history store is bound to the loop thread, so only the kit's file work
+        runs in a thread; a workspace that fails to register takes its record
+        back out, so the next attempt is not a 409."""
+        kit = str(payload.get("kit") or "")
+        kit_path = payload.get("kit_path") or next(
+            (r["path"] for r in self.history.harnesses() if str(r.get("name")) == kit), None
+        )
+        result: dict[str, Any] = await asyncio.to_thread(kits_api.create_team, payload)
+        folder = str(result["team"]["folder"])
+        try:
+            self.history.create_folder(folder, now=int(time.time() * 1000))
+        except Exception as exc:
+            await asyncio.to_thread(kits_api.remove_team, folder)
+            raise kits_api.KitApiError(
+                500, f"the workspace could not be registered: {exc}"
+            ) from exc
+        # The team's first session installs the kit if it is not there yet; the
+        # policy pins the kit tree the owner has just read on the kit page.
+        await asyncio.to_thread(
+            kits_api.add_policy_workspace, kit, folder, str(kit_path) if kit_path else None
+        )
+        return result
 
     def _suites_for(self, directory: object) -> list[str]:
         """Which installed skill kits (e.g. uv-suite) a
@@ -2691,6 +3052,8 @@ class Server:
                 self.history.set_meta(
                     key, name=name, notes=req.get("notes"), group=req.get("group")
                 )
+            launched = self.history.session(key) or {}
+            self._remember_launch(key, launched.get("worktree_path") or repo_path or cwd)
             await _write_json(writer, 200, {"session_key": key, "opened_in_terminal": False})
             return
 
@@ -2755,6 +3118,7 @@ class Server:
                 "command": command,
             }
         )
+        self._remember_launch(key, run_cwd)
         opened = open_in_terminal(
             str(run_cwd),
             argv,
@@ -2883,6 +3247,7 @@ class Server:
                 "command": shlex.join(argv),
             }
         )
+        self._remember_launch(child_key, str(worktree.path))
         opened = open_in_terminal(
             str(worktree.path),
             argv,
@@ -3850,7 +4215,12 @@ class Server:
     async def _folder_chat_message(
         self, folder: str, question: str, request_key: str
     ) -> dict[str, Any] | None:
-        """Interpret only the owner's request, then reuse scoped inbox delivery."""
+        """Interpret only the owner's request into a plan the owner must confirm.
+
+        The model paraphrases and picks recipients, so it never sends. The
+        owner confirms the exact text and recipients through the reviewed
+        folder dispatch route, which re-validates scope at send time.
+        """
         service = FolderMessages(self.history)
         snapshot = service.recipients(folder)
         identity, messages = self.history.folder_chats.snapshot(folder)
@@ -3897,17 +4267,17 @@ class Server:
             raise APIError(
                 409, "Some recipients have no inbox. Use @ to review recipients. Nothing was sent."
             )
-        return service.send(
-            folder,
-            {
+        return {
+            "plan": {
                 "identity": identity,
                 "target": target,
+                "label": candidates[0]["name"] if target["kind"] == "session" else target["id"],
                 "text": intent["text"],
-                "request_key": request_key,
-                "recipients": [r["session_id"] for r in candidates],
-            },
-            owner_question=question,
-        )
+                "recipients": [
+                    {"session_id": r["session_id"], "name": r["name"]} for r in candidates
+                ],
+            }
+        }
 
     async def _fleet_ask(self, writer: asyncio.StreamWriter, body: bytes) -> None:
         """Route explicit folder messages; answer other questions from session digests."""
@@ -3948,6 +4318,9 @@ class Server:
                 return
             except ValueError as exc:
                 await _write_json(writer, 409, {"error": str(exc)})
+                return
+            if exchange is not None and "plan" in exchange:
+                await _write_json(writer, 200, exchange)
                 return
             if exchange is not None:
                 await _write_json(
@@ -3996,16 +4369,10 @@ class Server:
             )
             await _write_json(writer, 200, {"answer": answer, "exchange": exchange, "sessions": []})
             return
-        digests = "\n\n".join(
-            [
-                (
-                    (await self._fleet_digest(r, question))[:6000]
-                    if folder is not None
-                    else await self._fleet_digest(r, question)
-                )
-                for r in running
-            ]
+        texts = await fleet_questions.collect_digests(
+            running, lambda row: self._fleet_digest(row, question)
         )
+        digests = "\n\n".join(text[:6000] if folder is not None else text for text in texts)
         prompt = fleet_questions.prompt(
             question,
             digests,
@@ -4105,18 +4472,20 @@ class Server:
             events.PRE_TOOL_USE,
             events.POST_TOOL_USE,
             events.STOP,
-            events.SESSION_END,
         ):
             # The agent moved on, so the question was answered. An agent whose
             # question doesn't block (Codex) carries on with it still queued;
             # only a submitted prompt (the answer, or one that discards it)
-            # or the session ending closes that note.
+            # or the session ending (below) closes that note.
             self.relay.close_for_session(key, {"choice"}, "handled", now)
-        if et in (events.USER_PROMPT_SUBMIT, events.SESSION_END):
+        if et in (events.SESSION_END, events.SESSION_START):
+            # A new or finished conversation means nobody answered these.
+            self.relay.close_for_session(key, {"question", "choice"}, "ended", now)
+        if et == events.USER_PROMPT_SUBMIT:
             kinds = {"question", "choice"}
             answered = (
                 self._answered_choice(key, str(event.get("prompt") or ""))
-                if et == events.USER_PROMPT_SUBMIT and not harness.owner_prompt_blocks
+                if not harness.owner_prompt_blocks
                 else None
             )
             if answered is not None:
@@ -4126,14 +4495,55 @@ class Server:
                 self.relay.close(answered, "handled", closed_at=now)
                 kinds = {"question"}
             self.relay.close_for_session(key, kinds, "handled", now)
-        if et == events.STOP:
+        row = self.history.session(key)
+        if et == events.STOP and row and row["state"] not in AT_REST_STATES:
+            final = event.get("last_assistant_message")
+            final = final if isinstance(final, str) else None
+            direct = permission_question(final or "")
+            if direct and not self._owner_question_pending(key):
+                self.relay.add(
+                    {
+                        **self._relay_session_fields(key),
+                        "kind": "question",
+                        "urgency": "blocked",
+                        "created_at": now,
+                        "question": direct,
+                        "options": [],
+                        "excerpt": (final or "")[-1200:],
+                        "detected_without_model": True,
+                    }
+                )
             try:
                 loop = asyncio.get_running_loop()
             except RuntimeError:
                 loop = None
             if loop is not None:
-                loop.create_task(self._relay_detect_question(key, now))
+                loop.create_task(self._relay_detect_question(key, now, final, str(event["_id"])))
         self._relay_sync_approvals()
+        row = self.history.session(key)
+        if row and row["state"] not in AT_REST_STATES and self._owner_question_pending(key):
+            event["owner_waiting"] = True
+            if row["state"] != "waiting":
+                self._mark_question_waiting(key)
+
+    def _owner_question_pending(self, key: str) -> bool:
+        return any(
+            n["session_key"] == key
+            and (
+                n["kind"] == "choice" or (n["kind"] == "question" and n.get("urgency") == "blocked")
+            )
+            for n in self.relay.open_notes()
+        )
+
+    def _mark_question_waiting(self, key: str) -> None:
+        self.bus.publish(
+            {
+                "event_type": events.NOTIFICATION,
+                "notification_type": "owner_question",
+                "session_key": key,
+                "reconciled": True,
+            }
+        )
 
     def _answered_choice(self, key: str, prompt: str) -> dict[str, Any] | None:
         first = prompt.split("\n", 1)[0]
@@ -4333,7 +4743,9 @@ class Server:
             if isinstance(b, dict) and b.get("type") == "text"
         ).strip()
 
-    async def _relay_detect_question(self, key: str, at: int) -> None:
+    async def _relay_detect_question(
+        self, key: str, at: int, final_message: str | None = None, turn_id: str | None = None
+    ) -> None:
         """Did this turn end waiting on the owner? A word-cue filter, then one
         classifier call (core/relay.py documents both and how they measured)."""
         if not self.edition.includes("oracle"):
@@ -4341,12 +4753,44 @@ class Server:
         row = self.history.session(key)
         if row is None or (row.get("runtime") or "") not in self._RELAY_RUNTIMES:
             return
+        turn = self.history.latest_turn_event(key)
+        if turn_id is not None and (not turn or turn.get("_id") != turn_id):
+            return
+
+        def still_current() -> bool:
+            current = self.history.session(key)
+            return bool(
+                current
+                and current["state"] not in AT_REST_STATES
+                and self.history.latest_turn_event(key) == turn
+                and self.history.last_event_ts(key, events.USER_PROMPT_SUBMIT) <= at
+            )
+
         await asyncio.sleep(self._RELAY_SETTLE_S)
-        if self.history.last_event_ts(key, events.USER_PROMPT_SUBMIT) > at:
+        if not still_current():
+            return
+        if self._owner_question_pending(key):
+            # A direct permission ask was already surfaced synchronously. Keep
+            # the existing owner-authored answer-rule path for that same note.
+            direct = next(
+                (
+                    n
+                    for n in self.relay.open_notes()
+                    if n["session_key"] == key
+                    and n["kind"] == "question"
+                    and n.get("created_at") == at
+                    and n.get("detected_without_model")
+                ),
+                None,
+            )
+            if direct is not None and final_message is not None:
+                await self._relay_question_rule(direct, final_message)
             return
         messages = await asyncio.to_thread(self._read_messages, self._message_source(key))
+        if not still_current():
+            return
         last = next((m for m in reversed(messages) if m.get("role") == "assistant"), None)
-        final = self._message_text(last)
+        final = final_message if final_message is not None else self._message_text(last)
         if not final or not ASK_CUES.search(final[-900:]):
             return
         if any(
@@ -4365,6 +4809,8 @@ class Server:
         result = await asyncio.to_thread(
             summarize, ask_prompt(owner, final), tier="deep", claude_model="sonnet"
         )
+        if not still_current() or self._owner_question_pending(key):
+            return
         verdict = parse_ask(result.text) if result.text else None
         if verdict is None:
             fallback = question_from(final)
@@ -4385,6 +4831,11 @@ class Server:
                 "detected_without_model": bool(verdict.get("fallback")),
             }
         )
+        if verdict["kind"] == "blocked":
+            self._mark_question_waiting(key)
+        await self._relay_question_rule(note, final)
+
+    async def _relay_question_rule(self, note: dict[str, Any], final: str) -> None:
         rule = self.relay.answer_rule_for(f"{note['question']}\n{final[-600:]}")
         if rule is None:
             return
@@ -4400,7 +4851,7 @@ class Server:
         allow it; otherwise put it in the session's inbox for a nudge."""
         key = note["session_key"]
         now = int(time.time() * 1000)
-        refusal = await self._typing_refusal(key)
+        refusal = await self._typing_refusal(key, answering_question=True)
         if refusal is None:
             status = await self._submit_prompt(
                 key, text, source="owner" if answered_by == "owner" else "relay"
@@ -4427,8 +4878,22 @@ class Server:
         )
         return note
 
+    def _relay_retire_ended(self) -> None:
+        """Close notes whose session stopped without a SessionEnd event: a
+        killed terminal or a server restart marks it interrupted, and its
+        questions otherwise stayed in Needs you for days."""
+        now = int(time.time() * 1000)
+        for key in {n["session_key"] for n in self.relay.open_notes() if n["kind"] != "approval"}:
+            row = self.history.session(key)
+            if row is None or row.get("state") in AT_REST_STATES:
+                self.relay.close_for_session(key, {"question", "choice"}, "ended", now)
+
     async def _relay_list(self, writer: asyncio.StreamWriter) -> None:
         self._relay_sync_approvals()
+        self._relay_retire_ended()
+        # Every open note, however old, plus recent history: the count below
+        # covers all open notes, so the list must too.
+        older_open = [n for n in self.relay.notes[:-200] if n["status"] == "open"]
         await _write_json(
             writer,
             200,
@@ -4442,7 +4907,7 @@ class Server:
                             else note.get("urgency", "blocked")
                         ),
                     }
-                    for note in self.relay.notes[-200:]
+                    for note in older_open + self.relay.notes[-200:]
                 ],
                 "rules": self.relay.rules,
                 "open": len(self.relay.needs_you()),
@@ -4451,6 +4916,7 @@ class Server:
 
     async def _relay_count(self, writer: asyncio.StreamWriter) -> None:
         self._relay_sync_approvals()
+        self._relay_retire_ended()
         await _write_json(writer, 200, {"open": len(self.relay.needs_you())})
 
     async def _relay_answer(self, writer: asyncio.StreamWriter, note_id: str, body: bytes) -> None:
@@ -4662,7 +5128,11 @@ class Server:
         async with self._tokens_lock:
             tokens = await asyncio.to_thread(self._tokens.totals, 7, now)
         day_ago = int((now - 86400) * 1000)
-        backup = self._backup_jobs.snapshot() if self._backup_jobs else None
+        backup = (
+            (self._backup_jobs.snapshot() if self._backup_jobs else None)
+            if self.edition.includes("backup")
+            else {}
+        )
         if backup is None:
             raw = private_read(paths.home() / "backup-state.json")
             backup = json.loads(raw) if raw else {"destination": None, "job": None}
@@ -4791,7 +5261,9 @@ class Server:
                 return "submitted"
         return "stuck"
 
-    async def _typing_refusal(self, session_key: str) -> str | None:
+    async def _typing_refusal(
+        self, session_key: str, *, answering_question: bool = False
+    ) -> str | None:
         """Why owner text can't be typed into this session's prompt right now,
         or None. The same gates Oracle applies before pasting a nudge."""
         row = self.history.session(session_key)
@@ -4801,7 +5273,20 @@ class Server:
         if self.restarts.pending(session_key):
             return "A restart is pending. Cancel it before sending a new prompt."
         inbox = "Send it to the inbox instead."
-        if row.get("state") != "idle":
+        turn = self.history.latest_turn_event(session_key)
+        answering_completed_turn = (
+            answering_question
+            and row.get("state") == "waiting"
+            and self._owner_question_pending(session_key)
+            and turn is not None
+            and turn.get("event_type") == events.STOP
+            and not any(a.session_key == session_key for a in self.approvals.pending())
+            and not any(
+                n["session_key"] == session_key and n["kind"] == "choice"
+                for n in self.relay.open_notes()
+            )
+        )
+        if row.get("state") != "idle" and not answering_completed_turn:
             return f"It isn't idle, so typing could interrupt it. {inbox}"
         if time.time() * 1000 - sup.last_owner_input_ms < oracle.TYPING_QUIET_MS:
             return f"Someone typed in its terminal in the last 2 minutes. {inbox}"
@@ -4819,6 +5304,47 @@ class Server:
 
     async def _list_zsh_themes(self, writer: asyncio.StreamWriter) -> None:
         await _write_json(writer, 200, {"themes": zsh_themes.list_themes()})
+
+    async def _autopilot(
+        self,
+        writer: asyncio.StreamWriter,
+        fn: Callable[..., Any],
+        *args: str,
+        body: bytes | None = None,
+    ) -> None:
+        """Run one autopilot API call on a worker thread (it touches files,
+        docker and GitHub). ValueError is the caller's mistake, KeyError an
+        unknown id."""
+        call_args: list[Any] = list(args)
+        if body is not None:
+            try:
+                payload = json.loads(body or b"{}")
+            except json.JSONDecodeError:
+                await _write_json(writer, 400, {"error": "invalid JSON"})
+                return
+            if not isinstance(payload, dict):
+                await _write_json(writer, 400, {"error": "expected a JSON object"})
+                return
+            call_args.append(payload)
+        try:
+            result = await asyncio.to_thread(fn, *call_args)
+        except ValueError as exc:
+            await _write_json(writer, 400, {"error": str(exc)})
+            return
+        except KeyError:
+            await _write_json(writer, 404, {"error": "not found"})
+            return
+        await _write_json(writer, 200, result if result is not None else {"ok": True})
+
+    async def _autopilot_loop(self) -> None:
+        """The GitHub issues trigger: poll every autopilot that is on."""
+        await asyncio.to_thread(ap_api.recover)
+        while True:
+            try:
+                await asyncio.to_thread(ap_api.tick)
+            except Exception:
+                traceback.print_exc()
+            await asyncio.sleep(ap_api.POLL_SECONDS)
 
     async def _list_harnesses(self, writer: asyncio.StreamWriter) -> None:
         """Registered skill kits, with manifest details re-read from disk (a kit
@@ -4933,12 +5459,8 @@ class Server:
         except json.JSONDecodeError:
             await _write_json(writer, 400, {"error": "invalid JSON"})
             return
-        if not isinstance(req, dict) or (
-            "write_access" in req and not isinstance(req["write_access"], bool)
-        ):
-            await _write_json(
-                writer, 400, {"error": "expected an object with boolean write_access"}
-            )
+        if not isinstance(req, dict):
+            await _write_json(writer, 400, {"error": "expected an object"})
             return
         harnesses = req.get("harnesses")
         if harnesses is not None and not (
@@ -4947,15 +5469,12 @@ class Server:
             await _write_json(writer, 400, {"error": "harnesses must be a list of names"})
             return
         token = str(req.get("token") or "").strip() or None
-        secret = str(req.get("secret") or "").strip() or None
         try:
             result = await asyncio.to_thread(
                 connectors.enable,
                 name,
                 token,
-                secret,
                 source=req.get("source"),
-                write_access=req.get("write_access", False),
                 harnesses=harnesses,
             )
         except ValueError as e:
@@ -5004,6 +5523,7 @@ class Server:
             await _write_json(writer, 401, {"error": "owner credential required"})
             return
         try:
+            self.require_feature("backup")
             if self._backup_jobs is None:
                 self._backup_jobs = BackupJobs(paths.home() / "backup-state.json")
             jobs = self._backup_jobs
@@ -5023,12 +5543,17 @@ class Server:
                 )
                 return
             mode = req.get("mode", "archive")
+            destination = req.get("destination", jobs.state["destination"])
+            if isinstance(destination, str) and destination.startswith("gs://"):
+                self.require_feature("byoc")
             if method == "POST":
                 backup_sync.validate_mode(req.get("destination", jobs.state["destination"]), mode)
             if "destination" in req or method == "PUT":
                 jobs.configure(req.get("destination"))
             result = jobs.start(mode) if method == "POST" else jobs.snapshot()
             await _write_json(writer, 202 if method == "POST" else 200, result)
+        except APIError as exc:
+            await _write_json(writer, exc.status, {"error": str(exc)})
         except (ValueError, UnicodeError) as exc:
             await _write_json(writer, 400, {"error": str(exc)})
         except OSError as exc:
@@ -5755,11 +6280,11 @@ class Server:
         await _write_json(writer, 200, {"automatic": automatic, "agents": agents})
 
     async def _ai_settings(self, writer: asyncio.StreamWriter, body: bytes | None = None) -> None:
-        from duckterm.llm import ai_settings, backend
+        from duckterm.llm import ai_settings, backend, latency
 
         def state(settings: dict[str, Any]) -> dict[str, Any]:
             keys = {}
-            for provider in ai_settings.PROVIDERS:
+            for provider in ai_settings.PROVIDERS if self.edition.includes("byok") else ():
                 base = ai_settings.base_url({**settings, "provider": provider})
                 secret, source = ai_settings.key(provider, base)
                 keys[provider] = {"saved": bool(secret), "source": source}
@@ -5768,6 +6293,7 @@ class Server:
                 "keys": keys,
                 "harness": backend.harness(settings["harness"]),
                 "models": {t: ai_settings.model(settings, t) for t in backend.TIERS},
+                "recent_timings": latency.recent(),
             }
 
         try:
@@ -5778,6 +6304,8 @@ class Server:
                     payload = json.loads(body)
                 except ValueError as exc:
                     raise APIError(400, "Invalid AI settings JSON") from exc
+                if isinstance(payload, dict) and payload.get("backend") == "api":
+                    self.require_feature("byok")
                 result = await asyncio.to_thread(lambda: state(ai_settings.save(payload)))
             await _write_json(writer, 200, result)
         except APIError as exc:
@@ -5791,6 +6319,7 @@ class Server:
         from duckterm.llm import ai_settings, api
 
         try:
+            self.require_feature("byok")
             try:
                 payload = json.loads(body or b"")
             except ValueError as exc:
@@ -6615,9 +7144,14 @@ class Server:
                 if self.edition.includes("checkpoints")
                 else None
             )
+            autopilot_worker = (
+                asyncio.create_task(self._autopilot_loop())
+                if self.edition.includes("autopilot")
+                else None
+            )
             collaboration_worker = (
                 asyncio.create_task(self.collaboration.run())
-                if self.edition.includes("inbox")
+                if self.edition.includes("cross_computer_collaboration")
                 else None
             )
             async with server:
@@ -6638,6 +7172,8 @@ class Server:
                     workers = [mobile_manager, sweeper]
                     if auto_checkpoints is not None:
                         workers.append(auto_checkpoints)
+                    if autopilot_worker is not None:
+                        workers.append(autopilot_worker)
                     if collaboration_worker is not None:
                         workers.append(collaboration_worker)
                     for worker in workers:
@@ -6785,7 +7321,11 @@ class Server:
         waiting_on_approval = {a.session_key for a in self.approvals.pending()}
         for row in self.history.sessions():
             key = str(row["session_key"])
-            if row.get("state") != "waiting" or key in waiting_on_approval:
+            if (
+                row.get("state") != "waiting"
+                or key in waiting_on_approval
+                or self._owner_question_pending(key)
+            ):
                 continue
             if now - int(row.get("updated_at") or now) < 60_000:
                 continue  # a dialog may still be drawing
@@ -6870,14 +7410,14 @@ class Server:
             if not text:
                 continue
             status = await self._submit_prompt(key, text, source="oracle")
-            if status == "failed":
-                continue
             if pinned and status == "submitted":
                 # A stuck paste isn't delivery: the status stays "pending
                 # next turn" and the Stop-hook notice still carries it.
                 self._delivered(key, pinned[1])
             ids = sorted(str(m["id"]) for m in picked)
-            nudge = oracle.record_nudge(previous, picked, mail, now)
+            nudge = oracle.record_nudge(
+                previous, picked, mail, now, delivered=status == "submitted"
+            )
             self._oracle_nudges[key] = nudge
             self.bus.publish(
                 {
@@ -6885,6 +7425,7 @@ class Server:
                     "session_key": key,
                     "text": text,
                     "submitted": status == "submitted",
+                    "delivery": status,
                     "mail_ids": ids,
                     "seen_mail_ids": sorted(nudge.ids),
                     "read_reminder_ids": sorted(nudge.read_ids),
@@ -6903,6 +7444,7 @@ class Server:
             frozenset(str(i) for i in event.get("seen_mail_ids", event["mail_ids"])),
             ts,
             frozenset(str(i) for i in event.get("read_reminder_ids", [])),
+            undelivered=event.get("submitted") is False,
         )
 
     def _archive_swept(self, key: str) -> None:

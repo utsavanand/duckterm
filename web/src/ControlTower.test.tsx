@@ -9,7 +9,7 @@ import { edition, CODE, FULL, LITE } from "./test/editions";
 import { StaticEdition } from "./edition";
 vi.mock("./api", () => ({ authHeaders: () => ({}), api: { controlTower: vi.fn(), messageSession: vi.fn(), oracleChat: vi.fn(), fleetAsk: vi.fn(), clearOracleChat: vi.fn(), relay: vi.fn() } }));
 beforeEach(() => {
-  vi.stubGlobal("fetch", vi.fn().mockImplementation(async (url: string) => new Response(JSON.stringify(url === "/tasks" ? { tasks: [] } : { revision: "default", instances: defaultLayout("oracle", oracleWidgets(() => {})) }))));
+  vi.stubGlobal("fetch", vi.fn().mockImplementation(async (url: string) => new Response(JSON.stringify(url === "/tasks" ? { tasks: [] } : { revision: "default", instances: defaultLayout("oracle", oracleWidgets(() => {}, { backup: true })) }))));
   vi.mocked(api.oracleChat).mockResolvedValue({ messages: [] });
   vi.mocked(api.relay).mockResolvedValue({ notes: [{ id: "n1", session_key: "qa", name: "qa", folder: "Nourish", runtime: "claude-code", kind: "question", status: "open", created_at: NOW - 4 * 86_400_000, question: "Deploy now?" }], rules: [], open: 1 });
 });
@@ -30,7 +30,7 @@ const agents = [
   agent({ key: "architect", state: "busy", shownState: "busy", lastTool: "Bash" }),
   agent({ key: "qa", group: "Nourish", state: "waiting", shownState: "waiting", updatedAt: NOW - 4 * 86_400_000 }),
 ];
-function renderTower(features = FULL) {
+function renderTower(features = [...FULL, "backup"]) {
   return render(<ControlTower onAnalytics={() => {}} agents={agents} now={NOW} onBack={() => {}} onOpenTerminal={() => {}} />, { wrapper: edition(features) });
 }
 
@@ -88,6 +88,24 @@ it("Escape closes a pinned card first, then returns to the sessions, but not whi
   expect(onBack).toHaveBeenCalledTimes(1);
 });
 
+async function openNeeds() {
+  fireEvent.click(await screen.findByRole("button", { name: "Show everything that needs you" }));
+  return screen.getByRole("region", { name: "Needs you" });
+}
+
+it("opens every note that needs you under Your agents, answerable there, from the tile", async () => {
+  vi.mocked(api.controlTower).mockResolvedValue(insights);
+  render(<ControlTower onAnalytics={() => {}} agents={agents} now={NOW} onBack={() => {}} onOpenTerminal={() => {}} />, { wrapper: edition(FULL) });
+  await screen.findByRole("button", { name: "Show everything that needs you" });
+  expect(screen.queryByRole("region", { name: "Needs you" })).toBeNull();
+  const needs = await openNeeds();
+  expect(needs.compareDocumentPosition(screen.getByRole("region", { name: "Teams" }))).toBe(Node.DOCUMENT_POSITION_PRECEDING);
+  expect(within(needs).getByText("Deploy now?")).toBeVisible();
+  expect(within(needs).getByRole("textbox", { name: "Reply to qa" })).toBeVisible();
+  fireEvent.click(within(needs).getByRole("button", { name: "Close" }));
+  expect(screen.queryByRole("region", { name: "Needs you" })).toBeNull();
+});
+
 it("sends a menu question straight to the agent's terminal", async () => {
   vi.mocked(api.controlTower).mockResolvedValue(insights);
   vi.mocked(api.relay).mockResolvedValue({
@@ -97,11 +115,10 @@ it("sends a menu question straight to the agent's terminal", async () => {
   });
   const onOpenTerminal = vi.fn();
   render(<ControlTower onAnalytics={() => {}} agents={agents} now={NOW} onBack={() => {}} onOpenTerminal={onOpenTerminal} />, { wrapper: edition(FULL) });
-  const needs = await screen.findByRole("region", { name: "Needs you" });
-  expect(needs).not.toHaveTextContent("Answer in the chat");
-  const row = await within(needs).findByRole("button", { name: /release-dev/ });
-  expect(row).toHaveTextContent("Merge PR #66? Answer in its terminal.");
-  fireEvent.click(row);
+  const needs = await openNeeds();
+  expect(needs).toHaveTextContent("Merge PR #66?");
+  expect(needs).toHaveTextContent("Answer its menu there.");
+  fireEvent.click(within(needs).getByRole("button", { name: "Open release-dev's terminal" }));
   expect(onOpenTerminal).toHaveBeenCalledWith("rel");
 });
 
@@ -114,7 +131,7 @@ it("shows the remote cloud in Oracle fleet and needs-you ducks without adding ne
   expect(duck.querySelector('.rd-location-cloud')).not.toBeNull();
   expect(duck.querySelector('[tabindex]')).toBeNull();
   expect(screen.getByRole("button", { name: "architect, Duckterm, Busy" }).querySelector('.rd-location-cloud')).toBeNull();
-  const needs = await screen.findByRole("region", { name: "Needs you" });
+  const needs = await openNeeds();
   expect(within(needs).getByRole("group", { name: "Remote · Build server · Disconnected" })).toBeInTheDocument();
 });
 
@@ -146,6 +163,7 @@ it("drops cached Oracle notes and stops its polls when the capability is withdra
   const content = <ControlTower onAnalytics={() => {}} agents={agents} now={NOW} onBack={() => {}} onOpenTerminal={() => {}} />;
   const view = render(<StaticEdition features={FULL}>{content}</StaticEdition>);
   await act(async () => { await vi.advanceTimersByTimeAsync(0); });
+  fireEvent.click(screen.getByRole("button", { name: "Show everything that needs you" }));
   expect(screen.getByRole("region", { name: "Needs you" })).toBeVisible();
   vi.mocked(api.relay).mockClear(); vi.mocked(api.oracleChat).mockClear();
   view.rerender(<StaticEdition features={LITE} id="lite">{content}</StaticEdition>);

@@ -43,13 +43,25 @@ export default async function globalSetup() {
 
   const home = mkdtempSync(join(runRoot, "state-"));
   // Development flags are off for everyone by default; the e2e server turns
-  // them all on so flagged surfaces stay covered until they ship.
-  writeFileSync(join(home, "flags.json"), JSON.stringify({ enabled: DEVELOPMENT }));
+  // them on except Home, which replaces the starting page for these tests.
+  writeFileSync(join(home, "flags.json"), JSON.stringify({ enabled: DEVELOPMENT.filter(flag => flag !== "home") }));
+
+  // Existing integration workflows deliberately exercise opt-in features.
+  // The separate default-off run passes an empty list and tests real defaults.
+  const flagNames = (process.env.RD_TEST_FEATURE_FLAGS ?? "cross_computer_collaboration,skill_kits,harness_management,byok,byoc,backup").split(",").filter(Boolean);
+  writeFileSync(join(home, "feature-flags.json"), JSON.stringify({ flags: Object.fromEntries(flagNames.map(name => [name, true])) }));
+
   // Backup UI tests must never collect the developer's actual agent transcripts.
   const testClaudeRoot = join(home, "test-claude");
   const testCodexRoot = join(home, "test-codex");
   mkdirSync(join(testClaudeRoot, "projects"), { recursive: true });
   mkdirSync(join(testCodexRoot, "sessions"), { recursive: true });
+  // The Skill kits page installs only for harnesses found on PATH; CI has no
+  // Claude Code, so a no-op stub stands in. Nothing launches it
+  // (DUCKTERM_NO_TERMINAL), it only has to exist.
+  const stubBin = join(home, "bin");
+  mkdirSync(stubBin, { recursive: true });
+  writeFileSync(join(stubBin, "claude"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
 
   // A deterministic stand-in for the LLM backend: the observation-loop spec
   // asserts these exact rules come back as AGENTS.md suggestions. (It also
@@ -67,6 +79,7 @@ export default async function globalSetup() {
       cwd: REPO,
       env: {
         ...process.env,
+        PATH: `${stubBin}:${process.env.PATH ?? ""}`,
         DUCKTERM_HOME: home,
         DUCKTERM_RELEASE_CHECK: "off",
         CLAUDE_CONFIG_DIR: testClaudeRoot,

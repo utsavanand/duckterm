@@ -38,6 +38,8 @@ npx vitest run >> "$LOG" 2>&1
 if [ "${1:-}" != "--fast" ]; then
   step "playwright e2e"
   PATH="$(cd .. && pwd)/.venv/bin:$PATH" RD_TEST_EDITION=full npm run e2e >> "$LOG" 2>&1
+  step "Default-off release flags"
+  PATH="$(cd .. && pwd)/.venv/bin:$PATH" RD_TEST_EDITION=full RD_TEST_FEATURE_FLAGS= npm run e2e -- e2e/feature-flags.spec.ts >> "$LOG" 2>&1
   step "Lite browser workflows"
   PATH="$(cd .. && pwd)/.venv/bin:$PATH" RD_TEST_EDITION=lite npm run e2e -- e2e/editions.spec.ts >> "$LOG" 2>&1
   step "Code browser workflows and PR review"

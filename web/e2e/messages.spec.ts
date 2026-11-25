@@ -5,7 +5,7 @@ import { api, apiPost, base } from "./helpers";
 // session's conversation as HTML from /sessions/:key/messages. This test seeds a
 // fake transcript on disk and verifies the toggle renders its text + tool chips.
 
-import { mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -126,6 +126,10 @@ test("annotating a span stores it and sends it back to the agent", async ({
     })
     .toBeGreaterThan(0);
 
+  const saved = await (await api(`/sessions/${key}/annotations`)).json();
+  const originalKey = await page.locator(".rd-message").filter({ has: page.locator(".rd-msg-text strong") }).getAttribute("data-message-key");
+  expect(saved.annotations[0].message_key).toBe(originalKey);
+
   // A newly saved note becomes visible immediately without changing tabs.
   await expect(page.locator(".rd-msg-text mark")).toHaveText("demo");
   await page.locator(".rd-msg-text mark").hover();
@@ -136,4 +140,18 @@ test("annotating a span stores it and sends it back to the agent", async ({
   await expect(
     page.locator(".rd-terminal-slot:visible .xterm-rows"),
   ).toContainText("explain this", { timeout: 5_000 });
+
+  // Later use of the same words must not inherit the earlier comment.
+  const slug = cwd.replace(/[^a-zA-Z0-9]/g, "-");
+  appendFileSync(join(homedir(), ".claude", "projects", slug, "seeded-session.jsonl"),
+    "\n" + [
+      { type: "user", message: { role: "user", content: "next question" } },
+      { type: "assistant", message: { role: "assistant", content: "A later demo repeats that word." } },
+    ].map(record => JSON.stringify(record)).join("\n"));
+  await page.reload();
+  await page.locator(".rd-view-toggle button", { hasText: "Messages" }).click();
+  await expect(page.locator(".rd-msg-text")).toContainText("A later demo");
+  await expect(page.locator(".rd-msg-text mark")).toHaveCount(0);
+  await page.getByRole("button", { name: "Previous turn", exact: true }).click();
+  await expect(page.locator(".rd-msg-text mark")).toHaveText("demo");
 });

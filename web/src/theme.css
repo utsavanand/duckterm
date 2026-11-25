@@ -821,6 +821,10 @@ code,
 .rd-connector-row .dot.warn {
   background: var(--wait);
 }
+/* Connected but withdrawn from agents: one door open, so neither on nor off. */
+.rd-connector-row .dot.part {
+  background: var(--wait);
+}
 .rd-connector-title {
   font-weight: 600;
   font-size: 0.8125rem;
@@ -842,9 +846,71 @@ code,
 }
 .rd-connector-installed {
   font-size: 0.6875rem;
-  font-family: ui-monospace, Menlo, monospace;
   color: var(--muted);
-  margin: 4px 0 0 15px;
+  margin: 6px 0 0 15px;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+/* The trailing note is a sentence, not a value: it spans the row and reads as
+   prose, where the inherited monospace made it look like output. */
+.rd-connector-installed > div {
+  flex-basis: 100%;
+  line-height: 1.45;
+}
+/* The revoke link sits inside that sentence now. Only its own text is held on
+   one line; the sentence around it wraps. Same brand green as .rd-msg-text a,
+   since the default blue-violet clashed with the panel. */
+.rd-connector-installed > div a {
+  white-space: nowrap;
+  color: var(--brand-green-strong);
+  text-decoration: underline;
+  text-underline-offset: 2px;
+  text-decoration-color: color-mix(in srgb, var(--brand-green-strong) 45%, transparent);
+}
+.rd-connector-installed > div a:hover {
+  text-decoration-color: var(--brand-green-strong);
+}
+.rd-connector-doors {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin: 6px 0 0 15px;
+}
+.rd-door {
+  display: flex;
+  gap: 7px;
+  align-items: flex-start;
+  font-size: 0.75rem;
+}
+.rd-door > div {
+  min-width: 0;
+}
+.rd-door .rd-connector-desc {
+  margin-left: 0;
+}
+.rd-door-mark {
+  font-family: ui-monospace, Menlo, monospace;
+  line-height: 1.45;
+  flex-shrink: 0;
+}
+.rd-door.on .rd-door-mark {
+  color: var(--idle);
+}
+.rd-door.off .rd-door-mark,
+.rd-door.off strong {
+  color: var(--muted);
+}
+.rd-connector-warn {
+  color: var(--wait);
+}
+.rd-connector-connect {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 6px 0 0 15px;
 }
 .rd-connector-proof {
   display: flex;
@@ -2779,15 +2845,12 @@ select {
 .rd-tower-ok { font-size: 0.75rem; color: var(--brand-green); }
 .rd-tower-error { font-size: 0.75rem; color: var(--danger); }
 .rd-tower-needs { margin-bottom: 16px; }
-.rd-tower-needs h2 { margin: 0 0 8px; font-size: 0.8125rem; font-weight: 600; }
+.rd-tower-needs h2 { display: flex; align-items: center; gap: 6px; margin: 0 0 8px; font-size: 0.8125rem; font-weight: 600; }
+.rd-tower-needs h2 button { margin-left: auto; }
+.rd-tower-needs-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 10px; align-items: start; }
+.rd-tower-need { display: flex; align-items: flex-start; gap: 8px; min-width: 0; }
+.rd-tower-need > .rd-relay-note { flex: 1; min-width: 0; margin-bottom: 0; }
 .rd-tower-needs h2 span { color: var(--muted); font-weight: 400; margin-left: 6px; }
-.rd-tower-needs-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 8px; }
-.rd-tower-need { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 8px 12px; border: 1px solid var(--amber-border); border-radius: 10px; background: var(--amber-bg); color: inherit; text-align: left; cursor: pointer; }
-.rd-tower-need:hover { border-color: var(--wait); }
-.rd-tower-need-who { flex: 1; min-width: 0; }
-.rd-tower-need-who b { font-weight: 600; }
-.rd-tower-need-who small { display: block; color: var(--muted); font-size: 0.75rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.rd-tower-need-age { font-size: 0.75rem; color: var(--amber-text); white-space: nowrap; font-variant-numeric: tabular-nums; }
 
 /* Oracle Relay: notes for what needs the owner, inside the Oracle chat.
    Open notes are amber; closed ones go neutral but stay as a record. */

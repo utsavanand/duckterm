@@ -15,7 +15,7 @@ from collections.abc import Coroutine, Sequence
 from pathlib import Path
 from typing import Any
 
-from duckterm import __version__, editions
+from duckterm import __version__, editions, release_features
 from duckterm.core import events
 from duckterm.helpers import instance
 
@@ -164,12 +164,14 @@ def build_parser() -> argparse.ArgumentParser:
     admin.add_argument("name")
     admin.add_argument("--config", default=Path("/etc/duckterm-broker/config.json"), type=Path)
     admin.add_argument("--version", type=int)
-    admin.add_argument("--write-access", action="store_true")
     admin.add_argument("--disable", action="store_true")
     from duckterm import session_client
 
     session_client.add_parser(sub)
     session_client.add_memory_parser(sub)
+    from duckterm.kits import cli as kits_cli
+
+    kits_cli.add_parser(sub)
     from duckterm.mobile.cli import add_parser as add_ducky_parser
 
     add_ducky_parser(sub)
@@ -831,6 +833,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"duckterm: {exc}", file=sys.stderr)
             return 1
     optional = {
+        "kit": "skill_kits",
         "voice": "oracle",
         "snapshot": "checkpoints",
         "connector-run": "connectors",
@@ -846,8 +849,10 @@ def main(argv: Sequence[str] | None = None) -> int:
                 or (args.command == "restart" and not args.edition)
             )
             feature = optional.get(args.command)
+            if feature:
+                edition = release_features.apply(edition)
             if feature and not edition.includes(feature):
-                raise ValueError(f"{feature} is unavailable in Duckterm {edition.name.title()}")
+                raise ValueError(release_features.unavailable_message(feature, edition))
             if feature:
                 # Standalone handlers and children must use the same selection
                 # even when invoked from a terminal launched in an older edition.
@@ -859,6 +864,10 @@ def main(argv: Sequence[str] | None = None) -> int:
         from duckterm import session_client
 
         return session_client.main(args)
+    if args.command == "kit":
+        from duckterm.kits import cli as kits_cli
+
+        return kits_cli.main(args)
     if args.command == "ducky":
         from duckterm.mobile.cli import run as run_ducky
 
@@ -874,6 +883,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     if args.command == "backup":
         import sqlite3
 
+        from duckterm.core.session_api import APIError
         from duckterm.persistence import backup, backup_sync
 
         try:
@@ -883,7 +893,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             else:
                 print(backup.create(args.to))
             return 0
-        except (OSError, ValueError, RuntimeError, sqlite3.Error) as exc:
+        except (OSError, ValueError, RuntimeError, sqlite3.Error, APIError) as exc:
             print(f"duckterm: {exc}", file=sys.stderr)
             return 1
     if args.command == "voice":
@@ -923,9 +933,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 connector_client.attach(args.config)
                 print("Shared connectors registered for Claude Code and Codex; start new sessions")
             else:
-                connector_broker.admin(
-                    args.config, args.name, args.version, args.write_access, args.disable
-                )
+                connector_broker.admin(args.config, args.name, args.version, args.disable)
             return 0
         except (OSError, ValueError, RuntimeError) as exc:
             print(f"duckterm: {exc}", file=sys.stderr)

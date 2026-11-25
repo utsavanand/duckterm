@@ -52,7 +52,8 @@ test("Lite runs continuity, saved artifacts and factual overviews without coding
   await withSession("lite-agent", async folder => {
     await open(page, folder, "lite-agent");
     const views = page.locator(".rd-view-toggle");
-    await expect(views.getByRole("button")).toHaveText(["Terminal", "Messages", "Timeline", /^Inbox/, "Artifacts", /Shell/]);
+    // The e2e server runs with every development flag on, so the flagged Flows tab shows in Lite too.
+    await expect(views.getByRole("button")).toHaveText(["Terminal", "Messages", "Timeline", /^Inbox/, "Artifacts", "Flows", /Shell/]);
     await expect(page.getByRole("button", { name: "Oracle", exact: true })).toHaveCount(0);
     await expect(page.getByRole("button", { name: "AGENTS.md", exact: true })).toBeVisible();
     await expect(page.getByRole("tab", { name: "Connectors" })).toHaveCount(0);
@@ -249,7 +250,8 @@ test("Full keeps every view, including pull request review", async ({ page }) =>
     for (const name of ["Timeline", "Artifacts", "PRs"]) await expect(views.getByRole("button", { name, exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Oracle", exact: true })).toBeVisible();
     await page.locator(".rd-group-name", { hasText: folder }).click();
-    await expect(page.getByRole("region", { name: `Workspace ${folder}` }).getByRole("tab")).toHaveText(["Overview", "Chat", "Artifacts", "Pull requests"]);
+    // e2e turns every development flag on (global-setup), so autopilot's Flows tab shows too.
+    await expect(page.getByRole("region", { name: `Workspace ${folder}` }).getByRole("tab")).toHaveText(["Overview", "Chat", "Artifacts", "Pull requests", "Flows"]);
   });
 });
 

@@ -327,7 +327,12 @@ def test_receipts_are_bounded_and_duplicate_question_ids_are_conflicts(hub):
     assert len(json.dumps(response).encode()) < 400000
 
 
-def test_http_authentication_and_offline_reply_use_existing_session_routes(tmp_path):
+def test_http_authentication_and_offline_reply_use_existing_session_routes(tmp_path, monkeypatch):
+    from duckterm import release_features
+
+    monkeypatch.setattr(
+        release_features, "overrides", lambda: ({"cross_computer_collaboration": True}, None)
+    )
     import asyncio
     import json
 

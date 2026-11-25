@@ -173,7 +173,6 @@ def test_certificate_required_and_disable_closes_stdio(
                 "enabled": True,
                 "reference": "projects/test/secrets/github/versions/1",
                 "identity": "test-user",
-                "write_access": False,
             }
         },
     }
@@ -183,7 +182,7 @@ def test_certificate_required_and_disable_closes_stdio(
     monkeypatch.setattr(
         connector_broker,
         "command",
-        lambda name, cred, write: ([sys.executable, str(fake)], dict(os.environ)),
+        lambda name, cred: ([sys.executable, str(fake)], dict(os.environ)),
     )
     worker_directories = []
     real_spawn = asyncio.create_subprocess_exec
@@ -274,18 +273,18 @@ def test_two_agents_reuse_one_provider_and_workspace_revocation_closes_both(
     certificates(tmp_path)
     config = tmp_path / "config.json"
     settings = {
-        "workspaces": {"workspace": ["porkbun"]},
-        "connectors": {"porkbun": {"enabled": True, "reference": "shared-porkbun"}},
+        "workspaces": {"workspace": ["github"]},
+        "connectors": {"github": {"enabled": True, "reference": "shared-github"}},
     }
     config.write_text(json.dumps(settings))
 
     class Store:
         def read(self, reference):
-            assert reference == "shared-porkbun"
+            assert reference == "shared-github"
             return {"token": "only-on-broker"}
 
-    def provider(name, credential, write):
-        assert name == "porkbun" and credential == {"token": "only-on-broker"}
+    def provider(name, credential):
+        assert name == "github" and credential == {"token": "only-on-broker"}
         return (
             [
                 sys.executable,
@@ -322,7 +321,7 @@ def test_two_agents_reuse_one_provider_and_workspace_revocation_closes_both(
                     server_hostname="server",
                 )
                 streams.append((reader, writer))
-                writer.write(b'{"name":"porkbun"}\n')
+                writer.write(b'{"name":"github"}\n')
                 await writer.drain()
                 assert json.loads(await asyncio.wait_for(reader.readline(), 3)) == {"ready": True}
                 request = (
@@ -520,7 +519,6 @@ def test_client_certificate_from_another_ca_is_refused_and_reads_no_secret(
                 "enabled": True,
                 "reference": "projects/test/secrets/github/versions/1",
                 "identity": "test-user",
-                "write_access": False,
             }
         },
     }
@@ -530,7 +528,7 @@ def test_client_certificate_from_another_ca_is_refused_and_reads_no_secret(
     monkeypatch.setattr(
         connector_broker,
         "command",
-        lambda name, cred, write: ([sys.executable, str(fake)], dict(os.environ)),
+        lambda name, cred: ([sys.executable, str(fake)], dict(os.environ)),
     )
     store = FakeStore()
     broker = connector_broker.Broker(config, store)
@@ -597,7 +595,6 @@ def test_broker_refuses_tls_below_its_floor_and_serves_at_it(tmp_path: Path, mon
                 "enabled": True,
                 "reference": "projects/test/secrets/github/versions/1",
                 "identity": "test-user",
-                "write_access": False,
             }
         },
     }
@@ -607,7 +604,7 @@ def test_broker_refuses_tls_below_its_floor_and_serves_at_it(tmp_path: Path, mon
     monkeypatch.setattr(
         connector_broker,
         "command",
-        lambda name, cred, write: ([sys.executable, str(fake)], dict(os.environ)),
+        lambda name, cred: ([sys.executable, str(fake)], dict(os.environ)),
     )
     store = FakeStore()
     broker = connector_broker.Broker(config, store)
