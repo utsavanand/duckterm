@@ -1,3 +1,11 @@
+## 2026-11-24 — A timed-out probe may never reach its first line
+
+The cleanup test gave a Python child 300ms to start and write its PID. Under
+full-suite load, the probe could correctly time out and reap the child before
+that marker existed; the test then failed waiting for a file it had prevented.
+Capture the owned process at spawn and assert it is reaped after timeout or
+cancellation. Cleanup correctness must not require the child to finish startup.
+
 ## 2026-11-24 — Launching a CLI is not connecting its activity signals
 
 A distributed app could start Claude with no DuckTerm hooks installed. Setup
