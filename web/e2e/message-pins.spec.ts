@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { apiDelete, apiPost, base } from "./helpers";
@@ -21,13 +21,17 @@ test("pins persist, open the exact older message, preserve terminal drafts, and 
   let key = "";
   try {
     const launch = await apiPost("/sessions/launch", {
-      command: "sh -c 'cat'", cwd, runtime: "claude-code", name: "pin-test-agent", in_terminal: false, test: true,
+      command: `sh -c 'printf "%s" "$DUCKTERM_HARNESS_GENERATION" > .test-generation; exec cat'`, cwd, runtime: "claude-code", name: "pin-test-agent", in_terminal: false, test: true,
     });
     expect(launch.status).toBe(200);
     key = String(launch.body.session_key);
+    // Emulate a hook from this launched fixture, not an unscoped external event.
+    const generationPath = join(cwd, ".test-generation");
+    await expect.poll(() => existsSync(generationPath) ? readFileSync(generationPath, "utf8") : "").not.toBe("");
     await apiPost("/events", {
       event_type: "SessionStart", session_key: key,
       session_id: "pin-test", runtime: "claude-code", cwd, test: true,
+      launch_generation: readFileSync(generationPath, "utf8"),
     });
     await page.goto(base());
     await page.locator(".rd-row-name", { hasText: "pin-test-agent" }).click();
