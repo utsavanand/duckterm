@@ -68,7 +68,7 @@ from duckterm import bug_reports, connectors, editions, release_features, suites
 from duckterm.agents import tmux
 from duckterm.agents.terminal import available_terminals, open_in_terminal
 from duckterm.autopilot import api as ap_api
-from duckterm.core import events, fleet_questions, oracle, oracle_intent
+from duckterm.core import events, fleet_pulse, fleet_questions, oracle, oracle_intent
 from duckterm.core.approvals import Approval, ApprovalRegistry
 from duckterm.core.backup_jobs import BackupJobs
 from duckterm.core.eventbus import EventBus
@@ -368,6 +368,7 @@ _ROUTES: list[Route] = [
     Route("POST", "/fleet/ask", lambda s, r, w, h, b, seg: s._fleet_ask(w, b)),
     Route("GET", "/oracle/chat", lambda s, r, w, h, b, seg: s._oracle_chat(w)),
     Route("GET", "/control-tower", lambda s, r, w, h, b, seg: s._control_tower(w)),
+    Route("GET", "/fleet/pulse", lambda s, r, w, h, b, seg: s._fleet_pulse(w)),
     Route("GET", "/relay", lambda s, r, w, h, b, seg: s._relay_list(w)),
     # ── Oracle voice: the optional local neural voice ──
     Route("GET", "/voice/status", lambda s, r, w, h, b, seg: s._voice_status(w)),
@@ -5173,6 +5174,24 @@ class Server:
             return
         self.history.session_api._sweep()
         await _write_json(writer, 200, mail_analytics.snapshot(self.history._conn, days))
+
+    _PULSE_TTL_MS = 30_000
+
+    async def _fleet_pulse(self, writer: asyncio.StreamWriter) -> None:
+        """Artifacts, PR merges and releases for the Fleet monitor's Pulse.
+        Git reads are cached briefly: every open dashboard polls this."""
+        now = int(time.time() * 1000)
+        cached = getattr(self, "_pulse_cache", None)
+        if cached is None or now - cached[0] >= self._PULSE_TTL_MS:
+            since = now - fleet_pulse.WINDOW_MS
+            events = await asyncio.to_thread(
+                fleet_pulse.collect,
+                self.history.sessions(),
+                self.history.artifacts.recent(since, fleet_pulse.LIMIT),
+                now,
+            )
+            cached = self._pulse_cache = (now, events)
+        await _write_json(writer, 200, {"events": cached[1]})
 
     async def _control_tower(self, writer: asyncio.StreamWriter) -> None:
         """Fleet insights for the control tower page. Session states and

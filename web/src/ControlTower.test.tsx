@@ -1,13 +1,13 @@
-import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { waitFor, act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
-import { api, TowerInsights } from "./api";
+import { api, PulseEvent, TowerInsights } from "./api";
 import { defaultLayout } from "./Widgets";
 import { oracleWidgets } from "./OracleWidgets";
 import { ControlTower } from "./ControlTower";
 import { TowerAgent } from "./tower";
 import { edition, CODE, FULL, LITE } from "./test/editions";
 import { StaticEdition } from "./edition";
-vi.mock("./api", () => ({ authHeaders: () => ({}), api: { controlTower: vi.fn(), messageSession: vi.fn(), oracleChat: vi.fn(), fleetAsk: vi.fn(), clearOracleChat: vi.fn(), relay: vi.fn() } }));
+vi.mock("./api", () => ({ authHeaders: () => ({}), api: { controlTower: vi.fn(), messageSession: vi.fn(), oracleChat: vi.fn(), fleetAsk: vi.fn(), clearOracleChat: vi.fn(), relay: vi.fn(), fleetPulse: vi.fn() } }));
 beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn().mockImplementation(async (url: string) => new Response(JSON.stringify(url === "/tasks" ? { tasks: [] } : { revision: "default", instances: defaultLayout("oracle", oracleWidgets(() => {}, { backup: true })) }))));
   vi.mocked(api.oracleChat).mockResolvedValue({ messages: [] });
@@ -185,8 +185,9 @@ it("starts no polling when its overview capability is unavailable", async () => 
   expect(fetch).not.toHaveBeenCalled();
 });
 
-function fleetMonitor() {
+function fleetMonitor(pulse: PulseEvent[] = []) {
   vi.mocked(api.controlTower).mockResolvedValue(insights);
+  vi.mocked(api.fleetPulse).mockResolvedValue({ events: pulse });
   render(<ControlTower onAnalytics={() => {}} agents={agents} now={NOW} onBack={() => {}} onOpenTerminal={() => {}} />, { wrapper: edition([...FULL, "fleet_monitor"]) });
 }
 
@@ -273,4 +274,26 @@ it("without fleet_monitor, the page is still the Control tower", async () => {
   render(<ControlTower onAnalytics={() => {}} agents={agents} now={NOW} onBack={() => {}} onOpenTerminal={() => {}} />, { wrapper: edition(FULL) });
   expect(screen.getByRole("heading", { name: /Control tower/ })).toBeVisible();
   expect(screen.queryByRole("tab")).toBeNull();
+});
+
+
+it("Pulse lists needs-you, merges, releases and artifacts newest first, and filters them", async () => {
+  fleetMonitor([
+    { kind: "pr", at: NOW - 60_000, title: "#470 Needs you counts match", name: "oracle-dev", session_key: "o", repo: "duckterm" },
+    { kind: "release", at: NOW - 3_600_000, title: "v0.4.218", repo: "duckterm", detail: "4 merged PRs" },
+    { kind: "artifact", at: NOW - 7_200_000, title: "Spec draft: Fleet monitor", name: "oracle-dev", session_key: "o" },
+  ]);
+  const pulse = screen.getByRole("complementary", { name: "Pulse" });
+  await waitFor(() => expect(within(pulse).getAllByRole("listitem")).toHaveLength(4));
+  const items = within(pulse).getAllByRole("listitem");
+  expect(items.map((li) => li.querySelector(".rd-pulse-what")?.textContent)).toEqual([
+    "oracle-dev merged a PR in duckterm",
+    "duckterm released v0.4.218",
+    "oracle-dev made an artifact",
+    "qa needs you",
+  ]);
+  fireEvent.click(within(pulse).getByRole("button", { name: "PRs & releases" }));
+  expect(within(pulse).getAllByRole("listitem")).toHaveLength(2);
+  fireEvent.click(within(pulse).getByRole("button", { name: "Answer" }));
+  expect(screen.getByRole("dialog", { name: "Needs you" })).toBeVisible();
 });
