@@ -41,6 +41,7 @@ export function readFilters(value: string | null): SidebarFilterState {
   } catch { return EMPTY_FILTERS; }
 }
 export function useSidebarFilters() {
+  const [query, setQuery] = useState("");
   const [expanded, setExpanded] = useState(() => {
     try { return localStorage.getItem(FILTER_PANEL_KEY) === "true"; } catch { return false; }
   });
@@ -59,7 +60,7 @@ export function useSidebarFilters() {
   const toggle = (group: FilterGroup, value: string) => setFilters(current => ({ ...current,
     [group]: current[group].includes(value) ? current[group].filter(v => v !== value) : [...current[group], value],
   }));
-  return { filters, toggle, clear: () => setFilters(EMPTY_FILTERS), saveError,
+  return { query, setQuery, filters, toggle, clear: () => setFilters(EMPTY_FILTERS), saveError,
     expanded, toggleExpanded: () => setExpanded(current => !current) };
 }
 export type SidebarFilterControls = ReturnType<typeof useSidebarFilters>;

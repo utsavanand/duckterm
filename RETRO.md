@@ -1,3 +1,26 @@
+## 2026-11-24 — Exercise empty-input keys and Unicode highlight boundaries
+
+Search must release Escape to sidebar navigation after clearing its own value.
+Assert the second Escape clears active filters, not just that focus remains.
+Lowercasing can expand characters, so map match positions back to original UTF-16
+boundaries and merge overlapping ranges before rendering the unchanged label.
+Include Unicode expansion, contextual casing, emoji, and literal punctuation in
+regression coverage.
+
+## 2026-11-24 — Scope searches and wait for terminal checkpoint receipts
+
+Adding a second search box exposed an unlabelled Inbox test locator. Target the
+named control. Checkpoint recovery polls may return a valid running receipt
+before completion; wait for the completed receipt, then retain exact request and
+result identity assertions instead of assuming the first HTTP 200 is final.
+
+## 2026-11-24 — Search must compose with filters without changing navigation
+
+Agent-name search must apply to the same session set as filter counts, retain
+filter choices when cleared, and leave workspace expansion and selection intact.
+Keep its input outside the collapsible filter controls and verify those behaviors
+with real sidebar rows, including forks inside collapsed workspaces.
+
 ## 2026-11-24 — Unread inbox items are not all unanswered requests
 
 Sidebar inbox badges include informational owner notices. A filter for unanswered

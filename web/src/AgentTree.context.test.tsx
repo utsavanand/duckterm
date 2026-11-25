@@ -16,7 +16,7 @@ it.each([
   const session = viewFromPersisted({ session_key: "probe", name: "Context probe", state: "busy", event_count: 1,
     started_at: 1, updated_at: 2, runtime: "codex", model: "unlisted-codex-model", context_tokens: tokens, context_window_tokens: capacity });
   const { container } = render(<AgentTree sessions={[session]} now={3} folders={[]} selectedKey={null}
-    filterControls={{ filters: EMPTY_FILTERS, toggle: vi.fn(), clear: vi.fn(), saveError: false, expanded: false, toggleExpanded: vi.fn() }}
+    filterControls={{ query: "", setQuery: vi.fn(), filters: EMPTY_FILTERS, toggle: vi.fn(), clear: vi.fn(), saveError: false, expanded: false, toggleExpanded: vi.fn() }}
     onOpen={vi.fn()} onFoldersChanged={vi.fn()} onSessionMoved={vi.fn()} onOpenGrid={vi.fn()} onNewSessionIn={vi.fn()} folderThemes={{}} />,
     { wrapper: edition(features) });
   const row = container.querySelector('[data-session-key="probe"]');

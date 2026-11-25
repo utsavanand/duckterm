@@ -4,6 +4,7 @@ import "./sidebarOrder.css";
 import { sessionStateLabel } from "./sessions";
 import { sidebarFolders } from "./sidebarFolders";
 import { openSessionActions } from "./SessionActionMenu";
+import { AgentNameSearch, HighlightName, matchesAgentName } from "./AgentNameSearch";
 import { SidebarFilters } from "./SidebarFilters";
 import { hasFilters, matchesFilters, sidebarSessions, SidebarFilterControls } from "./sidebarFilterState";
 import { desktop } from "./desktop";
@@ -65,7 +66,7 @@ export function AgentTree({
   folderThemes: Record<string, string>;
   onOpenFolderAppearance?: (folder: string) => void;
 }) {
-  const { filters, toggle, clear, saveError, expanded } = filterControls;
+  const { query, setQuery, filters, toggle, clear, saveError, expanded } = filterControls;
   const ordering = useSidebarOrder(sessions);
   const visibleSessions = sidebarSessions(ordering.sessions);
   const dragRoot = useRef<HTMLDivElement | null>(null);
@@ -82,7 +83,11 @@ export function AgentTree({
   const archivedSessions = sessions.filter(s => ["archived", "merged"].includes(s.state));
   const localArchives = useState(false);
   const [archivesOpen, setArchivesOpen] = expansion?.archives ?? localArchives;
-  const filtering = hasFilters(filters);
+  const search = query.trim();
+  const searching = search.length > 0;
+  const namedSessions = visibleSessions.filter(s => matchesAgentName(s.label, search));
+  const matchingSessions = namedSessions.filter(s => matchesFilters(s, filters, now));
+  const filtering = hasFilters(filters) || searching;
   const localFolders = useState<Set<string>>(() => new Set());
   const [expandedFolders, setExpandedFolders] = expansion?.folders ?? localFolders;
   useEffect(() => {
@@ -295,6 +300,7 @@ export function AgentTree({
       if (event.key === "Escape" && filtering) {
         event.preventDefault();
         event.stopPropagation();
+        if (searching) { setQuery(""); event.currentTarget.querySelector<HTMLInputElement>(".rd-agent-search input")?.focus(); return; }
         clear();
         if (expanded) event.currentTarget.querySelector<HTMLButtonElement>(".rd-filter-chip")?.focus();
         else event.currentTarget.closest(".rd-agents")?.querySelector<HTMLButtonElement>(".rd-filter-toggle")?.focus();
@@ -302,12 +308,13 @@ export function AgentTree({
     }}>
     <div className="rd-order-announcement" role="status" aria-live="polite">{drag.message}</div>
     {ordering.error && <p className="rd-order-error" role="alert">{ordering.error}</p>}
-    <SidebarFilters sessions={visibleSessions} now={now} filters={filters} onToggle={toggle} onClear={clear} saveError={saveError} expanded={expanded} />
+    <AgentNameSearch value={query} onChange={setQuery} />
+    <SidebarFilters sessions={namedSessions} query={search} totalSessions={visibleSessions.length} now={now} filters={filters} onToggle={toggle} onClear={clear} saveError={saveError} expanded={expanded} />
     <div className="rd-tree" ref={attachTree}
       onScroll={event => { if (expansion) expansion.scroll.current.tree = event.currentTarget.scrollTop; }}>
       {filtering ? <>
-        {visibleSessions.filter(s => matchesFilters(s, filters, now)).map(s => <TreeRow key={s.key} node={{ session: s, children: [] }} depth={0} now={now} selectedKey={selectedKey} contextKey={contextKey} onOpen={onOpen} onOpenInbox={onOpenInbox} onPin={onPin} showFolder />)}
-        {!visibleSessions.some(s => matchesFilters(s, filters, now)) && <div className="rd-filter-empty">No sessions match these filters.<button onClick={clear}>Clear filters</button></div>}
+        {matchingSessions.map(s => <TreeRow nameQuery={search} key={s.key} node={{ session: s, children: [] }} depth={0} now={now} selectedKey={selectedKey} contextKey={contextKey} onOpen={onOpen} onOpenInbox={onOpenInbox} onPin={onPin} showFolder />)}
+        {!matchingSessions.length && <div className="rd-filter-empty">{searching ? `No agents match “${search}”${hasFilters(filters) ? " with these filters" : ""}.` : "No sessions match these filters."}{searching && <button onClick={() => setQuery("")}>Clear search</button>}{hasFilters(filters) && <button onClick={clear}>Clear filters</button>}</div>}
       </> : <>
       {/* All folders render (even empty ones) so you can create then fill them. */}
       {topLevel.map((name) => renderFolder(name, 0))}
@@ -582,6 +589,7 @@ function TreeRow({
   depth,
   indent = 0,
   showFolder = false,
+  nameQuery = "",
   now,
   selectedKey,
   contextKey,
@@ -597,6 +605,7 @@ function TreeRow({
   depth: number;
   indent?: number; // folder depth — visual offset only, unlike fork `depth`
   showFolder?: boolean;
+  nameQuery?: string;
   now: number;
   selectedKey: string | null;
   contextKey?: string | null;
@@ -676,7 +685,7 @@ function TreeRow({
                 ⎇
               </span>
             )}
-            <span className="rd-row-name">{s.label}</span>
+            <span className="rd-row-name"><HighlightName name={s.label} query={nameQuery} /></span>
             <span className={`rd-state st-${effState}`} title={stateLabel} aria-label={stateLabel}>{stateLabel}</span>
             {!!s.inboxPending && (
               <button
