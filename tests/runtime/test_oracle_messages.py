@@ -1,6 +1,6 @@
-"""Ask Oracle telling one agent something: the owner's own words go straight to
-its inbox, reworded text and unclear recipients come back for confirmation, and
-the model can never pick a session it wasn't shown."""
+"""Ask Oracle telling one agent something: whatever the model routes comes back
+as a plan or candidates for the owner to confirm, the model can never pick a
+session it wasn't shown, and the confirmed send is saved to the chat once."""
 
 import json
 
@@ -39,30 +39,32 @@ def messaging(world):  # noqa: F811
     return server, owner, history
 
 
-def test_owners_own_words_to_one_agent_are_sent_and_logged(messaging, monkeypatch) -> None:
+@pytest.mark.parametrize(
+    ("question", "plan"),
+    [
+        # The owner's own words to the agent they named.
+        ("Tell product-manager to rebase #446", ("pm", "rebase #446")),
+        # Reworded text.
+        ("get product-manager to rebase 446", ("pm", "Please rebase PR 446.")),
+        # The model picked an agent the owner didn't name (security review of #474).
+        ("Tell main-dev to rebase #446", ("pm", "rebase #446")),
+        # A negated question read as a send.
+        ("Should I tell product-manager not to merge yet?", ("pm", "merge")),
+    ],
+)
+def test_a_routed_message_is_a_plan_and_nothing_is_sent(
+    messaging, monkeypatch, question, plan
+) -> None:
     server, owner, history = messaging
-    route(monkeypatch, {"action": "message", "session_id": "pm", "text": "rebase #446"})
-    status, body = ask(server, owner, "Tell product-manager to rebase #446")
-    assert status == 200 and body["sessions"] == ["pm"]
-    assert "Sent to **product-manager**" in body["answer"]
-    assert mail(history) == ["rebase #446"]
-    # A retried chat turn reuses its key and doesn't send twice.
-    ask(server, owner, "Tell product-manager to rebase #446")
-    assert mail(history) == ["rebase #446"]
-
-
-def test_reworded_text_is_a_plan_and_nothing_is_sent(messaging, monkeypatch) -> None:
-    server, owner, history = messaging
-    route(monkeypatch, {"action": "message", "session_id": "pm", "text": "Please rebase PR 446."})
-    status, body = ask(server, owner, "get product-manager to rebase 446")
+    session_id, text = plan
+    route(monkeypatch, {"action": "message", "session_id": session_id, "text": text})
+    status, body = ask(server, owner, question)
     assert status == 200
-    assert body["plan"] == {
-        "id": "pm",
-        "name": "product-manager",
-        "folder": "Duckterm",
-        "text": "Please rebase PR 446.",
+    assert body == {
+        "plan": {"id": "pm", "name": "product-manager", "folder": "Duckterm", "text": text}
     }
     assert mail(history) == []
+    assert dispatch(server, "GET", "/oracle/chat", owner)[1]["messages"] == []
 
 
 def test_unclear_recipient_returns_candidates_and_sends_nothing(messaging, monkeypatch) -> None:
@@ -118,3 +120,20 @@ def test_an_ask_oracle_send_is_saved_in_the_chat_history(world, flag) -> None:  
         ]
     else:
         assert "exchange" not in reply and chat == []
+
+
+def test_a_retried_send_is_delivered_and_saved_once(messaging) -> None:
+    server, owner, history = messaging
+    body = {
+        "text": "rebase #446",
+        "mode": "inbox",
+        "request_key": "oracle:k1",
+        "oracle_chat": "@product-manager rebase #446",
+    }
+    first = post(server, owner, "/sessions/pm/message", body)[1]
+    # The response was lost and the owner pressed Send again.
+    second = post(server, owner, "/sessions/pm/message", body)[1]
+    assert mail(history) == ["rebase #446"]
+    assert second["exchange"] == first["exchange"]
+    chat = dispatch(server, "GET", "/oracle/chat", owner)[1]["messages"]
+    assert [m["q"] for m in chat] == ["@product-manager rebase #446"]

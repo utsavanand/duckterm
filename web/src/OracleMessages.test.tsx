@@ -44,6 +44,15 @@ it("sends the owner's words unchanged to the agent picked with @, with no model 
   expect(api.fleetAsk).not.toHaveBeenCalled();
 });
 
+it.each(["rules", "stop R1"])("sends %j to the agent picked with @ instead of running it as a command", async (text) => {
+  const box = chat();
+  fireEvent.click(screen.getByRole("button", { name: "Message one agent" }));
+  fireEvent.click(screen.getByRole("option", { name: /release-dev/ }));
+  type(box, text);
+  await screen.findByText(`Sent to release-dev: ${text}`);
+  expect(api.messageSession).toHaveBeenCalledWith("rel", text, "inbox", expect.any(String), `@release-dev ${text}`);
+});
+
 it("waits for Send before delivering text the model reworded", async () => {
   routed({ plan: { ...AGENTS[0], text: "Please hold PR #470." } });
   type(chat(), "get release-dev to hold 470");

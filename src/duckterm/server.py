@@ -4281,11 +4281,11 @@ class Server:
             }
         }
 
-    async def _oracle_message(self, question: str, request_key: str) -> dict[str, Any] | None:
-        """An Ask Oracle message that tells one agent something. Sent at once
-        only when it is the owner's own words to exactly one agent; reworded
-        text comes back as a plan and an unclear recipient as candidates, both
-        for the owner to confirm. None means it is a question to answer."""
+    async def _oracle_message(self, question: str) -> dict[str, Any] | None:
+        """An Ask Oracle message that tells one agent something. Nothing is
+        sent here: the model chose the recipient, so the owner confirms a plan
+        or picks from candidates (Contracts §7.4). None means it is a question
+        to answer."""
         agents = [
             {
                 "id": str(r["session_key"]),
@@ -4313,15 +4313,7 @@ class Server:
                     "candidates": [by_id[c] for c in intent["candidates"]],
                 }
             }
-        agent, text = by_id[intent["session_id"]], intent["text"]
-        if not oracle_intent.verbatim(text, question):
-            return {"plan": {**agent, "text": text}}
-        self.history.session_api.owner_message(agent["id"], text, request_key=request_key)
-        answer = _sent_line(agent["name"], text)
-        exchange = oracle.append_chat(
-            paths.home() / "oracle-chat.json", question, answer, int(time.time() * 1000)
-        )
-        return {"answer": answer, "exchange": exchange, "sessions": [agent["id"]]}
+        return {"plan": {**by_id[intent["session_id"]], "text": intent["text"]}}
 
     async def _fleet_ask(self, writer: asyncio.StreamWriter, body: bytes) -> None:
         """Route explicit folder messages; answer other questions from session digests."""
@@ -4356,7 +4348,7 @@ class Server:
                 await _write_json(writer, 400, {"error": "Invalid request_key"})
                 return
             try:
-                routed = await self._oracle_message(question, "oracle:" + key)
+                routed = await self._oracle_message(question)
             except APIError as exc:
                 await _write_json(writer, exc.status, {"error": str(exc)})
                 return
@@ -5261,6 +5253,7 @@ class Server:
                     asked.strip()[:8000],
                     _sent_line(str(row.get("name") or session_key), str(req.get("text"))),
                     int(time.time() * 1000),
+                    key=message_id,
                 )
             await _write_json(writer, 200, reply)
             return

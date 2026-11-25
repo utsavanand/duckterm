@@ -161,9 +161,20 @@ def load_chat(path: Path) -> list[dict[str, Any]]:
     return chat if isinstance(chat, list) else []
 
 
-def append_chat(path: Path, question: str, answer: str, at_ms: int) -> dict[str, Any]:
-    exchange = {"q": question, "a": answer, "at": at_ms}
-    private_write(path, json.dumps((load_chat(path) + [exchange])[-CHAT_LIMIT:]))
+def append_chat(
+    path: Path, question: str, answer: str, at_ms: int, *, key: str | None = None
+) -> dict[str, Any]:
+    """Save one exchange. A keyed exchange is saved once: a retried send
+    returns the copy already in the history."""
+    chat = load_chat(path)
+    if key is not None:
+        saved = next((e for e in chat if e.get("key") == key), None)
+        if saved is not None:
+            return saved
+    exchange: dict[str, Any] = {"q": question, "a": answer, "at": at_ms}
+    if key is not None:
+        exchange["key"] = key
+    private_write(path, json.dumps((chat + [exchange])[-CHAT_LIMIT:]))
     return exchange
 
 

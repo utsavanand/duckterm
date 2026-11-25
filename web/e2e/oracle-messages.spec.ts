@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { apiPost, base, postEvent, seedSession } from "./helpers";
 
 // Ask Oracle telling one agent something, through the real server and inbox.
-test("Ask Oracle sends to one agent by @ or plain language, and asks when unsure", async ({ page }) => {
+test("Ask Oracle sends to one agent after the owner confirms, and asks when unsure", async ({ page }) => {
   const folder = `OracleMsg-${Date.now()}`;
   const credentials: Record<string, string> = {};
   for (const name of ["release-dev", "main-dev", "main-dev-2"]) {
@@ -17,10 +17,15 @@ test("Ask Oracle sends to one agent by @ or plain language, and asks when unsure
   await page.locator(".rd-topbar").getByRole("button", { name: /^Oracle/ }).click();
   const box = page.getByLabel("Message Oracle");
 
+  // The model chose the recipient, so nothing goes out before the owner's click.
   await box.fill("Tell release-dev to hold #470 until QA passes");
   await box.press("Enter");
+  const card = page.getByRole("group", { name: "Message to release-dev" });
+  await expect(card).toContainText("hold #470 until QA passes");
+  expect(await inbox("release-dev")).toEqual([]);
+  await card.getByRole("button", { name: "Send" }).click();
   await expect(page.getByText("Sent to release-dev:", { exact: false })).toBeVisible();
-  expect(await inbox("release-dev")).toContain("hold #470 until QA passes");
+  expect(await inbox("release-dev")).toEqual(["hold #470 until QA passes"]);
 
   await box.fill("tell main-dev to rebase on main");
   await box.press("Enter");

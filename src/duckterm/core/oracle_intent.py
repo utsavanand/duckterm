@@ -1,8 +1,8 @@
 """Read an owner's Ask Oracle message as a send to one agent, a question, or unclear.
 
-The model only proposes. The server sends without a confirmation click only
-when the message is the owner's own words, verbatim, to exactly one agent;
-model-reworded text needs the owner's click (Contracts §7.4).
+The model only proposes. Whatever it routes comes back to the owner to confirm,
+because the model chose the recipient: a wrong pick or an injected agent name
+must never become an owner message without a click (Contracts §7.4).
 """
 
 import json
@@ -56,9 +56,3 @@ def parse_intent(text: str, ids: set[str]) -> dict[str, Any]:
         ):
             return intent
     raise APIError(502, "Invalid message plan. Nothing was sent. Try again.")
-
-
-def verbatim(text: str, question: str) -> bool:
-    """The message is a span of what the owner typed, ignoring case and spacing."""
-    words = " ".join(text.split()).casefold()
-    return bool(words) and words in " ".join(question.split()).casefold()

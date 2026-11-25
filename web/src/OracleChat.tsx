@@ -113,6 +113,11 @@ export function OracleChat({
     const t = text.trim();
     if (!t || pending !== null) return;
     setQ("");
+    // Text to a chosen agent is theirs as typed, even "rules" or "stop R1".
+    if (recipient) {
+      const key = requestKey(), question = `@${recipient.name} ${t}`;
+      return deliver(addLocal({ at: Date.now(), kind: "send", agent: recipient, text: t, question, key, state: "open" }), recipient, t, key, question);
+    }
     const stop = t.match(/^stop\s+(r\d+)$/i);
     if (stop) {
       try {
@@ -127,10 +132,6 @@ export function OracleChat({
     if (/^rules$/i.test(t)) {
       addLocal({ at: Date.now(), kind: "info", text: relay.rules.length ? "Your rules:" : "No rules yet. Start one with \"always …\" or \"when an agent asks …\".", rules: relay.rules });
       return;
-    }
-    if (recipient) {
-      const key = requestKey(), question = `@${recipient.name} ${t}`;
-      return deliver(addLocal({ at: Date.now(), kind: "send", agent: recipient, text: t, question, key, state: "open" }), recipient, t, key, question);
     }
     if (RULE_WORDS.test(t)) return propose(t);
     return ask(t);
