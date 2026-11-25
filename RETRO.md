@@ -1,3 +1,13 @@
+## 2026-11-25 — An icon tile on a theme token needs that token's foreground
+
+The Support sidebar icon filled its tile with --accent and drew the glyph in
+white. Dark mode makes --accent near-white, so the question mark measured
+1.09:1 and disappeared; browser tests and visibility checks still passed.
+Pair a theme-dependent background with its foreground token (--accent-fg)
+and check new icons in both themes. The same PR broke an e2e that counted
+feature-flag rows as a magic number; it now derives the count from
+/feature-flags.
+
 ## 2026-11-24 — A completed response does not mean completed work
 
 The status fold treated every Stop as idle and the hook discarded Claude's

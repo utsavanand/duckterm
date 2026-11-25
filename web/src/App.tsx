@@ -486,7 +486,7 @@ function Dashboard() {
               </button>}
               {sidebarSupport && <button className="rd-oracle-row rd-support-row" type="button" aria-label="Support" aria-pressed={towerVisible && towerMode === "support"}
                 onClick={() => { setTowerMode("support"); setTowerOpen(true); setAnalyticsTab(null); }}>
-                <svg viewBox="0 0 26 26" aria-hidden="true"><rect x="1" y="1" width="24" height="24" rx="7" fill="var(--accent)" /><path d="M10 10.2a3 3 0 1 1 4.4 2.6c-.9.5-1.4 1.1-1.4 2.1v.6" fill="none" stroke="#fff" strokeWidth="2" strokeLinecap="round" /><circle cx="13" cy="19" r="1.3" fill="#fff" /></svg>
+                <svg viewBox="0 0 26 26" aria-hidden="true"><rect x="1" y="1" width="24" height="24" rx="7" fill="var(--accent)" /><path d="M10 10.2a3 3 0 1 1 4.4 2.6c-.9.5-1.4 1.1-1.4 2.1v.6" fill="none" stroke="var(--accent-fg)" strokeWidth="2" strokeLinecap="round" /><circle cx="13" cy="19" r="1.3" fill="var(--accent-fg)" /></svg>
                 <span>Support<small>How DuckTerm works</small></span>
               </button>}
             </div>
