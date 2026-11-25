@@ -532,7 +532,8 @@ def _row(
 
 
 def _worktree_branch(row: dict[str, Any]) -> tuple[str, str] | None:
-    """(repository root, branch) for a session that works in a git checkout."""
+    """(repository root, branch) for a session that works in a git checkout.
+    The branch is "" when the checkout is detached, mid-rebase included."""
     path = row.get("worktree_path") or row.get("cwd")
     if not path or not Path(str(path)).is_dir() or not git.is_repo(str(path)):
         return None
@@ -541,7 +542,7 @@ def _worktree_branch(row: dict[str, Any]) -> tuple[str, str] | None:
         branch = git.current_branch(str(path))
     except git.ReviewGitError:
         return None
-    return (repo, branch) if branch else None
+    return repo, branch or ""
 
 
 def build(
@@ -557,22 +558,30 @@ def build(
     by_repo: dict[str, list[tuple[dict[str, Any], str]]] = {}
     for row in sessions:
         found = _worktree_branch(row)
-        if found:
-            by_repo.setdefault(found[0], []).append((row, found[1]))
+        if found is None:
+            continue
+        repo, branch = found
+        # A detached checkout is on no branch, but the branches its session
+        # pushed are still its own, so it stays a member where it owns one.
+        mine = row["session_key"]
+        if branch or any(r == repo and k == mine for (r, _), k in owners.items()):
+            by_repo.setdefault(repo, []).append((row, branch))
     rows: list[dict[str, Any]] = []
     repos: list[dict[str, Any]] = []
     for repo, members in by_repo.items():
-        current = {branch for _, branch in members}
+        current = {branch for _, branch in members if branch}
         pushed = [
             (session_row, branch)
             for session_row, _ in members
             for (owner_repo, branch), key in owners.items()
             if owner_repo == repo and key == session_row["session_key"] and branch not in current
         ]
-        state = _repo_state(repo, [b for _, b in members] + [b for _, b in pushed], refresh=refresh)
+        state = _repo_state(
+            repo, [b for _, b in members if b] + [b for _, b in pushed], refresh=refresh
+        )
         seen: set[str] = set()
         for session_row, branch in [*members, *pushed]:
-            if branch == state["default"] or branch in seen:
+            if not branch or branch == state["default"] or branch in seen:
                 continue
             seen.add(branch)
             on_branch = branch in current
