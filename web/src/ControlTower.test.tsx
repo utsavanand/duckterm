@@ -184,3 +184,44 @@ it("starts no polling when its overview capability is unavailable", async () => 
   expect(api.oracleChat).not.toHaveBeenCalled();
   expect(fetch).not.toHaveBeenCalled();
 });
+
+function fleetMonitor() {
+  vi.mocked(api.controlTower).mockResolvedValue(insights);
+  render(<ControlTower onAnalytics={() => {}} agents={agents} now={NOW} onBack={() => {}} onOpenTerminal={() => {}} />, { wrapper: edition([...FULL, "fleet_monitor"]) });
+}
+
+it("with fleet_monitor, opens on Ask Oracle with tabs for the fleet and analytics", async () => {
+  fleetMonitor();
+  expect(screen.getByRole("heading", { name: /Fleet monitor/ })).toBeVisible();
+  expect(screen.queryByText(/Control tower/)).toBeNull();
+  expect(screen.getByRole("tab", { name: "Ask Oracle" })).toHaveAttribute("aria-selected", "true");
+  expect(screen.getByLabelText("Message Oracle")).toBeVisible();
+  expect(screen.queryByRole("region", { name: "Teams" })).toBeNull();
+  fireEvent.click(screen.getByRole("tab", { name: "Agent fleet" }));
+  expect(screen.getByRole("region", { name: "Teams" })).toBeVisible();
+  expect(screen.queryByLabelText("Message Oracle")).toBeNull();
+  fireEvent.click(screen.getByRole("tab", { name: "Analytics" }));
+  expect(await screen.findByRole("button", { name: "Show everything that needs you" })).toBeVisible();
+});
+
+it("with fleet_monitor, the banner and the tile open one Needs you window that Escape closes", async () => {
+  fleetMonitor();
+  const open = await screen.findByRole("button", { name: "Open Needs you" });
+  expect(open.parentElement).toHaveTextContent("1 agent needs you. Oldest: qa, 4 days ago");
+  fireEvent.click(open);
+  const win = screen.getByRole("dialog", { name: "Needs you" });
+  expect(within(win).getByText("Deploy now?")).toBeVisible();
+  expect(within(win).getByRole("textbox", { name: "Reply to qa" })).toBeVisible();
+  fireEvent.keyDown(window, { key: "Escape" });
+  expect(screen.queryByRole("dialog", { name: "Needs you" })).toBeNull();
+  fireEvent.click(screen.getByRole("tab", { name: "Analytics" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Show everything that needs you" }));
+  expect(screen.getByRole("dialog", { name: "Needs you" })).toBeVisible();
+});
+
+it("without fleet_monitor, the page is still the Control tower", async () => {
+  vi.mocked(api.controlTower).mockResolvedValue(insights);
+  render(<ControlTower onAnalytics={() => {}} agents={agents} now={NOW} onBack={() => {}} onOpenTerminal={() => {}} />, { wrapper: edition(FULL) });
+  expect(screen.getByRole("heading", { name: /Control tower/ })).toBeVisible();
+  expect(screen.queryByRole("tab")).toBeNull();
+});

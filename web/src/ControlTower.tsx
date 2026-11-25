@@ -58,6 +58,9 @@ export function ControlTower({
   const analyticsRef = useRef(onAnalytics); analyticsRef.current = onAnalytics;
   const taskOpen = useRef(onOpenTerminal); taskOpen.current = onOpenTerminal;
   const [needsOpen, setNeedsOpen] = useState(false);
+  // The Fleet monitor layout (owner-approved mock A, 2026-11-24): tabs over one page.
+  const fleet = oracle && has("fleet_monitor");
+  const [tab, setTab] = useState<"chat" | "fleet" | "analytics">("chat");
   const registry = useMemo(() => [...oracleWidgets(tab => analyticsRef.current(tab), { oracle, remote, backup, onNeedsYou: () => setNeedsOpen(o => !o) }), ...(inbox ? [tasksWidget(key => taskOpen.current(key))] : [])], [oracle, remote, inbox, backup]);
   const [hover, setHover] = useState<{ key: string; el: HTMLElement } | null>(null);
   const [pinned, setPinned] = useState<{ key: string; el: HTMLElement } | null>(null);
@@ -66,9 +69,12 @@ export function ControlTower({
   // typing, where Escape belongs to the text field.
   const pinnedRef = useRef(pinned);
   pinnedRef.current = pinned;
+  const needsWindowRef = useRef(false);
+  needsWindowRef.current = fleet && needsOpen;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
+      if (needsWindowRef.current) return setNeedsOpen(false);
       if (pinnedRef.current) return setPinned(null);
       if (e.target instanceof Element && e.target.closest("textarea, input")) return;
       onBack();
@@ -89,6 +95,110 @@ export function ControlTower({
   useEffect(() => { source.emit("needs-you", relay.loaded ? { status: "ready", value: { notes: relay.notes.filter(n => n.status === "open" && n.urgency !== "offer").sort((a, b) => a.created_at - b.created_at), now } } : { status: "loading" }); }, [source, relay.notes, relay.loaded, now]);
 
   if (!overview) return null;
+  const teamsSection = (
+    <>
+      <h2 className="rd-teams-title">Your agents <small>{agents.length} across {teamList.length} {teamList.length === 1 ? "team" : "teams"}</small></h2>
+      <section className="rd-tower-teams" aria-label="Teams">
+        {teamList.length === 0 && <p className="rd-panel-empty">No agents yet.</p>}
+        {teamList.map(team => <div key={team.name} className="rd-tower-team"><div className="rd-tower-team-head"><span className="rd-tower-team-name">{team.name}</span><small>{team.agents.length}</small></div><div className="rd-tower-field">{team.agents.map(a => <AgentDuck key={a.key} agent={a} stuck={looksStuck(a, now)} pinned={pinned?.key === a.key} onHover={el => setHover(el ? { key: a.key, el } : null)} onPin={el => setPinned({ key: a.key, el })} />)}</div></div>)}
+      </section>
+    </>
+  );
+  const needsCards = (
+    <>
+      {needs.length === 0 && <p className="rd-panel-empty">Nothing needs you.</p>}
+      <div className="rd-tower-needs-list">
+        {needs.map((n) => (
+          <div key={n.id} className="rd-tower-need">
+            <OracleDuck agent={agents.find((a) => a.key === n.session_key)} pose="waiting" size={28} />
+            <NoteCard note={n} rules={relay.rules} onChange={relay.refresh} onOpenTerminal={onOpenTerminal} />
+          </div>
+        ))}
+      </div>
+    </>
+  );
+  const widgets = <Widgets surface="oracle" slot="oracle" registry={registry} source={source} kindLabel={oracle ? "Oracle" : "fleet"} />;
+  const factsSection = (
+    <section className="rd-tower-facts" aria-label="Facts">
+      {facts(agents, now).map((f) => (
+        <span key={f.label} className="rd-tower-fact">
+          {f.label}: <b>{f.value}</b>
+        </span>
+      ))}
+    </section>
+  );
+  const agentCard = active && activeAgent && (
+    <AgentCard
+      key={`${activeAgent.key}-${pinned ? "pinned" : "hover"}`}
+      agent={activeAgent}
+      anchor={active.el}
+      pinned={pinned !== null}
+      stuck={looksStuck(activeAgent, now)}
+      now={now}
+      onClose={() => setPinned(null)}
+      onOpenTerminal={() => onOpenTerminal(activeAgent.key)}
+    />
+  );
+
+  if (fleet) {
+    const TABS = [["chat", "Ask Oracle"], ["fleet", "Agent fleet"], ["analytics", "Analytics"]] as const;
+    return (
+      <div className="rd-tower rd-tower-widgets rd-fleet">
+        <div className="rd-tower-bar">
+          <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={onBack} title="Back to sessions (Esc)">
+            ← Sessions
+          </button>
+          <h1 className="rd-tower-title">
+            Fleet monitor <small>Oracle · all workspaces</small>
+          </h1>
+        </div>
+        <div className="rd-fleet-tabs" role="tablist" aria-label="Fleet monitor">
+          {TABS.map(([id, label]) => (
+            <button key={id} role="tab" aria-selected={tab === id} className={tab === id ? "on" : ""} onClick={() => setTab(id)}>{label}</button>
+          ))}
+        </div>
+        <div className="rd-fleet-body" role="tabpanel" aria-label={TABS.find(([id]) => id === tab)?.[1]}>
+          {tab === "chat" && (
+            <div className="rd-tower-oracle rd-fleet-chat">
+              {needs.length > 0 && (
+                <div className="rd-fleet-needsbar">
+                  <span className="rd-fleet-needsbar-ducks" aria-hidden="true">
+                    {needs.slice(0, 4).map((n) => <OracleDuck key={n.id} agent={agents.find((a) => a.key === n.session_key)} pose="waiting" size={22} />)}
+                  </span>
+                  <span className="rd-fleet-needsbar-text">
+                    <b>{needs.length}</b> {needs.length === 1 ? "agent needs" : "agents need"} you. Oldest: {needs[0].name}, {ago(now - needs[0].created_at)} ago
+                  </span>
+                  <button className="rd-btn rd-btn-sm rd-fleet-needsbar-open" onClick={() => setNeedsOpen(true)}>Open Needs you</button>
+                </div>
+              )}
+              <OracleChat relay={relay} onRelayChange={relay.refresh} onOpenTerminal={onOpenTerminal} />
+            </div>
+          )}
+          {tab === "fleet" && <div className="rd-tower-scroll">{teamsSection}{factsSection}</div>}
+          {tab === "analytics" && (
+            <div className="rd-tower-scroll">
+              {widgets}
+              <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={() => onAnalytics("tokens")}>Full analytics ↗</button>
+            </div>
+          )}
+        </div>
+        {needsOpen && (
+          <>
+            <div className="rd-fleet-scrim" onClick={() => setNeedsOpen(false)} />
+            <section className="rd-fleet-needs-window" role="dialog" aria-label="Needs you">
+              <header>
+                <h2>Needs you</h2>
+                <span>{needs.length} open, oldest first</span>
+                <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={() => setNeedsOpen(false)}>Close</button>
+              </header>
+              <div className="rd-fleet-needs-cards">{needsCards}</div>
+            </section>
+          </>
+        )}
+        {agentCard}
+      </div>
+    );
+  }
   return (
     <div className={`rd-tower rd-tower-widgets${oracle ? "" : " rd-tower-passive"}`}>
       <div className="rd-tower-bar">
@@ -106,53 +216,22 @@ export function ControlTower({
         <OracleChat relay={relay} onRelayChange={relay.refresh} onOpenTerminal={onOpenTerminal} agents={agents.map(a => ({ id: a.key, name: a.label, folder: a.group ?? "" }))} />
       </aside>}
       <div className="rd-tower-scroll">
-      <h2 className="rd-teams-title">Your agents <small>{agents.length} across {teamList.length} {teamList.length === 1 ? "team" : "teams"}</small></h2>
-      <section className="rd-tower-teams" aria-label="Teams">
-        {teamList.length === 0 && <p className="rd-panel-empty">No agents yet.</p>}
-        {teamList.map(team => <div key={team.name} className="rd-tower-team"><div className="rd-tower-team-head"><span className="rd-tower-team-name">{team.name}</span><small>{team.agents.length}</small></div><div className="rd-tower-field">{team.agents.map(a => <AgentDuck key={a.key} agent={a} stuck={looksStuck(a, now)} pinned={pinned?.key === a.key} onHover={el => setHover(el ? { key: a.key, el } : null)} onPin={el => setPinned({ key: a.key, el })} />)}</div></div>)}
-      </section>
+      {teamsSection}
       {oracle && needsOpen && (
         <section className="rd-tower-needs" aria-label="Needs you">
           <h2>
             Needs you <span>{needs.length} open, oldest first.</span>
             <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={() => setNeedsOpen(false)}>Close</button>
           </h2>
-          {needs.length === 0 && <p className="rd-panel-empty">Nothing needs you.</p>}
-          <div className="rd-tower-needs-list">
-            {needs.map((n) => (
-              <div key={n.id} className="rd-tower-need">
-                <OracleDuck agent={agents.find((a) => a.key === n.session_key)} pose="waiting" size={28} />
-                <NoteCard note={n} rules={relay.rules} onChange={relay.refresh} onOpenTerminal={onOpenTerminal} />
-              </div>
-            ))}
-          </div>
+          {needsCards}
         </section>
       )}
-      <Widgets surface="oracle" slot="oracle" registry={registry} source={source} kindLabel={oracle ? "Oracle" : "fleet"} />
-
-      <section className="rd-tower-facts" aria-label="Facts">
-        {facts(agents, now).map((f) => (
-          <span key={f.label} className="rd-tower-fact">
-            {f.label}: <b>{f.value}</b>
-          </span>
-        ))}
-      </section>
-
+      {widgets}
+      {factsSection}
       </div>
       </div>
 
-      {active && activeAgent && (
-        <AgentCard
-          key={`${activeAgent.key}-${pinned ? "pinned" : "hover"}`}
-          agent={activeAgent}
-          anchor={active.el}
-          pinned={pinned !== null}
-          stuck={looksStuck(activeAgent, now)}
-          now={now}
-          onClose={() => setPinned(null)}
-          onOpenTerminal={() => onOpenTerminal(activeAgent.key)}
-        />
-      )}
+      {agentCard}
     </div>
   );
 }
