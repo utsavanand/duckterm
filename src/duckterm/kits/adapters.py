@@ -410,8 +410,10 @@ EVERY_FILE = {"*", "**", "**/*", "./**", "./**/*"}
 
 
 def _every_file(paths: object) -> bool:
-    """A path scope that names every file is `always` under another name."""
-    return bool(paths) and isinstance(paths, list) and all(str(p) in EVERY_FILE for p in paths)
+    """A path scope with a glob that names every file is `always` under
+    another name: the globs are alternatives, so one universal member covers
+    everything the others would."""
+    return bool(paths) and isinstance(paths, list) and any(str(p) in EVERY_FILE for p in paths)
 
 
 def place_skill(

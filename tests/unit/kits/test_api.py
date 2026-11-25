@@ -285,6 +285,35 @@ def test_repositories_collapse_worktrees_and_drop_plain_or_deleted_folders(tmp_p
     out = api.repositories([str(worktree), str(nested), str(plain), str(gone), str(main)])
     assert out == [str(main.resolve())]
     assert api.repositories([str(plain)]) == []
+    # a workspace whose sessions run only in a worktree: nothing installs now,
+    # since the main checkout may serve other workspaces; the worktree gets
+    # the kit at its next session start
+    assert api.repositories([str(worktree)]) == []
+
+
+@pytest.mark.parametrize("change", ["initialize", "remove-metadata", "separate-git-dir"])
+def test_repository_discovery_tracks_git_changes_without_restart(tmp_path, change):
+    import shutil
+    import subprocess
+
+    project = tmp_path / "repo"
+    project.mkdir()
+
+    def git(*args):
+        subprocess.run(["git", "-C", str(project), *args], check=True, capture_output=True)
+
+    if change == "initialize":
+        assert api.repositories([str(project)]) == []
+        git("init", "-q")
+        assert api.repositories([str(project)]) == [str(project)]
+    elif change == "remove-metadata":
+        git("init", "-q")
+        assert api.repositories([str(project)]) == [str(project)]
+        shutil.rmtree(project / ".git")
+        assert api.repositories([str(project)]) == []
+    else:
+        git("init", "-q", "--separate-git-dir", str(tmp_path / "metadata"))
+        assert api.repositories([str(project)]) == [str(project)]
 
 
 def test_register_reads_the_manifest_from_a_folder_or_a_toml_file(tmp_path):

@@ -143,13 +143,16 @@ def test_plan_reports_each_harness_honestly(tmp_path):
     assert not any(path.endswith("feature-squad.toml") for path in paths)
 
 
-def test_a_path_scope_over_every_file_installs_as_always_everywhere(tmp_path):
+@pytest.mark.parametrize("paths", [["**/*"], ["**/*", "src/**"]])
+def test_a_path_scope_over_every_file_installs_as_always_everywhere(tmp_path, paths):
     """uv-suite scoped its guardrails to `**/*`, which is every file; Codex and
-    OpenCode then showed "not supported" for a rule that was always-on anyway."""
+    OpenCode then showed "not supported" for a rule that was always-on anyway.
+    Globs are alternatives: one universal member makes the scope universal."""
     kit = _tiny_kit(
         tmp_path,
         'manifest_version = 1\nname = "k"\nversion = "1.0.0"\ndescription = "d"\n'
-        '[[components]]\nkind = "knowledge"\npath = "rule.md"\nload = { paths = ["**/*"] }\n',
+        '[[components]]\nkind = "knowledge"\npath = "rule.md"\n'
+        f"load = {{ paths = {json.dumps(paths)} }}\n",
         {"rule.md": "# Rule\nNo slop.\n"},
     )
     report = validate.validate(kit)

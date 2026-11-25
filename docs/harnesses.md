@@ -233,10 +233,12 @@ folder or a `skill-kit.toml` path, reads the manifest and adds the kit to
 DuckTerm (`POST /kits/register`; the record is the `harnesses` table, name
 and path). The list (`POST /kits/catalog`) shows every added kit with what it
 holds and the workspaces it is installed in. A workspace's repositories are
-the git repositories its sessions run in: a worktree counts as its main
-repository (the worktree gets the kit at its next session start), a plain
-folder or a deleted one counts for nothing, so a workspace with no
-repository yet gets the kit when a session starts in one. Adding is
+the git repositories its sessions run in directly, asked of git on every
+load; a linked worktree counts for nothing there, because its main checkout
+may be where other workspaces' sessions run, hooks included, and the
+worktree gets the kit at its next session start; a plain folder or a
+deleted one counts for nothing either, so a workspace with no repository
+yet gets the kit when a session starts in one. Adding is
 three steps: pick the kit (Browse marks kit folders and offers each kit of a
 multi-kit folder), read what it holds, enable it for all workspaces or chosen
 ones (`POST /kits/enable`; the choice lives in `<home>/kit-policy.json`).

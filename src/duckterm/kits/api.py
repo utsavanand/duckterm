@@ -367,37 +367,50 @@ def register(body: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-_REPO_OF: dict[str, str | None] = {}
-
-
 def repositories(paths: list[str]) -> list[str]:
-    """The repositories behind the folders a workspace's sessions ran in: a
-    worktree counts as its main repository (the kit reaches the worktree at
-    its next session start), a folder that is not a git repository or no
-    longer exists is left out. Kits install into repositories only."""
+    """The repositories a workspace's sessions run in directly, from the
+    folders its session rows name: a folder inside a main working tree
+    counts as that repository; a linked worktree counts for nothing here,
+    because its main checkout is where other workspaces' sessions may run
+    (hooks included), and the worktree itself gets the kit at its next
+    session start (policy_target). A plain folder, a deleted one or a bare
+    repository is left out. Git is asked every time: metadata changes while
+    DuckTerm runs (a `git init`, a removed `.git`), and a Git directory
+    need not be named `.git` (`--separate-git-dir`)."""
     import subprocess
 
     out: set[str] = set()
-    for raw in paths:
-        folder = str(raw)
+    for folder in sorted({str(p) for p in paths}):
         if not os.path.isdir(folder):
             continue
-        if folder not in _REPO_OF:
-            try:
-                args = ["git", "-C", folder, "rev-parse", "--path-format=absolute"]
-                proc = subprocess.run(
-                    [*args, "--git-common-dir"],
-                    capture_output=True,
-                    text=True,
-                    timeout=5,
-                )
-            except (OSError, subprocess.TimeoutExpired):
-                proc = None
-            common = proc.stdout.strip() if proc is not None and proc.returncode == 0 else ""
-            _REPO_OF[folder] = os.path.dirname(common) if common.endswith("/.git") else None
-        root = _REPO_OF[folder]
-        if root and os.path.isdir(root):
-            out.add(root)
+        try:
+            proc = subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "core.fsmonitor=false",
+                    "-C",
+                    folder,
+                    "rev-parse",
+                    "--path-format=absolute",
+                    "--absolute-git-dir",
+                    "--git-common-dir",
+                    "--show-toplevel",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        parts = proc.stdout.strip().splitlines() if proc.returncode == 0 else []
+        if len(parts) != 3:
+            continue
+        git_dir, common, top = parts
+        if git_dir != common:  # a linked worktree: its next session start installs there
+            continue
+        if os.path.isdir(top):
+            out.add(top)
     return sorted(out)
 
 
