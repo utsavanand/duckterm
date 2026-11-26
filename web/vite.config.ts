@@ -1,10 +1,19 @@
 /// <reference types="vitest/config" />
 import react from "@vitejs/plugin-react";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { defineConfig } from "vite";
 
 export default defineConfig({
   plugins: [react(), {
+    name: "pdf-resources",
+    generateBundle() {
+      const version = JSON.parse(readFileSync(new URL("./node_modules/pdfjs-dist/package.json", import.meta.url), "utf8")).version;
+      for (const folder of ["cmaps", "standard_fonts", "wasm"]) {
+        const directory = new URL(`./node_modules/pdfjs-dist/${folder}/`, import.meta.url);
+        for (const name of readdirSync(directory)) this.emitFile({ type: "asset", fileName: `assets/pdfjs-${version}/${folder}/${name}`, source: readFileSync(new URL(name, directory)) });
+      }
+    },
+  }, {
     name: "legacy-favicon",
     generateBundle() {
       // Keep the stable URL for older clients, without a second editable mark.

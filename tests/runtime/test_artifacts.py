@@ -259,3 +259,70 @@ def test_artifact_feedback_checks_revision_scope_and_actual_delivery(app, tmp_pa
     sup.write_bytes = lambda _: False
     assert send()[0] == 409
     assert len(server.history.annotations("a")) == 1
+
+
+def test_pdf_feedback_keeps_page_and_hash_and_rejects_invalid_locations(app, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    server, agents, owner = app
+    path = tmp_path / "review.pdf"
+    path.write_bytes(b"%PDF-1.4\nfixture")
+    saved = register(server, agents["a"], artifacts.registration(path, kind="report"))[1][
+        "artifact"
+    ]
+    writes = []
+
+    async def write(value):
+        writes.append(value)
+        return True
+
+    monkeypatch.setattr(
+        server.orchestrator,
+        "get",
+        lambda _: SimpleNamespace(running=True, write_queued_bytes=write),
+    )
+    data = {
+        "artifact_id": saved["id"],
+        "artifact_sha256": saved["sha256"],
+        "pdf_page": 2,
+        "quote": "",
+        "note": "Explain this diagram",
+    }
+
+    def send(payload):
+        return dispatch(
+            server, "POST", "/sessions/a/annotations", owner, json.dumps(payload).encode()
+        )
+
+    for page in (0, -1, True, 1.5, "2", 100001, {}):
+        assert send({**data, "pdf_page": page})[0] == 400
+    assert not writes and not server.history.annotations("a")
+    assert send(data)[1]["sent"] is True
+    prompt = json.loads(writes[0].decode().removeprefix("Artifact feedback: ").strip())
+    assert prompt["pdf_page"] == 2 and prompt["sha256"] == saved["sha256"]
+    assert json.loads(server.history.annotations("a")[0]["quote"])["pdf_page"] == 2
+    path.write_bytes(b"%PDF-1.4\nnew version")
+    register(server, agents["a"], artifacts.registration(path, kind="report"))
+    assert send(data)[0] == 409
+    assert len(writes) == 1
+    text = tmp_path / "text.md"
+    text.write_text("hello")
+    other = register(server, agents["a"], artifacts.registration(text, kind="report"))[1][
+        "artifact"
+    ]
+    assert send({**data, "artifact_id": other["id"], "artifact_sha256": other["sha256"]})[0] == 400
+
+
+def test_pdf_worker_and_decoder_assets_use_browser_mime_types(tmp_path):
+    import asyncio
+
+    from tests.runtime.test_session_api import Writer
+
+    from duckterm.transport.httpio import write_file
+
+    for suffix, media in ((".mjs", "text/javascript"), (".wasm", "application/wasm")):
+        path = tmp_path / ("reader" + suffix)
+        path.write_bytes(b"fixture")
+        writer = Writer()
+        asyncio.run(write_file(writer, path, immutable=True))
+        assert ("Content-Type: " + media).encode() in writer.data
