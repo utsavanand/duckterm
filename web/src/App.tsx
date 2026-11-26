@@ -398,9 +398,9 @@ function Dashboard() {
           className={`rd-btn rd-btn-ghost rd-btn-sm${towerOpen ? " rd-btn-active" : ""}`}
           aria-pressed={towerOpen}
           onClick={() => { setTowerMode("oracle"); setTowerOpen((o) => !o); setFocusOpen(false); setGridFolder(null); setHomeOpen(false); }}
-          title={has("oracle") ? "Control tower: fleet insights, every agent at a glance, and Oracle chat" : "Control tower: fleet insights and every agent at a glance"}
+          title={has("oracle") && has("fleet_monitor") ? "Fleet monitor: Ask Oracle, your agent fleet and analytics" : has("oracle") ? "Control tower: fleet insights, every agent at a glance, and Oracle chat" : "Control tower: fleet insights and every agent at a glance"}
         >
-          {has("oracle") ? "Oracle" : "Overview"}
+          {has("oracle") ? (has("fleet_monitor") ? "Fleet monitor" : "Oracle") : "Overview"}
           {has("oracle") && relayOpen > 0 && <span className="rd-rules-badge" aria-label={`${relayOpen} need you`}>{relayOpen}</span>}
         </button>}
         <button

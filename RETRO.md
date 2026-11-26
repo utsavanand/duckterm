@@ -1,3 +1,11 @@
+## 2026-11-25 — Tabs that unmount take the owner's draft with them
+
+The Fleet monitor rendered only the selected tab, so a look at Agent fleet
+discarded an unsent Ask Oracle message. Keep every panel mounted and hide the
+others. Its Needs you window said role=dialog but never took focus; a dialog
+needs initial focus, contained Tab and focus returned to its opener. And a
+count of notes labelled "agents" overstated the agents when one asked twice.
+
 ## 2026-11-25 — The per-agent holding folder was opened after the database changed
 
 Security's recheck of #461: convert() opened the holding folder up front, but
