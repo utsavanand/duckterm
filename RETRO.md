@@ -1,3 +1,11 @@
+## 2026-11-25 — Searchable artifact labels start at registration
+
+A label filter is useful only when producers classify their deliverables. The
+shipped collaboration instructions should explain the existing kind values,
+require an explicit kind and a descriptive subject in each title, and preserve
+accurate classification when updating an artifact. Reuse the current metadata
+rather than adding a second label vocabulary.
+
 ## 2026-11-24 — The conversion's Trash was unreachable and only its last folder was checked
 
 QA's re-check of #461: O_NOFOLLOW on a whole path only refuses a symlink in
