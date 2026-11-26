@@ -1,6 +1,6 @@
 import { useRef, useState } from "react";
 import type { ReviewCard, ReviewHeader } from "../api";
-import { html } from "../render";
+import { modelHtml } from "../render";
 import { BUCKET_LABELS } from "./diffModel";
 import { KIND_LABELS, type AuthorData, type BehaviourData, type BlastData, type GuardrailsData, type IntentData, type QuestionsData, type ReleaseData, type RiskData, type TestsData, type WalkthroughData } from "./cardModel";
 import { useMermaid } from "./useMermaid";
@@ -20,7 +20,7 @@ export function IntentCard({ data, actions }: { data: IntentData; actions: CardA
   const box = useRef<HTMLDivElement>(null);
   useMermaid(box, data.diagram);
   return <div ref={box} className="rd-card-body">
-    <div className="rd-card-prose" dangerouslySetInnerHTML={{ __html: html(data.summary) }} />
+    <div className="rd-card-prose" dangerouslySetInnerHTML={{ __html: modelHtml(data.summary) }} />
     <h4>Claims</h4>
     <table className="rd-card-table"><thead><tr><th>Claim</th><th>In diff</th><th>Evidence</th></tr></thead><tbody>
       {data.claims.map((claim, index) => <tr key={index}>
@@ -182,7 +182,7 @@ export function BlastCard({ data, actions }: { data: BlastData; actions: CardAct
   useMermaid(box, data.diagram);
   return <div ref={box} className="rd-card-body">
     {data.symbols.length === 0 && <p className="rd-prs-empty">No function, class or method definition changed; the index found nothing to trace.</p>}
-    {data.consequence && <div className="rd-card-prose" dangerouslySetInnerHTML={{ __html: html(data.consequence) }} />}
+    {data.consequence && <div className="rd-card-prose" dangerouslySetInnerHTML={{ __html: modelHtml(data.consequence) }} />}
     {data.model_status === "omitted" && data.symbols.length > 0 && <p className="rd-prs-note">Consequence paragraph omitted: {data.model_reason ?? "no model result"}. The callers below come from the index.</p>}
     {data.symbols.length > 0 && <table className="rd-card-table"><thead><tr><th>Changed symbol</th><th>Callers in diff</th><th>Callers outside</th><th>Tested</th></tr></thead><tbody>
       {data.symbols.map(row => <tr key={`${row.path}:${row.symbol}`}>
@@ -202,10 +202,10 @@ export function AuthorCard({ data }: { data: AuthorData }) {
   const kinds: Record<string, string> = { prompt: "Owner", commit: "Commit", push: "Push", verify: "Verified", abandon: "Undone", checkpoint: "Checkpoint", inbox: "Inbox" };
   return <div className="rd-card-body">
     {data.model_status !== "ready" && <p className="rd-prs-note">Summaries omitted: {data.model_reason ?? "no model result"}. The record below is the session's own events.</p>}
-    {data.trajectory && <div className="rd-card-prose" dangerouslySetInnerHTML={{ __html: html(data.trajectory) }} />}
+    {data.trajectory && <div className="rd-card-prose" dangerouslySetInnerHTML={{ __html: modelHtml(data.trajectory) }} />}
     {data.abandoned && data.abandoned.length > 0 && <><h4>Abandoned approaches</h4><ul className="rd-card-list">{data.abandoned.map((item, index) => <li key={index}>{item}</li>)}</ul></>}
     {data.decisions && data.decisions.length > 0 && <><h4>Owner decisions</h4><ul className="rd-card-list">{data.decisions.map((item, index) => <li key={index}>{item}</li>)}</ul></>}
-    {data.verification && <><h4>Verification</h4><div className="rd-card-prose" dangerouslySetInnerHTML={{ __html: html(data.verification) }} /></>}
+    {data.verification && <><h4>Verification</h4><div className="rd-card-prose" dangerouslySetInnerHTML={{ __html: modelHtml(data.verification) }} /></>}
     <h4>Record · {data.session.name} · {data.turns} turns · {data.commits} commits · {data.pushes} pushes</h4>
     {data.owner_decisions.length > 0 && <p className="rd-card-meta">Owner messages in the inbox: {data.owner_decisions.length}. Reverts or resets: {data.abandoned_commands.length}. Verification runs: {data.verification_runs.length}.</p>}
     <ol className="rd-card-trace">{data.events.slice(-80).map((event, index) => <li key={index} className={`is-${event.kind}`}><span className="rd-card-trace-turn">{event.turn ?? "·"}</span><span className="rd-card-trace-kind">{kinds[event.kind] ?? event.kind}</span><code>{event.text}</code></li>)}</ol>

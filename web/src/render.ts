@@ -68,3 +68,13 @@ export const highlighter = hljs;
 export function html(md: string): string {
   return DOMPurify.sanitize(marked.parse(md, { async: false }) as string);
 }
+
+// Text a model wrote about content someone else controls (a PR diff can carry
+// a prompt injection). Rendering it must not fetch anything: a remote image or
+// a style url() would carry what the model was told to leak in its URL.
+export function modelHtml(md: string): string {
+  return DOMPurify.sanitize(marked.parse(md, { async: false }) as string, {
+    FORBID_TAGS: ["img", "picture", "source", "video", "audio", "track", "image", "svg", "iframe", "object", "embed", "link", "style"],
+    FORBID_ATTR: ["style", "srcset", "background", "poster"],
+  });
+}

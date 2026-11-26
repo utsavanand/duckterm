@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type ChatMessage, type ReviewHeader } from "../api";
-import { html } from "../render";
+import { modelHtml } from "../render";
 
 export function ChatPanel({ header, quote, onClearQuote, onOpenFile, onDraft, onCollapse, pendingQuestion, onQuestionTaken }: {
   header: ReviewHeader; quote: string; onClearQuote: () => void; onOpenFile: (path: string, line?: number) => void;
@@ -49,7 +49,7 @@ export function ChatPanel({ header, quote, onClearQuote, onOpenFile, onDraft, on
       {messages.length === 0 && pending === null && <p className="rd-prs-empty">Ask about this change. Answers cite path:line from the diff; click a citation to open it.</p>}
       {messages.map((message, index) => <div key={`${message.at}-${index}`} className="rd-chat-exchange">
         <div className="rd-chat-q"><small>You{message.hunk ? ` · about ${message.hunk}` : ""}</small><p>{message.q}</p></div>
-        <div className="rd-chat-a"><div dangerouslySetInnerHTML={{ __html: html(message.a) }} />
+        <div className="rd-chat-a"><div dangerouslySetInnerHTML={{ __html: modelHtml(message.a) }} />
           {message.citations.length > 0 && <p className="rd-chat-cites">{message.citations.map(cite => <button key={`${cite.path}:${cite.line}`} onClick={() => onOpenFile(cite.path, cite.line)}>{cite.path}:{cite.line}</button>)}</p>}
         </div>
       </div>)}
