@@ -242,6 +242,55 @@ def test_the_owners_credential_helper_runs_and_the_repos_does_not(
 
 
 @pytest.mark.parametrize(
+    "key, value",
+    [
+        ("http.proxy", "http://127.0.0.1:{port}"),
+        ("http.{url}.sslVerify", "false"),
+        ("http.curloptResolve", "127.0.0.1:{port}:127.0.0.1"),
+        ("remote.origin.proxy", "http://127.0.0.1:{port}"),
+        ("url.{url}.insteadOf", "http://unused/"),
+        ("core.gitProxy", "/usr/bin/false"),
+        ("core.askPass", "/usr/bin/false"),
+    ],
+)
+def test_a_repo_that_sets_network_config_is_never_fetched(
+    git_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, key: str, value: str
+) -> None:
+    # Each of these could steer where the owner's credentials are sent; with
+    # it set, plain git still asks the owner's helper, and DuckTerm must not.
+    server = http.server.HTTPServer(("127.0.0.1", 0), _AskForPassword)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        marker = tmp_path / "owner-ran"
+        helper = tmp_path / "owner.sh"
+        helper.write_text(f"#!/bin/sh\ntouch {marker}\n")
+        helper.chmod(0o755)
+        (tmp_path / "home").mkdir()
+        (tmp_path / "home/.gitconfig").write_text(f"[credential]\n\thelper = !{helper}\n")
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        port = server.server_port
+        url = f"http://127.0.0.1:{port}/x"
+        # curl skips a proxy for a loopback host, so a proxied origin is one
+        # only the proxy can reach, as an attacker's would be.
+        origin = "http://github.invalid/x" if key.endswith("proxy") else url
+        run(git_repo, "remote", "add", "origin", origin)
+        run(git_repo, "config", key.format(url=url), value.format(url=url, port=port))
+        monkeypatch.setattr(git, "_REMOTE_PROTOCOLS", ("http",))
+        subprocess.run(
+            ["git", "-C", str(git_repo), "ls-remote", "origin"],
+            capture_output=True,
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+        )
+        assert marker.exists()  # the setting doesn't stop plain git asking
+        marker.unlink()
+        assert git.remote_heads(git_repo) is None
+        assert "the repository sets" in (git.fetch(git_repo, ["main"]) or "")
+        assert not marker.exists()
+    finally:
+        server.shutdown()
+
+
+@pytest.mark.parametrize(
     "read",
     [
         lambda repo, ref: git.commit_time(repo, ref),
