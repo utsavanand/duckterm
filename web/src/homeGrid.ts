@@ -2,16 +2,20 @@ import { WidgetInstance } from "./Widgets";
 
 // Mirrors HOME_DEFAULTS in src/duckterm/persistence/layouts.py.
 export const COLUMNS = 12;
+// Rows the default layout spans; Home sizes rows so these fill the page.
+export const ROWS = 12;
+export const MIN_ROW = 44;
 export interface Box { x: number; y: number; w: number; h: number }
 const DEFAULTS: [string, number, number, number, number][] = [
-  ["teams", 0, 0, 3, 2], ["autopilot", 0, 2, 3, 2], ["needs-you", 0, 4, 3, 4],
-  ["chat", 3, 0, 6, 8], ["prs", 9, 0, 3, 5], ["spend", 9, 5, 3, 3],
+  ["teams", 0, 0, 3, 2], ["autopilot", 0, 2, 3, 2], ["spend", 0, 4, 3, 8],
+  ["chat", 3, 0, 6, 6], ["needs-you", 3, 6, 6, 6], ["prs", 9, 0, 3, 12],
 ];
 // Size a widget gets when added, and the smallest it can be resized to.
 export const SIZES: Record<string, { w: number; h: number; minW: number; minH: number }> = {
   teams: { w: 3, h: 2, minW: 2, minH: 2 }, autopilot: { w: 3, h: 2, minW: 2, minH: 2 },
-  chat: { w: 6, h: 8, minW: 4, minH: 5 }, prs: { w: 3, h: 5, minW: 3, minH: 3 },
-  spend: { w: 3, h: 3, minW: 2, minH: 3 }, usage: { w: 3, h: 3, minW: 2, minH: 2 }, "needs-you": { w: 3, h: 3, minW: 2, minH: 2 },
+  chat: { w: 6, h: 6, minW: 4, minH: 4 }, prs: { w: 3, h: 12, minW: 3, minH: 3 },
+  spend: { w: 3, h: 8, minW: 2, minH: 3 }, usage: { w: 3, h: 3, minW: 2, minH: 2 }, "needs-you": { w: 6, h: 6, minW: 3, minH: 3 },
+  shortcuts: { w: 6, h: 2, minW: 3, minH: 2 },
   agents: { w: 3, h: 3, minW: 2, minH: 2 }, mail: { w: 3, h: 2, minW: 2, minH: 2 },
   backup: { w: 3, h: 2, minW: 2, minH: 2 }, remote: { w: 3, h: 2, minW: 2, minH: 2 },
 };

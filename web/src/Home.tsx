@@ -1,12 +1,16 @@
 import { createContext, PointerEvent as ReactPointerEvent, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { AnalyticsTab, fillDays, groupTokens, loadAnalytics, sumValues, TokenAnalytics, windowStart } from "./analyticsData";
-import { api, PrRow } from "./api";
+import { api, PrRow, RelayNote, ReviewDiff } from "./api";
 import { AutopilotSummary } from "./autopilotApi";
 import { useEdition } from "./edition";
-import { adjust, appended, Box, boxOf, COLUMNS, homeDefaults, inReadingOrder } from "./homeGrid";
+import { adjust, appended, Box, boxOf, COLUMNS, homeDefaults, inReadingOrder, MIN_ROW, ROWS } from "./homeGrid";
 import { HomeChat } from "./HomeChat";
 import { dollars, money } from "./pricing";
 import { oracleWidgets } from "./OracleWidgets";
+import { NoteCard } from "./RelayNotes";
+import { ApproveDialog } from "./review/ApproveDialog";
+import { ReviewWorkspace } from "./review/ReviewWorkspace";
 import { useRelay } from "./relay";
 import { ago, compact, TowerAgent, teams } from "./tower";
 import { Layout, requestLayout, WidgetContent, WidgetInstance, WidgetType } from "./Widgets";
@@ -17,14 +21,14 @@ import "./home.css";
 type Relay = ReturnType<typeof useRelay>;
 // Autopilot is null where the edition or the `autopilot` flag has no view to open.
 type Autopilot = { summary: AutopilotSummary | null; open: () => void } | null;
-type Actions = { agents: TowerAgent[]; relay: Relay | null; now: number; autopilot: Autopilot; onTeams: () => void; onOpenTerminal: (key: string) => void; onAnalytics: (tab: AnalyticsTab) => void };
-const HomeActions = createContext<Actions>({ agents: [], relay: null, now: 0, autopilot: null, onTeams: () => undefined, onOpenTerminal: () => undefined, onAnalytics: () => undefined });
-const CATALOG_GROUPS = ["Navigate", "Core", "Pulse", "Teams"];
+type Actions = { agents: TowerAgent[]; relay: Relay | null; now: number; autopilot: Autopilot; onTeams: () => void; onOpenTerminal: (key: string) => void; onAnalytics: (tab: AnalyticsTab) => void; onReview: (row: PrRow) => void };
+const HomeActions = createContext<Actions>({ agents: [], relay: null, now: 0, autopilot: null, onTeams: () => undefined, onOpenTerminal: () => undefined, onAnalytics: () => undefined, onReview: () => undefined });
+const CATALOG_GROUPS = ["Navigate", "Core", "Pulse", "Teams", "Create"];
 const CATALOG: Record<string, { group: string; description: string }> = {
   teams: { group: "Navigate", description: "Your sessions and folders. Opens the current dashboard." },
   autopilot: { group: "Navigate", description: "Your software factory. Opens the factory view." },
   chat: { group: "Core", description: "Ask about anything your teams or factory are doing." },
-  prs: { group: "Pulse", description: "Open pull requests across teams, with CI and review state." },
+  prs: { group: "Pulse", description: "Open pull requests with a risk level, GitHub and DuckTerm review links, and Merge for safe ones." },
   spend: { group: "Pulse", description: "Today, the last 7 days, and the split between Teams and Autopilot." },
   "needs-you": { group: "Pulse", description: "Approvals and questions waiting on you." },
   usage: { group: "Pulse", description: "Tokens over the last 7 days, by harness." },
@@ -32,7 +36,14 @@ const CATALOG: Record<string, { group: string; description: string }> = {
   mail: { group: "Teams", description: "Messages agents sent each other in the last day." },
   backup: { group: "Teams", description: "When the last backup finished." },
   remote: { group: "Teams", description: "Sessions running on the remote workspace." },
+  shortcuts: { group: "Create", description: "Buttons that do one thing: checkpoint everything, run the gate, ship a release. Examples for now." },
 };
+// Shown so the owner can see where it is going; nothing here works yet.
+const CREATE_SOON = [
+  ["New view", "Describe a page; DuckTerm builds it and adds it next to Teams and Autopilot."],
+  ["New widget", "Describe what to watch; DuckTerm builds the widget for this page."],
+  ["New shortcut", "A button that runs something: a release, a checkpoint, a prompt to a session."],
+];
 // Widgets whose header carries no title: the tile itself names the destination.
 const NAV = new Set(["teams", "autopilot"]);
 // One request per top-level folder, each running git across its sessions: poll gently.
@@ -54,9 +65,13 @@ export function Home({ agents, now, autopilot = null, onTeams, onOpenTerminal, o
   useEffect(() => {
     source.emit("needs-you", relay.loaded ? { status: "ready", value: { notes: relay.notes.filter(n => n.status === "open" && n.urgency !== "offer").sort((a, b) => a.created_at - b.created_at), now } } : { status: "loading" });
   }, [source, relay.notes, relay.loaded, now]);
-  const actions = useMemo(() => ({ agents, relay: oracle ? relay : null, now, autopilot, onTeams, onOpenTerminal, onAnalytics: (tab: AnalyticsTab) => analytics.current(tab) }), [agents, oracle, relay, now, autopilot, onTeams, onOpenTerminal]);
+  const [review, setReview] = useState<{ repo: string; ref: string; from?: string } | null>(null);
+  const onReview = useCallback((row: PrRow) => setReview({ repo: row.repo, ref: row.pr ? String(row.pr.number) : row.branch, from: row.session?.name }), []);
+  const actions = useMemo(() => ({ agents, relay: oracle ? relay : null, now, autopilot, onTeams, onOpenTerminal, onAnalytics: (tab: AnalyticsTab) => analytics.current(tab), onReview }), [agents, oracle, relay, now, autopilot, onTeams, onOpenTerminal, onReview]);
+  // The grid stays mounted under a review so its data is there on the way back.
   return <HomeActions.Provider value={actions}>
-    <div className="rd-home"><HomeGrid registry={registry} source={source} /></div>
+    {review && <div className="rd-home-review"><ReviewWorkspace key={`${review.repo}:${review.ref}`} repo={review.repo} target={review.ref} from={review.from} onBack={() => setReview(null)} /></div>}
+    <div className="rd-home" hidden={!!review}><HomeGrid registry={registry} source={source} /></div>
   </HomeActions.Provider>;
 }
 
@@ -75,6 +90,7 @@ function homeWidgets({ oracle, remote, prs, onAnalytics }: { oracle: boolean; re
     ...(prs ? [{ type: "prs", title: "Pull requests", slots: ["home" as const], streams: [], render: PrsWidget }] : []),
     { type: "spend", title: "Spend", slots: ["home"], streams: [], render: SpendWidget },
     { type: "usage", title: "Usage · 7 days", slots: ["home"], streams: [], render: UsageWidget },
+    { type: "shortcuts", title: "Shortcuts", slots: ["home"], streams: [], render: ShortcutsWidget },
     ...fleet,
   ];
 }
@@ -84,7 +100,7 @@ function TeamsTile({ agents }: { agents: TowerAgent[] }) {
   const count = (state: string) => agents.filter(a => a.shownState === state).length;
   const folders = teams(agents).filter(team => team.name !== "No folder").length;
   return <button className="rd-home-nav" onClick={onTeams}>
-    <span className="rd-home-nav-title">Teams <span aria-hidden="true">→</span></span>
+    <span className="rd-home-nav-title">Teams</span>
     <span className="rd-home-nav-sub">{folders} {folders === 1 ? "folder" : "folders"} · {agents.length} {agents.length === 1 ? "session" : "sessions"}</span>
     <span className="rd-home-chips">
       <span className={`rd-home-chip${count("waiting") ? " wait" : ""}`}>{count("waiting")} need you</span>
@@ -105,7 +121,7 @@ function AutopilotTile() {
   // A failed summary shows no counts rather than zeros.
   const s = autopilot.summary;
   return <button className="rd-home-nav" onClick={autopilot.open}>
-    <span className="rd-home-nav-title">Autopilot <span aria-hidden="true">→</span></span>
+    <span className="rd-home-nav-title">Autopilot</span>
     {/* One line, so four chips fit the tile's default two rows. */}
     <span className="rd-home-nav-sub">Skill-kit flows running unattended</span>
     {s && <span className="rd-home-chips">
@@ -123,22 +139,71 @@ function ChatWidget() {
   return <HomeChat sessions={sessions} onOpenTerminal={onOpenTerminal} />;
 }
 
-// Agents' questions to the owner, oldest first; each opens its terminal.
+// What one click on a row can answer. Menus (choice notes) are only answered
+// in the agent's terminal, so they get no answer buttons here.
+function quickAnswers(note: RelayNote): { label: string; value: string }[] {
+  if (note.kind === "approval") return [{ label: "Approve", value: "approve" }, { label: "Deny", value: "deny" }];
+  if (note.kind === "question") return (note.options ?? []).map(option => ({ label: option, value: option }));
+  return [];
+}
+
+function needText(note: RelayNote): string {
+  if (note.kind === "approval") return `Wants to run ${note.detail || note.tool || "a tool"}`;
+  return note.questions?.[0]?.question ?? note.question ?? note.kind;
+}
+
+// Agents' questions to the owner, oldest first. The agent's first two answers
+// are buttons on the row; the row itself opens the question with every option.
 function NeedsYouList() {
   const { relay, now, onOpenTerminal } = useContext(HomeActions);
+  const [opened, setOpened] = useState<string | null>(null), [busy, setBusy] = useState(""), [error, setError] = useState("");
   if (!relay?.loaded) return <div className="rd-widget-unavailable" role="status">Loading…</div>;
   const notes = relay.notes.filter(n => n.status === "open" && n.urgency !== "offer").sort((a, b) => a.created_at - b.created_at);
-  if (!notes.length) return <p className="rd-home-empty">Nothing needs you.</p>;
+  const dialogNote = relay.notes.find(n => n.id === opened);
+  async function answer(note: RelayNote, value: string) {
+    setBusy(note.id); setError("");
+    try { await api.relayAnswer(note.id, value); }
+    catch (e) { setError(`${note.name}: ${(e as Error).message}`); }
+    finally { setBusy(""); relay?.refresh(); }
+  }
   return <>
-    <ul className="rd-home-rows">{notes.slice(0, 8).map(note => <li key={note.id}>
-      <span className="rd-home-dot wait" aria-hidden="true" />
-      <span className="rd-home-row-main">
-        <button className="rd-home-row-link" title={`Open ${note.name}'s terminal`} onClick={() => onOpenTerminal(note.session_key)}>{note.name}: {note.question ?? note.tool ?? note.kind}</button>
-        <small>{note.folder ? `${note.folder.split("/")[0]} · ` : ""}{ago(now - note.created_at)} ago</small>
-      </span>
-    </li>)}</ul>
-    {notes.length > 8 && <p className="rd-home-empty">and {notes.length - 8} more</p>}
+    {error && <p className="rd-oracle-error" role="alert">{error}</p>}
+    {!notes.length ? <p className="rd-home-empty">Nothing needs you.</p> : <ul className="rd-home-rows rd-home-needs">{notes.map(note => {
+      const quick = quickAnswers(note);
+      return <li key={note.id}>
+        <span className="rd-home-dot wait" aria-hidden="true" />
+        <button className="rd-home-need-text" onClick={() => setOpened(note.id)}>
+          <span><b>{note.name}</b> <small>{note.folder ? `${note.folder.split("/")[0]} · ` : ""}{ago(now - note.created_at)} ago</small></span>
+          <span className="rd-home-need-q">{needText(note)}</span>
+        </button>
+        <span className="rd-home-need-acts">
+          {quick.slice(0, 2).map((q, i) => <button key={q.value} className={`rd-home-mini${i === 0 ? " go" : ""}`} disabled={busy === note.id} onClick={() => void answer(note, q.value)}>{q.label}</button>)}
+          {quick.length > 2 && <button className="rd-home-mini" onClick={() => setOpened(note.id)}>+{quick.length - 2} more</button>}
+          <button className="rd-home-mini" onClick={() => onOpenTerminal(note.session_key)}>Terminal</button>
+        </span>
+      </li>;
+    })}</ul>}
+    {dialogNote && <NeedDialog note={dialogNote} rules={relay.rules} onChange={relay.refresh} onClose={() => setOpened(null)}
+      onOpenTerminal={key => { setOpened(null); onOpenTerminal(key); }} />}
   </>;
+}
+
+// The full question with every option and a reply box. It stays open after an
+// answer so the owner sees what was sent; NoteCard shows the closed state.
+function NeedDialog({ note, rules, onChange, onClose, onOpenTerminal }: {
+  note: RelayNote; rules: Relay["rules"]; onChange: () => void; onClose: () => void; onOpenTerminal: (key: string) => void;
+}) {
+  useEffect(() => {
+    const close = (event: KeyboardEvent) => { if (event.key === "Escape") onClose(); };
+    window.addEventListener("keydown", close);
+    return () => window.removeEventListener("keydown", close);
+  }, [onClose]);
+  return createPortal(<div className="rd-home-backdrop" onClick={onClose}>
+    <div className="rd-home-dialog" role="dialog" aria-modal="true" aria-label={`${note.name} needs you`} onClick={event => event.stopPropagation()}>
+      <NoteCard note={note} rules={rules} onChange={onChange} onOpenTerminal={onOpenTerminal} />
+      <div className="rd-home-dialog-foot"><button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={onClose}>Close</button></div>
+    </div>
+  </div>, document.body);
 }
 
 const AGENT_NAMES: Record<string, string> = { "claude-code": "Claude Code", codex: "Codex" };
@@ -210,26 +275,51 @@ function SpendWidget() {
     <Sparkline values={days} />
     <Split parts={[{ name: "Teams", value: week }, { name: "Autopilot", value: 0 }]} format={money} />
     <span className="rd-home-legend">7 days <b>{money(week)}</b></span>
+    <ul className="rd-home-days">{weekDays(data).map((day, i) => <li key={day}>
+      <span>{new Date(`${day}T12:00:00`).toLocaleDateString("en-US", { weekday: "short" })}</span>
+      <i style={{ width: `${(days[i] / Math.max(1e-9, ...days)) * 100}%` }} />
+      <b>{money(days[i])}</b>
+    </li>)}</ul>
   </button>;
 }
 
-function prDot(row: PrRow): string {
-  if (row.needs_you) return "wait";
-  if (row.status === "merged") return "done";
-  if (row.checks?.failed) return "bad";
-  if (row.checks?.pending) return "busy";
-  return "ok";
+function ShortcutsWidget() {
+  return <div className="rd-home-shortcuts">
+    {["Checkpoint all sessions", "Run the gate on main", "Ship the next release"].map(name => <button key={name} disabled>{name}</button>)}
+    <p className="rd-home-empty">Examples. Coming soon: ask DuckTerm to make a shortcut and it appears here.</p>
+  </div>;
 }
+
+type Risk = { level: "safe" | "medium" | "high"; why: string };
+type Counts = ReviewDiff["counts"] & { reason: string };
+// Diff buckets per PR head, kept across remounts: a review diff runs git and
+// the buckets only change when the PR does.
+const riskCache = new Map<string, Counts>();
+const riskKey = (row: PrRow) => `${row.repo}\n${row.pr?.number}\n${row.updated_at}`;
+
+/** Safe means nothing for a human to read: CI green, no conflict, and every
+ *  changed file in the review's skim bucket (docs/pr-review-platform-spec.md §4). */
+export function prRisk(row: PrRow, counts: Counts | undefined): Risk | null {
+  if (row.conflict) return { level: "high", why: "merge conflict" };
+  if (row.checks?.failed) return { level: "high", why: `CI failed (${row.checks.failed})` };
+  if (!counts) return null;
+  if (counts.high) return { level: "high", why: counts.reason || `${counts.high} high-risk ${counts.high === 1 ? "file" : "files"}` };
+  if (!row.checks?.total) return { level: "medium", why: "no CI results" };
+  if (row.checks.pending) return { level: "medium", why: "CI running" };
+  if (counts.read) return { level: "medium", why: `${counts.read} ${counts.read === 1 ? "file" : "files"} to read` };
+  return { level: "safe", why: "CI passing · only low-risk files" };
+}
+const RISK_LABEL = { safe: "Safe", medium: "Medium", high: "High" };
 
 // Open and waiting PRs across every top-level folder, needs-you first.
 function PrsWidget() {
-  const { agents, onOpenTerminal } = useContext(HomeActions);
+  const { agents, onReview } = useContext(HomeActions);
   const folders = useMemo(() => [...new Set(agents.map(a => a.group?.split("/")[0]).filter((f): f is string => !!f))].sort(), [agents]);
   const key = folders.join("\n");
   const [rows, setRows] = useState<PrRow[] | null>(null), [error, setError] = useState(""), [notice, setNotice] = useState("");
+  const [, setRisks] = useState(0), [approving, setApproving] = useState<PrRow | null>(null), [reload, setReload] = useState(0);
   useEffect(() => {
     let stopped = false;
-    setRows(null);
     let timer: ReturnType<typeof setTimeout> | undefined;
     const load = async () => {
       const results = await Promise.allSettled(key.split("\n").filter(Boolean).map(folder => api.folderPrs(folder)));
@@ -246,25 +336,53 @@ function PrsWidget() {
       setNotice(problems[0] ?? "");
       const failed = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
       setError(failed && !merged.length ? (failed.reason as Error).message : "");
-      setRows(merged.filter(r => r.needs_you || r.pr?.state === "open")
-        .sort((a, b) => Number(b.needs_you) - Number(a.needs_you) || (b.updated_at ?? 0) - (a.updated_at ?? 0)));
-      timer = setTimeout(() => void load(), PR_POLL_MS);
+      const open = merged.filter(r => r.needs_you || r.pr?.state === "open")
+        .sort((a, b) => Number(b.needs_you) - Number(a.needs_you) || (b.updated_at ?? 0) - (a.updated_at ?? 0));
+      setRows(open);
+      // One diff at a time: each runs git on the owner's machine.
+      for (const row of open) {
+        if (stopped || !row.pr || riskCache.has(riskKey(row))) continue;
+        try {
+          const diff = await api.reviewDiff(row.repo, String(row.pr.number), { whitespace: false });
+          const high = diff.files.find(f => f.bucket === "high");
+          riskCache.set(riskKey(row), { ...diff.counts, reason: high ? `${high.path.split("/").pop()}: ${high.rules.find(rule => rule.bucket === "high")?.reason ?? "high risk"}` : "" });
+          if (!stopped) setRisks(n => n + 1);
+        } catch { /* The row keeps "checking"; Review in DuckTerm shows the error. */ }
+      }
+      if (!stopped) timer = setTimeout(() => void load(), PR_POLL_MS);
     };
     void load();
     return () => { stopped = true; clearTimeout(timer); };
-  }, [key]);
+  }, [key, reload]);
   if (error) return <div className="rd-widget-unavailable"><strong>Unavailable</strong><p>{error}</p></div>;
   if (!folders.length) return <p className="rd-home-empty">No sessions in folders yet.</p>;
   if (!rows) return <div className="rd-widget-unavailable" role="status">Loading…</div>;
   if (!rows.length) return <p className="rd-home-empty">{notice || "No open pull requests."}</p>;
-  return <ul className="rd-home-rows">{rows.map(row => <li key={`${row.repo}\n${row.branch}`}>
-    <span className={`rd-home-dot ${prDot(row)}`} aria-hidden="true" />
-    {row.pr && <span className="rd-home-num">#{row.pr.number}</span>}
-    <span className="rd-home-row-main">
-      {row.pr ? <a href={row.pr.url} target="_blank" rel="noreferrer">{row.pr.title}</a> : <span>{row.branch}</span>}
-      <small>{row.label} · Teams{row.session && <> · <button onClick={() => onOpenTerminal(row.session!.key)}>{row.session.name}</button></>}</small>
-    </span>
-  </li>)}</ul>;
+  return <>
+    <ul className="rd-home-rows rd-home-prs">{rows.map(row => {
+      const risk = row.pr ? prRisk(row, riskCache.get(riskKey(row))) : null;
+      return <li key={`${row.repo}\n${row.branch}`}>
+        <span className="rd-home-pr">
+          <span className="rd-home-pr-top">
+            {risk ? <span className={`rd-home-risk ${risk.level}`} title={risk.why}>{RISK_LABEL[risk.level]}</span>
+              : row.pr && <span className="rd-home-risk" title="Reading the diff">Checking</span>}
+            <span className="rd-home-pr-title" title={row.pr?.title ?? row.branch}>{row.pr?.title ?? row.branch}</span>
+          </span>
+          <small>{[row.pr && `#${row.pr.number}`, row.needs_you ? row.label : risk?.why ?? row.label, row.repo_name].filter(Boolean).join(" · ")}</small>
+          <span className="rd-home-pr-acts">
+            {row.pr && <a href={row.pr.url} target="_blank" rel="noreferrer">GitHub</a>}
+            <button className="rd-home-link" onClick={() => onReview(row)}>Review in DuckTerm</button>
+            {risk?.level === "safe" && row.pr
+              ? <button className="rd-home-mini go" onClick={() => setApproving(row)}>Merge</button>
+              : <button className="rd-home-mini" onClick={() => onReview(row)}>Look closer</button>}
+          </span>
+        </span>
+      </li>;
+    })}</ul>
+    {/* Merge is the Touch ID approval: it confirms, then hands the PR to the release session. */}
+    {approving?.pr && <ApproveDialog repo={approving.repo} target={String(approving.pr.number)} prNumber={approving.pr.number}
+      onClose={() => setApproving(null)} onApproved={() => setReload(n => n + 1)} />}
+  </>;
 }
 
 // origin is the layout when the drag began, so passing over a widget and back leaves it in place.
@@ -283,6 +401,20 @@ function HomeGrid({ registry, source }: { registry: WidgetType[]; source: Widget
     finally { if (active.current) setLoading(false); }
   }, []);
   useEffect(() => { active.current = true; void load(); return () => { active.current = false; }; }, [load]);
+  // The default layout is ROWS tall; size rows so it fills the visible page.
+  useEffect(() => {
+    const el = grid.current, page = el?.closest(".rd-home-layer");
+    if (!el || !page) return;
+    const fit = () => {
+      const gap = parseFloat(getComputedStyle(el).rowGap) || 0;
+      const room = page.clientHeight - (el.getBoundingClientRect().top - page.getBoundingClientRect().top) - 16;
+      el.style.setProperty("--home-row", `${Math.max(MIN_ROW, (room - gap * (ROWS - 1)) / ROWS)}px`);
+    };
+    fit();
+    const observer = new ResizeObserver(fit);
+    observer.observe(page);
+    return () => observer.disconnect();
+  }, []);
 
   // Layout changes apply at once; saves run one at a time, and the newest
   // pending layout is the one sent next.
@@ -306,7 +438,7 @@ function HomeGrid({ registry, source }: { registry: WidgetType[]; source: Widget
     event.preventDefault();
     const style = getComputedStyle(grid.current), gap = parseFloat(style.columnGap) || 0;
     const width = (grid.current.getBoundingClientRect().width - gap * (COLUMNS - 1)) / COLUMNS;
-    drag.current = { id, mode, x: event.clientX, y: event.clientY, start: boxOf(item), origin: layout.instances, cell: { w: width + gap, h: (parseFloat(style.gridAutoRows) || 58) + gap } };
+    drag.current = { id, mode, x: event.clientX, y: event.clientY, start: boxOf(item), origin: layout.instances, cell: { w: width + gap, h: (parseFloat(style.gridAutoRows) || MIN_ROW) + gap } };
     (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId);
     setDragging(id);
   };
@@ -336,8 +468,9 @@ function HomeGrid({ registry, source }: { registry: WidgetType[]; source: Widget
     <header className="rd-home-bar">
       <h1>Home</h1>
       <span className="rd-spacer" />
-      {editing && <>
-        <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={loading} onClick={() => commit(defaults)}>Reset layout</button>
+      {editing && <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={loading} onClick={() => commit(defaults)}>Reset layout</button>}
+      <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled title="Coming soon: ask DuckTerm to build a view, widget or shortcut">Create <span className="rd-home-soon">Soon</span></button>
+      <>
         <span className="rd-home-add">
           <button className="rd-btn rd-btn-ghost rd-btn-sm" aria-expanded={adding} disabled={loading} onClick={() => setAdding(!adding)}>+ Add widget</button>
           {adding && <span className="rd-widget-add rd-home-catalog" role="group" aria-label="Add a widget">{CATALOG_GROUPS.map(group => {
@@ -349,9 +482,12 @@ function HomeGrid({ registry, source }: { registry: WidgetType[]; source: Widget
                   {type.title}{placed && " · on page"}<small>{CATALOG[type.type].description}</small>
                 </button>;
               })}</span>;
-          })}</span>}
+          })}
+            <span className="rd-home-catalog-group"><span className="rd-home-catalog-name">Create with DuckTerm <span className="rd-home-soon">Soon</span></span>
+              {CREATE_SOON.map(([name, description]) => <button key={name} disabled>{name}<small>{description}</small></button>)}</span>
+          </span>}
         </span>
-      </>}
+      </>
       <button className={`rd-btn rd-btn-ghost rd-btn-sm${editing ? " rd-btn-active" : ""}`} aria-pressed={editing} disabled={loading} onClick={() => { setEditing(!editing); setAdding(false); }}>{editing ? "Done" : "Edit layout"}</button>
     </header>
     {error && <p className="rd-widget-error" role="alert">{error} <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={() => void load()}>Reload layout</button></p>}
