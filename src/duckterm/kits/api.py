@@ -385,33 +385,27 @@ def repositories(paths: list[str]) -> list[str]:
     repository is left out. Git is asked every time: metadata changes while
     DuckTerm runs (a `git init`, a removed `.git`), and a Git directory
     need not be named `.git` (`--separate-git-dir`)."""
-    import subprocess
+    from duckterm.review import git as review_git
 
     out: set[str] = set()
     for folder in sorted({str(p) for p in paths}):
         if not os.path.isdir(folder):
             continue
         try:
-            proc = subprocess.run(
-                [
-                    "git",
-                    "-c",
-                    "core.fsmonitor=false",
-                    "-C",
-                    folder,
-                    "rev-parse",
-                    "--path-format=absolute",
-                    "--absolute-git-dir",
-                    "--git-common-dir",
-                    "--show-toplevel",
-                ],
-                capture_output=True,
-                text=True,
+            # review/git.run is the one way DuckTerm runs git in a folder a
+            # session reported: GIT_* stripped, fsmonitor off, no locks
+            stdout = review_git.run(
+                folder,
+                "rev-parse",
+                "--path-format=absolute",
+                "--absolute-git-dir",
+                "--git-common-dir",
+                "--show-toplevel",
                 timeout=5,
             )
-        except (OSError, subprocess.TimeoutExpired):
+        except review_git.ReviewGitError:
             continue
-        parts = proc.stdout.strip().splitlines() if proc.returncode == 0 else []
+        parts = stdout.strip().splitlines()
         if len(parts) != 3:
             continue
         git_dir, common, top = parts

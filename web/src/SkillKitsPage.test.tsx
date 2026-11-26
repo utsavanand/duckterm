@@ -144,7 +144,7 @@ it("Codex trust and a conflicting file are fixed from the review's one strip", a
   expect(await screen.findByText(/1 of 1 is not trusted yet/)).toBeVisible();
   expect(screen.getByText("codex: needs trust · fix above")).toBeVisible();
   expect(screen.getByText("2 can be fixed here")).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "Fix · trust it in Codex" }));
+  fireEvent.click(screen.getByRole("button", { name: "Fix · trust it in Codex now" }));
   await waitFor(() => expect(api.kitsFix).toHaveBeenCalledWith({ kind: "codex-trust", projects: ["/ws/payments"] }, ""));
   await waitFor(() => expect(screen.queryByText(/not trusted yet/)).toBeNull());
   expect(screen.getByText("codex: needs trust")).toBeVisible();

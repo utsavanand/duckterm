@@ -1,4 +1,4 @@
-.rd-kits-page { position: fixed; inset: 52px 0 0; z-index: 150; background: var(--bg); color: var(--text); overflow: auto; font-size: 0.8125rem; }
+.rd-kits-page { position: fixed; inset: var(--rd-kits-top, 52px) 0 0; z-index: 150; background: var(--bg); color: var(--text); overflow: auto; font-size: 0.8125rem; }
 .rd-kits-main { max-width: 1080px; margin: 0 auto; padding: 20px 24px 40px; display: flex; flex-direction: column; gap: 18px; min-width: 0; }
 .rd-kits-crumb { font-size: 0.75rem; color: var(--text-soft); display: flex; gap: 6px; align-items: center; }
 .rd-kits-crumb button { border: 0; background: transparent; color: var(--text-soft); font: inherit; cursor: pointer; padding: 0; }

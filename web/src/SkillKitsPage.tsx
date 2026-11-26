@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { api, KitCatalog, KitDetail, KitEnableResult, KitEntry, KitFix, KitPlanRow, KitProcedure, KitReview, KitWorkspace } from "./api";
 import { DirBrowser } from "./DirBrowser";
 import { Button, useToast } from "./ui";
@@ -76,6 +76,20 @@ export function SkillKitsPage({
   const [error, setError] = useState<string | null>(null);
   const [unavailable, setUnavailable] = useState(false);
   const [view, setView] = useState<View>({ name: "list" });
+  // The page is a fixed layer under the top bar; at phone width the bar wraps
+  // to two rows, so its height is measured rather than assumed.
+  const pageRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const bar = document.querySelector<HTMLElement>(".rd-topbar");
+    const page = pageRef.current;
+    if (!bar || !page) return;
+    const place = () => page.style.setProperty("--rd-kits-top", `${bar.getBoundingClientRect().bottom}px`);
+    place();
+    if (typeof ResizeObserver === "undefined") return;
+    const observer = new ResizeObserver(place);
+    observer.observe(bar);
+    return () => observer.disconnect();
+  }, []);
   const [busy, setBusy] = useState(false);
 
   const refresh = useCallback(async () => {
@@ -238,7 +252,7 @@ export function SkillKitsPage({
   );
 
   return (
-    <div className="rd-kits-page" role="dialog" aria-label="Skill kits">
+    <div className="rd-kits-page" role="dialog" aria-label="Skill kits" ref={pageRef}>
       <div className="rd-kits-main">
         {crumb}
         {view.name === "list" && (
@@ -630,7 +644,7 @@ const KIND_TITLES: Record<string, string> = { knowledge: "Knowledge", skill: "Sk
 const KIND_ORDER = ["knowledge", "skill", "agent", "hook", "permission", "tool", "flow", "settings", "team"];
 
 function describeFix(fix: KitFix): string {
-  if (fix.kind === "codex-trust") return `Fix · trust ${fix.projects.length === 1 ? "it" : `all ${fix.projects.length}`} in Codex`;
+  if (fix.kind === "codex-trust") return `Fix · trust ${fix.projects.length === 1 ? "it" : `all ${fix.projects.length}`} in Codex now`;
   if (fix.kind === "fallback") return `Fix · load it always on ${fix.harnesses.join(", ")}`;
   return "Fix · replace with the kit's";
 }
@@ -659,7 +673,7 @@ function ReviewView({ kit, view, busy, onBack, onFix, onEnable }: {
       <div className="rd-kits-head">
         <div>
           <h1>Review: {kit.name} {kit.version ?? ""}</h1>
-          <p>A dry run; nothing is written until you press Enable</p>
+          <p>A dry run; nothing is installed until you press Enable. A Fix acts when you press it.</p>
         </div>
         <div className="rd-kits-pills">
           <Pill tone={errors.length ? "bad" : "ok"}>{errors.length ? `${errors.length} error${errors.length === 1 ? "" : "s"}` : "validate ok"}</Pill>
@@ -675,7 +689,7 @@ function ReviewView({ kit, view, busy, onBack, onFix, onEnable }: {
         {untrusted.length > 0 && trustFix && (
           <div className="rd-kits-fixrow">
             <Pill tone="warn">codex</Pill>
-            <span>Hooks run only in a repository Codex trusts. {untrusted.length} of {repos.length} {untrusted.length === 1 ? "is" : "are"} not trusted yet; trusting a repository once covers every kit and every session in it.</span>
+            <span>Hooks run only in a repository Codex trusts. {untrusted.length} of {repos.length} {untrusted.length === 1 ? "is" : "are"} not trusted yet; trusting a repository once covers every kit and every session in it. The Fix writes that into <span className="rd-kits-mono">~/.codex/config.toml</span> at once, before Enable.</span>
             <button type="button" className="rd-kits-fix" disabled={busy} onClick={() => onFix(trustFix)}>{describeFix(trustFix)}</button>
           </div>
         )}

@@ -57,7 +57,7 @@ test("add a skill kit, install it into a workspace and read a skill; the kit's s
   await page.getByLabel(workspace, { exact: true }).check();
   await page.getByRole("button", { name: "Review what will change" }).click();
 
-  await expect(page.getByText(/nothing is written until you press Enable/)).toBeVisible();
+  await expect(page.getByText(/nothing is installed until you press Enable/)).toBeVisible();
   await expect(page.getByText("every harness takes everything")).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("review-1280.png"), fullPage: true });
   expect(existsSync(join(project, ".claude", "skills", "ship-it", "SKILL.md"))).toBe(false);
@@ -131,7 +131,7 @@ test("the dry-run matrix stays readable at 390px in both themes", async ({ page 
   await page.getByLabel("These workspaces").check();
   await page.getByLabel(workspace, { exact: true }).check();
   await page.getByRole("button", { name: "Review what will change" }).click();
-  await expect(page.getByText(/nothing is written until you press Enable/)).toBeVisible();
+  await expect(page.getByText(/nothing is installed until you press Enable/)).toBeVisible();
   await page.locator(".rd-kits-sec > summary", { hasText: "Skills" }).click();
 
   const first = page.locator(".rd-kits-plan td").first();
@@ -145,6 +145,14 @@ test("the dry-run matrix stays readable at 390px in both themes", async ({ page 
   expect(scrolls).toBe(true);
   const pageWidth = await page.evaluate(() => document.documentElement.scrollWidth);
   expect(pageWidth).toBe(390);
+  // the top bar wraps to two rows here; the page starts below it, not over it
+  const settings = page.locator(".rd-topbar").getByRole("button", { name: "Settings", exact: true });
+  await expect(settings).toBeVisible();
+  const hit = await settings.evaluate((el) => {
+    const r = el.getBoundingClientRect();
+    return el.contains(document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2));
+  });
+  expect(hit).toBe(true);
 
   await page.screenshot({ path: testInfo.outputPath("review-390-light.png"), fullPage: true });
   await page.emulateMedia({ colorScheme: "dark" });
@@ -184,7 +192,7 @@ test("a repository deleted after the catalog load is left out of the review at 3
   rmSync(project, { recursive: true, force: true });
   await page.getByRole("button", { name: "Review what will change" }).click();
 
-  await expect(page.getByText(/nothing is written until you press Enable/)).toBeVisible();
+  await expect(page.getByText(/nothing is installed until you press Enable/)).toBeVisible();
   await expect(page.getByText("No repository yet")).toBeVisible();
   await expect(page.locator(".rd-kits-sec > summary", { hasText: "Skills" })).toBeVisible();
   const widths = await page.locator(".rd-kits-page").evaluate((el) => [el.scrollWidth, el.clientWidth]);
