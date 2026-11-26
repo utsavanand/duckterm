@@ -1,6 +1,6 @@
 {
   "name": "issue-to-merge",
-  "description": "Specs the fix for an issue, builds it on its own branch and checks it.",
+  "description": "Spec, fix, check, draft pull request.",
   "inputs": { "issue": "the issue: number, title, body, labels and URL, as JSON" },
   "triggers": [
     { "type": "github-issue", "input": "issue" },
