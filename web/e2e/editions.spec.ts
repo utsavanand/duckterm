@@ -78,7 +78,7 @@ test("Lite runs continuity, saved artifacts and factual overviews without coding
 
     await views.getByRole("button", { name: "Artifacts" }).click();
     await expect(page.getByRole("region", { name: "Session artifacts" })).toBeVisible();
-    await expect(page.getByRole("region", { name: "Session files" })).toHaveCount(0);
+    await expect(page.getByRole("region", { name: "Code explorer" })).toHaveCount(0);
     await page.locator(".rd-group-name", { hasText: folder }).click();
     const folderView = page.getByRole("region", { name: `Workspace ${folder}` });
     await expect(folderView.getByRole("tab")).toHaveText(["Overview", "Artifacts"]);
