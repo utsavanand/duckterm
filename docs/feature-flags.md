@@ -29,7 +29,7 @@ Claude/Codex sessions and their existing sign-in continue to work.
 | Flag | Controls hidden and operations blocked while off |
 |------|--------------------------------------------------|
 | `cross_computer_collaboration` | Cross-computer collaboration setup and exchange. Local inbox remains available. |
-| `skill_kits` | Settings → Skill kits (add, review, install, verify, Create team, uninstall), a session's Flows tab, the `/kits/*`, `/api/v1/session/kits/*` and legacy `/harnesses` routes, and `duckterm kit` validate/plan/install/verify/uninstall/run/runs. |
+| `skill_kits` | Settings → MetaHarnesses (add, review, install, verify, Create team, uninstall), a session's Flows tab, the `/kits/*`, `/api/v1/session/kits/*` and legacy `/harnesses` routes, and `duckterm kit` validate/plan/install/verify/uninstall/run/runs. |
 | `harness_management` | Harness installation and setup. Existing local harnesses remain usable. |
 | `byok` | API-key configuration and use, including deleting a saved key. Existing keys are retained; enable the flag to remove one through DuckTerm. |
 | `byoc` | Cloud/remote workspace management, including native Mac Settings controls. Available only in Full even when opted in. |
@@ -43,19 +43,19 @@ These switches are configured in `feature-flags.json` in the instance home:
 
 Restart DuckTerm after changes. Settings → Feature flags shows effective
 availability. Missing or invalid release configuration disables these switches;
-when the release file is missing, the legacy skill-kit exception below applies.
+when the release file is missing, the legacy MetaHarness exception below applies.
 Configuration belongs to the installation and must not be bundled in releases.
 
 `feature-flags.json`, when present, is authoritative for those switches, including
 `skill_kits`. A missing release-switch file preserves the older `flags.json`
-skill-kit opt-in; it does not enable any other release switch. An explicit false
+MetaHarness opt-in; it does not enable any other release switch. An explicit false
 or an omitted switch in `feature-flags.json` disables it. No configuration is
 rewritten during this compatibility read.
 
 The inventory includes both release and development switches, once each.
 `home` and `background_rule_suggestions` still use `flags.json`; creating a
 release configuration does not disable or enable those separate switches.
-Skill kits remain experimental, but their row is listed only above.
+MetaHarnesses remain experimental, but their row is listed only above.
 
 ## In development
 

@@ -183,7 +183,7 @@ def test_a_forged_restore_of_git_config_is_refused(tmp_path):
             }
         ],
     )
-    with pytest.raises(install.InstallRefused, match="not a path skill kits write"):
+    with pytest.raises(install.InstallRefused, match="not a path a MetaHarness writes"):
         install.uninstall(project, "sample-kit")
     assert config.read_bytes() == raw
 

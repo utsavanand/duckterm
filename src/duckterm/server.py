@@ -409,6 +409,8 @@ _ROUTES: list[Route] = [
     Route("POST", "/kits/enable", lambda s, r, w, h, b, seg: s._kits(w, "enable", b)),
     Route("POST", "/kits/disable", lambda s, r, w, h, b, seg: s._kits(w, "disable", b)),
     Route("POST", "/kits/plan", lambda s, r, w, h, b, seg: s._kits(w, "plan", b)),
+    Route("POST", "/kits/review", lambda s, r, w, h, b, seg: s._kits(w, "review", b)),
+    Route("POST", "/kits/fix", lambda s, r, w, h, b, seg: s._kits(w, "fix", b)),
     Route("POST", "/kits/install", lambda s, r, w, h, b, seg: s._kits(w, "install", b)),
     Route("POST", "/kits/uninstall", lambda s, r, w, h, b, seg: s._kits(w, "uninstall", b)),
     Route("POST", "/kits/verify", lambda s, r, w, h, b, seg: s._kits(w, "verify", b)),
@@ -1186,6 +1188,7 @@ class Server:
             return
         # Only the supervisor may assign identity; hooks can report observations.
         raw.pop("_assigned_native_id", None)
+        raw.pop("hook_setup", None)  # only the supervisor can record configuration
         # agent_pid comes from an external hook ($PPID) and is later fed to
         # os.kill in the liveness sweep — coerce to a positive int or drop it.
         if "agent_pid" in raw:
@@ -2832,7 +2835,7 @@ class Server:
         tracker = _FlowStepTracker(self, asyncio.get_running_loop())
         # The history store is bound to this thread, so everything it answers
         # is gathered here; only the kit engine's file work runs in a thread.
-        needs_registry = action in ("catalog", "enable")
+        needs_registry = action in ("catalog", "enable", "review")
         registry = [dict(r) for r in self.history.harnesses()] if needs_registry else []
         workspaces = self._kit_workspaces() if needs_registry else []
         if action == "unregister":
@@ -2858,6 +2861,8 @@ class Server:
                 payload.get("project"), str(payload.get("run_id") or "")
             ),
             "plan": lambda: kits_api.plan_for(payload),
+            "review": lambda: kits_api.review(payload, registry, workspaces),
+            "fix": lambda: kits_api.fix(payload),
             "install": lambda: kits_api.install_kit(payload),
             "uninstall": lambda: kits_api.uninstall_kit(payload),
             "verify": lambda: kits_api.verify_kits(payload),
@@ -2884,6 +2889,25 @@ class Server:
             await _write_json(writer, exc.status, {"error": str(exc)})
             return
         await _write_json(writer, 200, result)
+
+    def _kit_launch_flags(self, runtime: str, folder: str) -> list[str]:
+        """Copilot takes a kit's permissions as flags, not a file: a session
+        launched in a repository whose home-side install record holds a kit
+        gets the flags recorded at that install, while the kit still hashes
+        as reviewed. Other harnesses read files."""
+        if runtime != "copilot" or not self.edition.includes("skill_kits"):
+            return []
+        from duckterm.kits import api as kits_api
+
+        registry = [dict(r) for r in self.history.harnesses()]
+        flags, dropped = kits_api.copilot_flags(folder, registry)
+        for name in dropped:
+            print(
+                f"[duckterm] kit {name} in {folder}: Copilot flags dropped, the kit changed "
+                "since it was installed; enable it again to review",
+                file=sys.stderr,
+            )
+        return flags
 
     def _remember_launch(self, key: str, folder: object) -> None:
         """The launcher is the only writer of where a session lives (kits)."""
@@ -3101,6 +3125,7 @@ class Server:
             session_key=key,
             initial_prompt=self._collaboration_prompt(runtime.name, key, req.get("prompt", "")),
         )
+        argv[1:1] = self._kit_launch_flags(runtime.name, run_cwd)
 
         # Record a tracked row so the session shows up with its name/repo/branch.
         # The agent's hooks report under the same key (via DUCKTERM_SESSION_KEY)
@@ -3236,6 +3261,7 @@ class Server:
                 fork_runtime.name, child_key, req.get("prompt", "")
             ),
         )
+        argv[1:1] = self._kit_launch_flags(fork_runtime.name, str(worktree.path))
         # Record a tracked row so the fork shows its lineage. The agent's hooks
         # report under child_key (via DUCKTERM_SESSION_KEY), updating this row.
         self.bus.publish(
@@ -5180,18 +5206,24 @@ class Server:
 
     async def _fleet_pulse(self, writer: asyncio.StreamWriter) -> None:
         """Artifacts, PR merges and releases for the Fleet monitor's Pulse.
-        Git reads are cached briefly: every open dashboard polls this."""
+        Git reads are cached briefly: every open dashboard polls this. One
+        refresh runs at a time; polls that arrive during it wait for it."""
         now = int(time.time() * 1000)
         cached = getattr(self, "_pulse_cache", None)
         if cached is None or now - cached[0] >= self._PULSE_TTL_MS:
-            since = now - fleet_pulse.WINDOW_MS
-            events = await asyncio.to_thread(
-                fleet_pulse.collect,
-                self.history.sessions(),
-                self.history.artifacts.recent(since, fleet_pulse.LIMIT),
-                now,
-            )
-            cached = self._pulse_cache = (now, events)
+            refresh = getattr(self, "_pulse_refresh", None)
+            if refresh is None or refresh.done():
+                since = now - fleet_pulse.WINDOW_MS
+                refresh = self._pulse_refresh = asyncio.ensure_future(
+                    asyncio.to_thread(
+                        fleet_pulse.collect,
+                        self.history.sessions(),
+                        self.history.artifacts.recent(since, fleet_pulse.LIMIT),
+                        now,
+                    )
+                )
+            # A dropped poll must not cancel the refresh other polls share.
+            cached = self._pulse_cache = (now, await asyncio.shield(refresh))
         await _write_json(writer, 200, {"events": cached[1]})
 
     _FLEET_MAIL_MS = 10 * 60_000

@@ -28,7 +28,16 @@ from duckterm.core import agents_rules
 from duckterm.helpers import instance
 from duckterm.kits import adapters
 from duckterm.kits import manifest as m
-from duckterm.kits.plan import RECORD, PathEscape, Plan, _materialise, inside, load_record, sha256
+from duckterm.kits.plan import (
+    RECORD,
+    PathEscape,
+    Plan,
+    _materialise,
+    inside,
+    kit_digest,
+    load_record,
+    sha256,
+)
 
 TOML_BEGIN = "# skill-kit {kit} {cid} begin"
 TOML_END = "# skill-kit {kit} {cid} end"
@@ -313,6 +322,11 @@ def apply(plan: Plan, *, replace: bool = False) -> Report:
         "procedures": _procedures(kit),
         "details": _details(kit),
         "entries": entries,
+        # the tree this install came from, and what the launcher may pass to
+        # Copilot for it: read back from the home record only, never from the
+        # kit's current files or the repository's copy of this record
+        "digest": kit_digest(kit.root),
+        "copilot_flags": adapters.copilot_flags(kit),
     }
     record_path = _target(project, RECORD)
     if not record_path.parent.exists():
@@ -431,7 +445,7 @@ def _agents_block(
                 text=text,
                 status="active",
                 source="kit",
-                heading=f"Skill kit {kit.name}",
+                heading=f"MetaHarness {kit.name}",
                 added=time.strftime("%Y-%m-%d"),
                 kit=kit.name,
                 kit_version=kit.version,

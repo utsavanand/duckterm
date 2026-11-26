@@ -199,6 +199,19 @@ class SessionSupervisor:
             or shutil.which(argv[0], path=self._env.get("PATH", os.environ.get("PATH"))) is None
         ):
             raise ValueError(f"command not found: {argv[0] if argv else '(empty)'}")
+        from duckterm.agents.hooks_install import prepare_for_launch
+
+        settings = await asyncio.to_thread(
+            prepare_for_launch, self.runtime.name, Path(self.cwd), {**os.environ, **self._env}
+        )
+        if settings is not None:
+            generation = self._env.setdefault("DUCKTERM_HARNESS_GENERATION", uuid.uuid4().hex)
+            identity["launch_generation"] = generation
+            identity["hook_setup"] = {
+                "runtime": self.runtime.name,
+                "generation": generation,
+                "settings_path": settings,
+            }
         # Register and enroll synchronously before the child can use its inbox.
         self._emit(
             events.SESSION_START,

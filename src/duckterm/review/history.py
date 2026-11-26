@@ -91,7 +91,15 @@ def releases(repo: str) -> list[dict[str, Any]]:
 def _merges(repo: str, previous: str | None, tag: str) -> list[dict[str, Any]]:
     span = f"{previous}..{tag}" if previous else tag
     try:
-        out = git.run(repo, "log", span, "--merges", "--format=%H%x1f%s", "--max-count=200")
+        out = git.run(
+            repo,
+            "log",
+            "--merges",
+            "--format=%H%x1f%s",
+            "--max-count=200",
+            "--end-of-options",
+            span,
+        )
     except git.ReviewGitError:
         return []
     rows = []

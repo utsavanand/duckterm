@@ -49,6 +49,7 @@ button.rd-home-nav { cursor:pointer }
 .rd-home-chip { font-size:0.6875rem; padding:1px 8px; border-radius:99px; border:1px solid transparent; background:var(--home-chip); color:var(--text-soft); white-space:nowrap }
 .rd-home-chip.wait { background:var(--amber-bg); border-color:var(--amber-border); color:var(--wait) }
 .rd-home-chip.busy { color:var(--busy) }
+.rd-home-chip.bad { color:var(--danger) }
 
 .rd-home-chat { height:100%; display:flex; flex-direction:column; gap:10px; min-height:0 }
 .rd-home-scope { display:flex; align-items:center; gap:6px; flex-wrap:wrap }

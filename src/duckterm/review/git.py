@@ -17,9 +17,11 @@ class ReviewGitError(RuntimeError):
     pass
 
 
-# The repository's own config can name programs git will run: an fsmonitor,
-# and with log.showSignature a signature verifier. The repo path often comes
-# from a session, so none of them may run as the server.
+# A repository's own config can name programs git will run: an fsmonitor, a
+# signature verifier under log.showSignature, and an ssh command or remote
+# helper when a partial clone lazily fetches a missing object. Sessions report
+# the folders read here and can write their .git/config, so none of them may
+# run as the server. Only fetch and remote_heads are meant to reach a remote.
 _NO_REPO_PROGRAMS = (
     "-c",
     "core.fsmonitor=false",
@@ -32,6 +34,7 @@ _NO_REPO_PROGRAMS = (
     "-c",
     "gpg.x509.program=false",
 )
+_OFFLINE = ("-c", "protocol.allow=never")
 
 
 def _env() -> dict[str, str]:
@@ -41,13 +44,15 @@ def _env() -> dict[str, str]:
         if not (k.startswith("GIT_") and k not in ("GIT_SSH", "GIT_SSH_COMMAND"))
     }
     env["GIT_OPTIONAL_LOCKS"] = "0"
+    env["GIT_NO_LAZY_FETCH"] = "1"
     return env
 
 
-def run(path: str | Path, *args: str, timeout: float = 15) -> str:
+def run(path: str | Path, *args: str, timeout: float = 15, network: bool = False) -> str:
+    offline = () if network else _OFFLINE
     try:
         result = subprocess.run(
-            ["git", *_NO_REPO_PROGRAMS, "-C", str(path), *args],
+            ["git", *_NO_REPO_PROGRAMS, *offline, "-C", str(path), *args],
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -154,6 +159,7 @@ def conflicts(repo: str | Path, base: str, head: str) -> bool | None:
             [
                 "git",
                 *_NO_REPO_PROGRAMS,
+                *_OFFLINE,
                 "-C",
                 str(repo),
                 "merge-tree",
@@ -217,7 +223,7 @@ def remote_heads(repo: str | Path) -> dict[str, str] | None:
     """Branch -> tip sha on origin, from one `ls-remote` round trip. None when
     the remote is unreachable."""
     try:
-        out = run(repo, "ls-remote", "--heads", "origin", timeout=20)
+        out = run(repo, "ls-remote", "--heads", "origin", timeout=20, network=True)
     except ReviewGitError:
         return None
     heads: dict[str, str] = {}
@@ -238,7 +244,7 @@ def fetch(repo: str | Path, refs: list[str], *, tags: bool = True) -> str | None
     args.append("origin")
     args += [f"+refs/heads/{ref}:refs/remotes/origin/{ref}" for ref in refs]
     try:
-        run(repo, *args, timeout=25)
+        run(repo, *args, timeout=25, network=True)
     except ReviewGitError as exc:
         return str(exc) or "fetch failed"
     return None

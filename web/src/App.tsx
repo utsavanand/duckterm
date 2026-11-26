@@ -356,6 +356,9 @@ function Dashboard() {
 
   const towerVisible = towerOpen && !focusOpen && gridFolder === null;
   const closeHome = useCallback(() => setHomeOpen(false), []);
+  const homeAutopilot = useMemo(() => sidebarAutopilot
+    ? { summary: autopilotSummary, open: () => { setHomeOpen(false); setTowerMode("autopilot"); setTowerOpen(true); setAnalyticsTab(null); } }
+    : null, [sidebarAutopilot, autopilotSummary]);
   const towerLayer = towerVisible && <div className="rd-tower-layer">
     {towerMode === "autopilot" && sidebarAutopilot ? <AutopilotPage /> : analyticsTab ? <Analytics initialTab={analyticsTab} sessions={agents} onBack={() => setAnalyticsTab(null)} /> : <LiveControlTower
       onAnalytics={setAnalyticsTab}
@@ -437,6 +440,7 @@ function Dashboard() {
           leaves Agents interactive; other editions retain the fleet overview. */}
       {homeOpen && <div className="rd-home-layer">
         <LiveHome agents={agents} onTeams={closeHome} onOpenTerminal={key => { setSelectedKey(key); setView("terminal"); }}
+          autopilot={homeAutopilot}
           onAnalytics={tab => { setHomeOpen(false); setTowerOpen(true); setAnalyticsTab(tab); }} />
       </div>}
       {!sidebarOracle && towerLayer}

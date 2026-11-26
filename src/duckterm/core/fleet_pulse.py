@@ -9,6 +9,7 @@ left out (owner, 2026-11-24: too frequent to be a pulse).
 """
 
 import re
+import time
 from pathlib import Path
 from typing import Any
 
@@ -18,27 +19,34 @@ from duckterm.review.history import _merges
 WINDOW_MS = 7 * 86_400_000
 LIMIT = 60
 ARTIFACT_BURST_MS = 3_600_000
+# Sessions choose the folders read here, so the work per refresh is bounded:
+# distinct folders asked about, releases per repository, and total time.
+MAX_PATHS = 40
+MAX_TAGS = 10
+DEADLINE_S = 20.0
 _MERGE = re.compile(r"Merge pull request #(\d+) from [^/\s]+/(\S+)")
 
 
-def repo_events(repo: str, since_ms: int) -> list[dict[str, Any]]:
+def repo_events(repo: str, since_ms: int, deadline: float) -> list[dict[str, Any]]:
     """PR merges and release tags in one clone since since_ms, newest first."""
-    try:
-        ref = git.run(repo, "rev-parse", "--abbrev-ref", "origin/HEAD").strip() or "HEAD"
-    except git.ReviewGitError:
-        ref = "HEAD"
+    # A commit id, never the ref's name: a session can name a branch
+    # "--output=<path>" and point origin/HEAD at it.
+    head = git.resolve(repo, "refs/remotes/origin/HEAD") or git.resolve(repo, "HEAD")
+    if head is None:
+        return []
     name = Path(repo).name
     events: list[dict[str, Any]] = []
     try:
         log = git.run(
             repo,
             "log",
-            ref,
             "--merges",
             "--first-parent",
             f"--since=@{since_ms // 1000}",
             "--max-count=50",
             "--format=%ct%x1f%s%x1f%b%x1e",
+            "--end-of-options",
+            head,
         )
     except git.ReviewGitError:
         log = ""
@@ -72,10 +80,10 @@ def repo_events(repo: str, since_ms: int) -> list[dict[str, Any]]:
         ).splitlines()
     except git.ReviewGitError:
         tags = []
-    for i, line in enumerate(tags):
+    for i, line in enumerate(tags[:MAX_TAGS]):
         tag, _, when = line.partition("\x00")
         at = int(when or 0) * 1000
-        if at < since_ms:
+        if at < since_ms or time.monotonic() > deadline:
             break
         previous = tags[i + 1].partition("\x00")[0] if i + 1 < len(tags) else None
         merged = len(_merges(repo, previous, tag))
@@ -102,6 +110,8 @@ def clones(sessions: list[dict[str, Any]], since_ms: int) -> dict[str, list[dict
         if not path or int(row.get("updated_at") or 0) < since_ms:
             continue
         if path not in roots:
+            if len(roots) >= MAX_PATHS:
+                continue
             try:
                 common = git.run(path, "rev-parse", "--path-format=absolute", "--git-common-dir")
                 roots[path] = str(Path(common.strip()).parent)
@@ -139,9 +149,12 @@ def collect(
         )
     for e in events:
         del e["first"]
+    deadline = time.monotonic() + DEADLINE_S
     for repo, members in clones(sessions, since).items():
+        if time.monotonic() > deadline:
+            break
         by_branch = {str(m.get("branch") or ""): m for m in members}
-        for event in repo_events(repo, since):
+        for event in repo_events(repo, since, deadline):
             # A merged branch that a session worked on names that session.
             owner = by_branch.get(event.pop("branch", ""))
             if owner is not None:
