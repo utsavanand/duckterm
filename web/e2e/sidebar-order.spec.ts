@@ -68,6 +68,9 @@ test("session order survives reload, preserves forks and selection, and still al
 });
 
 // Exercise real overflow in a short window, independently of test ordering.
-test.use({ viewport: { width: 1280, height: 652 } });
+// The 18 filler folders overflow any height here; 760 leaves the tree about
+// 390px under the Autopilot, Oracle and Support rows and the search box, enough
+// to show a drag's source and a folder header below Ungrouped together.
+test.use({ viewport: { width: 1280, height: 760 } });
 test.beforeAll(async () => { for(let i=0;i<18;i++) await seedSession(`scroll-filler-${i}`, {name:`Filler ${i}`,group:`A filler ${String(i).padStart(2,"0")}`}); });
 test.afterAll(async () => { for(let i=0;i<18;i++){ await apiDelete(`/sessions/scroll-filler-${i}`);await apiDelete(`/folders/${encodeURIComponent(`A filler ${String(i).padStart(2,"0")}`)}`); } });

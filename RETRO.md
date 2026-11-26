@@ -1,3 +1,12 @@
+## 2026-11-25 — A pinned short window is a budget every sidebar row spends
+
+sidebar-order.spec.ts pins a 652px window to force a scrolling agent list,
+and drags a session onto a folder header about 320px away. Main's agent
+search box and #473's Support row each took height from the tree, leaving
+285px, and CI failed deterministically only after both met in one branch.
+When a spec pins a short viewport, say what the geometry needs next to it,
+and re-check it when anything is added above the tree.
+
 ## 2026-11-25 — An icon tile on a theme token needs that token's foreground
 
 The Support sidebar icon filled its tile with --accent and drew the glyph in
