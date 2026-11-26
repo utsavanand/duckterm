@@ -1,0 +1,129 @@
+import type { ReviewCard, ReviewHeader } from "../../api";
+import type { BlastData, GuardrailsData, QuestionsData, ReleaseCheck, ReleaseData, TestsData } from "../cardModel";
+
+export type ReadyStatus = "block" | "part" | "ok" | "wait";
+export interface ReadyLine { text: string; where?: string }
+// card: the review card the row is built from, so a fix request is recorded
+// against it (the send route keys sent items by card).
+export interface ReadyRow { id: string; name: string; sub: string; status: ReadyStatus; lines: ReadyLine[]; card: string; ask: string | null }
+
+export const STATUS_LABELS: Record<ReadyStatus, string> = { block: "Blocking", part: "Partial", ok: "Ready", wait: "Not read yet" };
+
+function ready<T>(cards: ReviewCard[], id: string): T | null {
+  const card = cards.find(item => item.id === id);
+  return card?.status === "ready" && card.data ? card.data as unknown as T : null;
+}
+
+function check(release: ReleaseData | null, name: string): ReleaseCheck | null {
+  return release?.checks.find(item => item.name === name) ?? null;
+}
+
+function waiting(id: string, name: string, sub: string, card: string, cards: ReviewCard[]): ReadyRow {
+  const state = cards.find(item => item.id === card)?.status;
+  const text = state === "pending" || state === "stale" ? "Being read now" : state === "omitted" || state === "failed" ? "Could not be read for this head" : "Generate the review to read this";
+  return { id, name, sub, status: "wait", lines: [{ text }], card, ask: null };
+}
+
+function request(pr: string, lead: string, lines: ReadyLine[]): string {
+  return `${pr}: ${lead}\n${lines.map(line => `- ${line.text}${line.where ? ` (${line.where})` : ""}`).join("\n")}`;
+}
+
+export function readinessRows(header: ReviewHeader, cards: ReviewCard[]): ReadyRow[] {
+  const pr = header.pr ? `PR #${header.pr.number}` : header.branch;
+  const release = ready<ReleaseData>(cards, "release");
+  const tests = ready<TestsData>(cards, "tests");
+  const blast = ready<BlastData>(cards, "blast");
+  const guard = ready<GuardrailsData>(cards, "guardrails");
+  const questions = ready<QuestionsData>(cards, "questions");
+  const rows: ReadyRow[] = [];
+
+  const conflict = header.row?.status === "conflict" || check(release, "Conflict with base")?.status === "fail";
+  rows.push(conflict
+    ? { id: "merge", name: "Merge", sub: "git", status: "block", card: "release", lines: [{ text: `Conflicts with ${header.base}`, where: "merge-tree" }],
+      ask: `${pr} conflicts with ${header.base}. Rebase ${header.branch} onto ${header.base}, regenerate any generated files, rerun the tests and push.` }
+    : { id: "merge", name: "Merge", sub: "git", status: "ok", card: "release", lines: [{ text: `Merges cleanly into ${header.base}`, where: "merge-tree" }], ask: null });
+
+  if (!tests) rows.push(waiting("tests", "Unit tests", "changed code", "tests", cards));
+  else {
+    const uncovered = tests.coverage.filter(row => row.covered === "no");
+    const partial = tests.coverage.filter(row => row.covered === "partial");
+    const lines: ReadyLine[] = [
+      ...uncovered.map(row => ({ text: `No test reaches ${row.path}` })),
+      ...tests.gaps.map(text => ({ text })),
+      ...tests.slop.map(item => ({ text: `Test with ${item.kind}`, where: `${item.path}:${item.line}` })),
+    ];
+    const ci = check(release, "CI");
+    if (ci) lines.push({ text: `CI: ${ci.note || ci.status}`, where: "CI" });
+    if (tests.gate) lines.push({ text: `Last gate ${tests.gate.passed ? "passed" : "failed"}, ${tests.gate.age_minutes} min ago`, where: "gate" });
+    const status: ReadyStatus = uncovered.length || tests.slop.length ? "block" : partial.length || tests.gaps.length ? "part" : "ok";
+    if (!lines.length) lines.push({ text: "Every changed file has a test that reaches it" });
+    const fix = lines.filter(line => line.where !== "gate" && line.where !== "CI");
+    rows.push({ id: "tests", name: "Unit tests", sub: "changed code", status, lines, card: "tests",
+      ask: status === "ok" ? null : request(pr, "add the missing tests, then run the gate so this head has a result.", fix) });
+  }
+
+  if (!release) rows.push(waiting("security", "Security", "credentials and secrets", "release", cards));
+  else {
+    const security = check(release, "Security or credential path");
+    const touched = security && (security.status === "fail" || security.status === "conditional");
+    rows.push(touched
+      ? { id: "security", name: "Security", sub: "credentials and secrets", status: "block", card: "release",
+        lines: [{ text: `Touches ${security.hits.slice(0, 3).join(", ") || "the credentials path"}: needs a security owner's sign-off`, where: "rule: security" }],
+        ask: `${pr} changes the security or credentials path (${security.hits.slice(0, 5).join(", ")}). Write a short note for the reviewer: every place secrets could reach logs, errors or responses, and how each is prevented, with file:line.` }
+      : { id: "security", name: "Security", sub: "credentials and secrets", status: "ok", card: "release", lines: [{ text: "No security or credentials path touched", where: "rules" }], ask: null });
+  }
+
+  if (!questions) rows.push(waiting("manual", "Manual tests", "by a person", "questions", cards));
+  else {
+    const manual = questions.items.filter(item => item.kind === "manual");
+    rows.push(manual.length
+      ? { id: "manual", name: "Manual tests", sub: "by a person", status: "part", card: "questions",
+        lines: manual.map(item => ({ text: item.text, where: item.paths[0] })),
+        ask: request(pr, "run these hand tests against a real build and post what you saw.", manual.map(item => ({ text: item.text }))) }
+      : { id: "manual", name: "Manual tests", sub: "by a person", status: "ok", card: "questions", lines: [{ text: "Nothing in this diff needs a hand test" }], ask: null });
+  }
+
+  if (!blast) rows.push(waiting("blast", "Blast radius", "code outside the diff", "blast", cards));
+  else {
+    const outside = blast.symbols.filter(symbol => symbol.outside_count > 0);
+    const untested = outside.filter(symbol => !symbol.tested);
+    const lines: ReadyLine[] = [{ text: `${outside.length} of ${blast.symbols.length} changed symbols are called from outside the diff`, where: "symbol index" }];
+    lines.push(...untested.slice(0, 4).map(symbol => ({ text: `${symbol.symbol}: ${symbol.outside_count} outside callers, no test`, where: `${symbol.path}:${symbol.line}` })));
+    rows.push({ id: "blast", name: "Blast radius", sub: "code outside the diff", status: untested.length ? "part" : "ok", lines, card: "blast",
+      ask: untested.length ? request(pr, "these changed symbols have callers outside the diff and no test. Add a test for each, or say why the callers are unaffected.", lines.slice(1)) : null });
+  }
+
+  if (!guard) rows.push(waiting("guardrails", "Guardrails", "AGENTS.md and slop rules", "guardrails", cards));
+  else {
+    const findings = guard.findings.filter(item => item.status === "finding");
+    const passed = guard.checks.filter(item => item.status === "pass").length;
+    const lines: ReadyLine[] = findings.map(item => ({ text: `${item.rule}: ${item.note}`, where: item.location || undefined }));
+    lines.push({ text: `${passed} ${passed === 1 ? "check" : "checks"} passed`, where: "rules" });
+    rows.push({ id: "guardrails", name: "Guardrails", sub: "AGENTS.md and slop rules", status: findings.length ? "part" : "ok", lines, card: "guardrails",
+      ask: findings.length ? request(pr, "fix these guardrail findings.", lines.slice(0, -1)) : null });
+  }
+
+  if (!release) rows.push(waiting("rollback", "Rollback", "how to undo it", "release", cards));
+  else {
+    const schema = check(release, "Schema or data path");
+    const installer = check(release, "Installer, updater or build path");
+    const dataTouched = schema?.status === "fail" || schema?.status === "conditional";
+    const installTouched = installer?.status === "fail" || installer?.status === "conditional";
+    const lines: ReadyLine[] = [];
+    if (dataTouched) lines.push({ text: `Changes stored data: ${schema!.hits.slice(0, 3).join(", ")}. Reverting the code does not undo it`, where: "rule: schema" });
+    if (installTouched) lines.push({ text: `Changes the installer, updater or build: ${installer!.hits.slice(0, 3).join(", ")}`, where: "rule: installer" });
+    if (!lines.length) lines.push({ text: "Code only: reverting the merge commit undoes it", where: "rules" });
+    rows.push({ id: "rollback", name: "Rollback", sub: "how to undo it", status: dataTouched ? "block" : installTouched ? "part" : "ok", lines, card: "release",
+      ask: dataTouched || installTouched ? request(pr, "write the rollback plan for these changes: what a revert leaves behind and how to undo it.", lines) : null });
+  }
+  return rows;
+}
+
+export function overall(rows: ReadyRow[]): { status: ReadyStatus; label: string; counts: Record<ReadyStatus, number> } {
+  const counts: Record<ReadyStatus, number> = { block: 0, part: 0, ok: 0, wait: 0 };
+  for (const row of rows) counts[row.status] += 1;
+  if (counts.block) return { status: "block", label: "Not ready to release", counts };
+  if (counts.wait) return { status: "wait", label: "Not read yet", counts };
+  if (counts.part) return { status: "part", label: "Ready with open items", counts };
+  return { status: "ok", label: "Ready to release", counts };
+}

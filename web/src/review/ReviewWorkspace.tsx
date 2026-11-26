@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type ReviewHeader } from "../api";
+import { useFeature } from "../edition";
 import { Modal } from "../ui";
 import { ApproveDialog, approvalLabel } from "./ApproveDialog";
 import { CardsPane } from "./CardsPane";
@@ -7,12 +8,17 @@ import { ChatPanel } from "./ChatPanel";
 import { DiffPane, type DiffFocus } from "./DiffPane";
 import { HistoryPane } from "./HistoryPane";
 import { shortSha } from "./diffModel";
+import { ReviewV2 } from "./v2/ReviewV2";
 import "./review.css";
 
 type Tab = "diff" | "review" | "history";
 const TABS: { id: Tab; label: string }[] = [{ id: "diff", label: "Diff" }, { id: "review", label: "Review" }, { id: "history", label: "History" }];
 
-export function ReviewWorkspace({ repo, target, from, onBack }: { repo: string; target: string; from?: string; onBack: () => void }) {
+export function ReviewWorkspace(props: { repo: string; target: string; from?: string; onBack: () => void }) {
+  return useFeature("review_v2") ? <ReviewV2 {...props} /> : <ReviewWorkspaceV1 {...props} />;
+}
+
+function ReviewWorkspaceV1({ repo, target, from, onBack }: { repo: string; target: string; from?: string; onBack: () => void }) {
   const [header, setHeader] = useState<ReviewHeader | null>(null);
   const [error, setError] = useState("");
   const [tab, setTab] = useState<Tab>("diff");
