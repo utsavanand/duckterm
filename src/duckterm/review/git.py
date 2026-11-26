@@ -22,7 +22,7 @@ class ReviewGitError(RuntimeError):
 # ssh command, credential helper or remote helper when git reaches a remote.
 # Sessions report the folders read here and can write their .git/config, so
 # none of them may run as the server. Only fetch and remote_heads are meant to
-# reach a remote; see _network_config for what they keep.
+# reach a remote; see _config_pairs for what they keep.
 _NO_REPO_PROGRAMS = (
     "-c",
     "core.fsmonitor=false",
@@ -53,51 +53,85 @@ _REPO_NETWORK_KEYS = re.compile(
 )
 
 
-def _network_config(path: str | Path) -> dict[str, str]:
-    """Config for a call that reaches a remote, as GIT_CONFIG_* variables so a
-    crafted key can't be misparsed. The owner's own credential helpers and ssh
-    command (system, global or the git install's own file) are kept; the
-    repository's are dropped: an empty credential.helper given last clears
-    every helper read so far, and the owner's are given again after it."""
-    try:
-        out = run(
-            path,
-            "config",
-            "--show-scope",
-            "-z",
-            "--get-regexp",
-            r"^credential\..*helper$|^core\.sshcommand$|" + _REPO_NETWORK_KEYS.pattern,
-        )
-    except ReviewGitError:  # exit 1: no helper or ssh command set anywhere
-        out = ""
-    pairs = [
-        ("protocol.allow", "never"),
-        *((f"protocol.{name}.allow", "always") for name in _REMOTE_PROTOCOLS),
-        ("core.askPass", ""),
-        ("gc.auto", "0"),
-        ("maintenance.auto", "false"),
-        ("credential.helper", ""),
-    ]
-    ssh = "ssh"
-    fields = out.split("\0")
-    for scope, entry in zip(fields[::2], fields[1::2], strict=False):
-        key, _, value = entry.partition("\n")
-        if scope not in _OWNER_SCOPES:
-            if _REPO_NETWORK_KEYS.match(key):
-                raise ReviewGitError(f"remote unreachable: the repository sets {key}")
-            continue
-        if _REPO_NETWORK_KEYS.match(key):
-            continue
-        if key == "core.sshcommand":
-            ssh = value
-        else:
-            pairs.append((key, value))
-    pairs.append(("core.sshCommand", ssh))
-    env = {"GIT_CONFIG_COUNT": str(len(pairs)), "GIT_TERMINAL_PROMPT": "0"}
+# Programs a repository can attach to files through attributes, which it also
+# controls (.git/info/attributes). diff-files runs a clean filter on racy index
+# entries, and merge-tree runs a merge driver, so the repository's own are
+# blanked on every call. A blank merge driver fails, which reports a conflict.
+_REPO_DRIVERS = re.compile(r"^(filter\..*\.(clean|smudge|process)|merge\..*\.driver)$")
+
+
+def _git(
+    path: str | Path, args: list[str], timeout: float, pairs: list[tuple[str, str]], network: bool
+) -> subprocess.CompletedProcess[str]:
+    """Run git with the given config as GIT_CONFIG_* variables, so a key
+    crafted to contain "=" can't be misparsed as it can with -c."""
+    env = _env()
+    env["GIT_CONFIG_COUNT"] = str(len(pairs))
     for i, (key, value) in enumerate(pairs):
         env[f"GIT_CONFIG_KEY_{i}"] = key
         env[f"GIT_CONFIG_VALUE_{i}"] = value
-    return env
+    if network:
+        env["GIT_TERMINAL_PROMPT"] = "0"
+    try:
+        return subprocess.run(
+            ["git", *_NO_REPO_PROGRAMS, *(() if network else _OFFLINE), "-C", str(path), *args],
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            env=env,
+        )
+    except subprocess.TimeoutExpired as exc:
+        raise ReviewGitError(f"git {args[0]} timed out") from exc
+    except OSError as exc:
+        raise ReviewGitError(str(exc)) from exc
+
+
+def _config_pairs(path: str | Path, timeout: float, network: bool) -> list[tuple[str, str]]:
+    """Config overriding what the repository may not choose, read with one
+    `git config` call (which runs nothing). Every call blanks the repository's
+    filters and merge drivers. A call that reaches a remote also keeps the
+    owner's own credential helpers and ssh command (system, global or the git
+    install's own file) and drops the repository's: an empty credential.helper
+    clears every helper read so far, and the owner's are given again after it."""
+    pattern = _REPO_DRIVERS.pattern
+    if network:
+        pattern += r"|^credential\..*helper$|^core\.sshcommand$|" + _REPO_NETWORK_KEYS.pattern
+    result = _git(
+        path, ["config", "--show-scope", "-z", "--get-regexp", pattern], timeout, [], False
+    )
+    # exit 1: nothing matched
+    fields = result.stdout.split("\0") if result.returncode == 0 else []
+    pairs: list[tuple[str, str]] = []
+    if network:
+        pairs += [
+            ("protocol.allow", "never"),
+            *((f"protocol.{name}.allow", "always") for name in _REMOTE_PROTOCOLS),
+            ("core.askPass", ""),
+            ("gc.auto", "0"),
+            ("maintenance.auto", "false"),
+            ("credential.helper", ""),
+        ]
+    ssh = "ssh"
+    for scope, entry in zip(fields[::2], fields[1::2], strict=False):
+        key, _, value = entry.partition("\n")
+        owner = scope in _OWNER_SCOPES
+        if _REPO_DRIVERS.match(key):
+            if not owner:
+                pairs.append((key, ""))
+                if key.startswith("filter."):
+                    pairs.append((key.rsplit(".", 1)[0] + ".required", "false"))
+        elif _REPO_NETWORK_KEYS.match(key):
+            if not owner:
+                raise ReviewGitError(f"remote unreachable: the repository sets {key}")
+        elif not owner:
+            continue
+        elif key == "core.sshcommand":
+            ssh = value
+        else:
+            pairs.append((key, value))
+    if network:
+        pairs.append(("core.sshCommand", ssh))
+    return pairs
 
 
 def _env() -> dict[str, str]:
@@ -112,21 +146,7 @@ def _env() -> dict[str, str]:
 
 
 def run(path: str | Path, *args: str, timeout: float = 15, network: bool = False) -> str:
-    env = _env()
-    if network:
-        env.update(_network_config(path))
-    try:
-        result = subprocess.run(
-            ["git", *_NO_REPO_PROGRAMS, *(() if network else _OFFLINE), "-C", str(path), *args],
-            capture_output=True,
-            text=True,
-            timeout=timeout,
-            env=env,
-        )
-    except subprocess.TimeoutExpired as exc:
-        raise ReviewGitError(f"git {args[0]} timed out") from exc
-    except OSError as exc:
-        raise ReviewGitError(str(exc)) from exc
+    result = _git(path, list(args), timeout, _config_pairs(path, timeout, network), network)
     if result.returncode:
         raise ReviewGitError(result.stderr.strip() or f"git {args[0]} failed")
     return result.stdout
@@ -227,26 +247,14 @@ def conflicts(repo: str | Path, base: str, head: str) -> bool | None:
     if resolve(repo, base) is None or resolve(repo, head) is None:
         return None
     try:
-        result = subprocess.run(
-            [
-                "git",
-                *_NO_REPO_PROGRAMS,
-                *_OFFLINE,
-                "-C",
-                str(repo),
-                "merge-tree",
-                "--write-tree",
-                "--name-only",
-                "--end-of-options",
-                base,
-                head,
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30,
-            env=_env(),
+        result = _git(
+            repo,
+            ["merge-tree", "--write-tree", "--name-only", "--end-of-options", base, head],
+            30,
+            _config_pairs(repo, 30, False),
+            False,
         )
-    except (OSError, subprocess.TimeoutExpired):
+    except ReviewGitError:
         return None
     if result.returncode == 0:
         return False

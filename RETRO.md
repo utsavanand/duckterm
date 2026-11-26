@@ -1,3 +1,20 @@
+## 2026-11-26 — Attributes attach programs to files, not just to commands
+
+#496 turned off every program a repository's config can name for a command:
+fsmonitor, hooks, signature verifiers, textconv, ssh and credential helpers.
+Security then found two more that every flag left running. Attributes attach
+these to files, and a repository controls its own attributes through
+`.git/info/attributes`. `diff-files` re-reads a racy index entry through the
+file's `filter.<driver>.clean` (or `.process`), and `merge-tree` hands a
+both-sides change to `merge.<driver>.driver`. Each call now reads the
+repository's filter and merge driver names with one `git config` call, which
+runs nothing, and blanks them. A blanked merge driver fails, so the review
+reports a conflict for that file instead of guessing. The owner's own
+filters, such as git-lfs in the global config, still run.
+
+To check that a git call runs no repository program, list the config it
+reads, and also every attribute that can name a driver for a path.
+
 ## 2026-11-26 — Dropping the repo's helper doesn't stop the repo choosing the host
 
 #496 dropped repository credential helpers and kept the owner's, so private
