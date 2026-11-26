@@ -143,6 +143,10 @@ export interface OracleExchange {
   q: string;
   a: string;
   at: number;
+  // A message sent to one session: its inbox id, its name, and its reply so far.
+  key?: string;
+  to?: string;
+  reply?: { status: InboxMessage["status"]; answer: string | null; answered_at: number | null };
   dispatch?: {
     assigned?: boolean;
     request_key: string;

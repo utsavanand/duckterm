@@ -6,7 +6,7 @@ import { homeDefaults } from "./homeGrid";
 import { TowerAgent } from "./tower";
 import { edition, CODE, FULL } from "./test/editions";
 import { WidgetInstance } from "./Widgets";
-vi.mock("./api", () => ({ authHeaders: () => ({}), api: { controlTower: vi.fn(), folderPrs: vi.fn(), oracleChat: vi.fn(), fleetAsk: vi.fn(), clearOracleChat: vi.fn(), relay: vi.fn(), relayAnswer: vi.fn(), reviewDiff: vi.fn(), approvalState: vi.fn(), approvalKey: vi.fn() } }));
+vi.mock("./api", () => ({ authHeaders: () => ({}), api: { controlTower: vi.fn(), folderPrs: vi.fn(), oracleChat: vi.fn(), fleetAsk: vi.fn(), messageSession: vi.fn(), clearOracleChat: vi.fn(), relay: vi.fn(), relayAnswer: vi.fn(), reviewDiff: vi.fn(), approvalState: vi.fn(), approvalKey: vi.fn() } }));
 
 const NOW = 10_000_000_000;
 const insights: TowerInsights = { tokens: { days: 7, by_agent: {} }, mail: { sent: 0, answered: 0, nudges: 0 }, backup: { destination: null, status: null, finished_at: null }, remote: { available: false, count: 0 } };
@@ -114,6 +114,49 @@ it("removes and adds widgets, and the layout request carries the latest revision
   const put = vi.mocked(fetch).mock.calls.filter(call => call[1]?.method === "PUT").at(-1)!;
   expect(JSON.parse(put[1]!.body as string).revision).toBe("r0");
   expect(saved.instances.find(item => item.type === "mail")!.params).toEqual({ x: 0, y: 12, w: 3, h: 2 });
+});
+
+it("asks one session with @: the picker fills its name, Oracle sends it, and the answer comes back", async () => {
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+  const sent = { q: "@b ship it?", a: "Sent to **b**", at: 2, key: "m1", to: "b", reply: { status: "queued", answer: null, answered_at: null } };
+  vi.mocked(api.messageSession).mockResolvedValue({ delivered: "inbox", exchange: sent } as never);
+  await show([...FULL, "home", "oracle_messages"]);
+  const chat = within(screen.getByRole("article", { name: "Ask DuckTerm" }));
+  const box = chat.getByRole("textbox", { name: "Ask DuckTerm" });
+  fireEvent.change(box, { target: { value: "@b" } });
+  const picker = chat.getByRole("listbox", { name: "Ask a session" });
+  expect(within(picker).getAllByRole("option").map(o => o.textContent)).toEqual(["b Duckterm · busy"]);
+  fireEvent.click(within(picker).getByRole("option"));
+  expect(box).toHaveValue("@b ");
+  fireEvent.change(box, { target: { value: "@b ship it?" } });
+  await act(async () => { fireEvent.click(chat.getByRole("button", { name: "Ask" })); });
+  expect(api.messageSession).toHaveBeenCalledWith("b", "ship it?", "inbox", expect.any(String), "@b ship it?");
+  expect(api.fleetAsk).not.toHaveBeenCalled();
+  expect(chat.getByText("Waiting for b to answer…")).toBeVisible();
+  // The chat checks again until the session answers.
+  vi.mocked(api.oracleChat).mockResolvedValue({ messages: [{ ...sent, reply: { status: "answered", answer: "Yes, CI is green.", answered_at: 3 } }] } as never);
+  await act(async () => { vi.advanceTimersByTime(15_000); });
+  expect(chat.getByText("Yes, CI is green.")).toBeVisible();
+  vi.useRealTimers();
+});
+
+it("sends nothing to an @ name that is no session, and treats @ as text without Oracle messages", async () => {
+  vi.mocked(api.fleetAsk).mockResolvedValue({ exchange: { q: "@b hi", a: "Hello.", at: 1 } } as never);
+  await show([...FULL, "home", "oracle_messages"]);
+  let chat = within(screen.getByRole("article", { name: "Ask DuckTerm" }));
+  fireEvent.change(chat.getByRole("textbox", { name: "Ask DuckTerm" }), { target: { value: "@nobody hi" } });
+  await act(async () => { fireEvent.click(chat.getByRole("button", { name: "Ask" })); });
+  expect(chat.getByRole("alert")).toHaveTextContent('No session is named "nobody"');
+  expect(api.messageSession).not.toHaveBeenCalled();
+  cleanup();
+  await show();
+  chat = within(screen.getByRole("article", { name: "Ask DuckTerm" }));
+  fireEvent.change(chat.getByRole("textbox", { name: "Ask DuckTerm" }), { target: { value: "@b" } });
+  expect(chat.queryByRole("listbox")).toBeNull();
+  fireEvent.change(chat.getByRole("textbox", { name: "Ask DuckTerm" }), { target: { value: "@b hi" } });
+  await act(async () => { fireEvent.click(chat.getByRole("button", { name: "Ask" })); });
+  expect(api.fleetAsk).toHaveBeenCalledWith("@b hi");
+  expect(api.messageSession).not.toHaveBeenCalled();
 });
 
 it("answers in the Home chat from the shared fleet conversation, without the agents' notes", async () => {

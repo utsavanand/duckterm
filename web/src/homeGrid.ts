@@ -8,7 +8,7 @@ export const MIN_ROW = 44;
 export interface Box { x: number; y: number; w: number; h: number }
 const DEFAULTS: [string, number, number, number, number][] = [
   ["teams", 0, 0, 3, 2], ["autopilot", 0, 2, 3, 2], ["spend", 0, 4, 3, 8],
-  ["chat", 3, 0, 6, 6], ["needs-you", 3, 6, 6, 6], ["prs", 9, 0, 3, 12],
+  ["prs", 3, 0, 5, 6], ["needs-you", 3, 6, 5, 6], ["chat", 8, 0, 4, 12],
 ];
 // Size a widget gets when added, and the smallest it can be resized to.
 export const SIZES: Record<string, { w: number; h: number; minW: number; minH: number }> = {

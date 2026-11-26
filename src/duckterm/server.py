@@ -5316,6 +5316,7 @@ class Server:
                     _sent_line(str(row.get("name") or session_key), str(req.get("text"))),
                     int(time.time() * 1000),
                     key=message_id,
+                    to=str(row.get("name") or session_key),
                 )
             await _write_json(writer, 200, reply)
             return
@@ -5428,7 +5429,18 @@ class Server:
         path = paths.home() / "oracle-chat.json"
         if clear:
             oracle.clear_chat(path)
-        await _write_json(writer, 200, {"messages": oracle.load_chat(path)})
+            await _write_json(writer, 200, {"messages": oracle.load_chat(path)})
+            return
+        self.history.session_api._sweep()
+
+        def lookup(message_id: str) -> dict[str, Any] | None:
+            row = self.history._conn.execute(
+                "SELECT status, answer, answered_at FROM session_questions WHERE id = ?",
+                (message_id,),
+            ).fetchone()
+            return dict(row) if row else None
+
+        await _write_json(writer, 200, {"messages": oracle.refresh_replies(path, lookup)})
 
     async def _list_zsh_themes(self, writer: asyncio.StreamWriter) -> None:
         await _write_json(writer, 200, {"themes": zsh_themes.list_themes()})

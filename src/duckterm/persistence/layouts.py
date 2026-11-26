@@ -34,9 +34,9 @@ HOME_DEFAULTS = (
     ("teams", 0, 0, 3, 2),
     ("autopilot", 0, 2, 3, 2),
     ("spend", 0, 4, 3, 8),
-    ("chat", 3, 0, 6, 6),
-    ("needs-you", 3, 6, 6, 6),
-    ("prs", 9, 0, 3, 12),
+    ("prs", 3, 0, 5, 6),
+    ("needs-you", 3, 6, 5, 6),
+    ("chat", 8, 0, 4, 12),
 )
 _LOCK = threading.RLock()
 

@@ -65,6 +65,16 @@ button.rd-home-nav { cursor:pointer }
 .rd-home-suggest { display:flex; flex-wrap:wrap; gap:6px }
 .rd-home-suggest button { border:1px dashed var(--border-strong); background:none; border-radius:8px; font:inherit; font-size:0.75rem; padding:3px 10px; color:var(--text-soft); cursor:pointer }
 .rd-home-suggest button:hover:not(:disabled) { color:var(--text); border-style:solid }
+.rd-home-compose-wrap { position:relative }
+.rd-home-mention { position:absolute; left:0; right:0; bottom:calc(100% + 6px); z-index:5; display:flex; flex-direction:column; gap:2px; padding:6px; background:var(--card); border:1px solid var(--border-strong); border-radius:10px; box-shadow:0 12px 30px #0006 }
+.rd-home-mention > small { color:var(--text-soft); font-size:0.7rem; padding:2px 8px }
+.rd-home-mention button { display:flex; align-items:baseline; gap:8px; border:0; background:none; border-radius:6px; padding:6px 8px; font:inherit; font-size:0.82rem; color:var(--text); text-align:left; cursor:pointer }
+.rd-home-mention button:first-of-type, .rd-home-mention button:hover { background:var(--home-chip) }
+.rd-home-mention button small { color:var(--text-soft); font-size:0.72rem }
+.rd-home-reply { border:1px solid var(--border-strong); border-radius:10px; padding:8px 12px; font-size:0.84rem }
+.rd-home-reply small { color:var(--text-soft); font-size:0.72rem }
+.rd-home-reply p { margin:4px 0 0; white-space:pre-wrap; line-height:1.5 }
+.rd-home-reply-wait { margin:0; color:var(--text-soft); font-size:0.78rem }
 .rd-home-compose { display:flex; gap:8px; align-items:flex-end; border:1px solid var(--border-strong); border-radius:12px; padding:7px 7px 7px 12px; background:var(--card) }
 .rd-home-compose .rd-btn-primary:disabled { opacity:.85 }
 .rd-home-compose textarea { flex:1; border:0; background:none; resize:none; outline:none; font:inherit; font-size:0.875rem; color:var(--text); min-height:22px; max-height:90px }
@@ -73,7 +83,7 @@ button.rd-home-nav { cursor:pointer }
 .rd-home-row-link { border:0; background:none; padding:0; font:inherit; color:var(--text); text-align:left; cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
 .rd-home-row-link:hover { text-decoration:underline }
 
-.rd-home-usage { display:flex; flex-direction:column; gap:4px; width:100%; border:0; background:none; padding:0; text-align:left; font:inherit; color:var(--text); cursor:pointer }
+.rd-home-usage { display:flex; flex-direction:column; gap:4px; width:100%; height:100%; border:0; background:none; padding:0; text-align:left; font:inherit; color:var(--text); cursor:pointer }
 .rd-home-kpi { font-size:1.6rem; font-weight:600; letter-spacing:-.01em }
 .rd-home-kpi small { font-size:0.75rem; color:var(--text-soft); font-weight:400; margin-left:6px }
 .rd-home-spark { width:100%; height:46px; display:block }
@@ -138,7 +148,8 @@ button.rd-home-nav { cursor:pointer }
 .rd-home-risk.medium { background:var(--amber-bg); border-color:var(--amber-border); color:var(--wait) }
 .rd-home-risk.high { background:color-mix(in srgb, var(--danger) 14%, transparent); border-color:transparent; color:var(--danger) }
 
-.rd-home-days { list-style:none; margin:8px 0 0; padding:0; font-size:0.72rem }
+/* The day rows spread over whatever height the card has, so a tall Spend has no empty foot. */
+.rd-home-days { flex:1; display:flex; flex-direction:column; justify-content:space-around; list-style:none; margin:8px 0 0; padding:0; font-size:0.72rem }
 .rd-home-days li { display:grid; grid-template-columns:34px 1fr auto; gap:8px; align-items:center; padding:2px 0 }
 .rd-home-days li span { color:var(--text-soft) }
 .rd-home-days li i { height:6px; border-radius:3px; background:var(--brand-green); min-width:2px }
