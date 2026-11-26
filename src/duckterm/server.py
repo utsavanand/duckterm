@@ -2477,6 +2477,9 @@ class Server:
         if not isinstance(req, dict):
             await _write_json(writer, 400, {"error": "expected an object"})
             return
+        if "file_path" in req and "artifact_id" in req:
+            await _write_json(writer, 400, {"error": "Choose one feedback target"})
+            return
         if "file_path" in req:
             from duckterm.file_feedback import add_file_annotation
 

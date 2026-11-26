@@ -37,7 +37,11 @@ async def add_file_annotation(
         if row is None or key.startswith("~remote~"):
             raise APIError(404, "Local session unavailable")
         recorded_root = row.get("worktree_path") or row.get("cwd")
-        if not isinstance(recorded_root, str) or not Path(recorded_root).is_absolute():
+        if (
+            not isinstance(recorded_root, str)
+            or "\x00" in recorded_root
+            or not Path(recorded_root).is_absolute()
+        ):
             raise APIError(409, "Working directory unavailable. Refresh Code explorer.")
         file = await asyncio.to_thread(content, recorded_root, path)
         current = server.history.session(key)

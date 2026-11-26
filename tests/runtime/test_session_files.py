@@ -446,6 +446,7 @@ def test_file_feedback_auth_revision_scope_and_delivery(app, tmp_path, monkeypat
     assert send({**data, "file_path": "../secret"})[0] == 400
     assert send({**data, "file_path": str(path)})[0] == 400
     assert send({**data, "file_path": 42})[0] == 400
+    assert send({**data, "artifact_id": "ambiguous"})[0] == 400
     assert send({**data, "note": "é" * 4001})[0] == 400
     assert send()[0] == 409
     writes = []
