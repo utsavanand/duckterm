@@ -6,7 +6,7 @@ engine underneath, so the page and the terminal cannot disagree."""
 
 from __future__ import annotations
 
-import hashlib
+import copy
 import json
 import os
 import tempfile
@@ -61,6 +61,14 @@ def _harnesses(value: Any) -> list[str]:
     unknown = [h for h in value if h not in adapters.ADAPTERS]
     if unknown:
         raise KitApiError(400, f"unknown harness {unknown[0]!r}")
+    return list(dict.fromkeys(value))
+
+
+def _fallbacks(value: Any) -> list[str]:
+    if value in (None, ""):
+        return []
+    if not isinstance(value, list) or not all(isinstance(v, str) for v in value):
+        raise KitApiError(400, "fallbacks must be a list of component ids")
     return list(dict.fromkeys(value))
 
 
@@ -377,33 +385,27 @@ def repositories(paths: list[str]) -> list[str]:
     repository is left out. Git is asked every time: metadata changes while
     DuckTerm runs (a `git init`, a removed `.git`), and a Git directory
     need not be named `.git` (`--separate-git-dir`)."""
-    import subprocess
+    from duckterm.review import git as review_git
 
     out: set[str] = set()
     for folder in sorted({str(p) for p in paths}):
         if not os.path.isdir(folder):
             continue
         try:
-            proc = subprocess.run(
-                [
-                    "git",
-                    "-c",
-                    "core.fsmonitor=false",
-                    "-C",
-                    folder,
-                    "rev-parse",
-                    "--path-format=absolute",
-                    "--absolute-git-dir",
-                    "--git-common-dir",
-                    "--show-toplevel",
-                ],
-                capture_output=True,
-                text=True,
+            # review/git.run is the one way DuckTerm runs git in a folder a
+            # session reported: GIT_* stripped, fsmonitor off, no locks
+            stdout = review_git.run(
+                folder,
+                "rev-parse",
+                "--path-format=absolute",
+                "--absolute-git-dir",
+                "--git-common-dir",
+                "--show-toplevel",
                 timeout=5,
             )
-        except (OSError, subprocess.TimeoutExpired):
+        except review_git.ReviewGitError:
             continue
-        parts = proc.stdout.strip().splitlines() if proc.returncode == 0 else []
+        parts = stdout.strip().splitlines()
         if len(parts) != 3:
             continue
         git_dir, common, top = parts
@@ -500,14 +502,217 @@ def catalog(entries: list[dict[str, Any]], workspaces: list[dict[str, Any]]) -> 
 
 
 def plan_for(body: dict[str, Any]) -> dict[str, Any]:
+    """The dry run. Without a project it is the kit alone against every
+    harness (an empty folder): what each harness gets does not depend on the
+    folder, only conflicts do."""
     kit = _kit(body.get("kit"))
-    project = _project(body.get("project"))
     harnesses = _harnesses(body.get("harnesses"))
+    options, fallbacks = _options(body.get("options")), _fallbacks(body.get("fallbacks"))
     try:
-        p = planning.build(kit, project, harnesses, _options(body.get("options")))
+        if body.get("project"):
+            p = planning.build(kit, _project(body.get("project")), harnesses, options, fallbacks)
+        else:
+            with tempfile.TemporaryDirectory(prefix="kit-plan-") as empty:
+                p = planning.build(kit, Path(empty), harnesses, options, fallbacks)
     except ValueError as exc:
         raise KitApiError(400, str(exc)) from exc
     return {"inventory": inventory(kit), "plan": p.to_json()}
+
+
+def review(
+    body: dict[str, Any], registry: list[dict[str, Any]], workspaces: list[dict[str, Any]]
+) -> dict[str, Any]:
+    """What Enable would do for the chosen workspaces: the kit's matrix (one,
+    for every harness), and per repository known now only what differs there:
+    its conflicts and whether Codex trusts it (hooks run only then). `fixes`
+    lists what the owner can put right from the review."""
+    kit_name = str(body.get("kit") or "")
+    scope = str(body.get("scope") or "")
+    if scope not in ("all", "workspaces"):
+        raise KitApiError(400, "scope must be 'all' or 'workspaces'")
+    chosen = body.get("workspaces") or []
+    if not isinstance(chosen, list) or not all(isinstance(w, str) for w in chosen):
+        raise KitApiError(400, "workspaces must be a list of names")
+    kit_path = _registry_path(registry, kit_name)
+    kit = _kit(kit_path)
+    options, fallbacks = _options(body.get("options")), _fallbacks(body.get("fallbacks"))
+    policy = {"scope": scope, "workspaces": chosen}
+    harnesses = list(adapters.ADAPTERS)
+    matrix = plan_for(
+        {"kit": kit_path, "harnesses": harnesses, "options": options, "fallbacks": fallbacks}
+    )
+    has_hooks = any(c.kind == "hook" for c in kit.components)
+    repos: list[dict[str, Any]] = []
+    for w in workspaces:
+        name = str(w.get("name", ""))
+        if not policy_matches(policy, name):
+            continue
+        for project in w.get("repositories", []):
+            path = Path(str(project))
+            if not path.is_dir():
+                continue
+            try:
+                p = planning.build(kit, path, harnesses, options, fallbacks)
+            except ValueError as exc:
+                raise KitApiError(400, f"{project}: {exc}") from exc
+            installed = kit_name in (p.record.get("kits") or {})
+            repos.append(
+                {
+                    "workspace": name,
+                    "project": str(project),
+                    "installed": installed,
+                    "conflicts": [c.__dict__ for c in p.conflicts],
+                    "codex_trusted": codex_trusts(path) if has_hooks else None,
+                }
+            )
+    fixes: list[dict[str, Any]] = []
+    untrusted = [r["project"] for r in repos if r.get("codex_trusted") is False]
+    if untrusted:
+        fixes.append({"kind": "codex-trust", "projects": untrusted})
+    for row in matrix["plan"]["rows"]:
+        if row["kind"] != "knowledge":
+            continue
+        lacking = [
+            h
+            for h, status in row["harnesses"].items()
+            if status == adapters.NOT_SUPPORTED
+            and any(n.startswith(f"{h}: ") and "no path-scoped" in n for n in row["notes"])
+        ]
+        if lacking:
+            fixes.append({"kind": "fallback", "component": row["component"], "harnesses": lacking})
+    for r in repos:
+        for c in r["conflicts"]:
+            if c.get("kind") == "file-exists":
+                fixes.append({"kind": "replace", "project": r["project"], "path": c["path"]})
+    pending = [
+        str(w.get("name", ""))
+        for w in workspaces
+        if policy_matches(policy, str(w.get("name", ""))) and not w.get("repositories")
+    ]
+    return {**matrix, "repositories": repos, "pending": pending, "fixes": fixes}
+
+
+def codex_trusts(project: Path) -> bool:
+    """Codex runs a project's hooks only once the owner trusted it; the record
+    is `[projects."<path>"] trust_level = "trusted"` in ~/.codex/config.toml."""
+    config = Path.home() / ".codex" / "config.toml"
+    try:
+        data = tomllib.loads(config.read_text())
+    except (OSError, ValueError):
+        return False
+    projects = data.get("projects")
+    if not isinstance(projects, dict):
+        return False
+    for key in (str(project), str(Path(project).resolve())):
+        entry = projects.get(key)
+        if isinstance(entry, dict) and entry.get("trust_level") == "trusted":
+            return True
+    return False
+
+
+def fix(body: dict[str, Any]) -> dict[str, Any]:
+    """A Fix pressed in the review. `codex-trust`: mark each repository
+    trusted in Codex's own config, the record Codex itself writes when the
+    owner accepts its prompt; one click covers every kit and session there.
+    Owner decision 2026-11-25: DuckTerm writes Codex trust only here, on the
+    owner's click, never at install or SessionStart."""
+    kind = str(body.get("kind") or "")
+    if kind != "codex-trust":
+        raise KitApiError(400, f"unknown fix {kind!r}")
+    projects = body.get("projects") or []
+    if not isinstance(projects, list) or not projects:
+        raise KitApiError(400, "projects is required")
+    done = []
+    for raw in projects:
+        project = _project(raw)
+        if not (project / ".git").exists():
+            raise KitApiError(400, f"{project} is not a git repository")
+        _codex_trust(project)
+        done.append(str(project))
+    return {"kind": kind, "trusted": done}
+
+
+def _codex_trust(project: Path) -> None:
+    config = Path.home() / ".codex" / "config.toml"
+    if config.is_symlink():
+        raise KitApiError(500, f"{config} is a symlink; nothing is written through it")
+    text = config.read_text() if config.is_file() else ""
+    try:
+        data = tomllib.loads(text)
+    except ValueError as exc:
+        raise KitApiError(409, f"{config} does not parse; fix it first: {exc}") from exc
+    key = str(project)
+    raw_projects = data.get("projects")
+    projects: dict[str, Any] = raw_projects if isinstance(raw_projects, dict) else {}
+    entry = projects.get(key)
+    if isinstance(entry, dict) and entry.get("trust_level") == "trusted":
+        return
+    expected = copy.deepcopy(data)
+    expected.setdefault("projects", {})
+    expected["projects"].setdefault(key, {})["trust_level"] = "trusted"
+    header = f"[projects.{json.dumps(key, ensure_ascii=False)}]"
+    lines = text.splitlines()
+    if isinstance(entry, dict):
+        # the table exists with another level: replace its trust_level line
+        starts = [i for i, line in enumerate(lines) if line.strip() == header]
+        if len(starts) != 1:
+            raise KitApiError(
+                409,
+                f"{config} records {key} in a form this writer does not edit; trust it in Codex",
+            )
+        start = starts[0]
+        stop = next(
+            (i for i in range(start + 1, len(lines)) if lines[i].lstrip().startswith("[")),
+            len(lines),
+        )
+        body_lines = [
+            line for line in lines[start + 1 : stop] if not line.strip().startswith("trust_level")
+        ]
+        lines[start:stop] = [header, 'trust_level = "trusted"', *body_lines]
+        out = "\n".join(lines) + "\n"
+    else:
+        out = text + ("" if not text or text.endswith("\n") else "\n")
+        out += ("\n" if text.strip() else "") + header + "\n" + 'trust_level = "trusted"\n'
+    try:
+        written = tomllib.loads(out)
+    except ValueError as exc:
+        raise KitApiError(
+            409, f"{config}: could not add the entry safely; trust it in Codex ({exc})"
+        ) from exc
+    if (
+        written != expected
+    ):  # never leave Codex a config that says more or less than this one change
+        raise KitApiError(
+            409, f"{config}: the entry for {key} is not plain enough to edit; trust it in Codex"
+        )
+    config.parent.mkdir(parents=True, exist_ok=True)
+    _write_private(config, out)
+
+
+def copilot_flags(
+    project: str | Path, registry: list[dict[str, Any]]
+) -> tuple[list[str], list[str]]:
+    """The permission flags for a Copilot session in `project`, and the kits
+    whose flags were dropped. Flags come from the home-side install record,
+    computed at install from the tree the owner reviewed, and are passed only
+    while the kit's folder still hashes the same; the repository's own record
+    and the kit's current files are never read here, because an agent in the
+    repository can write the one and an unreviewed edit changes the other."""
+    flags: list[str] = []
+    dropped: list[str] = []
+    for kit_name, entry in install._load_home(Path(project)).items():
+        if not isinstance(entry, dict) or not entry.get("copilot_flags"):
+            continue
+        try:
+            root = _kit(_registry_path(registry, kit_name)).root
+        except KitApiError:
+            dropped.append(kit_name)
+            continue
+        if entry.get("digest") != kit_digest(root):
+            dropped.append(kit_name)
+            continue
+        flags += [str(f) for f in entry["copilot_flags"]]
+    return flags, dropped
 
 
 def install_kit(body: dict[str, Any]) -> dict[str, Any]:
@@ -515,7 +720,13 @@ def install_kit(body: dict[str, Any]) -> dict[str, Any]:
     project = _project(body.get("project"))
     harnesses = _harnesses(body.get("harnesses"))
     try:
-        p = planning.build(kit, project, harnesses, _options(body.get("options")))
+        p = planning.build(
+            kit,
+            project,
+            harnesses,
+            _options(body.get("options")),
+            _fallbacks(body.get("fallbacks")),
+        )
         report = install.apply(p, replace=bool(body.get("replace")))
     except (install.InstallRefused, ValueError, OSError) as exc:
         raise KitApiError(409, str(exc)) from exc
@@ -648,20 +859,7 @@ def remove_team(folder: str) -> None:
 # ── enable: which workspaces a kit is for, and installing accordingly ───────
 
 
-def kit_digest(root: Path) -> str:
-    """One hash over every regular file under the kit folder: path, size and
-    content, `.git` left out, symlinks left out (validate refuses them). Enable
-    pins the digest of the tree the owner reviewed; a folder that no longer
-    hashes the same (a `git pull`, an edit under ~/Downloads) installs nowhere
-    until the owner enables it again."""
-    h = hashlib.sha256()
-    for path in sorted(root.rglob("*")):
-        if ".git" in path.relative_to(root).parts or path.is_symlink() or not path.is_file():
-            continue
-        data = path.read_bytes()
-        h.update(f"{path.relative_to(root).as_posix()}\0{len(data)}\0".encode())
-        h.update(hashlib.sha256(data).digest())
-    return h.hexdigest()
+kit_digest = planning.kit_digest
 
 
 def _policy_file() -> Path:
@@ -764,6 +962,7 @@ def _install_where_missing(
     targets: list[tuple[str, str]],
     options: dict[str, str],
     replace: bool,
+    fallbacks: list[str] | None = None,
 ) -> dict[str, list[dict[str, Any]]]:
     out: dict[str, list[dict[str, Any]]] = {"installed": [], "already": [], "failed": []}
     for workspace, project in targets:
@@ -781,6 +980,7 @@ def _install_where_missing(
                     "project": project,
                     "harnesses": list(adapters.ADAPTERS),
                     "options": options,
+                    "fallbacks": fallbacks or [],
                     "replace": replace,
                 }
             )
@@ -809,6 +1009,11 @@ def enable(
         {"scope": "all"} if scope == "all" else {"scope": "workspaces", "workspaces": chosen}
     )
     policy["digest"] = kit_digest(_kit(kit_path).root)  # the tree the review showed
+    options, fallbacks = _options(body.get("options")), _fallbacks(body.get("fallbacks"))
+    if options:
+        policy["options"] = options
+    if fallbacks:
+        policy["fallbacks"] = fallbacks
     data = policies()
     data[kit_name] = policy
     _save_policies(data)
@@ -819,7 +1024,7 @@ def enable(
         for r in w.get("repositories", [])
     ]
     result = _install_where_missing(
-        kit_path, kit_name, targets, _options(body.get("options")), bool(body.get("replace"))
+        kit_path, kit_name, targets, options, bool(body.get("replace")), fallbacks
     )
     pending = [
         str(w.get("name", ""))
@@ -855,7 +1060,15 @@ def apply_policies(registry: list[dict[str, Any]], folder: str, project: str) ->
         # only the tree the owner reviewed at Enable; the catalog says "changed"
         if not policy.get("digest") or kit_digest(kit.root) != policy["digest"]:
             continue
-        result = _install_where_missing(kit_path, kit_name, [(folder, project)], {}, False)
+        # the same options and fixes the owner reviewed at Enable
+        result = _install_where_missing(
+            kit_path,
+            kit_name,
+            [(folder, project)],
+            _options(policy.get("options")),
+            False,
+            _fallbacks(policy.get("fallbacks")),
+        )
         if result["installed"]:
             done.append(kit_name)
     return done

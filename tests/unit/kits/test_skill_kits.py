@@ -134,7 +134,9 @@ def test_plan_reports_each_harness_honestly(tmp_path):
     scoped = _statuses(p, "sample-kit/knowledge/api-conventions")
     assert scoped["codex"] == adapters.NOT_SUPPORTED and scoped["claude-code"] == adapters.INSTALLED
     perms = _statuses(p, "sample-kit/permission/rules")
-    assert perms["copilot"] == adapters.NOT_SUPPORTED and perms["codex"] == adapters.INSTALLED
+    assert perms["copilot"] == adapters.INSTALLED and perms["codex"] == adapters.INSTALLED
+    row = next(r for r in p.rows() if r["component"] == "sample-kit/permission/rules")
+    assert any("passed as flags when DuckTerm launches Copilot" in n for n in row["notes"])
     assert set(_statuses(p, "sample-kit/settings/sport").values()) == {adapters.NOT_APPLICABLE}
     assert set(_statuses(p, "sample-kit/team/feature-squad").values()) == {adapters.OFFERED}
     paths = {f.path for f in p.files()}

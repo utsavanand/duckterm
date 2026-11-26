@@ -880,15 +880,22 @@ def _workspace(run: Run, folder: Path) -> tuple[str, str]:
     env = {**os.environ, "GIT_INDEX_FILE": str(index)}
 
     def git(*args: str) -> subprocess.CompletedProcess[str]:
+        # the repository's own config is a file an agent can write: no
+        # external diff driver, no textconv, no fsmonitor, no hooks path
         return subprocess.run(
-            ["git", *args], cwd=run.project, env=env, capture_output=True, text=True, timeout=120
+            ["git", "-c", "core.fsmonitor=false", "-c", "core.hooksPath=/dev/null", *args],
+            cwd=run.project,
+            env=env,
+            capture_output=True,
+            text=True,
+            timeout=120,
         )
 
     try:
         if git("read-tree", "HEAD").returncode != 0:
             return "", ""
         git("add", "-A", "--", ".", f":(exclude){RUNS}")
-        diff = git("diff", "--cached", "HEAD")
+        diff = git("diff", "--no-ext-diff", "--no-textconv", "--cached", "HEAD")
         tree = git("write-tree")
     except (OSError, subprocess.TimeoutExpired):
         return "", ""
