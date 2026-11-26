@@ -1,3 +1,24 @@
+## 2026-11-26 — Copy approved as a phrase loses the test the button had
+
+A revoke action moved from a standalone button to a phrase inside a sentence,
+which the owner preferred and approved. The wording was reviewed; the coverage
+was not. Nothing had asserted the old button either, so the change did not
+delete a test -- it inherited an absence, and the review of the new wording felt
+like the review of the behaviour.
+
+The uncovered part was not the link's presence but its destination, which is
+chosen server-side from the credential source: /settings/applications for a
+`gh auth login` OAuth grant, /settings/tokens for a pasted PAT. Neither page
+lists the other's entry, so a wrong destination shows the owner a list their
+credential is absent from -- indistinguishable from already revoked. A one-line
+UI element can still carry a branch, and a branch with two wrong-looking-correct
+outcomes deserves a test per outcome.
+
+Rule: when a control becomes prose, ask what asserted it before. "It is only a
+link" describes the markup, not the consequence. Mutation-check the new test
+before trusting it: collapsing the server branch to a single page, and
+hardcoding the href in the component, each had to fail something.
+
 ## 2026-11-25 — A tooltip shouldn't take clicks
 
 The Oracle tower's hover and focus card is fixed-position and drawn above the
