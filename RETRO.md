@@ -1,3 +1,12 @@
+## 2026-11-25 — Fixture completion and retry deadlines need explicit evidence
+
+A tmux fixture exposed its JSON path before write_text finished, so a reader
+could parse an empty file. Publish that fixture by atomic rename. A separate
+lock-recovery test mixed its behavior assertion with a 100 ms scheduling budget;
+three short sleeps can overrun that budget on a busy host. Test the production
+retry deadline with a controlled clock, and give the lock-recovery fixture its
+own wait budget. Do not relax production timeouts to make tests pass.
+
 ## 2026-11-25 — Repeated browser checks must not inherit moved fixture folders
 
 The unnest browser test used the fixed child name `Inner` and left it behind
