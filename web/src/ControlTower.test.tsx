@@ -51,7 +51,10 @@ it("shows what an agent is working on when hovered, and sends a pinned message t
   fireEvent.mouseEnter(duck);
   expect(screen.getByRole("tooltip")).toHaveTextContent("Fixed the fork race.");
   expect(screen.getByRole("tooltip")).not.toHaveTextContent("Next it will ship.");
+  // A tooltip lets clicks through to what it covers; once pinned it takes them.
+  expect(screen.getByRole("tooltip")).toHaveStyle({ pointerEvents: "none" });
   fireEvent.click(duck);
+  expect(screen.getByRole("dialog")).not.toHaveStyle({ pointerEvents: "none" });
   const box = screen.getByLabelText("Message main-qa");
   fireEvent.change(box, { target: { value: "please rerun QA" } });
   await act(async () => { fireEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Send" })); });
