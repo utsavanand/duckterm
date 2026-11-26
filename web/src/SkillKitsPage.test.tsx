@@ -70,8 +70,8 @@ it("adds a kit from a path and lands on its page, not installed anywhere", async
   vi.mocked(api.kitsCatalog).mockResolvedValueOnce(catalog).mockResolvedValue({ ...catalog, kits: [uvSuite, sample] });
   vi.mocked(api.kitsRegister).mockResolvedValue({ name: "sample-kit", path: "/kits/sample", version: "0.1.0", description: "" });
   render(<SkillKitsPage onClose={() => {}} fallback={null} />);
-  fireEvent.click(await screen.findByRole("button", { name: "Add skill kit…" }));
-  fireEvent.change(screen.getByLabelText("Kit folder"), { target: { value: "/kits/sample/skill-kit.toml" } });
+  fireEvent.click(await screen.findByRole("button", { name: "Add MetaHarness…" }));
+  fireEvent.change(screen.getByLabelText("MetaHarness folder"), { target: { value: "/kits/sample/skill-kit.toml" } });
   fireEvent.click(screen.getByRole("button", { name: "Add" }));
   await waitFor(() => expect(api.kitsRegister).toHaveBeenCalledWith("/kits/sample/skill-kit.toml", ""));
   expect(await screen.findByRole("heading", { name: /sample-kit/ })).toBeVisible();
@@ -124,7 +124,7 @@ it("enables a kit for chosen workspaces: one matrix in sections, what each harne
   expect(await screen.findByRole("heading", { name: "sample-kit is enabled" })).toBeVisible();
   expect(screen.getByText(/Waiting for a first session: Ungrouped/)).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Done" }));
-  expect(await screen.findByRole("heading", { name: "Skill kits" })).toBeVisible();
+  expect(await screen.findByRole("heading", { name: "MetaHarnesses" })).toBeVisible();
 });
 
 it("Codex trust and a conflicting file are fixed from the review's one strip", async () => {
@@ -149,8 +149,8 @@ it("Codex trust and a conflicting file are fixed from the review's one strip", a
   await waitFor(() => expect(screen.queryByText(/not trusted yet/)).toBeNull());
   expect(screen.getByText("codex: needs trust")).toBeVisible();
   expect(screen.getByText(/it is kept and the component skipped there/)).toBeVisible();
-  fireEvent.click(screen.getByRole("button", { name: "Fix · replace with the kit's" }));
-  expect(await screen.findByText(/it will be replaced with the kit's/)).toBeVisible();
+  fireEvent.click(screen.getByRole("button", { name: "Fix · replace with the MetaHarness's" }));
+  expect(await screen.findByText(/it will be replaced with the MetaHarness's/)).toBeVisible();
   expect(screen.queryByText(/can be fixed here/)).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Enable" }));
   await waitFor(() => expect(api.kitsEnable).toHaveBeenCalledWith({ kit: "sample-kit", scope: "workspaces", workspaces: ["payments"], options: {}, fallbacks: [], replace: true }, ""));
@@ -169,7 +169,7 @@ it("enabling for all workspaces with no repository yet still reviews the kit's m
   expect(screen.getByText("Skills")).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Enable" }));
   await waitFor(() => expect(api.kitsEnable).toHaveBeenCalledWith({ kit: "sample-kit", scope: "all", workspaces: undefined, options: {}, fallbacks: [], replace: false }, ""));
-  expect(await screen.findByText(/Every workspace you create from now on gets the kit/)).toBeVisible();
+  expect(await screen.findByText(/Every workspace you create from now on gets the MetaHarness/)).toBeVisible();
 });
 
 it("a dry run the server refuses stays in the wizard, shows the reason, and lets the owner go back", async () => {
@@ -226,15 +226,15 @@ it("browses to a kit folder: plain folders cannot be picked, a multi-kit folder 
   ] };
   vi.mocked(api.browse).mockImplementation(async (p?: string) => (p === "/Users/me/Downloads/uv-suite" ? uvSuiteFolder : downloads) as never);
   render(<SkillKitsPage onClose={() => {}} fallback={null} />);
-  fireEvent.click(await screen.findByRole("button", { name: "Add skill kit…" }));
+  fireEvent.click(await screen.findByRole("button", { name: "Add MetaHarness…" }));
   fireEvent.click(screen.getByRole("button", { name: "Browse…" }));
   expect(await screen.findByText("uv-suite")).toBeVisible();
-  expect(screen.getByText("skill kit")).toBeVisible();
-  expect(screen.getByText(/Not a skill kit: no skill-kit.toml here/)).toBeVisible();
-  expect(screen.getByRole("button", { name: "Use this kit folder" })).toBeDisabled();
+  expect(screen.getByText("MetaHarness")).toBeVisible();
+  expect(screen.getByText(/Not a MetaHarness: no metaharness.toml here/)).toBeVisible();
+  expect(screen.getByRole("button", { name: "Use this folder" })).toBeDisabled();
   fireEvent.click(screen.getByText("uv-suite"));
   expect(await screen.findByText(/This folder holds 2 kits/)).toBeVisible();
-  expect(screen.queryByRole("button", { name: "Use this kit folder" })).toBeNull();
+  expect(screen.queryByRole("button", { name: "Use this folder" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Use uv-suite-fast" }));
-  expect(screen.getByLabelText("Kit folder")).toHaveValue("/Users/me/Downloads/uv-suite/skill-kit.fast.toml");
+  expect(screen.getByLabelText("MetaHarness folder")).toHaveValue("/Users/me/Downloads/uv-suite/skill-kit.fast.toml");
 });

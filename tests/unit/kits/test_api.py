@@ -366,7 +366,7 @@ def test_copilot_flags_come_from_the_reviewed_install_and_stop_when_the_kit_chan
     assert ("--allow-tool", "shell(npm test)") in pairs and dropped == []
     assert all(flag in ("--allow-tool", "--deny-tool") for flag, _ in pairs)
     # an unreviewed edit of the kit widens nothing: the flags stop, by name
-    manifest = kit / "skill-kit.toml"
+    manifest = kit / "metaharness.toml"
     manifest.write_text(manifest.read_text().replace('match = "npm test"', 'match = "*"'))
     assert api.copilot_flags(project, registry) == ([], ["sample-kit"])
     # a record an agent wrote into another repository is not believed either
@@ -447,7 +447,7 @@ def test_register_refuses_a_legacy_manifest_instead_of_adding_an_empty_kit(tmp_p
     with pytest.raises(api.KitApiError) as e:
         api.register({"kit": str(root)})
     assert e.value.status == 400
-    assert "duckterm-harness.json" in str(e.value) and "skill-kit.toml" in str(e.value)
+    assert "duckterm-harness.json" in str(e.value) and "metaharness.toml" in str(e.value)
 
 
 def test_repositories_collapse_worktrees_and_drop_plain_or_deleted_folders(tmp_path):

@@ -14,7 +14,7 @@ from duckterm.core import agents_rules
 from duckterm.kits import adapters, install, manifest, plan, shim, validate
 
 REPO = Path(__file__).resolve().parents[3]
-SAMPLE = REPO / "examples" / "skill-kits" / "sample-kit"
+SAMPLE = REPO / "examples" / "metaharnesses" / "sample-kit"
 ALL = ["claude-code", "codex", "copilot", "opencode"]
 
 
@@ -30,7 +30,7 @@ def _statuses(p: plan.Plan, component: str) -> dict[str, str]:
 def _tiny_kit(tmp_path: Path, manifest_toml: str, files: dict[str, str]) -> manifest.Kit:
     root = tmp_path / "kit"
     root.mkdir()
-    (root / "skill-kit.toml").write_text(manifest_toml)
+    (root / "metaharness.toml").write_text(manifest_toml)
     for rel, text in files.items():
         path = root / rel
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -105,6 +105,52 @@ path = "flows/loop.json"
     assert any("event must be one of" in m for m in messages)
     assert any("command 'hooks/missing.sh' does not exist" in m for m in messages)
     assert any("edge back to 'a' needs `max_loops`" in m for m in messages)
+
+
+def test_the_old_manifest_name_still_loads_and_asks_for_the_rename(tmp_path):
+    """skill-kit.toml was the manifest until 2026-11-25; MetaHarnesses in the
+    wild (uv-suite) keep it until their authors rename, and still work."""
+    kit = _tiny_kit(
+        tmp_path,
+        'manifest_version = 1\nname = "k"\nversion = "1.0.0"\ndescription = "d"\n'
+        '[[components]]\nkind = "skill"\npath = "skills/s"\n',
+        {"skills/s/SKILL.md": "---\nname: s\ndescription: d\n---\n"},
+    )
+    assert kit.old_manifest is False
+    messages = [str(f) for f in validate.validate(kit)]
+    assert not any("old name" in m for m in messages)
+    root = tmp_path / "kit"
+    (root / "skill-kit.toml").write_text((root / "metaharness.toml").read_text())
+    (root / "metaharness.toml").unlink()
+    old = manifest.load(root)
+    assert old.old_manifest and old.name == "k" and len(old.components) == 1
+    assert any(
+        "skill-kit.toml is the old name; rename it to metaharness.toml" in str(f)
+        for f in validate.validate(old)
+    )
+    # the new name wins when both are present
+    (root / "metaharness.toml").write_text(
+        (root / "skill-kit.toml").read_text().replace('name = "k"', 'name = "new"')
+    )
+    assert manifest.load(root).name == "new"
+
+
+def test_browse_marks_both_manifest_names_and_lists_the_new_one_first(tmp_path):
+    from duckterm.helpers import browse
+
+    root = tmp_path / "kits"
+    (root / "a").mkdir(parents=True)
+    (root / "a" / "skill-kit.toml").write_text(
+        'manifest_version = 1\nname = "a"\nversion = "1.0.0"\ndescription = "d"\n'
+    )
+    (root / "a" / "metaharness.toml").write_text(
+        'manifest_version = 1\nname = "a-new"\nversion = "1.0.0"\ndescription = "d"\n'
+    )
+    (root / "a" / "skill-kit.fast.toml").write_text(
+        'manifest_version = 1\nname = "a-fast"\nversion = "1.0.0"\ndescription = "d"\n'
+    )
+    names = [m.name for m in browse._manifests(root / "a")]
+    assert names == ["metaharness.toml", "skill-kit.toml", "skill-kit.fast.toml"]
 
 
 def test_legacy_manifest_loads_with_no_components_and_a_rename_warning(tmp_path):
@@ -449,6 +495,7 @@ def test_kit_cli_is_behind_the_skill_kits_flag(tmp_path, monkeypatch, capsys):
     assert "skill_kits is disabled by its feature flag" in capsys.readouterr().err
     (tmp_path / "flags.json").write_text(json.dumps({"enabled": ["skill_kits"]}))
     assert cli.main(["kit", "validate", str(SAMPLE)]) == 0
+    assert cli.main(["metaharness", "validate", str(SAMPLE)]) == 0  # the name; kit is its alias
     assert "13 components" in capsys.readouterr().out
     project = tmp_path / "proj"
     project.mkdir()

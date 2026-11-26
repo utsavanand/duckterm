@@ -834,6 +834,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 1
     optional = {
         "kit": "skill_kits",
+        "metaharness": "skill_kits",
         "voice": "oracle",
         "snapshot": "checkpoints",
         "connector-run": "connectors",
@@ -864,7 +865,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         from duckterm import session_client
 
         return session_client.main(args)
-    if args.command == "kit":
+    if args.command in ("metaharness", "kit"):
         from duckterm.kits import cli as kits_cli
 
         return kits_cli.main(args)

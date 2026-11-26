@@ -24,7 +24,7 @@ def enabled_feature(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(release_features, "overrides", lambda: ({"skill_kits": True}, None))
 
 
-SAMPLE = Path(__file__).resolve().parents[2] / "examples" / "skill-kits" / "sample-kit"
+SAMPLE = Path(__file__).resolve().parents[2] / "examples" / "metaharnesses" / "sample-kit"
 
 
 async def _owner_post(port: int, token: str, path: str, payload: dict) -> tuple[int, dict]:

@@ -4,7 +4,7 @@ import { DirBrowser } from "./DirBrowser";
 import { Button, useToast } from "./ui";
 import "./skillKits.css";
 
-// The Skill kits page (Settings › Skill kits): the kits added to DuckTerm,
+// The MetaHarnesses page (Settings › MetaHarnesses): the MetaHarnesses added to DuckTerm,
 // what each holds, and the workspaces each is enabled for. Adding is three
 // steps: pick the kit folder, read what it holds, enable it for all
 // workspaces or chosen ones. Enabling installs into every matching
@@ -218,7 +218,7 @@ export function SkillKitsPage({
     try {
       const out = await api.kitsVerify(project, sessionKey);
       const drift = out.reports.filter((r) => r.missing.length || r.drifted.length);
-      toast(drift.length ? `${drift.length} kit(s) drifted in ${project}` : "verified", drift.length ? "err" : "ok");
+      toast(drift.length ? `${drift.length} MetaHarness(es) drifted in ${project}` : "verified", drift.length ? "err" : "ok");
       await refresh();
     } catch (e) {
       toast(`Verify failed: ${(e as Error).message}`, "err");
@@ -243,7 +243,7 @@ export function SkillKitsPage({
   const crumb = (
     <div className="rd-kits-crumb">
       <button onClick={onClose}>Settings</button><span>›</span>
-      {view.name === "list" ? <span>Skill kits</span> : <button onClick={() => setView({ name: "list" })}>Skill kits</button>}
+      {view.name === "list" ? <span>MetaHarnesses</span> : <button onClick={() => setView({ name: "list" })}>MetaHarnesses</button>}
       {view.name === "add" && <><span>›</span><span>Add</span></>}
       {view.name === "kit" && <><span>›</span><span>{view.kit}</span></>}
       {(view.name === "enable" || view.name === "review") && <><span>›</span><button onClick={() => setView({ name: "kit", kit: view.kit })}>{view.kit}</button><span>›</span><span>Enable</span></>}
@@ -252,7 +252,7 @@ export function SkillKitsPage({
   );
 
   return (
-    <div className="rd-kits-page" role="dialog" aria-label="Skill kits" ref={pageRef}>
+    <div className="rd-kits-page" role="dialog" aria-label="MetaHarnesses" ref={pageRef}>
       <div className="rd-kits-main">
         {crumb}
         {view.name === "list" && (
@@ -335,11 +335,11 @@ function ListView({ catalog, error, busy, onAdd, onOpen, onClose, onCreateTeam }
     <>
       <div className="rd-kits-head">
         <div>
-          <h1>Skill kits</h1>
-          <p>Kits added to DuckTerm and the workspaces they are enabled for. A kit teaches every harness how a team works: knowledge, skills, agents, hooks, permissions, tools, flows, and sometimes a procedure.</p>
+          <h1>MetaHarnesses</h1>
+          <p>MetaHarnesses added to DuckTerm and the workspaces they are enabled for. A MetaHarness teaches every harness how a team works: knowledge, skills, agents, hooks, permissions, tools, flows, and sometimes a procedure.</p>
         </div>
         <div className="rd-kits-actions">
-          <Button onClick={onAdd}>Add skill kit…</Button>
+          <Button onClick={onAdd}>Add MetaHarness…</Button>
           <Button variant="ghost" onClick={onClose}>Close</Button>
         </div>
       </div>
@@ -366,11 +366,11 @@ function ListView({ catalog, error, busy, onAdd, onOpen, onClose, onCreateTeam }
               </div>
             );
           })}
-          {catalog && kits.length === 0 && <div className="rd-kits-row" style={{ gridTemplateColumns: "1fr" }}><span className="rd-kits-sub">No kit is added yet. Add one from a folder on this machine, then enable it for your workspaces.</span></div>}
+          {catalog && kits.length === 0 && <div className="rd-kits-row" style={{ gridTemplateColumns: "1fr" }}><span className="rd-kits-sub">No MetaHarness is added yet. Add one from a folder on this machine, then enable it for your workspaces.</span></div>}
         </div>
       </section>
       <section className="rd-kits-section">
-        <h2>Teams these kits offer <span>a team is a workspace with a procedure; creating one makes a new workspace</span></h2>
+        <h2>Teams these MetaHarnesses offer <span>a team is a workspace with a procedure; creating one makes a new workspace</span></h2>
         <div className="rd-kits-table">
           <div className="rd-kits-prow"><span>Team</span><span>Roles and rules</span><span /></div>
           {teams.map(({ kit, procedure }) => (
@@ -421,23 +421,23 @@ function AddView({ busy, onCancel, onAdd }: { busy: boolean; onCancel: () => voi
   return (
     <>
       <div className="rd-kits-head">
-        <h1>Add skill kit</h1>
-        <span className="rd-kits-sub">Step 1 of 3 · pick the kit; nothing is installed yet</span>
+        <h1>Add MetaHarness</h1>
+        <span className="rd-kits-sub">Step 1 of 3 · pick the MetaHarness; nothing is installed yet</span>
       </div>
       <form className="rd-kits-form" style={{ gridTemplateColumns: "1fr" }} onSubmit={(e) => { e.preventDefault(); if (!browsing && path.trim()) onAdd(path.trim()); }}>
         <div>
-          <label htmlFor="rd-kits-kit" style={LABEL}>Kit folder</label>
+          <label htmlFor="rd-kits-kit" style={LABEL}>MetaHarness folder</label>
           <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
             <input id="rd-kits-kit" type="text" value={path} onChange={(e) => setPath(e.target.value)} placeholder="~/Downloads/uv-suite" autoFocus style={{ flex: 1 }} />
             <Button type="button" variant="ghost" onClick={() => setBrowsing((b) => !b)}>Browse…</Button>
           </div>
-          <div className="rd-kits-note">The folder a kit was downloaded or cloned into; it holds skill-kit.toml. When one folder holds several kits, Browse offers each by name. Only the manifest is read; no kit code runs.</div>
+          <div className="rd-kits-note">The folder a MetaHarness was downloaded or cloned into; it holds metaharness.toml (skill-kit.toml, the old name, still works). When one folder holds several, Browse offers each by name. Only the manifest is read; no MetaHarness code runs.</div>
           {browsing && (
             <DirBrowser
               browse={api.browse}
               start={path.trim() || undefined}
               kitsOnly
-              pickLabel="Use this kit folder"
+              pickLabel="Use this folder"
               onPick={(r) => { setPath(r.path); setBrowsing(false); }}
               onCancel={() => setBrowsing(false)}
             />
@@ -476,7 +476,7 @@ function KitView({ kit, busy, fromAdd, onEnable, onDisable, onRemove, onVerify, 
         <div>
           <h1>{kit.name} <span className="rd-kits-mono" style={{ fontWeight: 400, color: "var(--text-soft)" }}>{kit.version ?? ""}</span></h1>
           <p>{kit.error ?? kit.description} · <span className="rd-kits-mono">{kit.path}</span></p>
-          {fromAdd && <p className="rd-kits-sub">Step 2 of 3 · what the kit holds. Next, choose the workspaces it is for.</p>}
+          {fromAdd && <p className="rd-kits-sub">Step 2 of 3 · what the MetaHarness holds. Next, choose the workspaces it is for.</p>}
         </div>
         <div className="rd-kits-actions">
           {!fromAdd && <Button onClick={onEnable} disabled={!canEnable}>{kit.policy ? "Change workspaces…" : "Enable for workspaces…"}</Button>}
@@ -484,12 +484,12 @@ function KitView({ kit, busy, fromAdd, onEnable, onDisable, onRemove, onVerify, 
           {!fromAdd && (!confirmRemove ? <Button variant="ghost" onClick={() => setConfirmRemove(true)}>Remove from DuckTerm…</Button> : <Button variant="danger" onClick={onRemove} disabled={busy}>Confirm remove</Button>)}
         </div>
       </div>
-      {confirmRemove && <div className="rd-kits-note">Forgets the kit here. Repositories it is installed in keep their files; uninstall those first if you want them gone.</div>}
+      {confirmRemove && <div className="rd-kits-note">Forgets the MetaHarness here. Repositories it is installed in keep their files; uninstall those first if you want them gone.</div>}
       {kit.error && <div className="rd-kits-error">{kit.error}</div>}
       <div className="rd-kits-pills">
         <Pill tone={kit.policy ? "ok" : "mute"}>{policyText(kit)}</Pill>
         {(kit.pending ?? []).length > 0 && <Pill tone="warn">{kit.pending!.map(workspaceLabel).join(", ")}: installs at the first session</Pill>}
-        {kit.changed && <Pill tone="warn">the kit folder changed since it was enabled: nothing new installs until you enable it again</Pill>}
+        {kit.changed && <Pill tone="warn">the MetaHarness folder changed since it was enabled: nothing new installs until you enable it again</Pill>}
         {kit.inventory && <Pill tone={errors.length ? "bad" : "ok"}>{errors.length ? `${errors.length} manifest errors` : "validate ok"}{warnings ? ` · ${warnings} warnings` : ""}</Pill>}
         {kit.inventory && <Pill>{kit.inventory.component_count} components</Pill>}
         {kit.inventory && Object.keys(kit.inventory.options).length > 0 && <Pill>options: {Object.keys(kit.inventory.options).join(", ")}</Pill>}
@@ -591,7 +591,7 @@ function EnableView({ kit, workspaces, busy, fromAdd, error, onBack, onReview }:
       <div className="rd-kits-head">
         <div>
           <h1>Enable {kit.name} for…</h1>
-          <p>{fromAdd ? "Step 3 of 3 · " : ""}A workspace's sessions get the kit wherever they run, for every harness: its repositories known now at Enable, any other folder when a session starts in it.</p>
+          <p>{fromAdd ? "Step 3 of 3 · " : ""}A workspace's sessions get the MetaHarness wherever they run, for every harness: its repositories known now at Enable, any other folder when a session starts in it.</p>
         </div>
       </div>
       <div className="rd-kits-table">
@@ -620,7 +620,7 @@ function EnableView({ kit, workspaces, busy, fromAdd, error, onBack, onReview }:
           <select id={`rd-kits-opt-${name}`} value={options[name] ?? spec.default ?? ""} onChange={(e) => setOptions({ ...options, [name]: e.target.value })}>
             {(spec.choices ?? []).map((c) => <option key={c} value={c}>{c}{c === spec.default ? " (default)" : ""}</option>)}
           </select>
-          <div className="rd-kits-note">{spec.description ?? "A kit option: each choice turns components on or off."}</div>
+          <div className="rd-kits-note">{spec.description ?? "A MetaHarness option: each choice turns components on or off."}</div>
         </div>
       ))}
       {error && (
@@ -646,7 +646,7 @@ const KIND_ORDER = ["knowledge", "skill", "agent", "hook", "permission", "tool",
 function describeFix(fix: KitFix): string {
   if (fix.kind === "codex-trust") return `Fix · trust ${fix.projects.length === 1 ? "it" : `all ${fix.projects.length}`} in Codex now`;
   if (fix.kind === "fallback") return `Fix · load it always on ${fix.harnesses.join(", ")}`;
-  return "Fix · replace with the kit's";
+  return "Fix · replace with the MetaHarness's";
 }
 
 function ReviewView({ kit, view, busy, onBack, onFix, onEnable }: {
@@ -696,8 +696,8 @@ function ReviewView({ kit, view, busy, onBack, onFix, onEnable }: {
         {soft.map((c) => (
           <div className="rd-kits-fixrow" key={c.project + c.path}>
             <Pill tone={replace ? "ok" : "warn"}>conflict</Pill>
-            <span><span className="rd-kits-mono">{c.path}</span> {c.detail} in {workspaceLabel(c.workspace)}'s repository; {replace ? "it will be replaced with the kit's (the original is snapshotted first)." : "it is kept and the component skipped there."}</span>
-            {!replace && <button type="button" className="rd-kits-fix" disabled={busy} onClick={() => onFix({ kind: "replace", project: c.project, path: c.path })}>Fix · replace with the kit's</button>}
+            <span><span className="rd-kits-mono">{c.path}</span> {c.detail} in {workspaceLabel(c.workspace)}'s repository; {replace ? "it will be replaced with the MetaHarness's (the original is snapshotted first)." : "it is kept and the component skipped there."}</span>
+            {!replace && <button type="button" className="rd-kits-fix" disabled={busy} onClick={() => onFix({ kind: "replace", project: c.project, path: c.path })}>Fix · replace with the MetaHarness's</button>}
           </div>
         ))}
         {hard.map((c) => (
@@ -728,7 +728,7 @@ function ReviewView({ kit, view, busy, onBack, onFix, onEnable }: {
       </div>
 
       <div className="rd-kits-footer">
-        <span>No kit script runs during review or install. {hooks} hook script{hooks === 1 ? "" : "s"} run later, inside the harness, through DuckTerm's shim.</span>
+        <span>No MetaHarness script runs during review or install. {hooks} hook script{hooks === 1 ? "" : "s"} run later, inside the harness, through DuckTerm's shim.</span>
         <div className="rd-kits-actions">
           <Button variant="ghost" onClick={onBack}>Back</Button>
           <Button onClick={onEnable} disabled={busy || hard.length > 0 || errors.length > 0}>Enable</Button>
@@ -798,10 +798,10 @@ function DoneView({ kit, result, onOpen, onDone }: { kit: KitEntry; result: KitE
       <div className="rd-kits-card">
         {result.installed.length > 0 && <div>Installed into {result.installed.length} repositor{result.installed.length === 1 ? "y" : "ies"}: {result.installed.map((i) => <span key={i.project} className="rd-kits-mono" style={{ display: "block" }}>{workspaceLabel(i.workspace)} · {i.project}</span>)}</div>}
         {result.already.length > 0 && <div className="rd-kits-sub">Already installed: {result.already.map((i) => workspaceLabel(i.workspace)).join(", ")}</div>}
-        {result.pending.length > 0 && <div>Waiting for a first session: {result.pending.map(workspaceLabel).join(", ")}. The kit installs when a session starts there.</div>}
+        {result.pending.length > 0 && <div>Waiting for a first session: {result.pending.map(workspaceLabel).join(", ")}. The MetaHarness installs when a session starts there.</div>}
         {result.failed.map((f) => <div key={f.project} className="rd-kits-error">{workspaceLabel(f.workspace)} · {f.project}: {f.error}</div>)}
-        {result.installed.length + result.already.length + result.pending.length + result.failed.length === 0 && <div className="rd-kits-sub">No workspace matches yet. Every workspace you create from now on gets the kit at its first session.</div>}
-        {(kit.flows ?? []).length > 0 && <div className="rd-kits-note">Flows are enabled with the kit: {(kit.flows ?? []).map((f) => `/${f}`).join(", ")} in a session of an installed repository.</div>}
+        {result.installed.length + result.already.length + result.pending.length + result.failed.length === 0 && <div className="rd-kits-sub">No workspace matches yet. Every workspace you create from now on gets the MetaHarness at its first session.</div>}
+        {(kit.flows ?? []).length > 0 && <div className="rd-kits-note">Flows are enabled with the MetaHarness: {(kit.flows ?? []).map((f) => `/${f}`).join(", ")} in a session of an installed repository.</div>}
       </div>
       <div className="rd-kits-footer">
         <span />

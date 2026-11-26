@@ -62,6 +62,8 @@ def validate(kit: m.Kit) -> list[Finding]:
     if kit.legacy:
         warn("manifest", f"{m.LEGACY_MANIFEST} is the retired name; rename to {m.MANIFEST}")
         return out
+    if kit.old_manifest:
+        warn("manifest", f"{m.OLD_MANIFEST} is the old name; rename it to {m.MANIFEST}")
     if not m.NAME_RE.match(kit.name):
         err("manifest", f"name {kit.name!r} must match [a-z0-9-], 1-64 chars")
     if not m.SEMVER_RE.match(kit.version):

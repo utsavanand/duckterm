@@ -445,7 +445,7 @@ def _agents_block(
                 text=text,
                 status="active",
                 source="kit",
-                heading=f"Skill kit {kit.name}",
+                heading=f"MetaHarness {kit.name}",
                 added=time.strftime("%Y-%m-%d"),
                 kit=kit.name,
                 kit_version=kit.version,
