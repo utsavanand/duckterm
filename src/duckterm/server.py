@@ -2270,6 +2270,14 @@ class Server:
         at, owners = self._branch_owners_cache
         if not refresh and time.time() - at < review_lists.CACHE_SECONDS:
             return owners
+        previous = self._branch_owners_refresh
+        if refresh and previous is not None:
+            # An explicit refresh must include pushes made after an older scan
+            # began. Wait for that scan, then start (or join) a newer one.
+            with contextlib.suppress(Exception):
+                await asyncio.shield(previous)
+            if self._branch_owners_refresh is previous:
+                self._branch_owners_refresh = None
         task = self._branch_owners_refresh
         if task is None:
             since = int((time.time() - review_lists.PUSH_DAYS * 86400) * 1000)
@@ -2286,7 +2294,8 @@ class Server:
             self._branch_owners_refresh = task
 
             def finished(done: asyncio.Task[dict[tuple[str, str], str]]) -> None:
-                self._branch_owners_refresh = None
+                if self._branch_owners_refresh is done:
+                    self._branch_owners_refresh = None
                 # A disconnected caller must neither cancel the shared scan nor
                 # leave an unobserved exception if all callers have gone away.
                 if not done.cancelled():

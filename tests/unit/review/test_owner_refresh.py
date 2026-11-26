@@ -70,7 +70,7 @@ def test_one_cancelled_request_does_not_cancel_other_folder_or_repeat_scan(
 
         monkeypatch.setattr(asyncio, "to_thread", worker)
         first = asyncio.create_task(server._branch_owners(False))
-        second = asyncio.create_task(server._branch_owners(True))
+        second = asyncio.create_task(server._branch_owners(False))
         await entered.wait()
         first.cancel()
         with pytest.raises(asyncio.CancelledError):
@@ -79,6 +79,36 @@ def test_one_cancelled_request_does_not_cancel_other_folder_or_repeat_scan(
         assert await second == owners
         assert await server._branch_owners(False) == owners
         assert calls == 1
+
+    asyncio.run(scenario())
+
+
+def test_explicit_refresh_observes_pushes_after_the_inflight_scan_started(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def scenario() -> None:
+        server = subject()
+        entered, release = asyncio.Event(), asyncio.Event()
+        calls = 0
+
+        async def worker(read):
+            nonlocal calls
+            calls += 1
+            result = {("/repo", f"push-{calls}"): "author"}
+            entered.set()
+            await release.wait()
+            return result
+
+        monkeypatch.setattr(asyncio, "to_thread", worker)
+        background = asyncio.create_task(server._branch_owners(False))
+        await entered.wait()
+        requested = asyncio.create_task(server._branch_owners(True))
+        await asyncio.sleep(0)  # Let the request join the still-blocked background scan.
+        release.set()
+        assert await background == {("/repo", "push-1"): "author"}
+        assert await requested == {("/repo", "push-2"): "author"}
+        assert await server._branch_owners(False) == {("/repo", "push-2"): "author"}
+        assert calls == 2
 
     asyncio.run(scenario())
 
