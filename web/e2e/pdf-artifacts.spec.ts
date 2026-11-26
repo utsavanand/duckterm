@@ -62,6 +62,7 @@ test("PDF pages, selections, scans and feedback preserve exact versions", async 
     await register("/saved/review.pdf", "Saved PDF review", Buffer.concat([pdf,Buffer.from("\n% updated")]));
     await page.getByRole("button", { name: "Leave feedback" }).click(); await feedback.getByLabel("Feedback to agent").fill("Keep my draft"); await feedback.getByRole("button", { name: "Send ⌘↵" }).click();
     await expect(feedback.getByRole("alert")).toContainText("This artifact changed"); await expect(feedback.getByLabel("Feedback to agent")).toHaveValue("Keep my draft"); await feedback.getByRole("button", { name: "Cancel" }).click();
+    await page.getByRole("button", {name:"Comments (2)"}).click();
     await page.getByText("Earlier versions (2)").click(); await expect(page.getByRole("button", { name: "Go to page 2" })).toHaveCount(0);
     await page.getByRole("button", { name: "PDF Unreadable PDF" }).click(); await expect(page.getByRole("alert")).toContainText("could not be read"); await expect(page.getByRole("link", { name: "Download" })).toBeVisible();
     await tabs.getByRole("button", { name: "Code explorer", exact: true }).click(); await page.getByRole("button", { name: /guide.pdf/ }).click();
