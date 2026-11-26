@@ -57,7 +57,7 @@ export default async function globalSetup() {
   const testCodexRoot = join(home, "test-codex");
   mkdirSync(join(testClaudeRoot, "projects"), { recursive: true });
   mkdirSync(join(testCodexRoot, "sessions"), { recursive: true });
-  // The Skill kits page installs only for harnesses found on PATH; CI has no
+  // The MetaHarnesses page installs only for harnesses found on PATH; CI has no
   // Claude Code, so a no-op stub stands in. Nothing launches it
   // (DUCKTERM_NO_TERMINAL), it only has to exist.
   const stubBin = join(home, "bin");

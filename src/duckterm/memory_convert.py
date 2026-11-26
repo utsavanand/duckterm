@@ -185,7 +185,7 @@ def _still_needed(root: Path, converted: set[str]) -> set[str]:
 
 
 def convert(conn: sqlite3.Connection, key: str, trash: Path, anchor: Path) -> dict[str, Any]:
-    """Convert one agent's cited raw versions; the raw files go to `trash`.
+    """Convert one agent's cited raw versions; the raw files go to `trash`/`key`.
 
     `trash` must lie under `anchor`; every folder below the anchor is opened
     without following symlinks.
@@ -201,7 +201,7 @@ def convert(conn: sqlite3.Connection, key: str, trash: Path, anchor: Path) -> di
     # Opened before anything changes: a holding folder that can't be reached
     # (a symlink, or macOS privacy protection) must stop the run
     # here, not after every reference has been rebound.
-    trash_fd = open_below(anchor, trash)
+    trash_fd = open_below(anchor, trash / key)
     try:
         return _convert(conn, key, root, trash_fd, report)
     finally:
@@ -334,7 +334,7 @@ def _convert(
             if (root / (snapshot + suffix)).is_file()
         ]
         if names:
-            report["removed"] = _move_to_trash(root, names, trash_fd, key)
+            report["removed"] = _move_to_trash(root, names, trash_fd)
     return report
 
 
@@ -362,17 +362,13 @@ def open_below(anchor: Path, target: Path) -> int:
     return fd
 
 
-def _move_to_trash(root: Path, names: list[str], trash_fd: int, key: str) -> list[dict[str, Any]]:
+def _move_to_trash(root: Path, names: list[str], destination: int) -> list[dict[str, Any]]:
     """Move files by hard link and unlink, through directories opened without
     following symlinks, so nothing in the holding folder is replaced and
     nothing lands outside it. One on another volume is refused, not copied."""
     moved = []
-    fds = [os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)]
+    source = os.open(root, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
     try:
-        with contextlib.suppress(FileExistsError):
-            os.mkdir(key, 0o700, dir_fd=trash_fd)
-        fds.append(os.open(key, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=trash_fd))
-        source, destination = fds
         for name in names:
             info = os.stat(name, dir_fd=source, follow_symlinks=False)
             if not stat.S_ISREG(info.st_mode):
@@ -397,6 +393,5 @@ def _move_to_trash(root: Path, names: list[str], trash_fd: int, key: str) -> lis
             os.unlink(name, dir_fd=source)
             moved.append({"file": name, "bytes": info.st_size})
     finally:
-        for fd in fds:
-            os.close(fd)
+        os.close(source)
     return moved

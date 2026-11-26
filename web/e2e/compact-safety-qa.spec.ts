@@ -2,7 +2,7 @@ import {expect,test} from '@playwright/test';
 import {mkdtempSync,writeFileSync,readFileSync,rmSync} from 'node:fs';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
-import {api,apiDelete,apiPost,base} from './helpers';
+import {apiDelete,apiPost,base,fixtureHookIdentity} from './helpers';
 for(const runtime of ['codex','claude-code']) test(`Compact idle submission and busy/approval safety (${runtime})`,async({page})=>{
  const dir=mkdtempSync(join(tmpdir(),'compact-qa-')); const script=join(dir,'agent.py'), journal=join(dir,'receipts.jsonl'), bytes=join(dir,'input.bin'); let key='';
  writeFileSync(journal,'');writeFileSync(bytes,'');
@@ -12,7 +12,7 @@ for(const runtime of ['codex','claude-code']) test(`Compact idle submission and 
  const receipts=()=>readFileSync(journal,'utf8').trim().split('\n').filter(Boolean).map(s=>JSON.parse(s));
  try{
  const launch=await apiPost('/sessions/launch',{command:`python3 -u ${script}`,cwd:dir,name:`QA compact ${runtime}`,runtime,test:true,in_terminal:false});expect(launch.status).toBe(200);key=String(launch.body.session_key);
- const listing=await (await api('/sessions')).json();const binding=JSON.parse(listing.sessions.find((s: {session_key:string})=>s.session_key===key).restart_json || '{}').native_binding;nativeId=binding?.native_id;generation=binding?.generation;
+ const identity=await fixtureHookIdentity(key);nativeId=identity.session_id;generation=identity.launch_generation;
  await page.goto(base());await page.locator('.rd-row-name',{hasText:`QA compact ${runtime}`}).click();await expect(page.locator('.rd-terminal-slot:visible .xterm-rows')).toContainText('QA_READY');
  const context=page.locator('details',{has:page.locator('summary',{hasText:'Active context'})});if(await context.getAttribute('open')===null)await context.locator('summary').click();
  const button=context.getByRole('button',{name:'Compact',exact:true});

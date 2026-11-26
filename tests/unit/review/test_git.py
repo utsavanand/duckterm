@@ -1,3 +1,4 @@
+import contextlib
 import subprocess
 from pathlib import Path
 
@@ -110,3 +111,51 @@ def test_remote_heads_and_fetch_track_pushes(git_repo: Path, tmp_path: Path) -> 
     assert heads is not None and heads["duckterm/abc"] == run(clone, "rev-parse", "HEAD")
     assert git.fetch(clone, ["main", "duckterm/abc"]) is None
     assert git.ref_exists(clone, "refs/remotes/origin/duckterm/abc")
+
+
+def _signed_head(repo: Path) -> None:
+    head, _, message = run(repo, "cat-file", "commit", "HEAD").partition("\n\n")
+    # Drop a signature the host's own git config may already have added.
+    head = "\n".join(line for line in head.split("\n") if not line.startswith(("gpgsig", " ")))
+    signature = " -----BEGIN PGP SIGNATURE-----\n \n AAAA\n -----END PGP SIGNATURE-----"
+    signed = subprocess.run(
+        ["git", "-C", str(repo), "hash-object", "-t", "commit", "-w", "--stdin"],
+        input=f"{head}\ngpgsig{signature}\n\n{message}\n",
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    run(repo, "reset", "-q", "--hard", signed)
+
+
+def _verifier(repo: Path, program: str) -> list[str]:
+    _signed_head(repo)
+    run(repo, "config", "log.showSignature", "true")
+    run(repo, "config", "gpg.program", program)
+    return ["log", "-1"]
+
+
+def _lazy_fetch(repo: Path, program: str) -> list[str]:
+    run(repo, "config", "core.repositoryformatversion", "1")
+    run(repo, "config", "extensions.partialClone", "origin")
+    run(repo, "config", "remote.origin.url", "ssh://example.invalid/x")
+    run(repo, "config", "remote.origin.promisor", "true")
+    run(repo, "config", "core.sshCommand", program)
+    (repo / ".git/refs/tags/v9").write_text("12" * 20 + "\n")
+    return ["tag", "--list", "v*", "--sort=-creatordate"]
+
+
+@pytest.mark.parametrize("arrange", [_verifier, _lazy_fetch])
+def test_a_repos_config_cannot_run_a_program(git_repo: Path, tmp_path: Path, arrange) -> None:
+    # Sessions report the folders review reads and can write their .git/config.
+    marker = tmp_path / "ran"
+    program = tmp_path / "program.sh"
+    program.write_text(f"#!/bin/sh\ntouch {marker}\nexit 1\n")
+    program.chmod(0o755)
+    args = arrange(git_repo, str(program))
+    subprocess.run(["git", "-C", str(git_repo), *args], capture_output=True)
+    assert marker.exists()  # plain git really runs it
+    marker.unlink()
+    with contextlib.suppress(git.ReviewGitError):
+        git.run(git_repo, *args)
+    assert not marker.exists()

@@ -34,7 +34,9 @@ def test_interactive_launch_ignores_inherited_no_color(tmp_path, piped, explicit
     result = tmp_path / "color.json"
     script = (
         "import json,os,pathlib,time; "
-        f"pathlib.Path({str(result)!r}).write_text(json.dumps(os.environ.get('NO_COLOR'))); "
+        f"p=pathlib.Path({str(result)!r}); "
+        "p.with_suffix('.tmp').write_text(json.dumps(os.environ.get('NO_COLOR'))); "
+        "p.with_suffix('.tmp').replace(p); "
         "print('PLAIN' if os.environ.get('NO_COLOR') else '\\x1b[32mGREEN\\x1b[0m', flush=True); "
         "time.sleep(30)"
     )
