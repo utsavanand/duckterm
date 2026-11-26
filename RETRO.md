@@ -1,3 +1,10 @@
+## 2026-11-25 — Choosing a recipient isn't approving the words
+
+Ask Oracle sent at once after the owner picked an agent on a "which agent?"
+card, whenever the model's text was a substring of what the owner typed. A
+fragment can flip the meaning ("not to merge" becomes "merge"), and the owner
+never saw it. A pick now opens the same Send card as any other plan.
+
 ## 2026-11-25 — Styling narration is not the same as removing it
 
 The connector panel was reviewed as "looks bad, not clean", so the first pass
