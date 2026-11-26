@@ -1,3 +1,17 @@
+## 2026-11-25 — A tooltip shouldn't take clicks
+
+The Oracle tower's hover and focus card is fixed-position and drawn above the
+page. Left open, it intercepted the click meant for the Needs you tile beneath
+it, which CI saw as a 30 s timeout (three times). fb421590 changed the spec to
+dismiss it first; the product now lets clicks through until the card is pinned.
+
+## 2026-11-25 — Choosing a recipient isn't approving the words
+
+Ask Oracle sent at once after the owner picked an agent on a "which agent?"
+card, whenever the model's text was a substring of what the owner typed. A
+fragment can flip the meaning ("not to merge" becomes "merge"), and the owner
+never saw it. A pick now opens the same Send card as any other plan.
+
 ## 2026-11-25 — Interrupted sessions retain unfinished requests
 
 QA caught a regression in the Unanswered cleanup fix: both lifecycle paths
