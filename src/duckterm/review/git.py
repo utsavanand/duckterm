@@ -17,6 +17,23 @@ class ReviewGitError(RuntimeError):
     pass
 
 
+# The repository's own config can name programs git will run: an fsmonitor,
+# and with log.showSignature a signature verifier. The repo path often comes
+# from a session, so none of them may run as the server.
+_NO_REPO_PROGRAMS = (
+    "-c",
+    "core.fsmonitor=false",
+    "-c",
+    "log.showSignature=false",
+    "-c",
+    "gpg.program=false",
+    "-c",
+    "gpg.ssh.program=false",
+    "-c",
+    "gpg.x509.program=false",
+)
+
+
 def _env() -> dict[str, str]:
     env = {
         k: v
@@ -30,7 +47,7 @@ def _env() -> dict[str, str]:
 def run(path: str | Path, *args: str, timeout: float = 15) -> str:
     try:
         result = subprocess.run(
-            ["git", "-c", "core.fsmonitor=false", "-C", str(path), *args],
+            ["git", *_NO_REPO_PROGRAMS, "-C", str(path), *args],
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -136,8 +153,7 @@ def conflicts(repo: str | Path, base: str, head: str) -> bool | None:
         result = subprocess.run(
             [
                 "git",
-                "-c",
-                "core.fsmonitor=false",
+                *_NO_REPO_PROGRAMS,
                 "-C",
                 str(repo),
                 "merge-tree",
