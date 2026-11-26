@@ -113,6 +113,34 @@ def test_one_sessions_burst_of_artifacts_is_one_event() -> None:
     ]
 
 
+def test_a_repos_signature_verifier_never_runs(repo, tmp_path) -> None:
+    # Security #485: a session names the folder, so its .git/config must not
+    # get a program run as the server via log.showSignature.
+    marker = tmp_path / "ran"
+    verifier = tmp_path / "verify.sh"
+    verifier.write_text(f"#!/bin/sh\ntouch {marker}\n")
+    verifier.chmod(0o755)
+    commit = subprocess.run(
+        ["git", "-C", str(repo), "cat-file", "commit", "HEAD~1"], capture_output=True, text=True
+    ).stdout
+    head, _, message = commit.partition("\n\n")
+    signature = " -----BEGIN PGP SIGNATURE-----\n \n AAAA\n -----END PGP SIGNATURE-----"
+    signed = subprocess.run(
+        ["git", "-C", str(repo), "hash-object", "-t", "commit", "-w", "--stdin"],
+        input=f"{head}\ngpgsig{signature}\n\n{message}",
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    git(repo, "reset", "-q", "--hard", signed)
+    git(repo, "config", "log.showSignature", "true")
+    git(repo, "config", "gpg.program", str(verifier))
+    subprocess.run(["git", "-C", str(repo), "log", "-1", "--merges"], capture_output=True)
+    assert marker.exists()  # the signed PR merge really runs it
+    marker.unlink()
+    fleet_pulse.collect([session(repo)], [], int(time.time() * 1000))
+    assert not marker.exists()
+
+
 def test_route_needs_the_flag_and_returns_artifacts(world) -> None:  # noqa: F811
     server, owner, _, history = world
     assert dispatch(server, "GET", "/fleet/pulse", owner)[0] == 403

@@ -6,6 +6,19 @@ arrows were drawn over the duck labels. A team with several pods now takes the
 full row and the arrows draw behind the ducks. Only the real-data preview found
 either problem.
 
+## 2026-11-25 — A path a session names is code the server may run
+
+The Pulse runs `git log` on every recent session's folder, and the folder
+comes from hook reports. Security found that a repository's own config with
+`log.showSignature=true` makes `git log` run its `gpg.program` to verify a
+signed commit, so any agent able to write a .git/config could have the server
+run its program every 30 s. review/git already turned off the fsmonitor for
+the same reason; signature verifiers are the same class. Every review git call
+now passes `log.showSignature=false` and points all three gpg programs at
+`false`. The first regression test passed without the fix because the signed
+commit wasn't a merge, which `--merges` never shows; it now signs the PR merge
+and checks the program really runs without the overrides.
+
 ## 2026-11-25 — Tabs that unmount take the owner's draft with them
 
 The Fleet monitor rendered only the selected tab, so a look at Agent fleet
