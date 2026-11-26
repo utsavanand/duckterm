@@ -209,20 +209,20 @@ test("desktop folders without the inbox capability use core HTTP despite a nativ
   }
 });
 
-test("Code combines files and artifacts and offers folder chat without the Oracle", async ({ page }) => {
+test("Code separates explorer and artifacts and offers folder chat without the Oracle", async ({ page }) => {
   await forEdition(page, "code", CODE);
   const requests = recordRequests(page);
   await withSession("code-agent", async folder => {
     await open(page, folder, "code-agent");
     const views = page.locator(".rd-view-toggle");
-    for (const name of ["Timeline", "Artifacts", "PRs"]) await expect(views.getByRole("button", { name, exact: true })).toBeVisible();
+    for (const name of ["Timeline", "Code explorer", "Artifacts", "PRs"]) await expect(views.getByRole("button", { name, exact: true })).toBeVisible();
     await expect(views.getByRole("button", { name: /^Inbox/ })).toBeVisible();
     await expect(page.getByRole("button", { name: "Oracle", exact: true })).toHaveCount(0);
-    await views.getByRole("button", { name: "Artifacts" }).click();
-    const files = page.getByRole("region", { name: "Session files" });
+    await views.getByRole("button", { name: "Code explorer" }).click();
+    const files = page.getByRole("region", { name: "Code explorer" });
     await files.getByRole("button", { name: /notes.txt/ }).click();
     await expect(files).toContainText("EDITION_FILE");
-    await expect(files.getByRole("group", { name: "Files filter" })).toBeVisible();
+    await expect(files.getByRole("textbox", { name: "Filter loaded files" })).toBeVisible();
     await page.locator(".rd-group-name", { hasText: folder }).click();
     const folderView = page.getByRole("region", { name: `Workspace ${folder}` });
     await expect(folderView.getByRole("tab")).toHaveText(["Overview", "Chat", "Artifacts", "Pull requests"]);
@@ -247,7 +247,7 @@ test("Full keeps every view, including pull request review", async ({ page }) =>
   await withSession("full-agent", async folder => {
     await open(page, folder, "full-agent");
     const views = page.locator(".rd-view-toggle");
-    for (const name of ["Timeline", "Artifacts", "PRs"]) await expect(views.getByRole("button", { name, exact: true })).toBeVisible();
+    for (const name of ["Timeline", "Code explorer", "Artifacts", "PRs"]) await expect(views.getByRole("button", { name, exact: true })).toBeVisible();
     await expect(page.getByRole("button", { name: "Oracle", exact: true })).toBeVisible();
     await page.locator(".rd-group-name", { hasText: folder }).click();
     // e2e turns every development flag on (global-setup), so autopilot's Flows tab shows too.

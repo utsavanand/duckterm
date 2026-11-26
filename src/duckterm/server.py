@@ -2477,6 +2477,11 @@ class Server:
         if not isinstance(req, dict):
             await _write_json(writer, 400, {"error": "expected an object"})
             return
+        if "file_path" in req:
+            from duckterm.file_feedback import add_file_annotation
+
+            await add_file_annotation(self, writer, session_key, req)
+            return
         if "artifact_id" in req:
             await self._add_artifact_annotation(writer, session_key, req)
             return

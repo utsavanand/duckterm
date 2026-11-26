@@ -413,3 +413,92 @@ def test_mac_case_alias_of_git_metadata_is_refused(app, tmp_path, route):
         pytest.skip("requires a case-insensitive filesystem")
     status, body = dispatch(server, "GET", "/sessions/a/" + route, owner)
     assert status == 400 and "content_base64" not in body
+
+
+def test_file_feedback_auth_revision_scope_and_delivery(app, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    server, agents, owner, root = root_for(app, tmp_path)
+    path = root / "review.md"
+    path.write_text("# Review")
+    opened = session_files.content(str(root), "review.md")
+    data = {
+        "file_path": "review.md",
+        "file_root": opened["root"],
+        "file_sha256": opened["sha256"],
+        "quote": "Review\n\x1b[201~",
+        "note": "Change\r\x03",
+    }
+
+    def send(payload=None, headers=None):
+        return dispatch(
+            server,
+            "POST",
+            "/sessions/a/annotations",
+            owner if headers is None else headers,
+            json.dumps(data if payload is None else payload).encode(),
+        )
+
+    assert send(headers={})[0] == 401
+    assert send(headers=agents["a"])[0] == 403
+    assert send({**data, "file_sha256": "old"})[0] == 409
+    assert send({**data, "file_root": "/different"})[0] == 409
+    assert send({**data, "file_path": "../secret"})[0] == 400
+    assert send({**data, "file_path": str(path)})[0] == 400
+    assert send({**data, "file_path": 42})[0] == 400
+    assert send({**data, "note": "é" * 4001})[0] == 400
+    assert send()[0] == 409
+    writes = []
+
+    async def write(value):
+        writes.append(value)
+        return True
+
+    sup = SimpleNamespace(running=True, write_queued_bytes=write)
+    monkeypatch.setattr(server.orchestrator, "get", lambda _: sup)
+    assert send()[1]["sent"] is True
+    assert len(writes) == 1 and writes[0].endswith(b"\r")
+    assert not any(value in writes[0][:-1] for value in (b"\n", b"\r", b"\x1b", b"\x03"))
+    annotations = server.history.annotations("a")
+    assert len(annotations) == 1
+    context = json.loads(annotations[0]["quote"])
+    assert context["type"] == "file_feedback"
+    assert context["sha256"] == opened["sha256"]
+    assert context["root"] == opened["root"]
+    path.write_text("# Changed")
+    assert send()[0] == 409
+    path.unlink()
+    path.symlink_to(tmp_path / "outside")
+    assert send()[0] == 409
+    assert len(writes) == 1
+    assert len(server.history.annotations("a")) == 1
+
+
+def test_file_feedback_refuses_root_change_during_read(app, tmp_path, monkeypatch):
+    from duckterm import file_feedback
+
+    server, _, owner, root = root_for(app, tmp_path)
+    (root / "review.txt").write_text("review")
+    file = session_files.content(str(root), "review.txt")
+
+    async def changed_read(fn, *args):
+        set_paths(server, cwd=str(tmp_path / "other"))
+        return file
+
+    monkeypatch.setattr(file_feedback.asyncio, "to_thread", changed_read)
+    status, _ = dispatch(
+        server,
+        "POST",
+        "/sessions/a/annotations",
+        owner,
+        json.dumps(
+            {
+                "file_path": "review.txt",
+                "file_root": file["root"],
+                "file_sha256": file["sha256"],
+                "note": "Fix",
+            }
+        ).encode(),
+    )
+    assert status == 409
+    assert not server.history.annotations("a")

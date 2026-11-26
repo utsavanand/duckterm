@@ -3,7 +3,7 @@ import { api, Artifact } from "./api";
 import "./artifactFeedback.css";
 
 export interface ArtifactSelection { quote: string; left: number; bottom: number }
-export interface FeedbackTarget extends ArtifactSelection { artifact: Artifact }
+export type FeedbackTarget = ArtifactSelection & ({ artifact: Artifact; file?: never } | { file: { path: string; root: string; sha256: string }; artifact?: never });
 
 export function ArtifactFeedback({ sessionKey, sessionName, target, onClose, onSent }: {
   sessionKey: string; sessionName: string; target: FeedbackTarget; onClose: () => void; onSent: () => void;
@@ -34,15 +34,16 @@ export function ArtifactFeedback({ sessionKey, sessionName, target, onClose, onS
     if (sending || !note.trim()) return;
     setSending(true); setError("");
     try {
-      await api.artifactFeedback(sessionKey, target.artifact, target.quote, note.trim());
+      if (target.file) await api.fileFeedback(sessionKey, target.file, target.quote, note.trim());
+      else await api.artifactFeedback(sessionKey, target.artifact, target.quote, note.trim());
       onSent();
     } catch (cause) { setError((cause as Error).message); }
     finally { setSending(false); }
   }
-  return <section ref={pop} className="rd-artifact-feedback" role="dialog" aria-label="Artifact feedback" style={position}>
-    <div className="rd-feedback-head">Artifact feedback<button type="button" aria-label="Close feedback" disabled={sending} onClick={onClose}>×</button></div>
-    <p className="rd-feedback-to">To {sessionName} · {target.artifact.source_path.split("/").pop()}</p>
-    <blockquote>{target.quote ? `“${target.quote}”` : "Feedback on the whole artifact"}</blockquote>
+  return <section ref={pop} className="rd-artifact-feedback" role="dialog" aria-label={target.file ? "File feedback" : "Artifact feedback"} style={position}>
+    <div className="rd-feedback-head">{target.file ? "File feedback" : "Artifact feedback"}<button type="button" aria-label="Close feedback" disabled={sending} onClick={onClose}>×</button></div>
+    <p className="rd-feedback-to">To {sessionName} · {(target.file?.path ?? target.artifact?.source_path)?.split("/").pop()}</p>
+    <blockquote>{target.quote ? `“${target.quote}”` : target.file ? "Feedback on the whole file" : "Feedback on the whole artifact"}</blockquote>
     <textarea ref={input} aria-label="Feedback to agent" placeholder="What would you like changed?" value={note} maxLength={8000} disabled={sending} onChange={e => setNote(e.target.value)} onKeyDown={e => {
       if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); void send(); }
     }} />

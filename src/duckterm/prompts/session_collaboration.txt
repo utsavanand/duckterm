@@ -64,6 +64,12 @@ The Mac app shows saved copies under Artifacts, next to Inbox. Registration is
 local, uses your own session credentials, and never publishes to the internet.
 Register deliverables, not ordinary source edits, logs, credentials, or temporary
 scratch work. Only register files you generated for the user's authorized task.
+For interactive HTML or React previews, register a self-contained HTML bundle.
+Use a .react.html filename for built React apps so the React format filter finds
+it. Include scripts and styles in that file; external resources, network calls,
+and raw JSX execution are not supported in the isolated artifact browser.
+Register source files separately when they help review.
+
 Files must be regular files (not symlinks), at most 5 MiB each; text is UTF-8.
 Updating the same path replaces its saved copy; other paths remain separate.
 If registration fails, report it and retain the source file; do not claim the
