@@ -44,10 +44,9 @@ async function mount() {
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
 }
 
-it("puts a flow on autopilot with only the triggers that exist, and labels as a list", async () => {
+it("sets up a listed flow with only the triggers that exist, and labels as a list", async () => {
   await mount();
-  await act(async () => { fireEvent.click(screen.getAllByRole("button", { name: /Put a flow on autopilot/ })[0]); });
-  await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Issue to merge/ })); });
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Set up" })); });
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
   expect(screen.getByRole("checkbox", { name: /GitHub issues/ })).toBeChecked();
   expect(screen.getByRole("checkbox", { name: /Jira issues/ })).toBeDisabled();
@@ -58,7 +57,7 @@ it("puts a flow on autopilot with only the triggers that exist, and labels as a 
   fireEvent.change(screen.getByLabelText("Labels"), { target: { value: "autopilot, bug ," } });
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Next" })); });
   expect(screen.getByText("GitHub issues labelled autopilot, bug")).toBeInTheDocument();
-  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Put on autopilot" })); });
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Turn on" })); });
   const create = sent.find(r => r.method === "POST");
   expect(create?.body).toEqual({
     flow: "autopilot/issue-to-merge", name: "uv-suite issue to merge", workspace: "Team", repo: "o/uv-suite",
@@ -69,8 +68,7 @@ it("puts a flow on autopilot with only the triggers that exist, and labels as a 
 
 it("cannot go past triggers with none turned on", async () => {
   await mount();
-  await act(async () => { fireEvent.click(screen.getAllByRole("button", { name: /Put a flow on autopilot/ })[0]); });
-  await act(async () => { fireEvent.click(screen.getByRole("button", { name: /Issue to merge/ })); });
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Set up" })); });
   fireEvent.click(screen.getByRole("checkbox", { name: /GitHub issues/ }));
   expect(screen.getByRole("button", { name: "Next" })).toBeDisabled();
   expect(screen.getByText("Turn on at least one trigger")).toBeInTheDocument();
@@ -99,5 +97,33 @@ it("a workspace's Flows tab asks for that workspace only and lists its runs", as
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
   expect(sent.map(r => r.path)).toContain("/api/autopilot?workspace=Team%2Fweb");
   expect(screen.getByText("Inbox badge stays")).toBeInTheDocument();
-  expect(screen.getByText(/No flows on autopilot in this workspace/)).toBeInTheDocument();
+  expect(screen.getByText(/None in this workspace/)).toBeInTheDocument();
+});
+
+it("an empty page lists the flows to set up and shows no counts, runs or second call to action", async () => {
+  overview.runs = [];
+  overview.summary = { available: true, active: 0, waiting_gate: 0, done_today: 0, failed_today: 0 };
+  await mount();
+  expect(screen.getByRole("heading", { name: "Flows" })).toBeInTheDocument();
+  expect(screen.getByRole("heading", { name: /Issue to merge/ })).toBeInTheDocument();
+  expect(screen.getAllByRole("button", { name: "Set up" })).toHaveLength(1);
+  expect(screen.queryByRole("heading", { name: /On autopilot/ })).toBeNull();
+  expect(screen.queryByRole("heading", { name: "Runs" })).toBeNull();
+  expect(screen.queryByText(/need you/)).toBeNull();
+  expect(screen.queryByText(/Put a flow on autopilot/)).toBeNull();
+});
+
+it("a page in use leads with counts, the waiting count marked, and lists each autopilot with its actions", async () => {
+  overview.summary = { available: true, active: 1, waiting_gate: 2, done_today: 3, failed_today: 1 };
+  overview.autopilots = [{ id: "ap-1", on: true, created_at: 0, flow: "autopilot/issue-to-merge", name: "duckterm issues", repo: "o/duckterm",
+    workspace: "Team", triggers: { "github-issue": { labels: ["autopilot"] } }, approvals: { spec_on_visible: false, keep_merge_approval: false },
+    budget_m: 5, max_runs: 2, active: 0, watch: { checked_at: Date.now() - 60_000 } }];
+  await mount();
+  expect(screen.getByText("need you").closest(".ap-pill")).toHaveClass("ap-pill-wait");
+  expect(screen.getByText("failed today").closest(".ap-pill")).toHaveClass("ap-pill-bad");
+  const row = screen.getByRole("heading", { name: /duckterm issues/ }).closest(".ap-item") as HTMLElement;
+  expect(within(row).getByText("GitHub issues labelled autopilot")).toBeInTheDocument();
+  expect(within(row).getAllByRole("button").map(b => b.textContent)).toEqual(["Run once…", "Pause", "Edit"]);
+  await act(async () => { fireEvent.click(within(row).getByRole("button", { name: "Pause" })); });
+  expect(sent.find(r => r.method === "PATCH")).toMatchObject({ path: "/api/autopilot/autopilots/ap-1", body: { on: false } });
 });

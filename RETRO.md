@@ -1,3 +1,13 @@
+## 2026-11-25 — The Autopilot page matched its mock and still looked wrong
+
+The owner's first real view was the empty page in dark mode on a wide screen.
+It led with four tiles of zeros, offered the same action twice, hid the flows
+the owner had decided it should list, and shrank to its content because the
+page was a flex child without `flex: 1`, so its button floated mid-screen.
+Every earlier check used a populated page at one width. Check a page empty and
+in use, in both themes, at a wide and a narrow width, before calling it done;
+an empty state is the first thing a new feature shows.
+
 ## 2026-11-25 — Fixture completion and retry deadlines need explicit evidence
 
 A tmux fixture exposed its JSON path before write_text finished, so a reader

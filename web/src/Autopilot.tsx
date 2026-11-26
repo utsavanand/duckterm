@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { ReactNode, useCallback, useEffect, useState } from "react";
 import {
   AutopilotDraft, AutopilotEntry, AutopilotFlow, AutopilotOverview, AutopilotRun, AutopilotSummary, autopilotApi, TriggerType,
 } from "./autopilotApi";
@@ -65,7 +65,7 @@ function triggerLine(kind: TriggerType, settings: { labels: string[] } | undefin
 function TriggerChips({ entry }: { entry: AutopilotEntry }) {
   return <div className="ap-chips">
     {(Object.keys(entry.triggers) as TriggerType[]).map(kind => <span key={kind} className="ap-chip">
-      <i>{TRIGGERS[kind].glyph}</i>{triggerLine(kind, entry.triggers[kind])}
+      {triggerLine(kind, entry.triggers[kind])}
     </span>)}
   </div>;
 }
@@ -73,7 +73,7 @@ function TriggerChips({ entry }: { entry: AutopilotEntry }) {
 export function AutopilotPage() {
   const [data, setData] = useState<AutopilotOverview | null>(null);
   const [error, setError] = useState("");
-  const [setup, setSetup] = useState<{ editing: AutopilotEntry | null } | null>(null);
+  const [setup, setSetup] = useState<{ flow: AutopilotFlow; editing: AutopilotEntry | null } | null>(null);
   const [runOnce, setRunOnce] = useState<AutopilotEntry | null>(null);
   const [openRun, setOpenRun] = useState<string | null>(null);
 
@@ -106,67 +106,89 @@ export function AutopilotPage() {
     }
   }
 
-  if (!data) return <div className="ap-page"><h1>Autopilot</h1><p className="ap-muted">{error || "Loading…"}</p></div>;
+  if (!data) return <div className="ap-page"><div className="ap-col"><h1>Autopilot</h1><p className="ap-muted">{error || "Loading…"}</p></div></div>;
   const on = data.autopilots.filter(a => a.on).length;
   const paused = data.autopilots.length - on;
   const flowsById = new Map(data.flows.map(f => [f.id, f]));
+  const inUse = data.autopilots.length > 0 || data.runs.length > 0;
+  const { waiting_gate, active, done_today, failed_today } = data.summary;
 
-  return <div className="ap-page">
-    <header className="ap-head">
-      <div>
-        <h1>Autopilot</h1>
-        <p className="ap-muted">Flows run in sandboxes on this Mac (Docker), using your Claude subscription. Your Mac has to stay awake.</p>
-      </div>
-      <Button onClick={() => setSetup({ editing: null })}>Put a flow on autopilot</Button>
-    </header>
+  return <div className="ap-page"><div className="ap-col">
+    <h1>Autopilot</h1>
     {error && <p className="ap-error" role="alert">{error}</p>}
     {data.problems.length > 0 && <p className="ap-warn">Runs can't start yet: {data.problems.join("; ")}.</p>}
+    {inUse && <div className="ap-status">
+      <span className={`ap-pill${waiting_gate ? " ap-pill-wait" : ""}`}><b>{waiting_gate}</b> need you</span>
+      <span className="ap-pill"><b>{active}</b> running</span>
+      <span className="ap-pill"><b>{done_today}</b> done today</span>
+      <span className={`ap-pill${failed_today ? " ap-pill-bad" : ""}`}><b>{failed_today}</b> failed today</span>
+    </div>}
 
-    <h2 className="ap-sec">On autopilot <small>{on} on{paused ? ` · ${paused} paused` : ""}</small></h2>
-    <div className="ap-cards">
-      {data.autopilots.map(entry => <article key={entry.id} className={`ap-card${entry.on ? "" : " ap-off"}`}>
-        <div className="ap-card-top">
-          <h3>{entry.name}</h3>
-          <span className={entry.on ? "ap-on" : "ap-paused"}>{entry.on ? "On" : "Paused"}</span>
-        </div>
-        <div className="ap-muted">{flowTitle(flowsById.get(entry.flow)?.name ?? entry.flow)} · <b>{entry.repo}</b>{entry.workspace ? <> · in {entry.workspace}</> : null}</div>
-        <TriggerChips entry={entry} />
-        <div className="ap-muted ap-small">
-          {entry.watch.error ? <span className="ap-error-text">{entry.watch.error}</span>
-            : entry.active ? `${entry.active} running` : entry.watch.checked_at ? `Checked ${ago(entry.watch.checked_at)}` : "Not checked yet"}
-        </div>
-        <div className="ap-card-actions">
-          <Button size="sm" variant="ghost" onClick={() => setSetup({ editing: entry })}>Edit</Button>
-          <Button size="sm" variant="ghost" onClick={() => setRunOnce(entry)}>Run once…</Button>
-          <Button size="sm" variant="ghost" onClick={() => void toggle(entry)}>{entry.on ? "Pause" : "Resume"}</Button>
-        </div>
-      </article>)}
-      <button type="button" className="ap-card ap-add" onClick={() => setSetup({ editing: null })}>
-        <b>+ Put a flow on autopilot</b><span className="ap-muted">Let GitHub, Jira, Slack or a schedule start a flow</span>
-      </button>
-    </div>
+    {data.autopilots.length > 0 && <section className="ap-sec">
+      <h2>On autopilot <small>{on} on{paused ? ` · ${paused} paused` : ""}</small></h2>
+      <div className="ap-list">{data.autopilots.map(entry => <AutopilotRow key={entry.id} entry={entry} flowsById={flowsById}>
+        <button type="button" className="ap-link" onClick={() => setRunOnce(entry)}>Run once…</button>
+        <button type="button" className="ap-link" onClick={() => void toggle(entry)}>{entry.on ? "Pause" : "Resume"}</button>
+        <Button size="sm" variant="ghost" disabled={!flowsById.has(entry.flow)}
+          onClick={() => setSetup({ flow: flowsById.get(entry.flow)!, editing: entry })}>Edit</Button>
+      </AutopilotRow>)}</div>
+    </section>}
 
-    <div className="ap-counts">
-      <div><strong className="ap-wait">{data.summary.waiting_gate}</strong>Needs you</div>
-      <div><strong>{data.summary.active}</strong>Running</div>
-      <div><strong>{data.summary.done_today}</strong>Done today</div>
-      <div><strong className={data.summary.failed_today ? "ap-error-text" : ""}>{data.summary.failed_today}</strong>Failed today</div>
-    </div>
+    <section className="ap-sec">
+      <h2>Flows</h2>
+      {data.flows.length === 0
+        ? <p className="ap-muted">No flows declare triggers yet.</p>
+        : <div className="ap-list">{data.flows.map(flow => <div key={flow.id} className="ap-item">
+          <div className="ap-item-main">
+            <h3>{flowTitle(flow.name)} <span className="ap-src">{flowTitle(flow.kit)} kit</span></h3>
+            {flow.description && <div className="ap-meta">{flow.description}</div>}
+            <div className="ap-chips">{flow.triggers.map(k => <span key={k} className={`ap-chip${data.triggers[k]?.available ? "" : " ap-chip-off"}`}>
+              {TRIGGERS[k].name}{data.triggers[k]?.available ? "" : " · soon"}
+            </span>)}</div>
+          </div>
+          <div className="ap-acts"><Button size="sm" variant="ghost"
+            onClick={() => setSetup({ flow, editing: null })}>Set up</Button></div>
+        </div>)}</div>}
+    </section>
 
-    <h2 className="ap-sec">Runs <small>{data.runs.length}</small></h2>
-    {data.runs.length === 0
-      ? <p className="ap-muted">No runs yet. A run starts when a trigger fires, or from Run once on a card.</p>
-      : <div className="ap-table-wrap"><table className="ap-table">
-        <thead><tr><th>Issue</th><th>Autopilot</th><th>Step</th><th>State</th><th>Tokens</th><th>Started</th></tr></thead>
-        <tbody>{data.runs.map(run => <RunRow key={run.id} run={run} open={openRun === run.id}
-          onToggle={() => setOpenRun(id => id === run.id ? null : run.id)} />)}</tbody>
-      </table></div>}
+    {inUse && <section className="ap-sec">
+      <h2>Runs</h2>
+      {data.runs.length === 0
+        ? <p className="ap-muted">No runs yet.</p>
+        : <RunTable runs={data.runs} openRun={openRun} setOpenRun={setOpenRun} />}
+    </section>}
 
-    {setup && <SetupDialog overview={data} editing={setup.editing} onClose={() => setSetup(null)}
+    {setup && <SetupDialog overview={data} flow={setup.flow} editing={setup.editing} onClose={() => setSetup(null)}
       onSaved={() => { setSetup(null); void load(); }} />}
     {runOnce && <RunOnceDialog entry={runOnce} onClose={() => setRunOnce(null)}
       onStarted={() => { setRunOnce(null); void load(); }} />}
+  </div></div>;
+}
+
+function AutopilotRow({ entry, flowsById, workspace, children }: {
+  entry: AutopilotEntry; flowsById: Map<string, AutopilotFlow>; workspace?: string; children?: ReactNode;
+}) {
+  const where = entry.workspace && entry.workspace !== workspace ? <> · in {entry.workspace}</> : null;
+  const status = entry.watch.error ? <span className="ap-error-text">{entry.watch.error}</span>
+    : entry.active ? `${entry.active} running` : entry.watch.checked_at ? `checked ${ago(entry.watch.checked_at)}` : "not checked yet";
+  return <div className="ap-item">
+    <div className="ap-item-main">
+      <h3>{entry.name} <span className={entry.on ? "ap-on" : "ap-paused"}>{entry.on ? "On" : "Paused"}</span></h3>
+      <div className="ap-meta">{flowTitle(flowsById.get(entry.flow)?.name ?? entry.flow)} · <b>{entry.repo}</b>{where} · {status}</div>
+      <TriggerChips entry={entry} />
+    </div>
+    {children && <div className="ap-acts">{children}</div>}
   </div>;
+}
+
+function RunTable({ runs, openRun, setOpenRun }: {
+  runs: AutopilotRun[]; openRun: string | null; setOpenRun: (f: (id: string | null) => string | null) => void;
+}) {
+  return <div className="ap-table-wrap"><table className="ap-table">
+    <thead><tr><th>Issue</th><th>Autopilot</th><th>Step</th><th>State</th><th className="ap-num-col">Tokens</th><th>Started</th></tr></thead>
+    <tbody>{runs.map(run => <RunRow key={run.id} run={run} open={openRun === run.id}
+      onToggle={() => setOpenRun(id => id === run.id ? null : run.id)} />)}</tbody>
+  </table></div>;
 }
 
 function RunRow({ run, open, onToggle }: { run: AutopilotRun; open: boolean; onToggle: () => void }) {
@@ -179,7 +201,7 @@ function RunRow({ run, open, onToggle }: { run: AutopilotRun; open: boolean; onT
       <td className="ap-muted">{run.autopilot_name}{run.workspace ? <span className="ap-small"> · {run.workspace}</span> : null}</td>
       <td>{step}</td>
       <td><span className={`ap-state ap-state-${run.state}`}>{run.pr ? "PR open" : STATE_LABEL[run.state] ?? run.state}</span></td>
-      <td className="ap-mono">{run.tokens != null ? `${Math.round(run.tokens / 1000)}k` : "—"}</td>
+      <td className="ap-mono ap-num-col">{run.tokens != null ? `${Math.round(run.tokens / 1000)}k` : "—"}</td>
       <td className="ap-muted">{new Date(run.started_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</td>
     </tr>
     {open && <tr className="ap-detail"><td colSpan={6}>
@@ -227,23 +249,23 @@ function RunOnceDialog({ entry, onClose, onStarted }: { entry: AutopilotEntry; o
   </Modal>;
 }
 
-const emptyDraft = (flow: AutopilotFlow, repo: string, overview: AutopilotOverview): AutopilotDraft => {
+const emptyDraft = (flow: AutopilotFlow, overview: AutopilotOverview): AutopilotDraft => {
   const first = flow.triggers.find(k => overview.triggers[k]?.available);
   return {
-    flow: flow.id, name: "", workspace: "", repo,
+    flow: flow.id, name: "", workspace: "", repo: "",
     triggers: first ? { [first]: { labels: first === "github-issue" ? ["autopilot"] : [] } } : {},
     approvals: { spec_on_visible: false, keep_merge_approval: false }, budget_m: 5, max_runs: 2,
   };
 };
 
-function SetupDialog({ overview, editing, onClose, onSaved }: {
-  overview: AutopilotOverview; editing: AutopilotEntry | null; onClose: () => void; onSaved: () => void;
+function SetupDialog({ overview, flow, editing, onClose, onSaved }: {
+  overview: AutopilotOverview; flow: AutopilotFlow; editing: AutopilotEntry | null; onClose: () => void; onSaved: () => void;
 }) {
-  const [step, setStep] = useState(editing ? 2 : 1);
-  const [draft, setDraft] = useState<AutopilotDraft | null>(editing ? {
+  const [step, setStep] = useState<"triggers" | "confirm">("triggers");
+  const [draft, setDraft] = useState<AutopilotDraft>(editing ? {
     flow: editing.flow, name: editing.name, workspace: editing.workspace ?? "", repo: editing.repo, triggers: editing.triggers,
     approvals: editing.approvals, budget_m: editing.budget_m, max_runs: editing.max_runs,
-  } : null);
+  } : emptyDraft(flow, overview));
   const [repos, setRepos] = useState<string[] | null>(null);
   const [workspaces, setWorkspaces] = useState<string[]>([]);
   const [labelsText, setLabelsText] = useState((editing?.triggers["github-issue"]?.labels ?? ["autopilot"]).join(", "));
@@ -252,28 +274,24 @@ function SetupDialog({ overview, editing, onClose, onSaved }: {
 
   useEffect(() => {
     let stopped = false;
-    autopilotApi.repositories().then(list => { if (!stopped) setRepos(list); }).catch(() => { if (!stopped) setRepos([]); });
+    autopilotApi.repositories().then(list => {
+      if (stopped) return;
+      setRepos(list);
+      setDraft(d => d.repo || !list.length ? d : { ...d, repo: list[0] });
+    }).catch(() => { if (!stopped) setRepos([]); });
     api.folders().then(r => { if (!stopped) setWorkspaces(r.folders); }).catch(() => undefined);
     return () => { stopped = true; };
   }, []);
 
-  const flow = draft ? overview.flows.find(f => f.id === draft.flow) : undefined;
-  const anyOn = !!draft && Object.keys(draft.triggers).length > 0;
+  const anyOn = Object.keys(draft.triggers).length > 0;
   const labels = () => labelsText.split(",").map(s => s.trim()).filter(Boolean);
   const finished = (): AutopilotDraft => {
-    const d = draft!;
-    const triggers = { ...d.triggers };
+    const triggers = { ...draft.triggers };
     if (triggers["github-issue"]) triggers["github-issue"] = { labels: labels() };
-    return { ...d, triggers, name: d.name.trim() || `${d.repo.split("/")[1] ?? d.repo} ${flowTitle(flow?.name ?? "").toLowerCase()}` };
+    return { ...draft, triggers, name: draft.name.trim() || `${draft.repo.split("/")[1] ?? draft.repo} ${flowTitle(flow.name).toLowerCase()}` };
   };
 
-  function pick(f: AutopilotFlow) {
-    setDraft(emptyDraft(f, draft?.repo ?? repos?.[0] ?? "", overview));
-    setStep(2);
-  }
-
   function toggleTrigger(kind: TriggerType, checked: boolean) {
-    if (!draft) return;
     const triggers = { ...draft.triggers };
     if (checked) triggers[kind] = { labels: [] };
     else delete triggers[kind];
@@ -305,24 +323,10 @@ function SetupDialog({ overview, editing, onClose, onSaved }: {
     }
   }
 
-  const title = editing ? `Edit ${editing.name}` : step === 1 || !flow ? "Put a flow on autopilot" : `Put ${flowTitle(flow.name)} on autopilot`;
-  const steps = ["Flow", "Triggers", "Confirm"];
+  const title = editing ? `Edit ${editing.name}` : `Set up ${flowTitle(flow.name)}`;
 
   return <Modal title={title} onClose={onClose} width={640}>
-    {!editing && <div className="ap-wizsteps">{steps.map((n, i) => <span key={n} className={i + 1 === step ? "ap-on-step" : ""}>{n}</span>)}</div>}
-
-    {step === 1 && <div className="ap-flowpick">
-      {overview.flows.map(f => <button key={f.id} type="button" onClick={() => pick(f)}>
-        <h3>{flowTitle(f.name)}</h3>
-        <p>{f.description}</p>
-        <div className="ap-chips">{f.triggers.map(k => <span key={k} className={`ap-chip${overview.triggers[k]?.available ? "" : " ap-chip-off"}`}>
-          <i>{TRIGGERS[k].glyph}</i>{TRIGGERS[k].name}{overview.triggers[k]?.available ? "" : " (soon)"}
-        </span>)}</div>
-      </button>)}
-      {overview.flows.length === 0 && <p className="ap-muted">No flows declare triggers yet.</p>}
-    </div>}
-
-    {step === 2 && draft && flow && <>
+    {step === "triggers" && <>
       <div className="ap-row2">
       <label className="ap-field"><span>Workspace</span>
         <select style={inputStyle} value={draft.workspace} onChange={e => setDraft({ ...draft, workspace: e.target.value })}>
@@ -362,14 +366,15 @@ function SetupDialog({ overview, editing, onClose, onSaved }: {
       </div>
     </>}
 
-    {step === 3 && draft && flow && <>
+    {step === "confirm" && <>
       <label className="ap-field"><span>Name</span>
         <input style={inputStyle} value={draft.name} placeholder={finished().name} onChange={e => setDraft({ ...draft, name: e.target.value })} /></label>
       <div className="ap-recap">
         {draft.repo}{draft.workspace ? <span className="ap-muted"> · in {draft.workspace}</span> : null}
         <ul>{(Object.keys(finished().triggers) as TriggerType[]).map(k => <li key={k}>{triggerLine(k, finished().triggers[k])}</li>)}</ul>
-        <div className="ap-small ap-muted">Each run works on its own branch. When it succeeds, DuckTerm pushes that branch and opens a draft pull request for you to review; nothing is merged. Pause any time from its card.</div>
-        <div className="ap-small ap-muted ap-secrets">Keep secrets and write permissions out of any {draft.repo || "repository"} workflow that runs on <code>autopilot/**</code> branches: what a run writes can be steered by the issue text, and a push runs that branch's workflows.</div>
+        <div className="ap-small ap-muted">Each run ends in a draft pull request. Nothing is merged.</div>
+        <div className="ap-small ap-muted">Runs in Docker on this Mac, on your Claude subscription. Keep the Mac awake.</div>
+        <div className="ap-small ap-muted ap-secrets">Issue text can steer what a run pushes, so keep secrets and write permissions out of {draft.repo || "repository"} workflows that run on <code>autopilot/**</code> branches.</div>
       </div>
       <details className="ap-limits">
         <summary>Limits <span>{draft.budget_m}M tokens a run · {draft.max_runs} at once</span></summary>
@@ -387,12 +392,12 @@ function SetupDialog({ overview, editing, onClose, onSaved }: {
     {error && <p className="ap-error-text" role="alert">{error}</p>}
     <div className="ap-foot">
       {editing && <span className="ap-foot-left"><Button variant="danger" size="sm" onClick={() => void remove()} disabled={busy}>Remove</Button></span>}
-      {step === 2 && (!anyOn || !draft?.repo) && <span className="ap-hint">{!draft?.repo ? "Choose a repository" : "Turn on at least one trigger"}</span>}
-      {step > (editing ? 2 : 1)
-        ? <Button variant="ghost" onClick={() => setStep(step - 1)}>Back</Button>
+      {step === "triggers" && (!anyOn || !draft.repo) && <span className="ap-hint">{!draft.repo ? "Choose a repository" : "Turn on at least one trigger"}</span>}
+      {step === "confirm"
+        ? <Button variant="ghost" onClick={() => setStep("triggers")}>Back</Button>
         : <Button variant="ghost" onClick={onClose}>Cancel</Button>}
-      {step === 2 && <Button onClick={() => setStep(3)} disabled={!anyOn || !draft?.repo}>Next</Button>}
-      {step === 3 && <Button onClick={() => void save()} disabled={busy}>{editing ? "Save" : "Put on autopilot"}</Button>}
+      {step === "triggers" && <Button onClick={() => setStep("confirm")} disabled={!anyOn || !draft.repo}>Next</Button>}
+      {step === "confirm" && <Button onClick={() => void save()} disabled={busy}>{editing ? "Save" : "Turn on"}</Button>}
     </div>
   </Modal>;
 }
@@ -418,26 +423,21 @@ export function WorkspaceFlows({ workspace }: { workspace: string }) {
     void tick();
     return () => { stopped = true; clearTimeout(timer); };
   }, [workspace]);
-  if (!data) return <div className="ap-page ap-embedded"><p className="ap-muted">{error || "Loading…"}</p></div>;
+  if (!data) return <div className="ap-page ap-embedded"><div className="ap-col"><p className="ap-muted">{error || "Loading…"}</p></div></div>;
   const flowsById = new Map(data.flows.map(f => [f.id, f]));
-  return <div className="ap-page ap-embedded">
+  return <div className="ap-page ap-embedded"><div className="ap-col">
     {error && <p className="ap-error" role="alert">{error}</p>}
-    <h2 className="ap-sec">On autopilot <small>{data.autopilots.length}</small></h2>
-    {data.autopilots.length === 0
-      ? <p className="ap-muted">No flows on autopilot in this workspace. Put one on autopilot from the Autopilot page and choose this workspace.</p>
-      : <div className="ap-cards">{data.autopilots.map(entry => <article key={entry.id} className={`ap-card${entry.on ? "" : " ap-off"}`}>
-        <div className="ap-card-top"><h3>{entry.name}</h3><span className={entry.on ? "ap-on" : "ap-paused"}>{entry.on ? "On" : "Paused"}</span></div>
-        <div className="ap-muted">{flowTitle(flowsById.get(entry.flow)?.name ?? entry.flow)} · <b>{entry.repo}</b>{entry.workspace !== workspace ? <> · in {entry.workspace}</> : null}</div>
-        <TriggerChips entry={entry} />
-        <div className="ap-muted ap-small">{entry.active ? `${entry.active} running` : entry.watch.checked_at ? `Checked ${ago(entry.watch.checked_at)}` : "Not checked yet"}</div>
-      </article>)}</div>}
-    <h2 className="ap-sec">Runs <small>{data.runs.length}</small></h2>
-    {data.runs.length === 0
-      ? <p className="ap-muted">No runs in this workspace yet.</p>
-      : <div className="ap-table-wrap"><table className="ap-table">
-        <thead><tr><th>Issue</th><th>Autopilot</th><th>Step</th><th>State</th><th>Tokens</th><th>Started</th></tr></thead>
-        <tbody>{data.runs.map(run => <RunRow key={run.id} run={run} open={openRun === run.id}
-          onToggle={() => setOpenRun(id => id === run.id ? null : run.id)} />)}</tbody>
-      </table></div>}
-  </div>;
+    <section className="ap-sec">
+      <h2>On autopilot</h2>
+      {data.autopilots.length === 0
+        ? <p className="ap-muted">None in this workspace. Set one up on the Autopilot page.</p>
+        : <div className="ap-list">{data.autopilots.map(entry => <AutopilotRow key={entry.id} entry={entry} flowsById={flowsById} workspace={workspace} />)}</div>}
+    </section>
+    <section className="ap-sec">
+      <h2>Runs</h2>
+      {data.runs.length === 0
+        ? <p className="ap-muted">No runs in this workspace yet.</p>
+        : <RunTable runs={data.runs} openRun={openRun} setOpenRun={setOpenRun} />}
+    </section>
+  </div></div>;
 }
