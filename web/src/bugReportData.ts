@@ -7,6 +7,7 @@ export interface BugContext {
   limits: { attachments: number; file_bytes: number; total_bytes: number; body_bytes: number };
 }
 export interface BugAttachment { name: string; content_base64: string; size: number; type: string; }
+export type BugDelivery = { state: "filed"; issue_number: number } | { state: "failed" | "unconfirmed"; message: string };
 export interface BugDraft { status: "draft_prepared"; sent: false; mailto_url: string | null; recipient: string; download_url: string; notice: string; }
 
 async function json<T>(context: string, path: string, data?: unknown): Promise<T> {
@@ -18,6 +19,13 @@ async function json<T>(context: string, path: string, data?: unknown): Promise<T
 export const bugReport = {
   context: (session: string | null) => json<BugContext>(session ?? "", `/bugreport/context${session ? `?session_key=${encodeURIComponent(splitSessionRef(session).key)}` : ""}`),
   prepare: (session: string | null, summary: string, body: string, attachments: BugAttachment[]) => json<BugDraft>(session ?? "", "/bugreport/submit", { summary, body, attachments: attachments.map(({ name, content_base64 }) => ({ name, content_base64 })) }),
+  file: async (session: string | null, path: string): Promise<BugDelivery> => {
+    if (!/^\/bugreport\/bundles\/[a-f0-9]{32}$/.test(path)) throw new Error("Invalid prepared report");
+    const result = await json<BugDelivery>(session ?? "", "/bugreport/file", { id: path.split("/").at(-1) });
+    if (result?.state === "filed" && Number.isSafeInteger(result.issue_number) && result.issue_number > 0) return result;
+    if ((result?.state === "failed" || result?.state === "unconfirmed") && typeof result.message === "string") return result;
+    throw new Error("Report delivery could not be confirmed.");
+  },
   bundle: async (session: string | null, path: string) => {
     if (!/^\/bugreport\/bundles\/[a-f0-9]{32}$/.test(path)) throw new Error("Invalid report download link");
     const response = await sessionFetch(session ?? "", path, { cache: "no-store", headers: authHeaders() });

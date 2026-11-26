@@ -1,14 +1,26 @@
 import AppKit
 import WebKit
 
-/// A local-only report editor. Nothing is uploaded. Sharing opens a mail draft;
-/// only the user can send it. A report remains exportable without a mail account.
+/// Reports leave this editor only after Send report. Email and ZIP remain
+/// explicit fallback actions; selected content is frozen across delivery retries.
 final class BugReportController: NSObject, WKScriptMessageHandler, WKNavigationDelegate, NSWindowDelegate {
     private var panel: NSPanel?
     private var web: WKWebView?
     private var screenshot: Data?
     private var diagnostics = ""
     private var report = BugReportData()
+    private struct Selection: Equatable {
+        let summary: String
+        let details: String
+        let reply: String
+        let screenshot: Data?
+        let diagnostics: String?
+        let report: BugReportData
+    }
+    private var submittedSelection: Selection?
+    private var submission: BugReportSubmission?
+    private var deliveryResult: BugReportDeliveryResult?
+    private let delivery: BugReportDelivery
     private var preparing = false
     private var loadingContext = false
     private var contextTask: Task<Void, Never>?
@@ -22,6 +34,7 @@ final class BugReportController: NSObject, WKScriptMessageHandler, WKNavigationD
         .appendingPathComponent("DuckTerm-report-\(UUID().uuidString)", isDirectory: true)
 
     init(screenshot: NSImage?, loadResumeReadiness: (@MainActor () async throws -> String?)? = nil,
+         delivery: BugReportDelivery = BugReportDelivery(),
          chooseSaveDestination: @escaping (NSWindow, @escaping (URL?) -> Void) -> Void = { panel, completion in
         let picker = NSSavePanel()
         picker.nameFieldStringValue = "DuckTerm-bug-report.zip"
@@ -31,6 +44,7 @@ final class BugReportController: NSObject, WKScriptMessageHandler, WKNavigationD
     }, onSaved: @escaping (URL) -> Void = {
         NSWorkspace.shared.activateFileViewerSelecting([$0])
     }) {
+        self.delivery = delivery
         self.onSaved = onSaved
         self.loadResumeReadiness = loadResumeReadiness
         self.chooseSaveDestination = chooseSaveDestination
@@ -122,7 +136,9 @@ final class BugReportController: NSObject, WKScriptMessageHandler, WKNavigationD
             "diagnostics": diagnostics,
             "files": report.attachments.map(\.name),
             "canEmail": !recipient.isEmpty,
-            "status": status.isEmpty && loadingContext ? "Loading local server diagnostics…" : status,
+            "status": status.isEmpty ? (loadingContext ? "Loading local server diagnostics…" : deliveryResult?.message ?? "") : status,
+            "filed": { if case .filed = deliveryResult { return true }; return false }(),
+            "fallback": { if case .failed = deliveryResult { return true }; return deliveryResult == .unconfirmed }(),
             "busy": preparing,
             "loadingContext": loadingContext,
         ]
@@ -140,7 +156,7 @@ final class BugReportController: NSObject, WKScriptMessageHandler, WKNavigationD
         case "add": chooseFiles()
         case "remove":
             if let index = body["index"] as? Int, report.attachments.indices.contains(index) {
-                report.attachments.remove(at: index); update()
+                report.attachments.remove(at: index); deliveryResult = nil; update()
             }
         case "preview":
             if let screenshot {
@@ -152,6 +168,8 @@ final class BugReportController: NSObject, WKScriptMessageHandler, WKNavigationD
                     NSWorkspace.shared.open(path)
                 } catch { update(status: "Could not open the screenshot preview.") }
             }
+        case "send": submit(body)
+        case "changed": deliveryResult = nil
         case "email", "save": prepare(body, email: action == "email")
         default: break
         }
@@ -174,8 +192,80 @@ final class BugReportController: NSObject, WKScriptMessageHandler, WKNavigationD
                 var updated = self.report
                 for url in picker.urls { try updated.add(url) }
                 self.report = updated
+                self.deliveryResult = nil
                 self.update()
             } catch { self.update(status: error.localizedDescription) }
+        }
+    }
+
+    private func submit(_ body: [String: Any]) {
+        guard !loadingContext else { return }
+        let selection = Selection(
+            summary: String((body["summary"] as? String ?? "").prefix(200)),
+            details: String((body["details"] as? String ?? "").prefix(20000)),
+            reply: String((body["reply"] as? String ?? "").prefix(254)),
+            screenshot: body["screenshot"] as? Bool == true ? screenshot : nil,
+            diagnostics: body["diagnostics"] as? Bool == true ? diagnostics : nil,
+            report: report)
+        guard !selection.summary.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            update(status: BugReportError.missingSummary.localizedDescription); return
+        }
+        if submittedSelection == selection, let submission {
+            if case .filed = deliveryResult { update(); return }
+            send(submission); return
+        }
+        submittedSelection = nil
+        submission = nil
+        deliveryResult = nil
+        preparing = true
+        update(status: "Preparing report…")
+        // Compression stays off the UI thread. This snapshot is never rebuilt on
+        // a retry: ZIP timestamps and the submission ID must remain identical.
+        let directory = temporary.appendingPathComponent(UUID().uuidString, isDirectory: true)
+        let archive = temporary.appendingPathComponent("upload-\(UUID().uuidString).zip")
+        DispatchQueue.global(qos: .userInitiated).async {
+            var frozen: BugReportSubmission?
+            do {
+                try FileManager.default.createDirectory(at: self.temporary, withIntermediateDirectories: true,
+                    attributes: [.posixPermissions: 0o700])
+                _ = try selection.report.write(to: directory, summary: selection.summary,
+                    details: selection.details, replyTo: selection.reply,
+                    screenshot: selection.screenshot, diagnostics: selection.diagnostics)
+                let task = Process()
+                task.executableURL = URL(fileURLWithPath: "/usr/bin/ditto")
+                task.arguments = ["-c", "-k", "--keepParent", directory.path, archive.path]
+                task.standardOutput = FileHandle.nullDevice
+                task.standardError = FileHandle.nullDevice
+                try task.run(); task.waitUntilExit()
+                guard task.terminationStatus == 0 else { throw BugReportError.archiveFailed }
+                try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: archive.path)
+                frozen = BugReportSubmission(summary: selection.summary,
+                    body: try String(contentsOf: directory.appendingPathComponent("report.txt"), encoding: .utf8),
+                    archive: try Data(contentsOf: archive))
+            } catch { }
+            try? FileManager.default.removeItem(at: directory)
+            try? FileManager.default.removeItem(at: archive)
+            let result = frozen
+            DispatchQueue.main.async {
+                guard let result else {
+                    self.preparing = false
+                    self.deliveryResult = .failed("Could not prepare the report. Use email or save the ZIP.")
+                    self.update(); return
+                }
+                self.submittedSelection = selection
+                self.submission = result
+                self.send(result)
+            }
+        }
+    }
+
+    private func send(_ submission: BugReportSubmission) {
+        preparing = true
+        update(status: "Sending report…")
+        Task { @MainActor in
+            self.deliveryResult = await self.delivery.send(submission)
+            self.preparing = false
+            self.update()
         }
     }
 
@@ -202,7 +292,7 @@ final class BugReportController: NSObject, WKScriptMessageHandler, WKNavigationD
                 service.subject = "[DuckTerm bug] " + summary.replacingOccurrences(of: "\n", with: " ").replacingOccurrences(of: "\r", with: " ")
                 share = service
                 service.perform(withItems: ["DuckTerm bug report\n\n\(summary)\n\n\(details)"] + files.map { $0 as Any })
-                update(status: "Email draft requested. Review the attachments and click Send in your email app. Nothing has been sent by DuckTerm.")
+                update(status: "Email draft requested. Review the attachments and click Send in your email app.")
             } else { save(directory) }
         } catch { update(status: error.localizedDescription) }
     }
@@ -254,12 +344,14 @@ final class BugReportController: NSObject, WKScriptMessageHandler, WKNavigationD
     private static let html = #"""
 <!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data:; connect-src 'none'"><style>
 *{box-sizing:border-box}body{margin:0;padding:24px;background:#15191f;color:#e4e7eb;font:14px -apple-system,BlinkMacSystemFont,sans-serif}h1{font-size:24px;margin:0 0 8px}p{color:#a8afbc;line-height:1.5;margin:0 0 18px}label{display:block;font-weight:600;margin:14px 0 7px}small{color:#98a2b1;font-weight:400}input,textarea{width:100%;font:inherit;color:#e0e5ed;background:#0d1117;border:1px solid #414a56;border-radius:7px;padding:10px}textarea{height:88px;resize:vertical}input::placeholder,textarea::placeholder{color:#8993a2}.grid{display:grid;grid-template-columns:1fr 1fr;gap:14px}.card{border:1px solid #3d4653;border-radius:8px;padding:12px}.card label{margin:0 0 10px}.card input{width:auto;accent-color:#2dc590;margin-right:7px}.thumb{width:100%;height:105px;object-fit:cover;object-position:top;cursor:pointer;border-radius:4px;background:#0d1117}button{padding:9px 13px;border-radius:6px;border:1px solid #4a5665;background:#202630;color:#e0e6ef;font:inherit;cursor:pointer}button:focus-visible,input:focus-visible,textarea:focus-visible{outline:2px solid #36d9a5;outline-offset:2px}button:disabled{opacity:.5;cursor:default}.primary{background:#2cc68f;color:#061810;border-color:#2cc68f;font-weight:600}.link{border:0;background:none;color:#46d9ae;padding:6px 0}.upload{border:1px dashed #556170;border-radius:7px;padding:10px;margin-top:15px}footer{display:flex;gap:8px;justify-content:flex-end;border-top:1px solid #343d48;padding-top:16px;margin-top:15px}pre{font:12px/1.5 ui-monospace,Menlo,monospace;white-space:pre-wrap;word-break:break-word;background:#0d1117;padding:12px;max-height:180px;overflow:auto}.file{display:flex;align-items:center;gap:8px;padding:6px 0}.file span{flex:1;overflow-wrap:anywhere}#status{color:#ffd18b;line-height:1.5;margin:12px 0}#privacy{display:block;margin-top:14px;line-height:1.5}@media(max-width:560px){body{padding:18px}.grid{grid-template-columns:1fr}footer{flex-wrap:wrap}h1{font-size:22px}}
-</style></head><body><h1>Report a bug</h1><p>Tell us what went wrong. Review what’s included before creating an email.</p><form id="report"><label for="summary">Summary</label><input id="summary" required maxlength="200" placeholder="For example: the terminal does not respond after resuming"><label for="details">What happened? <small>Optional</small></label><textarea id="details" maxlength="20000" placeholder="What were you doing, what did you expect, and what happened instead? Add steps to reproduce if you have them."></textarea><label for="reply">Your email <small>Optional · so we can reply</small></label><input id="reply" type="email" maxlength="254" placeholder="you@example.com"><label>Included with your report</label><div class="grid"><div class="card"><label><input id="screenshot" type="checkbox" checked>Current window screenshot</label><button type="button" class="link" id="preview" aria-label="Preview screenshot"><img class="thumb" id="image" alt="Screenshot of your current DuckTerm window"></button><small id="captureNote">Captured before this form opened · Click to preview</small></div><div class="card"><label><input id="diagnostics" type="checkbox" checked>App diagnostics</label><p>App and macOS versions<br>Recent app event log<br>Connection status</p><button type="button" class="link" id="review">Review diagnostics</button><small style="display:block">No credentials or agent conversations collected in diagnostics</small></div></div><pre id="logs" hidden></pre><div class="upload"><button type="button" class="link" id="add">＋ Add files</button> <small>Optional · up to 5 files, 5 MB each, 15 MB total</small><div id="files"></div></div><small id="privacy">Your screenshot and added files may contain private information. Review them before sending. Nothing is uploaded by this form.</small><div id="status" role="status" aria-live="polite"></div><footer><button type="button" id="cancel">Cancel</button><button type="submit" id="save" value="save">Save ZIP</button><button type="submit" class="primary" id="email" value="email">Create email</button></footer></form><script>
+</style></head><body><h1>Report a bug</h1><p>Tell us what went wrong. Review what’s included before sending a private bug report.</p><form id="report"><label for="summary">Summary</label><input id="summary" required maxlength="200" placeholder="For example: the terminal does not respond after resuming"><label for="details">What happened? <small>Optional</small></label><textarea id="details" maxlength="20000" placeholder="What were you doing, what did you expect, and what happened instead? Add steps to reproduce if you have them."></textarea><label for="reply">Your email <small>Optional · so we can reply</small></label><input id="reply" type="email" maxlength="254" placeholder="you@example.com"><label>Included with your report</label><div class="grid"><div class="card"><label><input id="screenshot" type="checkbox" checked>Current window screenshot</label><button type="button" class="link" id="preview" aria-label="Preview screenshot"><img class="thumb" id="image" alt="Screenshot of your current DuckTerm window"></button><small id="captureNote">Captured before this form opened · Click to preview</small></div><div class="card"><label><input id="diagnostics" type="checkbox" checked>App diagnostics</label><p>App and macOS versions<br>Recent app event log<br>Connection status</p><button type="button" class="link" id="review">Review diagnostics</button><small style="display:block">No credentials or agent conversations collected in diagnostics</small></div></div><pre id="logs" hidden></pre><div class="upload"><button type="button" class="link" id="add">＋ Add files</button> <small>Optional · up to 5 files, 5 MB each, 15 MB total</small><div id="files"></div></div><small id="privacy">Your screenshot and added files may contain private information. Review them before sending. Send report uploads the selected contents to our private support repository.</small><div id="status" role="status" aria-live="polite"></div><footer><button type="button" id="cancel">Cancel</button><button type="submit" id="save" value="save">Save ZIP</button><button type="submit" id="email" value="email" hidden>Create email</button><button type="submit" class="primary" id="send" value="send">Send report</button></footer></form><script>
 const el=id=>document.getElementById(id);const send=(action,data={})=>window.webkit.messageHandlers.bugReport.postMessage({action,...data});
 el('add').onclick=()=>send('add');el('preview').onclick=()=>send('preview');el('cancel').onclick=()=>send('cancel');el('review').onclick=()=>{el('logs').hidden=!el('logs').hidden};
+let loadingReportContext=false;
+el('report').addEventListener('input',()=>{send('changed');el('status').textContent=loadingReportContext?'Loading local server diagnostics…':'';el('email').hidden=true;el('send').textContent='Send report';el('send').disabled=loadingReportContext});
 document.addEventListener('keydown',e=>{if(e.key==='Escape'){e.preventDefault();send('cancel')}});
 el('report').onsubmit=e=>{e.preventDefault();send(e.submitter?.value||'save',{summary:el('summary').value,details:el('details').value,reply:el('reply').value,screenshot:el('screenshot').checked,diagnostics:el('diagnostics').checked})};
-window.updateReport=d=>{el('status').textContent=d.status;el('logs').textContent=d.diagnostics+(d.loadingContext?'\nLoading local server resume readiness…':'');el('image').src=d.screenshot;el('preview').hidden=!d.screenshot;if(!d.screenshot){el('screenshot').checked=false;el('screenshot').disabled=true;el('captureNote').textContent='Screenshot unavailable. You can add one manually.'}else{el('screenshot').disabled=false;el('captureNote').textContent='Captured before this form opened · Click to preview'}el('email').disabled=!d.canEmail||d.busy||d.loadingContext;el('save').disabled=d.busy||d.loadingContext;el('add').disabled=d.busy;el('cancel').disabled=d.busy;if(!d.canEmail&&!d.status)el('status').textContent='No support email is configured for this build. You can still save your report.';el('files').replaceChildren();d.files.forEach((name,index)=>{const row=document.createElement('div');row.className='file';const span=document.createElement('span');span.textContent=name;const b=document.createElement('button');b.type='button';b.textContent='Remove';b.onclick=()=>send('remove',{index});row.append(span,b);el('files').append(row)})};
+window.updateReport=d=>{loadingReportContext=!!d.loadingContext;el('status').textContent=d.status;el('logs').textContent=d.diagnostics+(d.loadingContext?'\nLoading local server resume readiness…':'');el('image').src=d.screenshot;el('preview').hidden=!d.screenshot;if(!d.screenshot){el('screenshot').checked=false;el('screenshot').disabled=true;el('captureNote').textContent='Screenshot unavailable. You can add one manually.'}else{el('screenshot').disabled=false;el('captureNote').textContent='Captured before this form opened · Click to preview'}el('email').hidden=!d.fallback;el('email').disabled=!d.canEmail||d.busy||d.loadingContext;el('send').disabled=d.busy||d.loadingContext||d.filed;el('send').textContent=d.filed?'Report sent':d.fallback?'Retry report':'Send report';['summary','details','reply','diagnostics'].forEach(id=>el(id).disabled=d.busy);el('screenshot').disabled=d.busy||!d.screenshot;el('save').disabled=d.busy||d.loadingContext;el('add').disabled=d.busy;el('cancel').disabled=d.busy;el('files').replaceChildren();d.files.forEach((name,index)=>{const row=document.createElement('div');row.className='file';const span=document.createElement('span');span.textContent=name;const b=document.createElement('button');b.type='button';b.disabled=d.busy;b.textContent='Remove';b.onclick=()=>send('remove',{index});row.append(span,b);el('files').append(row)})};
 </script></body></html>
 """#
 }

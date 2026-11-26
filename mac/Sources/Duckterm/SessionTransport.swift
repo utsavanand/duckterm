@@ -144,7 +144,7 @@ final class SessionTransport: NSObject, URLSessionTaskDelegate, URLSessionWebSoc
         let connector = method == "POST" && route.range(of: #"^/connectors/[A-Za-z0-9_-]+/(enable|disable|forget)$"#, options: .regularExpression) != nil
         let harness = route.range(of: #"^/harnesses/[A-Za-z0-9._-]+(/(contents|install|uninstall))?$"#, options: .regularExpression) != nil
         let bugReport = (method == "GET" && route == "/bugreport/context")
-            || (method == "POST" && path == "/bugreport/submit")
+            || (method == "POST" && ["/bugreport/submit", "/bugreport/file"].contains(path))
             || (method == "GET" && path.range(of: #"^/bugreport/bundles/[a-f0-9]{32}$"#, options: .regularExpression) != nil)
         let archiveUndoRoute = components.query == nil && (
             (method == "GET" && route == "/archive-requests")
@@ -180,7 +180,7 @@ final class SessionTransport: NSObject, URLSessionTaskDelegate, URLSessionWebSoc
         url.percentEncodedQuery = components.percentEncodedQuery
         var request = URLRequest(url: url.url!, cachePolicy: .reloadIgnoringLocalCacheData)
         request.httpMethod = method
-        request.timeoutInterval = 30
+        request.timeoutInterval = path == "/bugreport/file" ? 90 : 30
         if let binary = params["base64"] as? String {
             guard route == "/paste-image", method == "POST", let data = Data(base64Encoded: binary),
                   data.count <= 10_000_000,

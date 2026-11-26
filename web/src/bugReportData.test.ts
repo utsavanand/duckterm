@@ -31,3 +31,20 @@ it("rejects attachment budgets before reading or preparing a report", async () =
   await expect(captureFiles(Array.from({ length: 6 }, () => new File(["a"], "one.txt")), [], limits)).rejects.toThrow("at most");
   await expect(captureFiles(Array.from({ length: 3 }, () => new File(["12345"], "five.txt")), [], limits)).rejects.toThrow("total");
 });
+
+it("files only a prepared bundle on the selected host and validates the receipt", async () => {
+  const bridge = vi.fn().mockResolvedValue({ status: 200, body: JSON.stringify({ state: "filed", issue_number: 42 }) });
+  window.webkit = { messageHandlers: { launchRequest: { postMessage: bridge } } };
+  const session = sessionRef("remote", "session.id");
+  const path = "/bugreport/bundles/" + "a".repeat(32);
+  expect(await bugReport.file(session, path)).toEqual({ state: "filed", issue_number: 42 });
+  expect(bridge.mock.calls[0][0]).toMatchObject({ target: "remote", params: { path: "/bugreport/file", method: "POST", body: JSON.stringify({ id: "a".repeat(32) }) } });
+  for (const invalid of ["https://example.test/report", "/bugreport/bundles/../secret"]) {
+    await expect(bugReport.file(session, invalid)).rejects.toThrow("Invalid prepared report");
+  }
+  expect(bridge).toHaveBeenCalledTimes(1);
+  for (const receipt of [null, {}, { state: "filed", issue_number: true }, { state: "filed", issue_number: -1 }, { state: "filed", issue_number: 1.5 }]) {
+    bridge.mockResolvedValue({ status: 200, body: JSON.stringify(receipt) });
+    await expect(bugReport.file(session, path)).rejects.toThrow("could not be confirmed");
+  }
+});
