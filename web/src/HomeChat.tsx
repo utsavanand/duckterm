@@ -21,12 +21,10 @@ const SUGGESTIONS = ["Which sessions are waiting on me?", "What is each session 
 
 // Home's chat. Answers come from the same /fleet/ask conversation Oracle keeps,
 // so history carries over; agents' questions to the owner live in Needs you,
-// not here. Autopilot joins the scope once the factory has data to read.
+// not here.
 export function HomeChat({ sessions, onOpenTerminal }: { sessions: ChatSession[]; onOpenTerminal: (key: string) => void }) {
   const [log, setLog] = useState<OracleExchange[]>([]);
   const [q, setQ] = useState(""), [pending, setPending] = useState<string | null>(null), [error, setError] = useState("");
-  // Until Autopilot reports data, Everything and Teams read the same sessions.
-  const [scope, setScope] = useState<"Everything" | "Teams">("Everything");
   const logRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     let stale = false;
@@ -47,11 +45,7 @@ export function HomeChat({ sessions, onOpenTerminal }: { sessions: ChatSession[]
     catch (e) { setError(`Could not clear: ${(e as Error).message}`); }
   }
   return <div className="rd-home-chat">
-    <div className="rd-home-scope" aria-label="What answers draw on">
-      {(["Everything", "Teams"] as const).map(name => <button key={name} type="button" className={`rd-home-scope-chip${scope === name ? " on" : ""}`} aria-pressed={scope === name} onClick={() => setScope(name)}>{name}</button>)}
-      <button type="button" className="rd-home-scope-chip off" disabled title="Autopilot isn't connected yet">Autopilot</button>
-      {log.length > 0 && <button className="rd-home-clear" onClick={() => void clear()}>Clear</button>}
-    </div>
+    {log.length > 0 && <button className="rd-home-clear" onClick={() => void clear()}>Clear</button>}
     <div className="rd-home-log" ref={logRef} onClick={event => {
       const chip = (event.target as HTMLElement).closest<HTMLElement>(".rd-home-cite");
       if (chip?.dataset.session) onOpenTerminal(chip.dataset.session);
@@ -64,7 +58,8 @@ export function HomeChat({ sessions, onOpenTerminal }: { sessions: ChatSession[]
       {pending !== null && <div className="rd-home-exchange"><div className="rd-home-q">{pending}</div><div className="rd-home-thinking" role="status"><span className="rd-spinner" /> Reading your sessions…</div></div>}
       {error && <p className="rd-oracle-error" role="alert">{error}</p>}
     </div>
-    <div className="rd-home-suggest">{SUGGESTIONS.map(s => <button key={s} disabled={pending !== null} onClick={() => void ask(s)}>{s}</button>)}</div>
+    <div className="rd-home-suggest">{SUGGESTIONS.map(s => <button key={s} disabled={pending !== null} onClick={() => void ask(s)}>{s}</button>)}
+      <button disabled title="Coming soon: DuckTerm builds views you describe">Make me a view of failed runs <span className="rd-home-soon">Soon</span></button></div>
     <form className="rd-home-compose" onSubmit={event => { event.preventDefault(); void ask(q); }}>
       <textarea aria-label="Ask DuckTerm" rows={1} value={q} placeholder="Ask about your teams, the factory, PRs or spend…" onChange={event => setQ(event.target.value)}
         onKeyDown={event => { if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void ask(q); } }} />
