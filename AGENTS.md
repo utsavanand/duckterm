@@ -24,7 +24,7 @@ Rules labeled with a scope apply only to that agent runtime (or runtime/model); 
 
 - The server stays zero-dependency Python stdlib. Don't add pip deps to solve a problem stdlib can solve.
 
-- The user-facing term is "meta-harness" — never "suite" or "overlay" in UI or docs.
+- Product terminology is defined in `docs/specs/terminology.md` and that file wins any conflict. DuckTerm is a **multi-agent orchestrator**; a **harness** is an agent CLI (Claude Code, Codex); a **skill kit** is an installable collection of skills, hooks and instructions; a **meta harness** (two words, owner 2026-11-25) is the policy a team runs on the orchestrator, a procedure with its flows and gates, never the kit and never DuckTerm itself. "Suite" and "overlay" are retired — never use them in UI or docs.
 
 - Append a lesson to RETRO.md after every real fix, newest first.
 
