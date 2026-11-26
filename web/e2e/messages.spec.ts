@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { api, apiPost, base } from "./helpers";
+import { api, apiPost, base, fixtureHookIdentity } from "./helpers";
 
 // The Messages view (structured-render foundation, step 1) renders a claude
 // session's conversation as HTML from /sessions/:key/messages. This test seeds a
@@ -61,6 +61,7 @@ test("messages view renders structured conversation as HTML", async ({
   });
   expect(r.status).toBe(200);
   await apiPost("/events", {
+    ...(await fixtureHookIdentity(String(r.body.session_key))),
     event_type: "SessionStart", session_key: r.body.session_key,
     session_id: "seeded-session", runtime: "claude-code", cwd, test: true,
   });
@@ -100,6 +101,7 @@ test("annotating a span stores it and sends it back to the agent", async ({
   });
   const key = launch.body.session_key as string;
   await apiPost("/events", {
+    ...(await fixtureHookIdentity(key)),
     event_type: "SessionStart", session_key: key,
     session_id: "seeded-session", runtime: "claude-code", cwd, test: true,
   });

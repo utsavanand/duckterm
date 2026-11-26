@@ -5,7 +5,7 @@ export interface ConversationIdentity {
   source: "none" | "assigned" | "observed" | "adopted";
   transcript: "unknown" | "present" | "missing" | "unavailable";
   reason?: string;
-  hooks: { status: "missing" | "configured" | "unknown"; canInstall: boolean };
+  hooks: { status: "missing" | "configured" | "unknown"; canInstall: boolean; connection?: { state: "unknown" | "inactive" | "awaiting" | "connected" | "unconfirmed"; configuredAt?: number; receivedAt?: number } };
   canAdopt: boolean;
   canResume: boolean;
   canDetach?: boolean;

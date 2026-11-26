@@ -11,6 +11,20 @@ from pathlib import Path
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _no_real_hook_setup(monkeypatch: pytest.MonkeyPatch):
+    """Ordinary fake-agent launches must never modify the developer's CLI settings.
+
+    Hook-connection integration tests explicitly restore the real implementation
+    after isolating its settings, shared assets and profile registration paths.
+    """
+    from duckterm.agents import hooks_install
+
+    original = hooks_install.prepare_for_launch
+    monkeypatch.setattr(hooks_install, "prepare_for_launch", lambda *args: None)
+    return original
+
+
 @pytest.fixture(autouse=True, scope="session")
 def _isolated_home() -> Iterator[None]:
     with tempfile.TemporaryDirectory(prefix="duckterm-test-") as d:

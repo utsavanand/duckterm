@@ -208,14 +208,14 @@ it.each([["lite", LITE], ["code", CODE], ["full", FULL.filter(feature => feature
 });
 
 
-it("Skill kits appears in Settings only when the instance has the development flag", async () => {
+it("MetaHarnesses appears in Settings only when the instance has the development flag", async () => {
   await mount(FULL);
   fireEvent.click(screen.getByRole("button", { name: /^Settings/ }));
-  expect(screen.queryByRole("button", { name: /^Skill kits/ })).toBeNull();
+  expect(screen.queryByRole("button", { name: /^MetaHarnesses/ })).toBeNull();
   cleanup();
   await mount([...FULL, ...DEVELOPMENT]);
   fireEvent.click(screen.getByRole("button", { name: /^Settings/ }));
-  expect(screen.getAllByRole("button", { name: /^Skill kits/ })).toHaveLength(1);
+  expect(screen.getAllByRole("button", { name: /^MetaHarnesses/ })).toHaveLength(1);
 });
 
 it("Autopilot sits above Oracle in the sidebar only with its flag, and opens its page", async () => {

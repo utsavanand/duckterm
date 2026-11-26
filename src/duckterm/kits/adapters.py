@@ -270,17 +270,23 @@ def read_json(path: Path) -> dict[str, Any]:
 
 
 def place_knowledge(
-    kit: m.Kit, c: m.Component, chosen: list[str], roots: dict[str, list[str]]
+    kit: m.Kit,
+    c: m.Component,
+    chosen: list[str],
+    roots: dict[str, list[str]],
+    force_fallback: bool = False,
 ) -> list[Placement]:
+    """`force_fallback` is the owner's Fix from the review: load a path-scoped
+    file always on the harnesses that cannot scope by path, as if the kit had
+    said `fallback = "always"`; the kit itself is not edited."""
     cid = kit.component_id(c)
     text = (kit.root / str(c.path)).read_text()
     load = c.fields.get("load", "always")
     every_file = isinstance(load, dict) and _every_file(load.get("paths"))
     if every_file:
         load = "always"
-    fell_back = (
-        isinstance(load, dict) and c.fields.get("fallback") == "always" and _needs_fallback(chosen)
-    )
+    fallback = force_fallback or c.fields.get("fallback") == "always"
+    fell_back = isinstance(load, dict) and fallback and _needs_fallback(chosen)
     out: list[Placement] = []
     if load == "always" or fell_back:
         out.append(
@@ -359,7 +365,7 @@ def place_knowledge(
                         "knowledge",
                         "none",
                         status=NOT_SUPPORTED,
-                        note=f"{h}: no path-scoped instructions (P10); fallback='always' installs",
+                        note=f"{h}: no path-scoped instructions (P10); Fix loads it always there",
                     )
                 )
                 continue
@@ -684,6 +690,25 @@ def place_hook(
     return out
 
 
+def copilot_flags(kit: m.Kit) -> list[str]:
+    """`--allow-tool`/`--deny-tool` for every permission rule of the kit that
+    Copilot can take; `ask` rules are Copilot's default and pass nothing."""
+    flags: list[str] = []
+    for c in kit.components:
+        if c.kind != "permission":
+            continue
+        for r in c.fields.get("rules", []):
+            if not isinstance(r, dict):
+                continue
+            tool = COPILOT_TOOL.get(str(r.get("tool")))
+            match = str(r.get("match", ""))
+            if tool is None or r.get("decision") == "ask" or any(ch in match for ch in ")\n,"):
+                continue  # validate refuses such a match; never let one read as two rules
+            flag = "--allow-tool" if r.get("decision") == "allow" else "--deny-tool"
+            flags += [flag, f"{tool}({match})"]
+    return flags
+
+
 def place_permission(kit: m.Kit, c: m.Component, chosen: list[str]) -> list[Placement]:
     cid = kit.component_id(c)
     rules = [r for r in c.fields.get("rules", []) if isinstance(r, dict)]
@@ -749,14 +774,17 @@ def place_permission(kit: m.Kit, c: m.Component, chosen: list[str]) -> list[Plac
                     continue
                 flag = "--allow-tool" if r["decision"] == "allow" else "--deny-tool"
                 flags.append(f"{flag} '{tool}({r['match']})'")
+            # Copilot takes permissions as command-line flags; DuckTerm launches
+            # Copilot, so it passes them (copilot_flags) for a repository whose
+            # record holds this kit. Nothing is written for it.
             out.append(
                 Placement(
                     cid,
                     h,
                     "permission",
                     "none",
-                    status=NOT_SUPPORTED,
-                    note="Copilot takes permissions as flags, not a file; ask is default. Flags: "
+                    status=INSTALLED,
+                    note="passed as flags when DuckTerm launches Copilot; ask is the default: "
                     + " ".join(flags),
                 )
             )
@@ -951,7 +979,7 @@ def _flow_shortcut(kit: m.Kit, flow: str, spec: dict[str, Any]) -> bytes:
         # no inputs, a prefix (for the --input pairs) when it does
         f"allowed-tools: Bash({start}{':*' if inputs else ''})",
         "---",
-        f"Start the `{kit.name}/{flow}` flow of the {kit.name} skill kit from this session:",
+        f"Start the `{kit.name}/{flow}` flow of the {kit.name} MetaHarness from this session:",
         "",
         f"    {argv}",
         "",

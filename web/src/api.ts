@@ -163,6 +163,13 @@ export interface FolderMessagePlan {
 
 export interface FleetAnswer { answer: string; exchange: OracleExchange; sessions: string[] }
 
+// Ask Oracle reading a message as a send to one agent (flag oracle_messages).
+export interface OracleAgent { id: string; name: string; folder: string }
+export type OracleRouted =
+  | FleetAnswer
+  | { plan: OracleAgent & { text: string } }
+  | { clarify: { text: string; candidates: OracleAgent[] } };
+
 export interface FolderRecipients {
   identity: string;
   sessions: BroadcastTarget[];
@@ -485,7 +492,7 @@ async function artifactRequest<T>(path: string, method = "GET"): Promise<T> {
 
 
 // ── Skill kits (server: duckterm.kits.api) ────────────────────────────────
-export interface KitPlanRequest { kit: string; project: string; harnesses?: string[]; options?: Record<string, string> }
+export interface KitPlanRequest { kit: string; project?: string; harnesses?: string[]; options?: Record<string, string>; fallbacks?: string[] }
 export interface KitProcedure {
   name: string; description: string; template: string;
   roles: Record<string, { purpose: string; skills: string[] }>;
@@ -531,7 +538,13 @@ export interface KitRun extends KitRunSummary {
 export interface KitTeam { folder: string; team: string; description: string; kit: string; kit_version: string | null; project: string; roles: Record<string, { purpose: string; skills: string[] }>; rules: Record<string, unknown>[]; created_at: number }
 export interface KitsOverview { project: string; kits: KitInstalled[]; procedures: KitProcedure[]; harnesses_present: Record<string, boolean>; runs: KitRunSummary[] }
 export interface KitInstall { workspace: string; project: string; version: string | null; harnesses: string[]; installed_at: number | null; trusted: boolean; verify: { ok: boolean | null; missing: string[]; drifted: string[] } }
-export interface KitPolicy { scope: "all" | "workspaces"; workspaces?: string[] }
+export interface KitPolicy { scope: "all" | "workspaces"; workspaces?: string[]; options?: Record<string, string>; fallbacks?: string[] }
+export interface KitReviewRepository { workspace: string; project: string; installed: boolean; conflicts: KitConflict[]; codex_trusted: boolean | null }
+export type KitFix =
+  | { kind: "codex-trust"; projects: string[] }
+  | { kind: "fallback"; component: string; harnesses: string[] }
+  | { kind: "replace"; project: string; path: string };
+export interface KitReview { inventory: KitInventory; plan: KitPlan; repositories: KitReviewRepository[]; pending: string[]; fixes: KitFix[] }
 export interface KitEnableResult { kit: string; policy: KitPolicy; installed: { workspace: string; project: string }[]; already: { workspace: string; project: string }[]; failed: { workspace: string; project: string; error: string }[]; pending: string[] }
 export interface KitEntry {
   name: string; path: string; installed_in: KitInstall[]; error?: string; policy?: KitPolicy | null; pending?: string[]; changed?: boolean;
@@ -688,13 +701,14 @@ export const api = {
   folderDispatch: (folder: string, request: { assign?: boolean; identity: string; target: { kind: "session" | "folder"; id: string }; text: string; request_key: string; recipients: string[] }) =>
     post<{ exchange: OracleExchange }>(`/folders/${encodeURIComponent(folder)}/dispatch`, request),
   folderChat: (folder: string) => artifactRequest<{ messages: OracleExchange[] }>(`/folders/${encodeURIComponent(folder)}/chat`),
-  // Only a folder request with a request key can come back as a message plan.
+  // Only a request with a request key can come back as a message plan.
   fleetAsk: ((question: string, folder?: string, requestKey?: string) =>
     post<FleetAnswer | { plan: FolderMessagePlan }>(
       "/fleet/ask",
       { question, ...(folder !== undefined ? { folder } : {}), ...(requestKey !== undefined ? { request_key: requestKey } : {}) },
     )) as {
     (question: string): Promise<FleetAnswer>;
+    (question: string, folder: undefined, requestKey: string): Promise<OracleRouted>;
     (question: string, folder: string, requestKey?: string): Promise<FleetAnswer | { plan: FolderMessagePlan }>;
   },
   oracleChat: () => get<{ messages: OracleExchange[] }>("/oracle/chat"),
@@ -734,10 +748,11 @@ export const api = {
   },
   // The owner has looked at this session: lower its raised hand.
   sessionAttended: (key: string) => post<{ attended: boolean }>(`/sessions/${encodeURIComponent(key)}/attended`),
-  messageSession: (key: string, text: string, mode: "inbox" | "prompt") =>
-    post<{ delivered: "inbox" | "prompt" | null }>(
+  // oracleChat: the Ask Oracle line that led to this send, saved with it in the chat history.
+  messageSession: (key: string, text: string, mode: "inbox" | "prompt", requestKey?: string, oracleChat?: string) =>
+    post<{ delivered: "inbox" | "prompt" | null; exchange?: OracleExchange }>(
       `/sessions/${encodeURIComponent(key)}/message`,
-      { text, mode },
+      { text, mode, ...(requestKey !== undefined ? { request_key: requestKey } : {}), ...(oracleChat !== undefined ? { oracle_chat: oracleChat } : {}) },
     ),
   clearOracleChat: () =>
     fetch("/oracle/chat", { method: "DELETE", headers: authHeaders() }).then(
@@ -801,7 +816,9 @@ export const api = {
   kitsCatalog: (context?: string) => post<KitCatalog>("/kits/catalog", {}, context),
   kitsRegister: (kit: string, context?: string) => post<{ name: string; path: string; version: string; description: string }>("/kits/register", { kit }, context),
   kitsUnregister: (name: string, context?: string) => post<{ removed: string }>("/kits/unregister", { name }, context),
-  kitsEnable: (body: { kit: string; scope: "all" | "workspaces"; workspaces?: string[]; options?: Record<string, string>; replace?: boolean }, context?: string) => post<KitEnableResult>("/kits/enable", body, context),
+  kitsEnable: (body: { kit: string; scope: "all" | "workspaces"; workspaces?: string[]; options?: Record<string, string>; fallbacks?: string[]; replace?: boolean }, context?: string) => post<KitEnableResult>("/kits/enable", body, context),
+  kitsReview: (body: { kit: string; scope: "all" | "workspaces"; workspaces?: string[]; options?: Record<string, string>; fallbacks?: string[] }, context?: string) => post<KitReview>("/kits/review", body, context),
+  kitsFix: (body: { kind: "codex-trust"; projects: string[] }, context?: string) => post<{ kind: string; trusted: string[] }>("/kits/fix", body, context),
   kitsDisable: (kit: string, context?: string) => post<{ kit: string; policy: null }>("/kits/disable", { kit }, context),
   kitsOverview: (project: string, context?: string) =>
     post<KitsOverview>("/kits/overview", { project }, context),

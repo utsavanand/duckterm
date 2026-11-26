@@ -6,7 +6,7 @@ test("Settings reflects server feature flags and preserves core controls", async
   const edition = await (await page.request.get("/edition")).json();
   const supportsCloud = edition.id === "full";
   await page.getByRole("button", { name: "Settings", exact: true }).click();
-  for (const name of ["Collaboration", "Skill kits", "Agent setup", "Back up to remote"]) {
+  for (const name of ["Collaboration", "MetaHarnesses", "Agent setup", "Back up to remote"]) {
     const control = page.getByRole("button", { name, exact: true });
     if (optedIn) await expect(control).toBeVisible();
     else await expect(control).toHaveCount(0);
@@ -14,7 +14,9 @@ test("Settings reflects server feature flags and preserves core controls", async
   await expect(page.getByRole("button", { name: "Checkpointing", exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Feature flags", exact: true }).click();
   const table = page.getByRole("table").filter({ has: page.getByRole("columnheader", { name: "This installation", exact: true }) });
-  await expect(table.getByRole("row")).toHaveCount(10);
+  await expect(table.getByRole("row")).toHaveCount(12);
+  await expect(table.getByRole("cell", { name: "Oracle messages", exact: true })).toHaveCount(1);
+  await expect(table.getByRole("cell", { name: "Fleet monitor", exact: true })).toHaveCount(1);
   await expect(table.getByRole("cell", { name: "Autopilot", exact: true })).toHaveCount(1);
   await expect(table.getByRole("cell", { name: "Home", exact: true })).toHaveCount(1);
   await expect(table.getByRole("cell", { name: "Background rule suggestions", exact: true })).toHaveCount(1);

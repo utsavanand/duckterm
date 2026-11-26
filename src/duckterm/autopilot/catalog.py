@@ -57,7 +57,7 @@ class Flow:
 
 def flows(root: Path = KITS) -> list[Flow]:
     out = []
-    for path in sorted(p for p in root.iterdir() if (p / manifest.MANIFEST).is_file()):
+    for path in sorted(p for p in root.iterdir() if manifest.has_manifest(p)):
         kit = manifest.load(path)
         for component in kit.by_kind("flow"):
             data = json.loads((kit.root / str(component.path)).read_text())
