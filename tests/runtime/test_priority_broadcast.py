@@ -489,3 +489,47 @@ def test_inbox_counts_distinguish_unanswered_from_informational_notices(scenario
     counts = dispatch(server, "GET", "/session-inbox-counts", owner)[1]
     assert counts["unanswered_counts"] == {"peer": 3, "codex": 1}
     assert counts["counts"]["peer"] == 4
+
+
+@pytest.mark.parametrize("paused", [False, True], ids=["ended", "resumable-stop"])
+def test_read_priority_stops_counting_only_when_recipient_permanently_ends(scenario, paused):
+    history, server, owner, creds = scenario
+    send(server, owner, "Please acknowledge", "end-priority")
+    send(server, owner, "Informational notice", "end-info", priority=False)
+    messages = call(history, creds["claude"], "GET", "/inbox")[1]["messages"]
+    assert {m["status"] for m in messages} == {"read"}
+    counts = dispatch(server, "GET", "/session-inbox-counts", owner)[1]
+    assert counts["unanswered_counts"] == {"claude": 1, "peer": 1, "codex": 1}
+
+    if paused:
+        history.set_state("claude", "stopped")
+    history.record(
+        {
+            "_id": "end-priority-recipient",
+            "_ts": int(time.time() * 1000),
+            "event_type": "SessionEnd",
+            "session_key": "claude",
+            "test": True,
+        }
+    )
+    assert history.session("claude")["state"] == ("stopped" if paused else "terminated")
+    with pytest.raises(APIError) as exc:
+        call(history, creds["claude"], "GET", "/self")
+    assert exc.value.status == 401
+    counts = dispatch(server, "GET", "/session-inbox-counts", owner)[1]
+    expected = {"peer": 1, "codex": 1}
+    if paused:
+        expected["claude"] = 1
+    assert counts["unanswered_counts"] == expected
+    # Both messages remain readable in history; only the unfinished priority closes.
+    saved = {
+        row["id"]: dict(row)
+        for row in history._conn.execute(
+            "SELECT id, status, answered_at FROM session_questions WHERE recipient = 'claude'"
+        )
+    }
+    for message in messages:
+        row = saved[message["id"]]
+        cancelled = message["priority"] and not paused
+        assert row["status"] == ("cancelled" if cancelled else "read")
+        assert bool(row["answered_at"]) is bool(cancelled)

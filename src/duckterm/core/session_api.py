@@ -759,7 +759,8 @@ class SessionAPI:
         if cancel_pending:
             self.conn.execute(
                 "UPDATE session_questions SET status = 'cancelled', answered_at = ? "
-                "WHERE (sender = ? OR recipient = ?) AND status IN ('queued', 'accepted')",
+                "WHERE (sender = ? OR recipient = ?) AND (status IN ('queued', 'accepted') "
+                "OR (kind = 'broadcast' AND priority = 1 AND status = 'read'))",
                 (int(time.time() * 1000), key, key),
             )
 

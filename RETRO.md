@@ -1,3 +1,14 @@
+## 2026-11-25 — Reading a priority message does not finish it
+
+Final session cleanup cancelled queued and accepted inbox requests, but missed
+priority broadcasts that the agent had read without acknowledging. Those rows
+still counted as Unanswered after the recipient ended and lost its credentials.
+Cleanup now cancels those unfinished broadcasts too, preserving their history.
+Resumable stops keep them pending; informational read notices stay unchanged.
+Lesson: when adding a pending message state, check lifecycle cleanup as well as
+inbox counts. The regression exercises inbox read, SessionEnd, revoked access,
+and the actual Unanswered count, including the resumable-stop case.
+
 ## 2026-11-25 — Tabs that unmount take the owner's draft with them
 
 The Fleet monitor rendered only the selected tab, so a look at Agent fleet
