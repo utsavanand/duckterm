@@ -1,10 +1,12 @@
 import os
+import subprocess
 from collections.abc import Iterator
 from pathlib import Path
 
 import pytest
 
 from duckterm.persistence.checkpoints import (
+    _git_state,
     build_checkpoint,
     load_record,
     markdown_dir,
@@ -116,6 +118,47 @@ def test_checkpoint_records_git_state(git_repo: Path, tmp_path: Path) -> None:
     assert cp.record["git"] is True
     assert cp.record["repo"] == git_repo.name
     assert cp.record["branch"] in ("main", "master")
+
+
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(
+        ["git", "-c", "commit.gpgsign=false", "-C", str(repo), *args],
+        check=True,
+        capture_output=True,
+    )
+
+
+def test_dirty_files_list_staged_unstaged_and_untracked(git_repo: Path) -> None:
+    (git_repo / "staged.txt").write_text("s\n")
+    _git(git_repo, "add", "staged.txt")
+    (git_repo / "README.md").write_text("changed\n")
+    (git_repo / "new.txt").write_text("n\n")
+    assert sorted(_git_state(git_repo)["dirty_files"]) == ["README.md", "new.txt", "staged.txt"]
+
+
+@pytest.mark.parametrize("hook", ["filter", "fsmonitor"])
+def test_reading_git_state_runs_no_program_from_the_repo(
+    git_repo: Path, tmp_path: Path, hook: str
+) -> None:
+    # The folder is session-reported, so its .git/config is session-written.
+    marker = tmp_path / "ran"
+    program = tmp_path / "program.sh"
+    program.write_text(f"#!/bin/sh\ntouch {marker}\ncat\n")
+    program.chmod(0o755)
+    if hook == "filter":
+        (git_repo / ".gitattributes").write_text("*.md filter=x\n")
+        _git(git_repo, "add", ".gitattributes")
+        _git(git_repo, "commit", "-q", "-m", "attributes")
+        _git(git_repo, "config", "filter.x.clean", str(program))
+    else:
+        _git(git_repo, "config", "core.fsmonitor", str(program))
+    os.utime(git_repo / "README.md", (1, 1))  # stat-dirty, content unchanged
+    subprocess.run(["git", "-C", str(git_repo), "status"], capture_output=True)
+    assert marker.exists()  # plain git status really runs it
+    marker.unlink()
+    os.utime(git_repo / "README.md", (2, 2))
+    _git_state(git_repo)
+    assert not marker.exists()
 
 
 def test_checkpoint_notes_non_git_dir(tmp_path: Path) -> None:

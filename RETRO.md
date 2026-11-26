@@ -1,3 +1,21 @@
+## 2026-11-26 — git status runs the repo's clean filter
+
+Checkpoints read each session's folder with a bare `git status`, `rev-parse`
+and `log`: no fsmonitor override and no timeout. The folder is session-reported
+and its .git/config session-writable. Beyond the fsmonitor, `git status`
+re-reads every file whose stat data changed through the repo's own
+`filter.<driver>.clean`, chosen by a committed `.gitattributes`, so a session
+could have the server run a program at its next checkpoint. Checkpoints now go
+through review/git with a 5 s timeout. Dirty files come from `diff-index
+--cached`, `diff-files` and `ls-files --others`, which compare stat data and
+never read content through a filter. The cost: a file touched but unchanged is
+listed as dirty.
+
+The parity test found an older bug. The status output was `.strip()`ped before
+each line was cut at column 3. The first line's leading space went, so the first
+unstaged file lost its first letter (`README.md` became `EADME.md`). Stripping a
+fixed-column format corrupts it.
+
 ## 2026-11-25 — Fixture completion and retry deadlines need explicit evidence
 
 A tmux fixture exposed its JSON path before write_text finished, so a reader

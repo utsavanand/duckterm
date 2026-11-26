@@ -6,7 +6,6 @@ record fields and renders Markdown; it never generates an independent summary.
 A rendered file is derived from the database and is not a provider backup.
 """
 
-import subprocess
 import uuid
 from collections import Counter
 from dataclasses import dataclass, field
@@ -17,6 +16,7 @@ from typing import Any
 # `events`, which would shadow a module import inside the functions below.
 from duckterm.core.events import POST_TOOL_USE, PRE_TOOL_USE, USER_PROMPT_SUBMIT
 from duckterm.helpers import paths
+from duckterm.review import git as review_git
 
 Event = dict[str, Any]
 
@@ -78,15 +78,26 @@ def _git_state(cwd: Path) -> dict[str, Any]:
     if not (cwd / ".git").exists():
         return {"git": False, "path": str(cwd)}
 
+    # A session reports cwd and can write its .git/config, so git runs through
+    # review/git (repo programs off, bounded). Dirty files come from the index's
+    # stat data: `git status` re-reads stat-dirty files through the repo's own
+    # clean filter. A file touched but unchanged is listed as dirty.
     def git(*args: str) -> str:
-        r = subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True)
-        return r.stdout.strip() if r.returncode == 0 else ""
+        try:
+            return review_git.run(cwd, *args, timeout=5).strip()
+        except review_git.ReviewGitError:
+            return ""
 
+    dirty = [
+        *git("diff-index", "--cached", "--name-only", "HEAD").splitlines(),
+        *git("diff-files", "--name-only").splitlines(),
+        *git("ls-files", "--others", "--exclude-standard").splitlines(),
+    ]
     return {
         "git": True,
         "repo": cwd.name,
         "branch": git("rev-parse", "--abbrev-ref", "HEAD"),
-        "dirty_files": [ln[3:] for ln in git("status", "--porcelain").splitlines()],
+        "dirty_files": list(dict.fromkeys(dirty)),
         "last_commit": git("log", "-1", "--oneline"),
     }
 
