@@ -30,6 +30,31 @@ now passes `log.showSignature=false` and points all three gpg programs at
 commit wasn't a merge, which `--merges` never shows; it now signs the PR merge
 and checks the program really runs without the overrides.
 
+## 2026-11-25 — Hardening one call path leaves its neighbours open
+
+The first #496 closed the signature verifier and lazy fetch. Security's
+recheck found three more in the same helper, all already on main.
+- fetch and ls-remote, exempted as "the calls that must reach a remote", still
+  ran the repo's ssh command, credential helpers and reference-transaction hook.
+- A branch checked out as `--output=<path>` reached `git log` and `rev-list` as
+  an option, through the bare branch name in the PR list.
+- The review diff ran a textconv named by a committed `.gitattributes`.
+
+A fix that names the one key a reviewer found invites the next key. The useful
+question is every way this command can start a program, or read an argument as
+an option.
+
+Two traps while fixing it. A blanket `credential.helper=` would have broken the
+owner's own fetches. Their helpers live in the Xcode git install's config and
+in a global reset-then-`gh auth` pair. So fetch now clears every helper and
+re-adds only those from system, global and the git install, passed through
+GIT_CONFIG_* variables so a crafted key name can't be misparsed. Two
+regression tests passed against the old code at first. `git diff --shortstat`
+never runs textconv, and git reads attributes from the worktree, not the
+compared trees. And `rev-list --output=X...main` writes to `X...main`. Each test
+now proves plain git runs the program, or writes the file, before checking
+DuckTerm doesn't.
+
 ## 2026-11-25 — A folder a session names is config the server obeys
 
 review/git turned off a repository's fsmonitor because sessions report the
