@@ -440,6 +440,9 @@ class HistoryStore:
         """Persist an event and fold it into its session row. Called for every
         published event (the EventBus sink)."""
         key = session_key_of(event)
+        # "owner" identifies the human sender in mail, never an agent session.
+        if key == "owner":
+            return
         # A deleted session whose terminal is still alive keeps firing events.
         # Drop ALL of them — deleted stays deleted (no resurrection, even by a
         # SessionEnd/SessionStart). `clear_tombstones()` (duckterm restart) is
