@@ -80,13 +80,20 @@ def _is_git(p: Path) -> bool:
 
 
 def _manifests(p: Path) -> list[Path]:
-    """A skill kit is a folder holding skill-kit.toml; a repository that
-    ships several kits names each one skill-kit.<variant>.toml."""
+    """A MetaHarness is a folder holding metaharness.toml (skill-kit.toml, the
+    old name, is still read); a repository that ships several names each one
+    metaharness.<variant>.toml."""
     try:
-        found = [m for m in p.glob("skill-kit*.toml") if m.is_file() and m.suffix == ".toml"]
+        found = [
+            f
+            for pattern in ("metaharness*.toml", "skill-kit*.toml")
+            for f in p.glob(pattern)
+            if f.is_file() and f.suffix == ".toml"
+        ]
     except OSError:
         return []
-    return sorted(found, key=lambda m: (m.name != "skill-kit.toml", m.name))
+    first = {"metaharness.toml": 0, "skill-kit.toml": 1}
+    return sorted(found, key=lambda f: (first.get(f.name, 2), f.name))
 
 
 def _kit_summary(manifest: Path) -> dict[str, Any]:

@@ -35,6 +35,74 @@ current launch generation. A synthetic SessionStart or old hook cannot prove
 connection. Test the actual installed script against an isolated authenticated
 server, not just a successful JSON write. Keep hook-writing tests isolated from
 the developer's real harness settings and shared assets.
+
+## 2026-11-25 — Styling narration is not the same as removing it
+
+The connector panel was reviewed as "looks bad, not clean", so the first pass
+fixed how its prose looked: spacing, a muted colour, a bounded card. The owner's
+answer was "why do we need all of this narration?" -- the fault was the quantity
+of text, not its appearance. Styling a paragraph legitimises it; the question to
+ask first is whether the reader needs the sentence at all.
+
+What the cut removed, and the test each line failed: a description of what GitHub
+is (the reader already knows the service they are connecting). A tick confirming
+a prerequisite passed (only its failure is news; the warning stayed). A recovery
+hint for signing in elsewhere (a rare path holding permanent space). A paragraph
+restating the heading directly above it. An explanation of what sign-out deletes
+(the confirm dialog says it at the moment it matters). A note that both doors use
+the credential either way (the two door lines already say so). One paragraph was
+kept because it carries something the reader cannot infer: a CLI login cannot be
+scoped read-only or to one repo, a fine-grained token can.
+
+A state you can act on earns its words. "Codex has no entry for it, so that agent
+cannot reach it. Re-register below, or deselect it." names the agent and the fix,
+and stayed.
+
+Copy cuts break assertions, not behaviour. Nine tests failed on the new strings;
+each was checked individually to confirm the behavioural assertion beside it --
+both doors reported separately, a tool count claimed only after a check, the
+editor fitting the sidebar -- still passed. Keep the restyle and the copy cut in
+separate commits so one can be adjusted without losing the other.
+
+## 2026-11-25 — A global appearance reset needs a per-control rule to match
+
+The stylesheet resets `select { appearance: none }` so WebKit stops drawing the
+aqua dropdown, and leaves colors, border and padding to each control's own rule.
+A select without one renders chrome-less in the browser's default font, which is
+worse than the native widget it replaced. The connector select had only
+`max-width`, so it shipped looking unstyled. A blanket reset is a contract: every
+control it strips needs a rule, or the reset is a regression.
+
+Two neighbouring lessons from the same pass. `accent-color` was absent from the
+whole stylesheet, so every checkbox drew macOS blue inside a green theme. And
+`.rd-sr-only` was used in `SessionFilesView` but never defined, so text meant
+only for screen readers was rendering on screen -- a class that does not exist
+fails silently and looks like content.
+
+When a flex row cannot fit its items, `margin-left: auto` does not center the
+overflow, it strands it: `Check now` dropped to its own line, right-aligned
+away from the text it acts on. Decide where a wrap lands rather than letting the
+leftover margin decide.
+
+## 2026-11-25 — Tabs that unmount take the owner's draft with them
+
+The Fleet monitor rendered only the selected tab, so a look at Agent fleet
+discarded an unsent Ask Oracle message. Keep every panel mounted and hide the
+others. Its Needs you window said role=dialog but never took focus; a dialog
+needs initial focus, contained Tab and focus returned to its opener. And a
+count of notes labelled "agents" overstated the agents when one asked twice.
+
+## 2026-11-25 — The per-agent holding folder was opened after the database changed
+
+Security's recheck of #461: convert() opened the holding folder up front, but
+each agent's subfolder inside it was created and opened only when the files
+moved, after the records were written and the references rebound. A symlink
+planted there made the run change the database and then refuse the move.
+Nothing was lost, but "a failed open leaves the DB untouched" was not true.
+The whole destination, subfolder included, is now opened before the lock.
+Lesson: "open the destination first" means the folder the files actually land
+in, not its parent.
+
 ## 2026-11-25 — A text check doesn't vouch for the recipient
 
 Ask Oracle sent free text at once when the model's message was a span of the

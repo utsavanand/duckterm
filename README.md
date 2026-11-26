@@ -110,9 +110,9 @@ See [installation, upgrades, and troubleshooting](docs/installation.md) for help
 - **AGENTS.md that learns** — "Suggest from corrections" distills the feedback
   you've given agents (annotations, follow-up prompts) into proposed rules you
   review before saving.
-- **Installable skill kits** — register a collection of skills/hooks/sub-agents
+- **Installable MetaHarnesses** — register a collection of skills/hooks/sub-agents
   (e.g. uv-suite) and install it into any project from the dashboard, with
-  per-skill-kit option pickers and compatibility declarations.
+  per-MetaHarness option pickers and compatibility declarations.
   Contract: [docs/harnesses.md](docs/harnesses.md).
 
 ## Ducky for iPhone

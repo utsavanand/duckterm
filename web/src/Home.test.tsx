@@ -53,6 +53,20 @@ it("opens Teams from its tile and counts sessions by state across folders", asyn
   expect(screen.getByRole("textbox", { name: "Ask DuckTerm" })).toBeVisible();
 });
 
+it("opens Autopilot from its tile, leading with runs waiting on the owner, and shows no counts when the summary failed", async () => {
+  const open = vi.fn();
+  await show(undefined, { autopilot: { summary: { available: true, active: 2, waiting_gate: 1, done_today: 3, failed_today: 0 }, open } });
+  const tile = within(screen.getByRole("article", { name: "Autopilot" })).getByRole("button");
+  expect([...tile.querySelectorAll(".rd-home-chip")].map(chip => chip.textContent)).toEqual(["1 need you", "2 running", "3 done today", "0 failed"]);
+  fireEvent.click(tile);
+  expect(open).toHaveBeenCalledOnce();
+  cleanup();
+  await show(undefined, { autopilot: { summary: null, open } });
+  const bare = within(screen.getByRole("article", { name: "Autopilot" })).getByRole("button");
+  expect(bare.querySelector(".rd-home-chip")).toBeNull();
+  expect(bare).not.toHaveTextContent("Not available yet");
+});
+
 it("leaves out the chat and pull requests when the edition lacks Oracle and PR review", async () => {
   await show([...CODE.filter(f => f !== "pr_review"), "home"]);
   expect(screen.queryByRole("article", { name: "Ask DuckTerm" })).toBeNull();
