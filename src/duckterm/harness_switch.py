@@ -148,6 +148,12 @@ def accept_hook(server: Server, raw: dict[str, Any]) -> bool:
     if not isinstance(key, str):
         return True
     control = server.restarts.read(key)
+    connection = control.get("hook_connection") or {}
+    if connection.get("generation") and (
+        raw.get("runtime") != connection.get("runtime")
+        or raw.get("launch_generation") != connection["generation"]
+    ):
+        return False
     binding = control.get("native_binding")
     if not binding:
         return True

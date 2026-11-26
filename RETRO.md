@@ -20,6 +20,123 @@ Lesson: when adding a pending message state, check lifecycle cleanup as well as
 inbox counts. The regression exercises inbox read, SessionEnd, revoked access,
 and the actual Unanswered count, including the resumable-stop case.
 
+## 2026-11-25 — A cache does not share work while it is empty
+
+Home requests PR rows for several folders together. Every cold request saw
+the same expired branch-owner cache and started its own event scan and Git
+lookups. Twelve simultaneous calls reproduced twelve rebuilds. Share one
+in-flight rebuild, cache only successful results, and let it finish when one
+caller disconnects. Test the overlap and failure path with explicit gates,
+not machine-wide CPU stress.
+
+The analytics worker also received identities computed on the event loop:
+argument evaluation scanned all event JSON before the worker ever started.
+Read identities through a worker-owned, read-only SQLite snapshot. Moving
+the expensive call requires moving its expensive arguments too; do not
+reuse the loop's SQLite connection from a thread.
+
+TokenLedger had its own whole-suffix read/split allocation, independent of
+the MessageCache reader fixed earlier. Stream its raw input too, preserving
+byte line splitting and the incomplete trailing record. Chunking reduces
+temporary allocation; it does not eliminate full-history scan time or bound
+the largest individual record and retained accounting state.
+
+## 2026-11-25 — The Autopilot page matched its mock and still looked wrong
+
+The owner's first real view was the empty page in dark mode on a wide screen.
+It led with four tiles of zeros, offered the same action twice, hid the flows
+the owner had decided it should list, and shrank to its content because the
+page was a flex child without `flex: 1`, so its button floated mid-screen.
+Every earlier check used a populated page at one width. Check a page empty and
+in use, in both themes, at a wide and a narrow width, before calling it done;
+an empty state is the first thing a new feature shows.
+
+## 2026-11-25 — Fixture completion and retry deadlines need explicit evidence
+
+A tmux fixture exposed its JSON path before write_text finished, so a reader
+could parse an empty file. Publish that fixture by atomic rename. A separate
+lock-recovery test mixed its behavior assertion with a 100 ms scheduling budget;
+three short sleeps can overrun that budget on a busy host. Test the production
+retry deadline with a controlled clock, and give the lock-recovery fixture its
+own wait budget. Do not relax production timeouts to make tests pass.
+
+## 2026-11-25 — Repeated browser checks must not inherit moved fixture folders
+
+The unnest browser test used the fixed child name `Inner` and left it behind
+at the top level. Running the file twice on unchanged main made the second
+locator match both old and new folders. Give the child a unique name, target
+its exact folder path, and remove the owned session and both possible folder
+locations in `finally`. Keep the move and indentation assertions intact.
+
+## 2026-11-24 — A timed-out probe may never reach its first line
+
+The cleanup test gave a Python child 300ms to start and write its PID. Under
+full-suite load, the probe could correctly time out and reap the child before
+that marker existed; the test then failed waiting for a file it had prevented.
+Capture the owned process at spawn and assert it is reaped after timeout or
+cancellation. Cleanup correctness must not require the child to finish startup.
+
+## 2026-11-24 — Launching a CLI is not connecting its activity signals
+
+A distributed app could start Claude with no DuckTerm hooks installed. Setup
+checked the CLI and credentials; startup only repaired existing hooks. A running
+terminal therefore looked healthy while filters lacked the provider's events.
+Install through the existing atomic merge before launch, preserve other hooks
+and policy settings, and check configuration before stopping a source terminal.
+Record real accepted hook delivery separately from configuration, scoped to the
+current launch generation. A synthetic SessionStart or old hook cannot prove
+connection. Test the actual installed script against an isolated authenticated
+server, not just a successful JSON write. Keep hook-writing tests isolated from
+the developer's real harness settings and shared assets.
+
+## 2026-11-25 — Styling narration is not the same as removing it
+
+The connector panel was reviewed as "looks bad, not clean", so the first pass
+fixed how its prose looked: spacing, a muted colour, a bounded card. The owner's
+answer was "why do we need all of this narration?" -- the fault was the quantity
+of text, not its appearance. Styling a paragraph legitimises it; the question to
+ask first is whether the reader needs the sentence at all.
+
+What the cut removed, and the test each line failed: a description of what GitHub
+is (the reader already knows the service they are connecting). A tick confirming
+a prerequisite passed (only its failure is news; the warning stayed). A recovery
+hint for signing in elsewhere (a rare path holding permanent space). A paragraph
+restating the heading directly above it. An explanation of what sign-out deletes
+(the confirm dialog says it at the moment it matters). A note that both doors use
+the credential either way (the two door lines already say so). One paragraph was
+kept because it carries something the reader cannot infer: a CLI login cannot be
+scoped read-only or to one repo, a fine-grained token can.
+
+A state you can act on earns its words. "Codex has no entry for it, so that agent
+cannot reach it. Re-register below, or deselect it." names the agent and the fix,
+and stayed.
+
+Copy cuts break assertions, not behaviour. Nine tests failed on the new strings;
+each was checked individually to confirm the behavioural assertion beside it --
+both doors reported separately, a tool count claimed only after a check, the
+editor fitting the sidebar -- still passed. Keep the restyle and the copy cut in
+separate commits so one can be adjusted without losing the other.
+
+## 2026-11-25 — A global appearance reset needs a per-control rule to match
+
+The stylesheet resets `select { appearance: none }` so WebKit stops drawing the
+aqua dropdown, and leaves colors, border and padding to each control's own rule.
+A select without one renders chrome-less in the browser's default font, which is
+worse than the native widget it replaced. The connector select had only
+`max-width`, so it shipped looking unstyled. A blanket reset is a contract: every
+control it strips needs a rule, or the reset is a regression.
+
+Two neighbouring lessons from the same pass. `accent-color` was absent from the
+whole stylesheet, so every checkbox drew macOS blue inside a green theme. And
+`.rd-sr-only` was used in `SessionFilesView` but never defined, so text meant
+only for screen readers was rendering on screen -- a class that does not exist
+fails silently and looks like content.
+
+When a flex row cannot fit its items, `margin-left: auto` does not center the
+overflow, it strands it: `Check now` dropped to its own line, right-aligned
+away from the text it acts on. Decide where a wrap lands rather than letting the
+leftover margin decide.
+
 ## 2026-11-25 — Tabs that unmount take the owner's draft with them
 
 The Fleet monitor rendered only the selected tab, so a look at Agent fleet
@@ -161,6 +278,18 @@ Sidebar inbox badges include informational owner notices. A filter for unanswere
 requests needs explicit reply-required counts, retaining read/accepted requests
 and excluding informational notices and closed requests. Keep the existing badge
 count intact, count matching sessions once, and test live answers plus status unions.
+
+## 2026-11-24 — An editable prompt is not a waiting agent
+
+Claude keeps its input arrow visible while a foreground turn runs. The terminal
+fallback treated any arrow as Waiting, overriding a valid UserPromptSubmit.
+After a minute, stale-wait cleanup saw the empty input box and changed it to
+Idle, hiding running sessions from Working. Remove the ambiguous arrow signal;
+native hooks still report work, approvals and turn completion. Reproduce the
+whole repaint-to-cleanup sequence, not just the filter predicate, and check
+that genuine approvals still wait. The emailed report contained app lifecycle
+logs but no session events, so this is a reproduced defect consistent with the
+screenshots, not proof of the other computer's exact event sequence.
 
 ## 2026-11-24 — A completed response does not mean completed work
 

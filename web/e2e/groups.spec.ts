@@ -132,27 +132,31 @@ test("nested folder moves to top level via the unnest button", async ({
 }) => {
   const key = `e2e-unn-${Date.now()}`;
   const parent = `Top-${Date.now()}`;
-  await seedSession(key, { name: key, group: `${parent}/Inner` });
+  const child = `Inner-${Date.now()}`;
+  await seedSession(key, { name: key, group: `${parent}/${child}` });
+  try {
+    await page.goto("/");
+    await expandFolder(page, parent);
+    const inner = page.locator(".rd-group-head").filter({
+      has: page.getByRole("button", { name: `Terminal colors for ${parent}/${child}`, exact: true }),
+    });
+    await expect(inner).toBeVisible();
+    await inner.hover();
+    await inner.locator(".rd-group-unnest").click();
 
-  await page.goto("/");
-  await expandFolder(page, parent);
-  const inner = page.locator(".rd-group-head", { hasText: "Inner" });
-  await expect(inner).toBeVisible();
-  await inner.hover();
-  await inner.locator(".rd-group-unnest").click();
-
-  // Inner is now a top-level folder (base padding, no parent prefix).
-  await expect
-    .poll(() =>
-      page
-        .locator(".rd-group-head", { hasText: "Inner" })
-        .evaluate((el) => parseInt(getComputedStyle(el).paddingLeft)),
-    )
-    .toBe(14);
-  // Its session followed the move.
-  await expandFolder(page, "Inner");
-  const body = page.locator(".rd-group", { hasText: "Inner" });
-  await expect(body.locator(".rd-row", { hasText: key })).toBeVisible();
+    // The moved folder is top-level, and its session follows the move.
+    const moved = page.getByRole("button", { name: `Terminal colors for ${child}`, exact: true }).locator("..");
+    await expect(moved).toBeVisible();
+    await expect.poll(() => moved.evaluate((el) => parseInt(getComputedStyle(el).paddingLeft))).toBe(14);
+    await expect(inner).toHaveCount(0);
+    await expandFolder(page, child);
+    const body = page.locator(".rd-group", { has: moved });
+    await expect(body.locator(".rd-row", { hasText: key })).toBeVisible();
+  } finally {
+    await apiDelete(`/sessions/${key}`);
+    await apiDelete(`/folders/${encodeURIComponent(parent)}`);
+    await apiDelete(`/folders/${encodeURIComponent(child)}`);
+  }
 });
 
 // A terminated session keeps Notes and destructive cleanup. Running-session

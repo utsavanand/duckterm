@@ -1,6 +1,6 @@
-# Harnesses and skill kits
+# Harnesses and MetaHarnesses
 
-A **harness** is an agent CLI Duckterm runs (§1). A **skill kit** is a
+A **harness** is an agent CLI Duckterm runs (§1). A **MetaHarness** (until 2026-11-25 a "MetaHarness") is a
 collection of skills, hooks, sub-agents and guardrails those agents load (§2).
 
 ## 1. Runtime adapters — how Duckterm drives and observes one agent CLI
@@ -26,30 +26,30 @@ generic runtime — driven in a PTY, just without hook-powered smarts.
 
 Shipped adapters: `claude-code`, `codex`, `copilot`, `generic`.
 
-## 2. Skill kits — collections of skills, hooks, and sub-agents
+## 2. MetaHarnesses — collections of skills, hooks, and sub-agents
 
-A kit like [uv-suite](https://github.com/utsavanand/uv-suite) bundles skills,
-hooks, sub-agents, guardrails, and personas. The **Skill kits** item in
-Settings lists the kits you have added by folder path and shows what each
-contains; the session panel's "Skill kit" row shows which kit a session's
+A MetaHarness like [uv-suite](https://github.com/utsavanand/uv-suite) bundles skills,
+hooks, sub-agents, guardrails, and personas. The **MetaHarnesses** item in
+Settings lists the MetaHarnesses you have added by folder path and shows what each
+contains; the session panel's "MetaHarness" row shows which MetaHarness a session's
 folder has installed.
 
-Skill kits are behind the `skill_kits` development flag: the Settings item,
-the `/harnesses` routes and the "Skill kit" row exist only on an instance that
+MetaHarnesses are behind the `skill_kits` development flag (the flag keeps its id): the Settings item,
+the `/harnesses` routes and the "MetaHarness" row exist only on an instance that
 has turned the flag on. See [feature-flags.md](feature-flags.md).
 
-Installing never runs a kit's own script (owner decision 2026-10-04). A kit is
+Installing never runs a MetaHarness's own script (owner decision 2026-10-04). A MetaHarness is
 installed declaratively: the manifest lists components, and the installer
 writes each one where the chosen harness reads it, or reports why it cannot.
-The one place a kit script runs is a flow's `exec` step, at run time, and only
+The one place a MetaHarness script runs is a flow's `exec` step, at run time, and only
 a script the install on this machine recorded (see Flows and the runner); a
-kit's hooks are installed only at the kit digest reviewed at Enable. Both
+MetaHarness's hooks are installed only at the MetaHarness digest reviewed at Enable. Both
 pins are the owner's decision of 2026-11-22.
-The format is the Skill Kit Specification (`docs/specs/skill-kit-protocol-spec.md`
-on the spec branch); `examples/skill-kits/sample-kit` holds one of every
-component kind and is the kit the installer is tried on.
+The format is the Skill MetaHarness Specification (`docs/specs/skill-kit-protocol-spec.md`
+on the spec branch); `examples/metaharnesses/sample-kit` holds one of every
+component kind and is the MetaHarness the installer is tried on.
 
-The manifest is `skill-kit.toml` at the kit's root:
+The manifest is `metaharness.toml` at the root (`skill-kit.toml`, the name until 2026-11-25, is still read and validate asks for the rename; a direct path to any `*.toml` also works, as `metaharness.fast.toml` beside the main one):
 
 ```toml
 manifest_version = 1
@@ -72,14 +72,14 @@ blocking = true
 Seven component kinds: `knowledge`, `tool`, `skill`, `agent`, `hook`,
 `permission`, `flow`, plus `settings` as the per-harness escape hatch. A
 legacy `duckterm-harness.json` loads (name, description, `detect`) but lists
-no components, so the Skill kits page refuses to add it and the CLI warns
+no components, so the MetaHarnesses page refuses to add it and the CLI warns
 about the retired name. A knowledge `load.paths` that names every file
 (`**/*`) is `always` under another name and installs as such; a path scope
 with `fallback = "always"` loads always for every harness as soon as one
 chosen harness (Codex, OpenCode) cannot scope by path, because the fallback
 text lives in the shared AGENTS.md.
 
-The CLI works from a bare clone, no server needed:
+The CLI is `duckterm metaharness` (`duckterm kit` stays as an alias: installed `/flow` shortcuts call it) and works from a bare clone, no server needed:
 
 ```
 duckterm kit validate <kit>                      # authoring rules; runs no kit code
@@ -109,9 +109,9 @@ option not chosen). Where files land per harness is the adapter table in
 | permissions | `permissions` in settings | `.codex/rules/<kit>.rules` (shell only) | flags only | `opencode.json` |
 | MCP tools | `.mcp.json` | `.codex/config.toml` | `.mcp.json` | `opencode.json` |
 
-Hooks go through a shim the installer writes beside the kit's scripts
+Hooks go through a shim the installer writes beside the MetaHarness's scripts
 (`_skill_kit_shim.py`): it rewrites each harness's payload to one neutral
-shape, so a kit author writes one script, and maps a block decision back to
+shape, so a MetaHarness author writes one script, and maps a block decision back to
 what that harness honours (exit 2, or a JSON decision for Copilot stop events).
 
 Knowledge never replaces a hand-written `AGENTS.md` or `CLAUDE.md`: it is an
@@ -121,27 +121,27 @@ path written with its hash, and for every file the installer edited rather
 than wrote (a settings JSON, `.codex/config.toml`, `AGENTS.md`, `CLAUDE.md`)
 the bytes it found there and the hash of what it left. Uninstall puts the
 original bytes back when the file is still what the install wrote; when the
-owner changed it since, only the recorded kit additions come out and the
-owner's edits stay. A copied kit file edited since install is kept and listed.
-`verify` checks every entry: a deleted config is *missing*, one whose kit
+owner changed it since, only the recorded MetaHarness additions come out and the
+owner's edits stay. A copied MetaHarness file edited since install is kept and listed.
+`verify` checks every entry: a deleted config is *missing*, one whose MetaHarness
 values are gone is *drifted*; the owner's own additions beside them are
 neither. Reinstalling repairs; it never duplicates a hook, rule or block.
 
 The record comes with the repository, so a clone controls it. A copy of each
-kit's entry is kept under the DuckTerm home, keyed by project path, and the
+MetaHarness's entry is kept under the DuckTerm home, keyed by project path, and the
 repository's entry is believed only when it matches that copy; otherwise
-uninstall strips the text a kit of that name would have written (attributed
-blocks, kit-owned rules, copied files that still hash), leaves config JSON as
+uninstall strips the text a MetaHarness of that name would have written (attributed
+blocks, MetaHarness-owned rules, copied files that still hash), leaves config JSON as
 it is and says so. Every path an install or uninstall touches, from the
 record or from the adapters, is refused unless it is a path the adapters write
 (never `.git/`), relative, with no symlink anywhere on the way (a committed
 `.claude -> .git` would otherwise carry an allowed name into `.git/`), and
 still inside the project. Links are refused, not followed, even when they
 resolve inside the project: a project whose agent folder is a link (say
-`.claude/skills -> ../shared`) cannot use skill kits until the link is replaced
+`.claude/skills -> ../shared`) cannot use MetaHarnesses until the link is replaced
 with a real folder (owner decision, 2026-11-21). Component names are one path
 segment (`[a-z0-9_-]`),
-and a kit's own sources must be real files under the kit root; a symlink
+and a MetaHarness's own sources must be real files under the MetaHarness root; a symlink
 anywhere on the way fails `validate`. Uninstall prunes only the directories
 the install created.
 
@@ -156,11 +156,11 @@ itself, retrying an invalid one twice with the error. A step is judged by its
 exit code first, never by the harness's own status field. `gate` pauses the
 run (exit 3) until `--resume … --gate <step> <answer>`; `parallel` runs
 read-only steps together; `wait` polls CI or review on the branch head through
-`gh` until pass, fail or its timeout; `exec` runs a kit script with the step's
+`gh` until pass, fail or its timeout; `exec` runs a MetaHarness script with the step's
 inputs as JSON on stdin and reads a typed result from its last stdout line.
 `next` sends a step somewhere other than the next in the list; any edge
 pointing backwards carries `max_loops`. Copilot and OpenCode steps are refused
-with the reason; Codex steps of a kit with hooks need `--codex-trusted`.
+with the reason; Codex steps of a MetaHarness with hooks need `--codex-trusted`.
 
 What the runner believes. The flow file, `skills.json` and the scripts sit in
 the repository, so a clone or a pulled commit can rewrite all three together.
@@ -174,7 +174,7 @@ between ends the run (`gate_shown_changed`), because a step's output was
 altered outside the runner. A step reading a file output (`{path, sha256}`)
 checks the hash again before it starts. The run file itself is in the
 repository too, so a commit can carry one already past its gate: this machine
-notes the hash of every run file it writes (`<home>/kits/runs/<project
+notes the hash of every run file it writes (`<home>/MetaHarnesses/runs/<project
 key>/<run id>`), a run with no note "was not started on this machine", one
 whose file no longer matches "changed outside the runner", and `runs` marks
 such runs `recorded: false` so the Flows tab lists them without a gate or
@@ -220,54 +220,78 @@ sandbox executor answers from inside the sandbox, where the harness and its
 trust record actually live. The runner itself checks only that the step's
 skill is installed in the project.
 
-**The Skill kits page** (Settings → Skill kits, behind the flag) is a front
-end to the same engine. It lists the kits installed in a workspace's
+**The MetaHarnesses page** (Settings → MetaHarnesses, behind the flag) is a front
+end to the same engine. It lists the MetaHarnesses installed in a workspace's
 repository with their verify state and flows, and the procedures they ship
 (from the install record, which carries each team template's roles and
-rules); Add takes a kit folder, shows the inventory and options, then the
+rules); Add takes a MetaHarness folder, shows the inventory and options, then the
 review page is the plan: one row per component, one status per harness, the
 conflicts with keep or replace, the files. Install, verify and uninstall call
 the engine; Run starts a flow in a server thread and the page watches the run
-file. **The page starts from kits, not repositories.** Add skill kit takes a kit
-folder or a `skill-kit.toml` path, reads the manifest and adds the kit to
+file. **The page starts from MetaHarnesses, not repositories.** Add MetaHarness takes a
+folder or a manifest path, reads the manifest and adds the MetaHarness to
 DuckTerm (`POST /kits/register`; the record is the `harnesses` table, name
-and path). The list (`POST /kits/catalog`) shows every added kit with what it
+and path). The list (`POST /kits/catalog`) shows every added MetaHarness with what it
 holds and the workspaces it is installed in. A workspace's repositories are
 the git repositories its sessions run in directly, asked of git on every
 load; a linked worktree counts for nothing there, because its main checkout
 may be where other workspaces' sessions run, hooks included, and the
-worktree gets the kit at its next session start; a plain folder or a
+worktree gets the MetaHarness at its next session start; a plain folder or a
 deleted one counts for nothing either, so a workspace with no repository
-yet gets the kit when a session starts in one. Adding is
-three steps: pick the kit (Browse marks kit folders and offers each kit of a
-multi-kit folder), read what it holds, enable it for all workspaces or chosen
+yet gets the MetaHarness when a session starts in one. Adding is
+three steps: pick the MetaHarness (Browse marks MetaHarness folders and offers each MetaHarness of a
+multi-MetaHarness folder), read what it holds, enable it for all workspaces or chosen
 ones (`POST /kits/enable`; the choice lives in `<home>/kit-policy.json`).
-Enabling installs into every matching repository known now, after a dry run
-you can read, for every harness; the review names, per harness, the
-components the kit does not support. Enable pins a digest of the kit tree
+The chooser lists workspaces only, no folders: enabling is a workspace
+property. The review (`POST /kits/review`) is one matrix for the MetaHarness, since
+what each harness gets depends on the harness, not the folder: components in
+sections by kind, collapsed, a section with something a harness cannot take
+marked; above it, one strip with everything per repository that differs
+and can be put right from there, each with a Fix: Codex trust (hooks run
+only in a repository Codex trusts; `POST /kits/fix` with `codex-trust`
+writes `trust_level = "trusted"` for the repository into `~/.codex/config.toml`,
+the record Codex itself writes when the owner accepts its prompt, and one
+click covers every MetaHarness and session there; owner decision 2026-11-25, the
+only place DuckTerm writes trust, never at install or SessionStart), a
+knowledge file with a path scope on a harness without one (`fallbacks`:
+load it always there, kept with the policy so later SessionStart installs
+do the same), a file that exists and is not from a MetaHarness (replace). A MetaHarness's
+permission rules reach Copilot as `--allow-tool`/`--deny-tool` flags when
+DuckTerm launches a Copilot session in the repository: the flags are
+computed at install from the tree the owner reviewed and kept in the
+home-side install record with the MetaHarness's digest; the launcher reads only
+that record, never the MetaHarness's current files or the repository's own copy
+of the record, and passes a MetaHarness's flags only while its folder still
+hashes the same (a changed MetaHarness's flags are dropped and logged until Enable
+reviews it again). A permission `match` may not contain `)`, `,` or a
+newline, so one rule cannot read as two. OpenCode hooks (JS plugins)
+have no fix yet. Enabling installs into every matching repository known
+now, for every harness, with the options and fixes the review showed; the
+policy keeps them (`options`, `fallbacks`) for the installs SessionStart
+does later. Enable pins a digest of the MetaHarness tree
 the review showed (`digest` in the policy). On a SessionStart the server
-installs enabled kits the session's repository lacks, but only that pinned
-tree: a kit folder that changed since (a pull, an edit under ~/Downloads)
+installs enabled MetaHarnesses the session's repository lacks, but only that pinned
+tree: a MetaHarness folder that changed since (a pull, an edit under ~/Downloads)
 installs nowhere, the page shows it as "changed since enabled", and Enable
 again is the review of the new tree. The install target is the repository
 DuckTerm launched the session in (the session row's worktree or repository
 as it stood before the event, a git root, never the home folder), and only
 when the event's cwd lies inside it; the hook's own cwd is never a target,
 because a `claude` an agent starts in another folder inherits the session
-key and reports that folder. Create team works from an added kit: the new
-workspace is enabled for the kit (pinned to the tree the kit page showed),
+key and reports that folder. Create team works from an added MetaHarness: the new
+workspace is enabled for the MetaHarness (pinned to the tree the MetaHarness page showed),
 so its first session installs it. `kit-policy.json` is written atomically
-and never through a symlink. A kit's name is unique in the registry;
-registering a second kit or suite of that name is refused.
+and never through a symlink. A MetaHarness's name is unique in the registry;
+registering a second MetaHarness or suite of that name is refused.
 
-The server routes are `POST /kits/catalog | register | unregister | enable |
+The server routes are `POST /MetaHarnesses/catalog | register | unregister | enable |
 disable | overview
 | plan | install | uninstall | verify | run | runs | run-detail | gate | teams
-| team` (`duckterm.kits.api`); the ones that touch a repository take its
-path in the body. **Create team** (`POST /kits/team
-{project, kit, team, name?}`) makes a workspace carrying the kit's procedure:
-the record (roles and rules copied from the installed kit's template, with
-kit and version) is `<home>/teams/<name>.json`, the workspace is registered
+| team` (`duckterm.MetaHarnesses.api`); the ones that touch a repository take its
+path in the body. **Create team** (`POST /MetaHarnesses/team
+{project, MetaHarness, team, name?}`) makes a workspace carrying the MetaHarness's procedure:
+the record (roles and rules copied from the installed MetaHarness's template, with
+MetaHarness and version) is `<home>/teams/<name>.json`, the workspace is registered
 like New workspace, and the workspace view shows one card per role.
 
 **A run shows in the app while it runs.** The session's Flows tab lists the
@@ -283,27 +307,27 @@ are the owner's, in the Flows tab, so there is no session gate route.
 Neither HTTP route takes `yolo` or `codex_trusted`; the harness keeps its
 own permission prompts unless the owner passes `--yolo` or `--codex-trusted`
 to `duckterm kit run` in a terminal outside a session, and flows run by
-name only (`<kit>/<flow>`, installed), never by file path. `duckterm kit
+name only (`<kit>/<flow>`, installed), never by file path. `duckterm MetaHarness
 run` inside a session hands the run to the server this way and watches it
 from the terminal; outside a session it runs locally. The `/<flow>` command
-a flow installs for Claude Code pre-approves exactly `duckterm kit run
-<kit>/<flow>` (no `--gate`, no `--yolo`), with the flow's description as one
+a flow installs for Claude Code pre-approves exactly `duckterm MetaHarness run
+<MetaHarness>/<flow>` (no `--gate`, no `--yolo`), with the flow's description as one
 quoted frontmatter line and only identifier input names; a flow without
 inputs pre-approves the exact command, no prefix. Inside a session (any
 `DUCKTERM_SESSION_KEY`) the CLI refuses `--yolo`, `--codex-trusted` and
 `--gate` before it looks anything up, and a missing session credential is an
 error, never a fall-back to the local runner. Script steps are not sessions.
 
-Where a session lives, for kits, is the folder DuckTerm launched it in:
+Where a session lives, for MetaHarnesses, is the folder DuckTerm launched it in:
 the launcher writes `<home>/kits/launches/<session>.json` and nothing else
 does. The session row's `cwd` and `repo_path` follow every hook event, so a
-`claude` an agent starts in another repository moves them; the session kit
+`claude` an agent starts in another repository moves them; the session MetaHarness
 routes and the SessionStart install never read them. A session with no
-launch record (one DuckTerm did not start) gets 409 from the session kit
+launch record (one DuckTerm did not start) gets 409 from the session MetaHarness
 routes and no auto-install.
 
 Endpoints: `GET /harnesses`, `POST /harnesses/register {path}`,
-`GET /harnesses/:name/contents`, `DELETE /harnesses/:name`. Registered kits
+`GET /harnesses/:name/contents`, `DELETE /harnesses/:name`. Registered MetaHarnesses
 live in the `harnesses` table (name + path); the manifest is re-read from disk
 on every use.
 

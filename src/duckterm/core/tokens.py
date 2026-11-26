@@ -19,6 +19,7 @@ from pathlib import Path
 from typing import Any
 
 FIELDS = ("input", "cache_read", "cache_write", "output")
+READ_CHUNK = 1024 * 1024
 
 
 @dataclass
@@ -138,20 +139,33 @@ class TokenLedger:
         handle_line = _claude_line if agent == "claude-code" else _codex_line
         with path.open("rb") as fh:
             fh.seek(state.offset)
-            data = fh.read(stat.st_size - state.offset)
-        # Leave a trailing partial line for the next scan.
-        end = data.rfind(b"\n") + 1
-        for raw in data[:end].splitlines():
-            try:
-                obj = json.loads(raw)
-            except json.JSONDecodeError:
-                continue
-            if isinstance(obj, dict):
-                try:
-                    handle_line(state, obj)
-                except (TypeError, ValueError, OverflowError):
-                    continue  # malformed usage must not break the whole page
-        state.offset += end
+            remaining = stat.st_size - state.offset
+            pending = bytearray()
+            while remaining:
+                chunk = fh.read(min(remaining, READ_CHUNK))
+                if not chunk:
+                    break
+                remaining -= len(chunk)
+                end = chunk.rfind(b"\n") + 1
+                if end:
+                    pending.extend(chunk[:end])
+                    # Preserve byte splitlines semantics, including CR/CRLF,
+                    # and commit only through the last complete LF record.
+                    for raw in pending.splitlines():
+                        try:
+                            obj = json.loads(raw)
+                        except json.JSONDecodeError:
+                            continue
+                        if isinstance(obj, dict):
+                            try:
+                                handle_line(state, obj)
+                            except (TypeError, ValueError, OverflowError):
+                                continue  # malformed usage must not break the whole page
+                    state.offset += len(pending)
+                    pending.clear()
+                # A long record can exceed the chunk size; never truncate it.
+                # An unfinished final record is reread on the next scan.
+                pending.extend(chunk[end:])
         return state
 
     def totals(self, days: int, now: float) -> dict[str, dict[str, int]]:

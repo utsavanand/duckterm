@@ -502,6 +502,9 @@ class HistoryStore:
         if key is not None:
             self._upsert_session(key, event)
             native_identity.record(self._conn, key, event)
+            from duckterm.agents import hook_connection
+
+            hook_connection.record(self._conn, key, event)
             row = self.session(key)
             if row and row["state"] in AT_REST_STATES:
                 # A late SessionEnd after a stop or interruption must not cancel

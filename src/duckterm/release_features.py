@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 FLAGS = {
     "cross_computer_collaboration": "Cross-computer collaboration",
-    "skill_kits": "Skill kits",
+    "skill_kits": "MetaHarnesses",
     "harness_management": "Harness installation and setup",
     "byok": "Bring your own API key",
     "byoc": "Bring your own cloud",

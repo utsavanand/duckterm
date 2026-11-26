@@ -32,7 +32,8 @@ function agentReachLabel(c: Connector): string {
     const label = harnessNames[h] ?? h;
     return c.harnesses_present?.[h] === false ? `${label} (not installed here)` : label;
   });
-  return `${named.join(" and ")}, through the GitHub MCP server.`;
+  // "through the GitHub MCP server" is how it works, not whether it works.
+  return named.join(" and ");
 }
 
 const sourceNames: Record<string, string> = {
@@ -157,7 +158,9 @@ export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
         <div className="rd-connector-row">
           <span className={`dot ${c.agents_use ? "on" : connected ? "part" : "off"}`} />
           <span className="rd-connector-title">{c.title}</span>
-          <span className="rd-connector-cred">
+          {/* An identity is a value and stays monospace; "Not connected" is a
+              state, and monospace made it read as returned output. */}
+          <span className={`rd-connector-cred${connected ? "" : " rd-connector-state"}`}>
             {connected
               ? c.identity ?? "Identity not verified — reconnect to verify"
               : "Not connected"}
@@ -166,29 +169,26 @@ export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
           {editing === c.name && <button className="rd-btn rd-btn-ghost rd-btn-sm" aria-label={`Close ${c.title} connection settings`} onClick={() => { setEditing(null); setToken(""); }}>Close</button>}
         </div>
 
-        {connected && <div className="rd-connector-desc">{sourceNames[c.credential!] ?? c.credential} · {c.description}</div>}
+        {/* Which credential is in use is worth saying; what GitHub is is not. */}
+        {connected && <div className="rd-connector-desc">{sourceNames[c.credential!] ?? c.credential}</div>}
 
-        {/* The two doors, each said separately. One line for both read as
-            "Duckterm stopped using it" whenever agents were off. */}
+        {/* The two doors still report separately -- one line for both read as
+            "Duckterm stopped using it" whenever agents were off. But each is a
+            state, so each is one line. The paragraph under "Duckterm uses it"
+            listed features that were never in question; the paragraph under
+            the agents line only earns its place when something is wrong. */}
         {connected && <div className="rd-connector-doors">
           <div className="rd-door on">
             <span className="rd-door-mark" aria-hidden="true">▸</span>
-            <div>
-              <strong>Duckterm uses it</strong>
-              <div className="rd-connector-desc">Pull request status, repository browser, code review and transfers.</div>
-            </div>
+            <div><strong>Duckterm uses it</strong></div>
           </div>
           <div className={`rd-door ${c.agents_use ? "on" : "off"}`}>
             <span className="rd-door-mark" aria-hidden="true">{c.agents_use ? "▸" : "×"}</span>
             <div>
-              <strong>{c.agents_use ? "Agents use it" : "Agents cannot use it"}</strong>
-              <div className="rd-connector-desc">
-                {c.agents_use
-                  ? agentReachLabel(c)
-                  : lost.length && !c.agents_off_by_choice
-                  ? `${harnessList(lost)} ${lost.length > 1 ? "have" : "has"} no entry for it, so ${lost.length > 1 ? "those agents" : "that agent"} cannot reach it. Re-register below, or deselect ${lost.length > 1 ? "them" : "it"}.`
-                  : "No agent session can reach GitHub. Your login stays saved."}
-              </div>
+              <strong>{c.agents_use ? `Agents use it — ${agentReachLabel(c)}` : "Agents cannot use it"}</strong>
+              {!c.agents_use && lost.length > 0 && !c.agents_off_by_choice && <div className="rd-connector-desc">
+                {`${harnessList(lost)} ${lost.length > 1 ? "have" : "has"} no entry for it. Re-register below, or deselect ${lost.length > 1 ? "them" : "it"}.`}
+              </div>}
             </div>
           </div>
         </div>}
@@ -197,57 +197,70 @@ export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
           Agents also need the server to run: {c.detail}
         </div>}
 
+        {/* One span, not two: as separate flex items the status and the usage
+            could not share a line with the button at panel width. "Configured"
+            added nothing -- the row above already says agents use it. */}
         {c.agents_use && <div className="rd-connector-desc rd-connector-proof">
           <span>{checks[c.name]
             ? (checks[c.name].ok
-                ? `✓ Verified — ${checks[c.name].tools} tools available`
+                ? `✓ ${checks[c.name].tools} tools`
                 : `✗ ${checks[c.name].detail ?? "Verification failed"}`)
-            : "Configured · not verified this session"}</span>
-          <span> · {lastUsedLabel(c)}</span>
+            : "Not verified"} · {lastUsedLabel(c)}</span>
           <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy !== null} onClick={() => verify(c)}>
             {busy === c.name ? "Checking…" : "Check now"}
           </button>
         </div>}
 
         {c.managed ? <div className="rd-connector-desc">Managed through the remote connector administrator.</div> : <>
-          {/* Not connected: the prerequisite first, then the two ways in. A
-              dropdown for a binary choice hid that gh needs nothing pasted. */}
+          {/* Disconnected is a button, not a briefing. What GitHub is needs no
+              explaining, and a passing prerequisite check is not news -- only
+              its failure is. Both were prose the owner had to read past to
+              reach the one control that matters. */}
           {!connected && editing !== c.name && <div className="rd-connector-connect">
-            <div className="rd-connector-desc">{c.description} — lets Duckterm show pull request status and browse your repositories, and lets agents work with issues, PRs and Actions.</div>
-            {c.runner_ready === false
-              ? <div className="rd-connector-desc rd-connector-warn">Before connecting: {c.detail}</div>
-              : <div className="rd-connector-desc">✓ Found the GitHub MCP server, so agents can run it.</div>}
-            {(c.sources ?? []).includes("gh-cli") && <button className="rd-btn rd-btn-sm rd-btn-primary" disabled={busy !== null} onClick={() => { setSource("gh-cli"); setToken(""); setHarnesses(c.harnesses ?? HARNESS_ORDER); void change({ ...c, credential: "gh-cli" }, "enable", c.harnesses ?? HARNESS_ORDER); }}>
-              Use my GitHub CLI login
-            </button>}
-            <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy !== null} onClick={() => { setEditing(c.name); setSource("stored"); setToken(""); setHarnesses(c.harnesses ?? HARNESS_ORDER); }}>
-              Paste a token instead
-            </button>
-            <div className="rd-connector-desc">Finished signing in elsewhere? <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={refresh}>Refresh credentials</button></div>
+            {c.runner_ready === false && <div className="rd-connector-desc rd-connector-warn">Before connecting: {c.detail}</div>}
+            <div className="rd-connector-actions">
+              {(c.sources ?? []).includes("gh-cli") && <button className="rd-btn rd-btn-sm rd-btn-primary" disabled={busy !== null} onClick={() => { setSource("gh-cli"); setToken(""); setHarnesses(c.harnesses ?? HARNESS_ORDER); void change({ ...c, credential: "gh-cli" }, "enable", c.harnesses ?? HARNESS_ORDER); }}>
+                Connect
+              </button>}
+              <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy !== null} onClick={() => { setEditing(c.name); setSource("stored"); setToken(""); setHarnesses(c.harnesses ?? HARNESS_ORDER); }}>
+                Paste a token
+              </button>
+            </div>
           </div>}
 
           {connected && <div className="rd-connector-installed">
-            {c.agents_use
-              ? <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy !== null} onClick={() => change(c, "disable")}>Stop sharing with agents</button>
-              : <button className="rd-btn rd-btn-sm rd-btn-primary" disabled={busy !== null} onClick={() => change(c, "enable", c.harnesses ?? HARNESS_ORDER)}>Share with agents</button>}
-            <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy !== null} onClick={() => change(c, "forget")}>Sign out</button>
-            {/* Revoking lives in the sentence, not the button row: it happens on
-                github.com, so offering it beside Sign out read as a third thing
-                Duckterm does. */}
-            <div>Signing out deletes the token Duckterm stored. Revoking the authorization itself must be done <a href={c.revoke_url} target="_blank" rel="noreferrer">on github.com ↗</a>.</div>
+            <div className="rd-connector-actions">
+              {c.agents_use
+                ? <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy !== null} onClick={() => change(c, "disable")}>Stop sharing with agents</button>
+                : <button className="rd-btn rd-btn-sm rd-btn-primary" disabled={busy !== null} onClick={() => change(c, "enable", c.harnesses ?? HARNESS_ORDER)}>Share with agents</button>}
+              <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy !== null} onClick={() => change(c, "forget")}>Sign out</button>
+            </div>
+            {/* What Sign out does is already in its confirm dialog, which is
+                where it matters. Here one link is enough. */}
+            <div>Revoking happens <a href={c.revoke_url} target="_blank" rel="noreferrer">on github.com ↗</a></div>
           </div>}
 
           {editing === c.name && <div className="rd-connector-token">
-            <label>Credential
-              <select aria-label={`${c.title} credential source`} value={source} onChange={e => { setSource(e.target.value); setToken(""); }}>
+            {/* Label above the control, as every other form in the app does.
+                Wrapping the select inside the label put the two on one line
+                with no gap, and the select kept the browser's own font. */}
+            <div className="rd-connector-field">
+              {/* The visible word is "Credential"; the accessible name keeps
+                  the connector in it, since the panel can list more than one. */}
+              <label htmlFor={`cred-${c.name}`}>
+                <span aria-hidden="true">Credential</span>
+                <span className="rd-sr-only">{c.title} credential source</span>
+              </label>
+              <select id={`cred-${c.name}`} value={source} onChange={e => { setSource(e.target.value); setToken(""); }}>
                 {(c.sources ?? []).map(s => <option key={s} value={s}>{sourceNames[s] ?? s}</option>)}
               </select>
-            </label>
+            </div>
             {source === "stored" && <>
               <input aria-label={`${c.title} personal access token`} type="password" autoComplete="off" value={token} placeholder={c.credential === "stored" ? "Leave blank to reuse the stored token" : "ghp_… or github_pat_…"} onChange={e => setToken(e.target.value)} />
-              {/* A gh token cannot go below repo + read:org + gist, so a
-                  fine-grained token is the only way to hand agents less. */}
-              <div className="rd-connector-desc">A fine-grained token lets you limit which repositories agents reach, and grant read-only access. Your CLI login cannot go narrower than full <code>repo</code> access.</div>
+              {/* The one note worth keeping: a gh token cannot go below
+                  repo + read:org + gist, so a fine-grained token is the only
+                  way to hand agents less, and you can only act on that here. */}
+              <div className="rd-connector-desc">A fine-grained token can be read-only, or limited to some repositories. Your CLI login cannot.</div>
             </>}
             <fieldset className="rd-connector-harnesses">
               <legend>Share with</legend>
@@ -267,7 +280,6 @@ export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
                 </label>;
               })}
             </fieldset>
-            <div className="rd-connector-desc">Duckterm uses the credential for pull request status either way. This chooses which agents may also use it.</div>
             <button className="rd-btn rd-btn-sm rd-btn-primary" disabled={busy !== null || !source || harnesses.length === 0} onClick={() => change(c, "enable")}>
               {harnesses.length ? "Verify and share" : "Verify"}
             </button>

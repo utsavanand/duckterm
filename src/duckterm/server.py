@@ -407,6 +407,8 @@ _ROUTES: list[Route] = [
     Route("POST", "/kits/enable", lambda s, r, w, h, b, seg: s._kits(w, "enable", b)),
     Route("POST", "/kits/disable", lambda s, r, w, h, b, seg: s._kits(w, "disable", b)),
     Route("POST", "/kits/plan", lambda s, r, w, h, b, seg: s._kits(w, "plan", b)),
+    Route("POST", "/kits/review", lambda s, r, w, h, b, seg: s._kits(w, "review", b)),
+    Route("POST", "/kits/fix", lambda s, r, w, h, b, seg: s._kits(w, "fix", b)),
     Route("POST", "/kits/install", lambda s, r, w, h, b, seg: s._kits(w, "install", b)),
     Route("POST", "/kits/uninstall", lambda s, r, w, h, b, seg: s._kits(w, "uninstall", b)),
     Route("POST", "/kits/verify", lambda s, r, w, h, b, seg: s._kits(w, "verify", b)),
@@ -575,6 +577,7 @@ class Server:
         self.digests = DigestStore(conn=self.history._conn)
         self._review_tasks: dict[str, asyncio.Task[Any]] = {}
         self._branch_owners_cache: tuple[float, dict[tuple[str, str], str]] = (0.0, {})
+        self._branch_owners_refresh: asyncio.Task[dict[tuple[str, str], str]] | None = None
         from duckterm.checkpoint_requests import CheckpointRequests
 
         self.checkpoint_requests = CheckpointRequests(self)
@@ -1184,6 +1187,7 @@ class Server:
             return
         # Only the supervisor may assign identity; hooks can report observations.
         raw.pop("_assigned_native_id", None)
+        raw.pop("hook_setup", None)  # only the supervisor can record configuration
         # agent_pid comes from an external hook ($PPID) and is later fed to
         # os.kill in the liveness sweep — coerce to a positive int or drop it.
         if "agent_pid" in raw:
@@ -1651,9 +1655,8 @@ class Server:
         keys = {row["session_key"] for row in rows}
         now = time.time()
         async with self._tokens_lock:
-            usage = await asyncio.to_thread(
-                self._tokens.analytics, 7, now, self._token_identities()
-            )
+            identities = await asyncio.to_thread(self._token_identities)
+            usage = await asyncio.to_thread(self._tokens.analytics, 7, now, identities)
         # Membership can change while transcript accounting runs in its worker.
         current = {
             row["session_key"]
@@ -2268,15 +2271,41 @@ class Server:
         from duckterm.review import lists as review_lists
 
         at, owners = self._branch_owners_cache
-        if refresh or time.time() - at >= review_lists.CACHE_SECONDS:
+        if not refresh and time.time() - at < review_lists.CACHE_SECONDS:
+            return owners
+        previous = self._branch_owners_refresh
+        if refresh and previous is not None:
+            # An explicit refresh must include pushes made after an older scan
+            # began. Wait for that scan, then start (or join) a newer one.
+            with contextlib.suppress(Exception):
+                await asyncio.shield(previous)
+            if self._branch_owners_refresh is previous:
+                self._branch_owners_refresh = None
+        task = self._branch_owners_refresh
+        if task is None:
             since = int((time.time() - review_lists.PUSH_DAYS * 86400) * 1000)
 
             def read() -> dict[tuple[str, str], str]:
                 return review_lists.branch_owners(self.history.push_commands(since))
 
-            owners = await asyncio.to_thread(read)
-            self._branch_owners_cache = (time.time(), owners)
-        return owners
+            async def rebuild() -> dict[tuple[str, str], str]:
+                result = await asyncio.to_thread(read)
+                self._branch_owners_cache = (time.time(), result)
+                return result
+
+            task = asyncio.create_task(rebuild())
+            self._branch_owners_refresh = task
+
+            def finished(done: asyncio.Task[dict[tuple[str, str], str]]) -> None:
+                if self._branch_owners_refresh is done:
+                    self._branch_owners_refresh = None
+                # A disconnected caller must neither cancel the shared scan nor
+                # leave an unobserved exception if all callers have gone away.
+                if not done.cancelled():
+                    done.exception()
+
+            task.add_done_callback(finished)
+        return await asyncio.shield(task)
 
     async def _prs(
         self,
@@ -2830,7 +2859,7 @@ class Server:
         tracker = _FlowStepTracker(self, asyncio.get_running_loop())
         # The history store is bound to this thread, so everything it answers
         # is gathered here; only the kit engine's file work runs in a thread.
-        needs_registry = action in ("catalog", "enable")
+        needs_registry = action in ("catalog", "enable", "review")
         registry = [dict(r) for r in self.history.harnesses()] if needs_registry else []
         workspaces = self._kit_workspaces() if needs_registry else []
         if action == "unregister":
@@ -2856,6 +2885,8 @@ class Server:
                 payload.get("project"), str(payload.get("run_id") or "")
             ),
             "plan": lambda: kits_api.plan_for(payload),
+            "review": lambda: kits_api.review(payload, registry, workspaces),
+            "fix": lambda: kits_api.fix(payload),
             "install": lambda: kits_api.install_kit(payload),
             "uninstall": lambda: kits_api.uninstall_kit(payload),
             "verify": lambda: kits_api.verify_kits(payload),
@@ -2882,6 +2913,25 @@ class Server:
             await _write_json(writer, exc.status, {"error": str(exc)})
             return
         await _write_json(writer, 200, result)
+
+    def _kit_launch_flags(self, runtime: str, folder: str) -> list[str]:
+        """Copilot takes a kit's permissions as flags, not a file: a session
+        launched in a repository whose home-side install record holds a kit
+        gets the flags recorded at that install, while the kit still hashes
+        as reviewed. Other harnesses read files."""
+        if runtime != "copilot" or not self.edition.includes("skill_kits"):
+            return []
+        from duckterm.kits import api as kits_api
+
+        registry = [dict(r) for r in self.history.harnesses()]
+        flags, dropped = kits_api.copilot_flags(folder, registry)
+        for name in dropped:
+            print(
+                f"[duckterm] kit {name} in {folder}: Copilot flags dropped, the kit changed "
+                "since it was installed; enable it again to review",
+                file=sys.stderr,
+            )
+        return flags
 
     def _remember_launch(self, key: str, folder: object) -> None:
         """The launcher is the only writer of where a session lives (kits)."""
@@ -3099,6 +3149,7 @@ class Server:
             session_key=key,
             initial_prompt=self._collaboration_prompt(runtime.name, key, req.get("prompt", "")),
         )
+        argv[1:1] = self._kit_launch_flags(runtime.name, run_cwd)
 
         # Record a tracked row so the session shows up with its name/repo/branch.
         # The agent's hooks report under the same key (via DUCKTERM_SESSION_KEY)
@@ -3234,6 +3285,7 @@ class Server:
                 fork_runtime.name, child_key, req.get("prompt", "")
             ),
         )
+        argv[1:1] = self._kit_launch_flags(fork_runtime.name, str(worktree.path))
         # Record a tracked row so the fork shows its lineage. The agent's hooks
         # report under child_key (via DUCKTERM_SESSION_KEY), updating this row.
         self.bus.publish(
@@ -5107,23 +5159,29 @@ class Server:
         await _write_json(writer, 200, {"deleted": rule_id})
 
     def _token_identities(self) -> list[dict[str, Any]]:
-        native_ids: dict[str, set[str]] = {}
-        for row in self.history._conn.execute(
-            "SELECT DISTINCT session_key, json_extract(payload_json, '$.session_id') AS sid "
-            "FROM events WHERE sid IS NOT NULL"
-        ):
-            native_ids.setdefault(row["session_key"], set()).add(str(row["sid"]))
-        return [
-            dict(
-                key=r["session_key"],
-                runtime=r["runtime"],
-                name=r["name"] or r["session_key"],
-                folder=r["grp"],
-                test=bool(r["test"]),
-                native_ids=list(native_ids.get(r["session_key"], set()) | {r["session_key"]}),
-            )
-            for r in self.history._conn.execute("SELECT * FROM sessions")
-        ]
+        """Read one identity snapshot in a worker, never on the loop connection."""
+        with contextlib.closing(
+            sqlite3.connect(self.history.path.resolve().as_uri() + "?mode=ro", uri=True, timeout=5)
+        ) as conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute("BEGIN")
+            native_ids: dict[str, set[str]] = {}
+            for row in conn.execute(
+                "SELECT DISTINCT session_key, json_extract(payload_json, '$.session_id') AS sid "
+                "FROM events WHERE sid IS NOT NULL"
+            ):
+                native_ids.setdefault(row["session_key"], set()).add(str(row["sid"]))
+            return [
+                dict(
+                    key=r["session_key"],
+                    runtime=r["runtime"],
+                    name=r["name"] or r["session_key"],
+                    folder=r["grp"],
+                    test=bool(r["test"]),
+                    native_ids=list(native_ids.get(r["session_key"], set()) | {r["session_key"]}),
+                )
+                for r in conn.execute("SELECT * FROM sessions")
+            ]
 
     async def _token_analytics(
         self, writer: asyncio.StreamWriter, headers: dict[str, str], query: str
@@ -5142,8 +5200,8 @@ class Server:
         except ValueError:
             await _write_json(writer, 400, {"error": "days must be 1..36500 or all"})
             return
-        identities = self._token_identities()
         async with self._tokens_lock:
+            identities = await asyncio.to_thread(self._token_identities)
             result = await asyncio.to_thread(
                 self._tokens.analytics,
                 days,
