@@ -178,8 +178,45 @@ def _upload_pack(repo: Path, program: str) -> Case:
     return ["-C", str(clone), "ls-remote", "origin"], lambda: git.remote_heads(clone)
 
 
+def _filter(kind: str) -> Callable[[Path, str], Case]:
+    def arrange(repo: Path, program: str) -> Case:
+        run(repo, "config", f"filter.x.{kind}", program)
+        (repo / ".git/info").mkdir(exist_ok=True)
+        (repo / ".git/info/attributes").write_text("* filter=x\n")
+        # An index older than a file's mtime makes its entry racy, and git
+        # re-reads a racy file through the filter to compare it.
+        os.utime(repo / ".git/index", (1, 1))
+        return ["diff-files", "--name-only"], lambda: git.run(repo, "diff-files", "--name-only")
+
+    arrange.__name__ = f"_{kind}_filter"
+    return arrange
+
+
+def _merge_driver(repo: Path, program: str) -> Case:
+    run(repo, "checkout", "-q", "-b", "x")
+    commit(repo, "README.md", "x\n", "x")
+    run(repo, "checkout", "-q", "main")
+    commit(repo, "README.md", "main\n", "main")
+    run(repo, "config", "merge.evil.driver", f"{program} %A %B")
+    (repo / ".git/info").mkdir(exist_ok=True)
+    (repo / ".git/info/attributes").write_text("* merge=evil\n")
+    args = ["merge-tree", "--write-tree", "--name-only", "main", "x"]
+    return args, lambda: git.conflicts(repo, "main", "x")
+
+
 @pytest.mark.parametrize(
-    "arrange", [_verifier, _lazy_fetch, _ssh_command, _fetch_hook, _upload_pack]
+    "arrange",
+    [
+        _verifier,
+        _lazy_fetch,
+        _ssh_command,
+        _fetch_hook,
+        _upload_pack,
+        _filter("clean"),
+        _filter("process"),
+        _merge_driver,
+    ],
+    ids=lambda arrange: arrange.__name__,
 )
 def test_a_repos_config_cannot_run_a_program(git_repo: Path, tmp_path: Path, arrange) -> None:
     # Sessions report the folders review reads and can write their .git/config.
