@@ -150,8 +150,9 @@ def test_revocation_is_permanent_and_cancels_pending(store: HistoryStore, action
 
 @pytest.mark.parametrize("participant", ["a", "b"])
 @pytest.mark.parametrize("accepted", [False, True])
-def test_stop_resume_preserves_exchange_and_rotates_credential(
-    store: HistoryStore, tmp_path: Path, participant: str, accepted: bool
+@pytest.mark.parametrize("rest_state", ["stopped", "interrupted"])
+def test_pause_resume_preserves_exchange_and_rotates_credential(
+    store: HistoryStore, tmp_path: Path, participant: str, accepted: bool, rest_state: str
 ) -> None:
     from duckterm.helpers.session_credentials import credential_path
 
@@ -161,8 +162,8 @@ def test_stop_resume_preserves_exchange_and_rotates_credential(
     if accepted:
         call(store, headers["b"], "POST", path + "/accept")
     old = headers[participant]
-    store.set_state(participant, "stopped")
-    # The child exit can follow the explicit stop; it must remain a pause.
+    store.set_state(participant, rest_state)
+    # A late child exit must preserve both deliberate and involuntary pauses.
     store.record({"_id": "exit", "_ts": 2, "event_type": "SessionEnd", "session_key": participant})
     assert not credential_path(participant, store.session_api.credential_dir).exists()
     with pytest.raises(APIError) as error:

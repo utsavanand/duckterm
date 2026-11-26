@@ -59,6 +59,7 @@ class CodexRuntime(Harness):
         repo_rel=Path(".codex") / "hooks.json",
         build=claude_style_build,
         strip=claude_style_strip,
+        config_env="CODEX_HOME",
     )
 
     def __init__(self, command: str = "codex") -> None:

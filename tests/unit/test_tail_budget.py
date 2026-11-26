@@ -150,11 +150,13 @@ def test_pty_pending_prompt_is_scanned_without_more_output(tmp_path, monkeypatch
         try:
             os.write(write_fd, b"initial output\n")
             await asyncio.sleep(0.03)
-            os.write(write_fd, "❯ waiting for input\n".encode())
+            # An actual dialog drives Waiting; the ordinary input arrow does not.
+            dialog = "│ Do you want to proceed?\n│ ❯ 1. Yes\n".encode()
+            os.write(write_fd, dialog)
             async with asyncio.timeout(1):
                 while sup._state != "waiting":
                     await asyncio.sleep(0.01)
-            assert b"".join(sup._byte_tail) == "initial output\n❯ waiting for input\n".encode()
+            assert b"".join(sup._byte_tail) == b"initial output\n" + dialog
         finally:
             os.close(write_fd)
             await task

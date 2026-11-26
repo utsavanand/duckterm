@@ -10,10 +10,11 @@ declares, via the registry in harnesses.py. The legacy alias `AgentRuntime` is
 kept so existing drive-only callers don't need to change.
 """
 
+import os
 import re
 import shlex
 from abc import ABC, abstractmethod
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -68,9 +69,22 @@ class HookSpec:
     transport: Literal["config-entry", "file-drop"] = "config-entry"
     payload: Callable[[], bytes] | None = None
     global_path: Callable[[], Path] | None = None
+    config_env: str | None = None
 
-    def path(self, *, global_scope: bool, project_dir: Path) -> Path:
+    def path(
+        self,
+        *,
+        global_scope: bool,
+        project_dir: Path,
+        environment: Mapping[str, str] | None = None,
+    ) -> Path:
         if global_scope:
+            env = os.environ if environment is None else environment
+            if self.config_env and env.get(self.config_env):
+                root = Path(env[self.config_env]).expanduser()
+                if not root.is_absolute():
+                    raise ValueError(f"{self.config_env} must be an absolute directory")
+                return root / self.global_rel.name
             return self.global_path() if self.global_path else Path.home() / self.global_rel
         return project_dir / self.repo_rel
 

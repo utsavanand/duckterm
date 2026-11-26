@@ -115,7 +115,7 @@ it("cancels a matching status request and ignores a late signed-in response", as
   expect(close).not.toHaveBeenCalled();
   await act(async () => { pending.resolve({ ...status, authentication: "signed_in" }); });
   await waitFor(() => expect(close).toHaveBeenCalledOnce());
-  expect(screen.queryByText("Claude Code is ready")).toBeNull();
+  expect(screen.queryByText("Claude Code is installed")).toBeNull();
 });
 
 it("closing before the first frame is painted does not launch or cancel a nonexistent helper", async () => {
@@ -143,7 +143,7 @@ it("uses only a native selection handle for checking and completion", async () =
   await waitFor(() => expect(screen.getByLabelText("Executable")).toHaveValue("claude"));
   expect(screen.getByLabelText("Executable")).toHaveAttribute("readonly");
   fireEvent.click(screen.getByRole("button", { name: "Check installation" }));
-  await screen.findByText("Claude Code is ready");
+  await screen.findByText("Claude Code is installed");
   expect(request).toHaveBeenCalledWith({ operation: "status", params: { runtime: "claude-code", request_id: expect.any(String), selection_handle: "native-selection" } });
   fireEvent.click(screen.getByRole("button", { name: "Continue" }));
   fireEvent.click(screen.getByRole("button", { name: "Open DuckTerm" }));
@@ -214,7 +214,7 @@ it("a host switch closes local setup and ignores stale authentication replies", 
     pending.resolve({ ...status, authentication: "signed_in" });
   });
   expect(close).toHaveBeenCalledOnce();
-  expect(screen.queryByText("Claude Code is ready")).toBeNull();
+  expect(screen.queryByText("Claude Code is installed")).toBeNull();
 });
 
 it("checks a saved executable instead of mistaking missing PATH discovery for a missing installation", async () => {

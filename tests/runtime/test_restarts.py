@@ -133,6 +133,26 @@ def test_canceled_queue_cannot_restart_and_model_is_not_changed(rig):
     asyncio.run(run())
 
 
+def test_hook_configuration_failure_preserves_current_terminal(rig, monkeypatch):
+    server, supervisor, _, calls = rig
+
+    def fail(*args):
+        raise ValueError("Could not configure DuckTerm hooks: invalid settings")
+
+    monkeypatch.setattr("duckterm.agents.hooks_install.prepare_for_launch", fail)
+
+    async def run():
+        await server.restarts.request("a", "new-model")
+        await hook(server)
+        await drain(server)
+        assert not calls  # neither stop nor launch was attempted
+        assert supervisor.running
+        assert server.restarts.read("a")["status"] == "failed"
+        assert "Could not configure DuckTerm hooks" in server.restarts.read("a")["error"]
+
+    asyncio.run(run())
+
+
 def test_cancel_failed_restart_clears_diagnostics_but_preserves_process_evidence(rig):
     server, _, _, calls = rig
     server.restarts.save(

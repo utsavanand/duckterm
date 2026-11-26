@@ -577,6 +577,7 @@ class Server:
         self.digests = DigestStore(conn=self.history._conn)
         self._review_tasks: dict[str, asyncio.Task[Any]] = {}
         self._branch_owners_cache: tuple[float, dict[tuple[str, str], str]] = (0.0, {})
+        self._branch_owners_refresh: asyncio.Task[dict[tuple[str, str], str]] | None = None
         from duckterm.checkpoint_requests import CheckpointRequests
 
         self.checkpoint_requests = CheckpointRequests(self)
@@ -1186,6 +1187,7 @@ class Server:
             return
         # Only the supervisor may assign identity; hooks can report observations.
         raw.pop("_assigned_native_id", None)
+        raw.pop("hook_setup", None)  # only the supervisor can record configuration
         # agent_pid comes from an external hook ($PPID) and is later fed to
         # os.kill in the liveness sweep — coerce to a positive int or drop it.
         if "agent_pid" in raw:
@@ -1653,9 +1655,8 @@ class Server:
         keys = {row["session_key"] for row in rows}
         now = time.time()
         async with self._tokens_lock:
-            usage = await asyncio.to_thread(
-                self._tokens.analytics, 7, now, self._token_identities()
-            )
+            identities = await asyncio.to_thread(self._token_identities)
+            usage = await asyncio.to_thread(self._tokens.analytics, 7, now, identities)
         # Membership can change while transcript accounting runs in its worker.
         current = {
             row["session_key"]
@@ -2270,15 +2271,41 @@ class Server:
         from duckterm.review import lists as review_lists
 
         at, owners = self._branch_owners_cache
-        if refresh or time.time() - at >= review_lists.CACHE_SECONDS:
+        if not refresh and time.time() - at < review_lists.CACHE_SECONDS:
+            return owners
+        previous = self._branch_owners_refresh
+        if refresh and previous is not None:
+            # An explicit refresh must include pushes made after an older scan
+            # began. Wait for that scan, then start (or join) a newer one.
+            with contextlib.suppress(Exception):
+                await asyncio.shield(previous)
+            if self._branch_owners_refresh is previous:
+                self._branch_owners_refresh = None
+        task = self._branch_owners_refresh
+        if task is None:
             since = int((time.time() - review_lists.PUSH_DAYS * 86400) * 1000)
 
             def read() -> dict[tuple[str, str], str]:
                 return review_lists.branch_owners(self.history.push_commands(since))
 
-            owners = await asyncio.to_thread(read)
-            self._branch_owners_cache = (time.time(), owners)
-        return owners
+            async def rebuild() -> dict[tuple[str, str], str]:
+                result = await asyncio.to_thread(read)
+                self._branch_owners_cache = (time.time(), result)
+                return result
+
+            task = asyncio.create_task(rebuild())
+            self._branch_owners_refresh = task
+
+            def finished(done: asyncio.Task[dict[tuple[str, str], str]]) -> None:
+                if self._branch_owners_refresh is done:
+                    self._branch_owners_refresh = None
+                # A disconnected caller must neither cancel the shared scan nor
+                # leave an unobserved exception if all callers have gone away.
+                if not done.cancelled():
+                    done.exception()
+
+            task.add_done_callback(finished)
+        return await asyncio.shield(task)
 
     async def _prs(
         self,
@@ -5132,23 +5159,29 @@ class Server:
         await _write_json(writer, 200, {"deleted": rule_id})
 
     def _token_identities(self) -> list[dict[str, Any]]:
-        native_ids: dict[str, set[str]] = {}
-        for row in self.history._conn.execute(
-            "SELECT DISTINCT session_key, json_extract(payload_json, '$.session_id') AS sid "
-            "FROM events WHERE sid IS NOT NULL"
-        ):
-            native_ids.setdefault(row["session_key"], set()).add(str(row["sid"]))
-        return [
-            dict(
-                key=r["session_key"],
-                runtime=r["runtime"],
-                name=r["name"] or r["session_key"],
-                folder=r["grp"],
-                test=bool(r["test"]),
-                native_ids=list(native_ids.get(r["session_key"], set()) | {r["session_key"]}),
-            )
-            for r in self.history._conn.execute("SELECT * FROM sessions")
-        ]
+        """Read one identity snapshot in a worker, never on the loop connection."""
+        with contextlib.closing(
+            sqlite3.connect(self.history.path.resolve().as_uri() + "?mode=ro", uri=True, timeout=5)
+        ) as conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute("BEGIN")
+            native_ids: dict[str, set[str]] = {}
+            for row in conn.execute(
+                "SELECT DISTINCT session_key, json_extract(payload_json, '$.session_id') AS sid "
+                "FROM events WHERE sid IS NOT NULL"
+            ):
+                native_ids.setdefault(row["session_key"], set()).add(str(row["sid"]))
+            return [
+                dict(
+                    key=r["session_key"],
+                    runtime=r["runtime"],
+                    name=r["name"] or r["session_key"],
+                    folder=r["grp"],
+                    test=bool(r["test"]),
+                    native_ids=list(native_ids.get(r["session_key"], set()) | {r["session_key"]}),
+                )
+                for r in conn.execute("SELECT * FROM sessions")
+            ]
 
     async def _token_analytics(
         self, writer: asyncio.StreamWriter, headers: dict[str, str], query: str
@@ -5167,8 +5200,8 @@ class Server:
         except ValueError:
             await _write_json(writer, 400, {"error": "days must be 1..36500 or all"})
             return
-        identities = self._token_identities()
         async with self._tokens_lock:
+            identities = await asyncio.to_thread(self._token_identities)
             result = await asyncio.to_thread(
                 self._tokens.analytics,
                 days,

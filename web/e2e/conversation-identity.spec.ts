@@ -1,7 +1,29 @@
+import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { readOwnedState } from "./run-state";
 import { sessionMenu } from "./helpers";
 import { expect, test } from "@playwright/test";
 import { randomUUID } from "node:crypto";
 import { apiDelete, base, postEvent, seedSession } from "./helpers";
+
+// These tests exercise recovery on an older launch with no configured hooks.
+// Other specs now install hooks automatically; isolate that prerequisite in the
+// disposable browser-test home and restore it after each recovery test.
+const savedConfigs = new Map<string, Buffer | null>();
+test.beforeEach(() => {
+  const home = readOwnedState().home;
+  for (const path of [join(home, "test-claude", "settings.json"), join(home, "test-codex", "hooks.json")]) {
+    savedConfigs.set(path, existsSync(path) ? readFileSync(path) : null);
+    rmSync(path, { force: true });
+  }
+});
+test.afterEach(() => {
+  for (const [path, content] of savedConfigs) {
+    if (content === null) rmSync(path, { force: true });
+    else writeFileSync(path, content);
+  }
+  savedConfigs.clear();
+});
 
 test("missing conversation identity is visible on launch and does not promise Resume", async ({ page }) => {
   const key = `identity-${randomUUID()}`, name = "Recovery reviewer";

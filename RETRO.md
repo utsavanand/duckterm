@@ -12,6 +12,97 @@ card, whenever the model's text was a substring of what the owner typed. A
 fragment can flip the meaning ("not to merge" becomes "merge"), and the owner
 never saw it. A pick now opens the same Send card as any other plan.
 
+## 2026-11-25 — Interrupted sessions retain unfinished requests
+
+QA caught a regression in the Unanswered cleanup fix: both lifecycle paths
+treated interrupted sessions as final, despite interruption being resumable.
+The original regression covered explicit Stop but not a terminal crash. Both
+paths now preserve pending requests for stopped and interrupted sessions while
+still revoking credentials. Tests cover every resting state through direct
+state changes and events, late exits, and resuming to answer retained work.
+Lesson: derive lifecycle test cases from the runtime's state contract; testing
+one resumable state does not cover the other.
+
+## 2026-11-25 — Reading a priority message does not finish it
+
+Final session cleanup cancelled queued and accepted inbox requests, but missed
+priority broadcasts that the agent had read without acknowledging. Those rows
+still counted as Unanswered after the recipient ended and lost its credentials.
+Cleanup now cancels those unfinished broadcasts too, preserving their history.
+Resumable stops keep them pending; informational read notices stay unchanged.
+Lesson: when adding a pending message state, check lifecycle cleanup as well as
+inbox counts. The regression exercises inbox read, SessionEnd, revoked access,
+and the actual Unanswered count, including the resumable-stop case.
+
+## 2026-11-25 — A cache does not share work while it is empty
+
+Home requests PR rows for several folders together. Every cold request saw
+the same expired branch-owner cache and started its own event scan and Git
+lookups. Twelve simultaneous calls reproduced twelve rebuilds. Share one
+in-flight rebuild, cache only successful results, and let it finish when one
+caller disconnects. Test the overlap and failure path with explicit gates,
+not machine-wide CPU stress.
+
+The analytics worker also received identities computed on the event loop:
+argument evaluation scanned all event JSON before the worker ever started.
+Read identities through a worker-owned, read-only SQLite snapshot. Moving
+the expensive call requires moving its expensive arguments too; do not
+reuse the loop's SQLite connection from a thread.
+
+TokenLedger had its own whole-suffix read/split allocation, independent of
+the MessageCache reader fixed earlier. Stream its raw input too, preserving
+byte line splitting and the incomplete trailing record. Chunking reduces
+temporary allocation; it does not eliminate full-history scan time or bound
+the largest individual record and retained accounting state.
+
+## 2026-11-25 — The Autopilot page matched its mock and still looked wrong
+
+The owner's first real view was the empty page in dark mode on a wide screen.
+It led with four tiles of zeros, offered the same action twice, hid the flows
+the owner had decided it should list, and shrank to its content because the
+page was a flex child without `flex: 1`, so its button floated mid-screen.
+Every earlier check used a populated page at one width. Check a page empty and
+in use, in both themes, at a wide and a narrow width, before calling it done;
+an empty state is the first thing a new feature shows.
+
+## 2026-11-25 — Fixture completion and retry deadlines need explicit evidence
+
+A tmux fixture exposed its JSON path before write_text finished, so a reader
+could parse an empty file. Publish that fixture by atomic rename. A separate
+lock-recovery test mixed its behavior assertion with a 100 ms scheduling budget;
+three short sleeps can overrun that budget on a busy host. Test the production
+retry deadline with a controlled clock, and give the lock-recovery fixture its
+own wait budget. Do not relax production timeouts to make tests pass.
+
+## 2026-11-25 — Repeated browser checks must not inherit moved fixture folders
+
+The unnest browser test used the fixed child name `Inner` and left it behind
+at the top level. Running the file twice on unchanged main made the second
+locator match both old and new folders. Give the child a unique name, target
+its exact folder path, and remove the owned session and both possible folder
+locations in `finally`. Keep the move and indentation assertions intact.
+
+## 2026-11-24 — A timed-out probe may never reach its first line
+
+The cleanup test gave a Python child 300ms to start and write its PID. Under
+full-suite load, the probe could correctly time out and reap the child before
+that marker existed; the test then failed waiting for a file it had prevented.
+Capture the owned process at spawn and assert it is reaped after timeout or
+cancellation. Cleanup correctness must not require the child to finish startup.
+
+## 2026-11-24 — Launching a CLI is not connecting its activity signals
+
+A distributed app could start Claude with no DuckTerm hooks installed. Setup
+checked the CLI and credentials; startup only repaired existing hooks. A running
+terminal therefore looked healthy while filters lacked the provider's events.
+Install through the existing atomic merge before launch, preserve other hooks
+and policy settings, and check configuration before stopping a source terminal.
+Record real accepted hook delivery separately from configuration, scoped to the
+current launch generation. A synthetic SessionStart or old hook cannot prove
+connection. Test the actual installed script against an isolated authenticated
+server, not just a successful JSON write. Keep hook-writing tests isolated from
+the developer's real harness settings and shared assets.
+
 ## 2026-11-25 — Styling narration is not the same as removing it
 
 The connector panel was reviewed as "looks bad, not clean", so the first pass
@@ -201,6 +292,18 @@ Sidebar inbox badges include informational owner notices. A filter for unanswere
 requests needs explicit reply-required counts, retaining read/accepted requests
 and excluding informational notices and closed requests. Keep the existing badge
 count intact, count matching sessions once, and test live answers plus status unions.
+
+## 2026-11-24 — An editable prompt is not a waiting agent
+
+Claude keeps its input arrow visible while a foreground turn runs. The terminal
+fallback treated any arrow as Waiting, overriding a valid UserPromptSubmit.
+After a minute, stale-wait cleanup saw the empty input box and changed it to
+Idle, hiding running sessions from Working. Remove the ambiguous arrow signal;
+native hooks still report work, approvals and turn completion. Reproduce the
+whole repaint-to-cleanup sequence, not just the filter predicate, and check
+that genuine approvals still wait. The emailed report contained app lifecycle
+logs but no session events, so this is a reproduced defect consistent with the
+screenshots, not proof of the other computer's exact event sequence.
 
 ## 2026-11-24 — A completed response does not mean completed work
 

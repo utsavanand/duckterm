@@ -3,6 +3,7 @@
 import asyncio
 import json
 import threading
+from types import SimpleNamespace
 
 import pytest
 from tests.runtime import test_ducky_analysis as fixtures
@@ -243,6 +244,39 @@ def test_timeout_inside_authorized_operation_is_never_retried(app):
     run(app, scenario)
 
 
+def test_grant_retry_has_one_fixed_deadline(app, monkeypatch):
+    clock = SimpleNamespace(now=0.0)
+    calls = []
+    delays = []
+
+    async def sleep(delay):
+        delays.append(delay)
+        clock.now += delay
+
+    def blocked():
+        calls.append(clock.now)
+        raise analysis_module._GrantBusy()
+
+    # Exercise the production retry budget without depending on OS scheduling.
+    monkeypatch.setattr(
+        analysis_module,
+        "asyncio",
+        SimpleNamespace(
+            get_running_loop=lambda: SimpleNamespace(time=lambda: clock.now),
+            sleep=sleep,
+        ),
+    )
+
+    async def scenario():
+        with pytest.raises(AnalysisError, match="analysis_unavailable"):
+            await app.service._retry_grant(blocked)
+
+    asyncio.run(scenario())
+    assert clock.now == pytest.approx(analysis_module.GRANT_WAIT_SECONDS)
+    assert len(calls) > 1
+    assert delays and max(delays) <= 0.01
+
+
 @pytest.mark.parametrize("phase", ["pending", "completion", "revocation"])
 def test_brief_contention_does_not_discard_paid_answer_and_revocation_still_wins(
     app, monkeypatch, phase
@@ -252,6 +286,9 @@ def test_brief_contention_does_not_discard_paid_answer_and_revocation_still_wins
     provider_entered, provider_release = threading.Event(), threading.Event()
     held, unlock = threading.Event(), threading.Event()
     monkeypatch.setattr(analysis_module, "CHECK_SECONDS", 0.01)
+    # This test verifies lock recovery/revocation, not a 100 ms scheduler race.
+    # The fixed production deadline is exercised with a controlled clock above.
+    monkeypatch.setattr(analysis_module, "GRANT_WAIT_SECONDS", 5.0)
 
     def provider(*args, **kwargs):
         provider_entered.set()
@@ -289,7 +326,7 @@ def test_brief_contention_does_not_discard_paid_answer_and_revocation_still_wins
             if phase == "revocation":
                 assert result["status"] == "cancelled" and result["answer"] is None
             else:
-                assert result["status"] == "complete" and result["answer"] == "Paid result"
+                assert result["status"] == "complete" and result["answer"] == "Paid result", result
         finally:
             unlock.set()
             provider_release.set()

@@ -164,22 +164,28 @@ print('codex-cli 1.2.3')
 
 @pytest.mark.parametrize("cancel", [False, True])
 def test_timeout_and_cancellation_reap_owned_child(tmp_path, monkeypatch, cancel):
-    marker = tmp_path / "pid"
-    binary(
-        tmp_path,
-        "codex",
-        f"import os,time\nopen({str(marker)!r},'w').write(str(os.getpid()))\ntime.sleep(30)\n",
-    )
+    binary(tmp_path, "codex", "import time\ntime.sleep(30)\n")
+    # Capture ownership at spawn. A valid 300ms timeout can kill the interpreter
+    # before it executes Python to write a marker, especially during a full gate.
+    children = []
+    popen = discovery.subprocess.Popen
+
+    def capture_child(*args, **kwargs):
+        child = popen(*args, **kwargs)
+        children.append(child)
+        return child
+
+    monkeypatch.setattr(discovery.subprocess, "Popen", capture_child)
     monkeypatch.setattr(discovery, "PROBE_TIMEOUT", 0.3 if not cancel else 4)
 
     async def run():
         task = asyncio.create_task(
             discovery.inspect_runtime("codex", "Codex", "codex", {"PATH": str(tmp_path)})
         )
-        async with asyncio.timeout(2):
-            while not marker.exists() or not marker.read_text():
-                await asyncio.sleep(0.01)
         if cancel:
+            async with asyncio.timeout(2):
+                while not children:
+                    await asyncio.sleep(0.01)
             task.cancel()
             with pytest.raises(asyncio.CancelledError):
                 await task
@@ -187,8 +193,10 @@ def test_timeout_and_cancellation_reap_owned_child(tmp_path, monkeypatch, cancel
             result = await task
             assert result["installed"] and result["probe"] == "timeout"
             assert result["support"] == "unknown"
+        assert len(children) == 1
+        assert children[0].returncode is not None
         with pytest.raises(ProcessLookupError):
-            os.kill(int(marker.read_text()), 0)
+            os.kill(children[0].pid, 0)
 
     asyncio.run(run())
 

@@ -50,6 +50,29 @@ it("in a browser, shows the conditions and what the release touches but cannot a
   expect(api.approvalKey).not.toHaveBeenCalled();
 });
 
+it("refuses to approve a head other than the one Home rated Safe", async () => {
+  vi.mocked(api.approvalState).mockResolvedValue(state);
+  vi.mocked(api.approvalKey).mockResolvedValue(state.key);
+  inMacApp(() => "SIG");
+  render(<ApproveDialog repo="/r" target="312" prNumber={312} ratedHead="1111111" onClose={vi.fn()} onApproved={vi.fn()} />);
+  expect(await screen.findByRole("alert")).toHaveTextContent("#312 changed after Home rated it Safe");
+  expect(screen.getByRole("button", { name: "Approve with Touch ID" })).toBeDisabled();
+});
+
+it("refuses to sign a challenge for a head pushed after Home rated the PR", async () => {
+  vi.mocked(api.approvalState).mockResolvedValue(state);
+  vi.mocked(api.approvalKey).mockResolvedValue(state.key);
+  vi.mocked(api.approvalChallenge).mockResolvedValue({ payload: "duckterm-approve v1\nrepo=/r\ngithub=o/r\npr=312\nhead=3333333\nfolder=T\nrelease=rel\nnonce=n\nexpires=1" });
+  const bridge = inMacApp(() => "SIG");
+  render(<ApproveDialog repo="/r" target="312" prNumber={312} ratedHead={head} onClose={vi.fn()} onApproved={vi.fn()} />);
+  const approve = screen.getByRole("button", { name: "Approve with Touch ID" });
+  await vi.waitFor(() => expect(approve).toBeEnabled());
+  fireEvent.click(approve);
+  expect(await screen.findByRole("alert")).toHaveTextContent("#312 changed after Home rated it Safe");
+  expect(bridge).not.toHaveBeenCalledWith(expect.objectContaining({ operation: "sign" }));
+  expect(api.approvalSubmit).not.toHaveBeenCalled();
+});
+
 it("in the Mac app, binds the key, signs the server's challenge and hands it back", async () => {
   vi.mocked(api.approvalState).mockResolvedValue(state);
   vi.mocked(api.approvalKey).mockResolvedValue(state.key);
