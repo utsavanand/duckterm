@@ -189,3 +189,29 @@ it("detects new credentials without window blur, but never polls a hidden panel"
     expect(api.connectors).toHaveBeenCalledTimes(2);
   } finally { vi.useRealTimers(); visible.mockRestore(); }
 });
+
+it("sends the revoke link to the page the server chose, in a new tab", async () => {
+  // The owner approved this link as a phrase rather than the standalone button
+  // it used to be, so nothing asserted it existed. It is the only route out of
+  // the panel to GitHub, and its href is chosen server-side per credential
+  // source (a CLI login and a pasted token live on different pages), so the
+  // component must pass revoke_url through rather than hardcode a page.
+  vi.mocked(api.connectors).mockResolvedValue({
+    connectors: [{ ...live, revoke_url: "https://github.com/settings/applications" }],
+  });
+  render(<Connectors />);
+  const link = await screen.findByRole("link", { name: /on github\.com/ });
+  expect(link).toHaveAttribute("href", "https://github.com/settings/applications");
+  // A new tab, and no referrer leaked to github.com.
+  expect(link).toHaveAttribute("target", "_blank");
+  expect(link).toHaveAttribute("rel", "noreferrer");
+  // Placement: inside the connected block, beside Sign out.
+  expect(link.closest(".rd-connector-installed")).not.toBeNull();
+});
+
+it("does not offer a revoke link before there is anything to revoke", async () => {
+  vi.mocked(api.connectors).mockResolvedValue({ connectors: [row] });
+  render(<Connectors />);
+  await screen.findByText("Not connected");
+  expect(screen.queryByRole("link", { name: /github\.com/ })).toBeNull();
+});
