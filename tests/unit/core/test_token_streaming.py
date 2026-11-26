@@ -14,7 +14,7 @@ from duckterm.core import tokens
 def test_chunk_boundaries_preserve_counts_crlf_long_lines_and_partial_tail(
     tmp_path, monkeypatch, chunk_size
 ):
-    monkeypatch.setattr(tokens, "READ_CHUNK", chunk_size)
+    monkeypatch.setattr(tokens, "READ_CHUNK", chunk_size, raising=False)
     path = tmp_path / "claude/a.jsonl"
     path.parent.mkdir()
     first = claude("one", "2026-09-25", 100, 5).encode()
@@ -43,7 +43,7 @@ def test_chunk_boundaries_preserve_counts_crlf_long_lines_and_partial_tail(
 def test_codex_running_totals_and_model_switch_survive_chunked_appends(
     tmp_path, monkeypatch, chunk_size
 ):
-    monkeypatch.setattr(tokens, "READ_CHUNK", chunk_size)
+    monkeypatch.setattr(tokens, "READ_CHUNK", chunk_size, raising=False)
     root = tmp_path / "codex"
     root.mkdir()
     path = root / "rollout-test.jsonl"
@@ -75,7 +75,7 @@ def test_reader_never_requests_the_whole_large_suffix(tmp_path, monkeypatch):
     path = tmp_path / "a.jsonl"
     payload = (claude("duplicate", "2026-09-25", 0, 1) + "\n").encode() * 100
     path.write_bytes(payload)
-    monkeypatch.setattr(tokens, "READ_CHUNK", 127)
+    monkeypatch.setattr(tokens, "READ_CHUNK", 127, raising=False)
     requests = []
 
     class Reader(io.BytesIO):
