@@ -701,10 +701,11 @@ def copilot_flags(kit: m.Kit) -> list[str]:
             if not isinstance(r, dict):
                 continue
             tool = COPILOT_TOOL.get(str(r.get("tool")))
-            if tool is None or r.get("decision") == "ask":
-                continue
+            match = str(r.get("match", ""))
+            if tool is None or r.get("decision") == "ask" or any(ch in match for ch in ")\n,"):
+                continue  # validate refuses such a match; never let one read as two rules
             flag = "--allow-tool" if r.get("decision") == "allow" else "--deny-tool"
-            flags += [flag, f"{tool}({r.get('match')})"]
+            flags += [flag, f"{tool}({match})"]
     return flags
 
 

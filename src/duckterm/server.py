@@ -2889,14 +2889,22 @@ class Server:
 
     def _kit_launch_flags(self, runtime: str, folder: str) -> list[str]:
         """Copilot takes a kit's permissions as flags, not a file: a session
-        launched in a repository whose record holds a kit gets that kit's
-        `--allow-tool`/`--deny-tool` flags. Other harnesses read files."""
+        launched in a repository whose home-side install record holds a kit
+        gets the flags recorded at that install, while the kit still hashes
+        as reviewed. Other harnesses read files."""
         if runtime != "copilot" or not self.edition.includes("skill_kits"):
             return []
         from duckterm.kits import api as kits_api
 
         registry = [dict(r) for r in self.history.harnesses()]
-        return kits_api.copilot_flags(folder, registry)
+        flags, dropped = kits_api.copilot_flags(folder, registry)
+        for name in dropped:
+            print(
+                f"[duckterm] kit {name} in {folder}: Copilot flags dropped, the kit changed "
+                "since it was installed; enable it again to review",
+                file=sys.stderr,
+            )
+        return flags
 
     def _remember_launch(self, key: str, folder: object) -> None:
         """The launcher is the only writer of where a session lives (kits)."""

@@ -336,6 +336,9 @@ def _check_permission(c: m.Component, cid: str, err: Report, warn: Report) -> No
         if not match:
             err(cid, f"rules[{i}] needs `match`")
             continue
+        if any(ch in match for ch in ")\n,"):
+            err(cid, f"rules[{i}].match may not contain ')' ',' or a newline (Copilot reads them)")
+            continue
         one_word_prefix = match.count(" ") == 0 and match.endswith("*")
         if rule.get("decision") == "allow" and (match.strip("* ") == "" or one_word_prefix):
             warn(cid, f"rules[{i}] allows {match!r}, broader than one command")

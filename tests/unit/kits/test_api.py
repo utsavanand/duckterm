@@ -347,16 +347,72 @@ def test_fix_codex_trust_writes_codex_own_record_and_keeps_the_rest_of_the_confi
         api.fix({"kind": "rm-rf", "projects": [str(a)]})
 
 
-def test_copilot_gets_a_kit_permission_as_launch_flags(tmp_path):
+def test_copilot_flags_come_from_the_reviewed_install_and_stop_when_the_kit_changes(
+    tmp_path, monkeypatch
+):
+    import shutil
+
+    from duckterm.helpers import instance
+
+    monkeypatch.setattr(instance, "home", lambda: tmp_path / "home")
+    kit = tmp_path / "kit"
+    shutil.copytree(SAMPLE, kit)
     project = _project(tmp_path)
-    registry = [{"name": "sample-kit", "path": str(SAMPLE)}]
-    assert api.copilot_flags(project, registry) == []
-    api.install_kit({"kit": str(SAMPLE), "project": str(project), "harnesses": ["copilot"]})
-    flags = api.copilot_flags(project, registry)
+    registry = [{"name": "sample-kit", "path": str(kit)}]
+    assert api.copilot_flags(project, registry) == ([], [])
+    api.install_kit({"kit": str(kit), "project": str(project), "harnesses": ["copilot"]})
+    flags, dropped = api.copilot_flags(project, registry)
     pairs = list(zip(flags[::2], flags[1::2], strict=True))
-    assert ("--allow-tool", "shell(npm test)") in pairs
-    assert any(flag == "--deny-tool" for flag, _ in pairs)
+    assert ("--allow-tool", "shell(npm test)") in pairs and dropped == []
     assert all(flag in ("--allow-tool", "--deny-tool") for flag, _ in pairs)
+    # an unreviewed edit of the kit widens nothing: the flags stop, by name
+    manifest = kit / "skill-kit.toml"
+    manifest.write_text(manifest.read_text().replace('match = "npm test"', 'match = "*"'))
+    assert api.copilot_flags(project, registry) == ([], ["sample-kit"])
+    # a record an agent wrote into another repository is not believed either
+    (tmp_path / "elsewhere").mkdir()
+    other = _project(tmp_path / "elsewhere")
+    (other / ".duckterm").mkdir()
+    (other / ".duckterm" / "installed.json").write_text(json.dumps({"kits": {"sample-kit": {}}}))
+    assert api.copilot_flags(other, registry) == ([], [])
+
+
+def test_a_permission_match_cannot_end_the_copilot_pattern_early(tmp_path):
+    from test_skill_kits import _tiny_kit
+
+    from duckterm.kits import validate
+
+    kit = _tiny_kit(
+        tmp_path,
+        'manifest_version = 1\nname = "k"\nversion = "1.0.0"\ndescription = "d"\n'
+        '[[components]]\nkind = "permission"\nname = "rules"\n'
+        'rules = [{ tool = "shell", match = "npm test), shell(*", decision = "allow" }]\n',
+        {},
+    )
+    messages = [str(f) for f in validate.validate(kit)]
+    assert any("may not contain" in m for m in messages)
+    assert api.adapters.copilot_flags(kit) == []
+
+
+def test_fix_codex_trust_refuses_an_entry_it_cannot_edit_plainly_and_keeps_astral_paths(
+    tmp_path, monkeypatch
+):
+    import tomllib
+
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
+    config = tmp_path / "home" / ".codex" / "config.toml"
+    config.parent.mkdir(parents=True)
+    odd = _git_project(tmp_path, "odd")
+    before = f'projects = {{ "{odd}" = {{ trust_level = "untrusted" }} }}\n'
+    config.write_text(before)
+    with pytest.raises(api.KitApiError) as e:
+        api.fix({"kind": "codex-trust", "projects": [str(odd)]})
+    assert e.value.status == 409 and "trust it in Codex" in str(e.value)
+    assert config.read_text() == before
+    config.write_text("")
+    emoji = _git_project(tmp_path, "r\U0001f986pository")
+    api.fix({"kind": "codex-trust", "projects": [str(emoji)]})
+    assert tomllib.loads(config.read_text())["projects"][str(emoji)] == {"trust_level": "trusted"}
 
 
 def test_enable_keeps_options_and_fixes_for_the_sessions_that_install_later(tmp_path, monkeypatch):

@@ -6,7 +6,7 @@ engine underneath, so the page and the terminal cannot disagree."""
 
 from __future__ import annotations
 
-import hashlib
+import copy
 import json
 import os
 import tempfile
@@ -648,48 +648,77 @@ def _codex_trust(project: Path) -> None:
     except ValueError as exc:
         raise KitApiError(409, f"{config} does not parse; fix it first: {exc}") from exc
     key = str(project)
-    entry = (
-        (data.get("projects") or {}).get(key) if isinstance(data.get("projects"), dict) else None
-    )
+    raw_projects = data.get("projects")
+    projects: dict[str, Any] = raw_projects if isinstance(raw_projects, dict) else {}
+    entry = projects.get(key)
     if isinstance(entry, dict) and entry.get("trust_level") == "trusted":
         return
-    header = f"[projects.{json.dumps(key)}]"
+    expected = copy.deepcopy(data)
+    expected.setdefault("projects", {})
+    expected["projects"].setdefault(key, {})["trust_level"] = "trusted"
+    header = f"[projects.{json.dumps(key, ensure_ascii=False)}]"
     lines = text.splitlines()
     if isinstance(entry, dict):
         # the table exists with another level: replace its trust_level line
-        start = next(i for i, line in enumerate(lines) if line.strip() == header)
-        end = next(
+        starts = [i for i, line in enumerate(lines) if line.strip() == header]
+        if len(starts) != 1:
+            raise KitApiError(
+                409,
+                f"{config} records {key} in a form this writer does not edit; trust it in Codex",
+            )
+        start = starts[0]
+        stop = next(
             (i for i in range(start + 1, len(lines)) if lines[i].lstrip().startswith("[")),
             len(lines),
         )
         body_lines = [
-            line for line in lines[start + 1 : end] if not line.strip().startswith("trust_level")
+            line for line in lines[start + 1 : stop] if not line.strip().startswith("trust_level")
         ]
-        lines[start:end] = [header, 'trust_level = "trusted"', *body_lines]
+        lines[start:stop] = [header, 'trust_level = "trusted"', *body_lines]
         out = "\n".join(lines) + "\n"
     else:
         out = text + ("" if not text or text.endswith("\n") else "\n")
         out += ("\n" if text.strip() else "") + header + "\n" + 'trust_level = "trusted"\n'
-    tomllib.loads(out)  # never leave Codex a config it cannot read
+    try:
+        written = tomllib.loads(out)
+    except ValueError as exc:
+        raise KitApiError(
+            409, f"{config}: could not add the entry safely; trust it in Codex ({exc})"
+        ) from exc
+    if (
+        written != expected
+    ):  # never leave Codex a config that says more or less than this one change
+        raise KitApiError(
+            409, f"{config}: the entry for {key} is not plain enough to edit; trust it in Codex"
+        )
     config.parent.mkdir(parents=True, exist_ok=True)
     _write_private(config, out)
 
 
-def copilot_flags(project: str | Path, registry: list[dict[str, Any]]) -> list[str]:
-    """The permission flags for a Copilot session in `project`: every kit the
-    repository's record holds, read from the kit as added to DuckTerm."""
-    try:
-        record = planning.load_record(Path(project))
-    except (OSError, ValueError):
-        return []
+def copilot_flags(
+    project: str | Path, registry: list[dict[str, Any]]
+) -> tuple[list[str], list[str]]:
+    """The permission flags for a Copilot session in `project`, and the kits
+    whose flags were dropped. Flags come from the home-side install record,
+    computed at install from the tree the owner reviewed, and are passed only
+    while the kit's folder still hashes the same; the repository's own record
+    and the kit's current files are never read here, because an agent in the
+    repository can write the one and an unreviewed edit changes the other."""
     flags: list[str] = []
-    for kit_name in record.get("kits") or {}:
-        try:
-            kit = _kit(_registry_path(registry, kit_name))
-        except KitApiError:
+    dropped: list[str] = []
+    for kit_name, entry in install._load_home(Path(project)).items():
+        if not isinstance(entry, dict) or not entry.get("copilot_flags"):
             continue
-        flags += adapters.copilot_flags(kit)
-    return flags
+        try:
+            root = _kit(_registry_path(registry, kit_name)).root
+        except KitApiError:
+            dropped.append(kit_name)
+            continue
+        if entry.get("digest") != kit_digest(root):
+            dropped.append(kit_name)
+            continue
+        flags += [str(f) for f in entry["copilot_flags"]]
+    return flags, dropped
 
 
 def install_kit(body: dict[str, Any]) -> dict[str, Any]:
@@ -836,20 +865,7 @@ def remove_team(folder: str) -> None:
 # ── enable: which workspaces a kit is for, and installing accordingly ───────
 
 
-def kit_digest(root: Path) -> str:
-    """One hash over every regular file under the kit folder: path, size and
-    content, `.git` left out, symlinks left out (validate refuses them). Enable
-    pins the digest of the tree the owner reviewed; a folder that no longer
-    hashes the same (a `git pull`, an edit under ~/Downloads) installs nowhere
-    until the owner enables it again."""
-    h = hashlib.sha256()
-    for path in sorted(root.rglob("*")):
-        if ".git" in path.relative_to(root).parts or path.is_symlink() or not path.is_file():
-            continue
-        data = path.read_bytes()
-        h.update(f"{path.relative_to(root).as_posix()}\0{len(data)}\0".encode())
-        h.update(hashlib.sha256(data).digest())
-    return h.hexdigest()
+kit_digest = planning.kit_digest
 
 
 def _policy_file() -> Path:

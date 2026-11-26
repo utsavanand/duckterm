@@ -166,6 +166,22 @@ def detect_harnesses() -> list[str]:
     return [a.id for a in adapters.ADAPTERS.values() if a.installed_here()]
 
 
+def kit_digest(root: Path) -> str:
+    """One hash over every regular file under the kit folder: path, size and
+    content, `.git` left out, symlinks left out (validate refuses them). Enable
+    pins the digest of the tree the owner reviewed; a folder that no longer
+    hashes the same (a `git pull`, an edit under ~/Downloads) installs nowhere
+    until the owner enables it again."""
+    h = hashlib.sha256()
+    for path in sorted(root.rglob("*")):
+        if ".git" in path.relative_to(root).parts or path.is_symlink() or not path.is_file():
+            continue
+        data = path.read_bytes()
+        h.update(f"{path.relative_to(root).as_posix()}\0{len(data)}\0".encode())
+        h.update(hashlib.sha256(data).digest())
+    return h.hexdigest()
+
+
 def build(
     kit: m.Kit,
     project: Path,

@@ -257,8 +257,14 @@ knowledge file with a path scope on a harness without one (`fallbacks`:
 load it always there, kept with the policy so later SessionStart installs
 do the same), a file that exists and is not from a kit (replace). A kit's
 permission rules reach Copilot as `--allow-tool`/`--deny-tool` flags when
-DuckTerm launches a Copilot session in a repository whose record holds the
-kit, so they are never "not supported" there. OpenCode hooks (JS plugins)
+DuckTerm launches a Copilot session in the repository: the flags are
+computed at install from the tree the owner reviewed and kept in the
+home-side install record with the kit's digest; the launcher reads only
+that record, never the kit's current files or the repository's own copy
+of the record, and passes a kit's flags only while its folder still
+hashes the same (a changed kit's flags are dropped and logged until Enable
+reviews it again). A permission `match` may not contain `)`, `,` or a
+newline, so one rule cannot read as two. OpenCode hooks (JS plugins)
 have no fix yet. Enabling installs into every matching repository known
 now, for every harness, with the options and fixes the review showed; the
 policy keeps them (`options`, `fallbacks`) for the installs SessionStart
