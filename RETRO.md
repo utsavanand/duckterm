@@ -1,3 +1,29 @@
+## 2026-11-26 — CSP does not block frame self-navigation
+
+A sandboxed iframe can navigate itself even when connect-src is none. Keep
+interactive artifacts behind the Mac navigation delegate; ordinary browsers use
+a sanitized static preview. Test location changes, refresh tags and SVG links,
+not just fetch. A selection channel identifies a frame, not trustworthy text:
+the document shares its realm, so show quote bounds and label it untrusted.
+
+## 2026-11-25 — Review content by identity and version, not storage location
+
+A worktree disappearing must not move an artifact into a different tab. Keep
+all saved outputs together, show source availability per row, and distinguish
+live bytes from saved bytes. Comments belong to the exact artifact ID or
+working-directory path and content hash; earlier versions remain readable but
+must never silently anchor to new text. Interactive HTML needs an opaque frame,
+restricted resource policy, validated messages, and native navigation guards
+that cannot launch external apps on behalf of an untrusted subframe.
+
+## 2026-11-25 — Searchable artifact labels start at registration
+
+A label filter is useful only when producers classify their deliverables. The
+shipped collaboration instructions should explain the existing kind values,
+require an explicit kind and a descriptive subject in each title, and preserve
+accurate classification when updating an artifact. Reuse the current metadata
+rather than adding a second label vocabulary.
+
 ## 2026-11-26 — Session search must include the folder path
 
 The sidebar searched session labels only, hiding relevant sessions when the owner

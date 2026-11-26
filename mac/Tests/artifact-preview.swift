@@ -11,6 +11,7 @@ import WebKit
             ("about:blank", false, true),
             ("about:srcdoc", true, false),
             ("http://127.0.0.1:4300/sessions", true, true),
+            ("http://127.0.0.1:4300/sessions", false, false),
             ("http://127.0.0.1:9999/", false, false),
             ("https://example.com/", false, false),
         ]
@@ -18,6 +19,17 @@ import WebKit
         where dashboardAllowsNavigation(to: URL(string: destination)!, dashboard: dashboard,
                                         inMainFrame: mainFrame) != expected {
             print("FAIL: \(destination) mainFrame=\(mainFrame) should be \(expected ? "allowed" : "refused")")
+            exit(1)
+        }
+
+        for (main, scheme, host, port, expected) in [
+            (true, "http", "127.0.0.1", 4300, true),
+            (false, "http", "127.0.0.1", 4300, false),
+            (true, "https", "example.com", 443, false),
+            (false, "", "", 0, false),
+        ] where dashboardAllowsExternalNavigation(sourceMainFrame: main, sourceScheme: scheme,
+                sourceHost: host, sourcePort: port, dashboard: dashboard) != expected {
+            print("FAIL: external navigation source boundary")
             exit(1)
         }
 
