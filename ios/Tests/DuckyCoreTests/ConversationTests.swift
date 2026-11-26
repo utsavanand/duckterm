@@ -120,6 +120,8 @@ final class ConversationLifecycleTests: XCTestCase {
         await model.restore()
         return (model, transport)
     }
+    // Only for waits with nothing to await. A conversation load is awaited with refreshConversation(),
+    // which joins the read selectSession started; yields alone lose that race on slow CI runners.
     private func settle() async { for _ in 0..<50 { await Task.yield() } }
     func testLegacyReadOnlyGrantsNeverReadOrSendConversation() async {
         let (model, transport) = await setup()
@@ -161,7 +163,7 @@ final class ConversationLifecycleTests: XCTestCase {
     func testTimedOutSendNeverReplaysAndLaterReceiptResolvesSameID() async {
         let (model, transport) = await setup()
         defer { model.forget() }
-        model.selectSession("a"); await settle(); model.setDraft("Hello")
+        model.selectSession("a"); await model.refreshConversation(); model.setDraft("Hello")
         transport.sendError = URLError(.timedOut)
         await model.sendMessage()
         XCTAssertEqual(model.sendState, .unconfirmed); XCTAssertEqual(model.draft, "Hello")
@@ -177,7 +179,7 @@ final class ConversationLifecycleTests: XCTestCase {
         let (model, transport) = await setup()
         defer { model.forget() }
         transport.holdRead = true; model.selectSession("a"); await settle()
-        model.selectSession("b"); await settle()
+        model.selectSession("b"); await model.refreshConversation()
         XCTAssertEqual(model.conversation?.sessionID, "b")
         transport.readContinuation?.resume(); await settle()
         XCTAssertEqual(model.conversation?.sessionID, "b")
@@ -194,7 +196,7 @@ final class ConversationLifecycleTests: XCTestCase {
         let (model, transport) = await setup()
         defer { model.forget() }
         transport.state = "stopped"; await model.refresh()
-        model.selectSession("a"); await settle()
+        model.selectSession("a"); await model.refreshConversation()
         XCTAssertNotNil(model.conversation); XCTAssertFalse(model.canSend)
         model.setDraft("Hello"); await model.sendMessage(); XCTAssertTrue(transport.sends.isEmpty)
         transport.capabilities = []; await model.refresh()
