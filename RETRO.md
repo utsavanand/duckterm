@@ -1,3 +1,13 @@
+## 2026-11-26 — The narrow-strip rule never hid Oracle's subtitle
+
+Compacting the sidebar rows for short windows first saved only the Autopilot
+row: `.rd-sidebar-tops small` ties `.rd-oracle-row small` on specificity, and
+oracleNavigation.css loads later, so Oracle and Support kept their subtitles
+and 26px icons. The narrow-window strip had lost the same way since it was
+added: its Oracle cell kept a subtitle and stood 57px tall instead of 38. Unit tests can't see media queries; the
+screenshot's measured height was the only signal. Scope container overrides
+with `> button` and measure the rows, not just the first one.
+
 ## 2026-11-25 — A pinned short window is a budget every sidebar row spends
 
 sidebar-order.spec.ts pins a 652px window to force a scrolling agent list,
