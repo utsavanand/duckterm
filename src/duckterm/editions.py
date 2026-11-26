@@ -77,6 +77,7 @@ DEVELOPMENT = frozenset(
         "autopilot",
         "oracle_messages",
         "fleet_monitor",
+        "review_v2",
     }
 )
 

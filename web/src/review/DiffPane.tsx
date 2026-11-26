@@ -11,7 +11,7 @@ function fileName(path: string): { dir: string; name: string } {
   return slash < 0 ? { dir: "", name: path } : { dir: path.slice(0, slash + 1), name: path.slice(slash + 1) };
 }
 
-function Code({ text, language }: { text: string; language: string | null }) {
+export function Code({ text, language }: { text: string; language: string | null }) {
   const html = useMemo(() => language ? highlighter.highlight(text, { language, ignoreIllegals: true }).value : null, [text, language]);
   if (html === null) return <code>{text}</code>;
   return <code dangerouslySetInnerHTML={{ __html: html }} />;

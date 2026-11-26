@@ -43,9 +43,10 @@ export default async function globalSetup() {
 
   const home = mkdtempSync(join(runRoot, "state-"));
   // Development flags are off for everyone by default; the e2e server turns
-  // them on except Home, which replaces the starting page, and the Fleet
-  // monitor, which replaces the Control tower these specs drive.
-  writeFileSync(join(home, "flags.json"), JSON.stringify({ enabled: DEVELOPMENT.filter(flag => flag !== "home" && flag !== "fleet_monitor") }));
+  // them on except Home, which replaces the starting page, the Fleet
+  // monitor, which replaces the Control tower, and review_v2, which replaces
+  // the review page these specs drive.
+  writeFileSync(join(home, "flags.json"), JSON.stringify({ enabled: DEVELOPMENT.filter(flag => flag !== "home" && flag !== "fleet_monitor" && flag !== "review_v2") }));
 
   // Existing integration workflows deliberately exercise opt-in features.
   // The separate default-off run passes an empty list and tests real defaults.
