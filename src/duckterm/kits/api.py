@@ -40,7 +40,7 @@ def _project(value: Any) -> Path:
 def _kit(value: Any) -> m.Kit:
     text = str(value or "").strip()
     if not text:
-        raise KitApiError(400, "kit is required (a folder holding skill-kit.toml)")
+        raise KitApiError(400, "kit is required (a folder holding metaharness.toml)")
     path = Path(text).expanduser()
     if not path.is_dir() and not (path.is_file() and path.suffix == ".toml"):
         raise KitApiError(400, f"no such kit folder or manifest: {path}")

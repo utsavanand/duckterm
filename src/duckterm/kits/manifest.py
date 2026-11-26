@@ -1,4 +1,5 @@
-"""`skill-kit.toml` → Kit. Parsing only; see validate.py for the authoring rules."""
+"""`metaharness.toml` → Kit (`skill-kit.toml`, the name until 2026-11-25, is still read).
+Parsing only; see validate.py for the authoring rules."""
 
 from __future__ import annotations
 
@@ -9,7 +10,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-MANIFEST = "skill-kit.toml"
+MANIFEST = "metaharness.toml"
+OLD_MANIFEST = "skill-kit.toml"  # the name until 2026-11-25; still read, validate asks for a rename
 LEGACY_MANIFEST = "duckterm-harness.json"
 KINDS = ("knowledge", "tool", "skill", "agent", "hook", "permission", "flow", "settings")
 HARNESSES = ("claude-code", "codex", "copilot", "opencode")
@@ -76,6 +78,7 @@ class Kit:
     teams: list[str] = field(default_factory=list)
     raw: dict[str, Any] = field(default_factory=dict)
     legacy: bool = False
+    old_manifest: bool = False  # read from skill-kit.toml
 
     def component_id(self, component: Component) -> str:
         return f"{self.name}/{component.kind}/{component.name}"
@@ -123,12 +126,16 @@ def load(root: Path) -> Kit:
     manifest = root / MANIFEST
     if root.is_file() and root.suffix == ".toml":
         manifest, root = root, root.parent
+    elif not manifest.is_file() and (root / OLD_MANIFEST).is_file():
+        manifest = root / OLD_MANIFEST
     if manifest.is_file():
         try:
             raw = tomllib.loads(manifest.read_text())
         except tomllib.TOMLDecodeError as exc:
             raise ManifestError(f"{manifest}: {exc}") from exc
-        return _from_raw(raw, root)
+        kit = _from_raw(raw, root)
+        kit.old_manifest = manifest.name == OLD_MANIFEST
+        return kit
     legacy = root / LEGACY_MANIFEST
     if legacy.is_file():
         try:

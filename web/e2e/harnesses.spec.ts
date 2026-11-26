@@ -5,12 +5,12 @@ import { join } from "node:path";
 import { expect, test } from "@playwright/test";
 import { api, apiPost, postEvent, seedSession } from "./helpers";
 
-// Skill kits end to end: add a kit by path on the Skill kits page, install it
+// MetaHarnesses end to end: add one by path on the MetaHarnesses page, install it
 // into a workspace from the dry run, and read what a skill does on the kit's
 // page. DuckTerm writes the kit's files itself and never runs a kit's own
 // script, so a stray install.sh in the kit is never executed.
 
-test("add a skill kit, install it into a workspace and read a skill; the kit's script never runs", async ({
+test("add a MetaHarness, install it into a workspace and read a skill; the kit's script never runs", async ({
   page,
 }, testInfo) => {
   const kit = mkdtempSync(join(tmpdir(), "rd-e2e-kit-"));
@@ -23,7 +23,7 @@ test("add a skill kit, install it into a workspace and read a skill; the kit's s
     "---\nname: ship-it\ndescription: Reviews, tests, then ships.\n---\n",
   );
   writeFileSync(
-    join(kit, "skill-kit.toml"),
+    join(kit, "metaharness.toml"),
     [
       "manifest_version = 1",
       `name = "kit-${stamp}"`,
@@ -45,9 +45,9 @@ test("add a skill kit, install it into a workspace and read a skill; the kit's s
 
   await page.goto("/");
   await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.getByRole("button", { name: "Skill kits" }).click();
-  await page.getByRole("button", { name: "Add skill kit…" }).click();
-  await page.getByLabel("Kit folder").fill(kit);
+  await page.getByRole("button", { name: "MetaHarnesses" }).click();
+  await page.getByRole("button", { name: "Add MetaHarness…" }).click();
+  await page.getByLabel("MetaHarness folder").fill(kit);
   await page.getByRole("button", { name: "Add", exact: true }).click();
 
   await expect(page.getByRole("heading", { name: `kit-${stamp}` })).toBeVisible();
@@ -103,7 +103,7 @@ test("the dry-run matrix stays readable at 390px in both themes", async ({ page 
     ].join("\n"),
   );
   writeFileSync(
-    join(kit, "skill-kit.toml"),
+    join(kit, "metaharness.toml"),
     [
       "manifest_version = 1",
       `name = "kit-${stamp}"`,
@@ -123,9 +123,9 @@ test("the dry-run matrix stays readable at 390px in both themes", async ({ page 
   await page.setViewportSize({ width: 390, height: 1000 });
   await page.goto("/");
   await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.getByRole("button", { name: "Skill kits" }).click();
-  await page.getByRole("button", { name: "Add skill kit…" }).click();
-  await page.getByLabel("Kit folder").fill(kit);
+  await page.getByRole("button", { name: "MetaHarnesses" }).click();
+  await page.getByRole("button", { name: "Add MetaHarness…" }).click();
+  await page.getByLabel("MetaHarness folder").fill(kit);
   await page.getByRole("button", { name: "Add", exact: true }).click();
   await page.getByRole("button", { name: "Next: choose workspaces" }).click();
   await page.getByLabel("These workspaces").check();
@@ -171,7 +171,7 @@ test("a repository deleted after the catalog load is left out of the review at 3
   mkdirSync(join(kit, "skills", "ship-it"), { recursive: true });
   writeFileSync(join(kit, "skills", "ship-it", "SKILL.md"), "---\nname: ship-it\ndescription: Ships.\n---\n");
   writeFileSync(
-    join(kit, "skill-kit.toml"),
+    join(kit, "metaharness.toml"),
     ["manifest_version = 1", `name = "kit-${stamp}"`, 'description = "for the refusal path"', 'version = "0.1.0"', "", "[[components]]", 'kind = "skill"', 'path = "skills/ship-it"', ""].join("\n"),
   );
   const workspace = `kit-ws-${stamp}`;
@@ -180,9 +180,9 @@ test("a repository deleted after the catalog load is left out of the review at 3
   await page.setViewportSize({ width: 390, height: 1000 });
   await page.goto("/");
   await page.getByRole("button", { name: "Settings", exact: true }).click();
-  await page.getByRole("button", { name: "Skill kits" }).click();
-  await page.getByRole("button", { name: "Add skill kit…" }).click();
-  await page.getByLabel("Kit folder").fill(kit);
+  await page.getByRole("button", { name: "MetaHarnesses" }).click();
+  await page.getByRole("button", { name: "Add MetaHarness…" }).click();
+  await page.getByLabel("MetaHarness folder").fill(kit);
   await page.getByRole("button", { name: "Add", exact: true }).click();
   await page.getByRole("button", { name: "Next: choose workspaces" }).click();
   await page.getByLabel("These workspaces").check();
@@ -230,6 +230,7 @@ test("Browse offers each manifest of a folder and registers nothing until Add is
         'path = "skills/ship-it"',
         "",
       ].join("\n");
+    // the old manifest name and its variants are still offered
     writeFileSync(join(kit, "skill-kit.toml"), manifest(`main-${stamp}`));
     writeFileSync(join(kit, "skill-kit.alt.toml"), manifest(`alt-${stamp}`));
     const registers: string[] = [];
@@ -239,15 +240,15 @@ test("Browse offers each manifest of a folder and registers nothing until Add is
 
     await page.goto("/");
     await page.getByRole("button", { name: "Settings", exact: true }).click();
-    await page.getByRole("button", { name: "Skill kits" }).click();
-    await page.getByRole("button", { name: "Add skill kit…" }).click();
-    await page.getByLabel("Kit folder").fill(kit);
+    await page.getByRole("button", { name: "MetaHarnesses" }).click();
+    await page.getByRole("button", { name: "Add MetaHarness…" }).click();
+    await page.getByLabel("MetaHarness folder").fill(kit);
     await page.getByRole("button", { name: "Browse…" }).click();
     await expect(page.getByRole("button", { name: `Use alt-${stamp}` })).toBeVisible();
     await expect(page.getByRole("button", { name: `Use main-${stamp}` })).toBeVisible();
     expect(registers).toEqual([]);
     await page.getByRole("button", { name: `Use alt-${stamp}` }).click();
-    await expect(page.getByLabel("Kit folder")).toHaveValue(join(kit, "skill-kit.alt.toml"));
+    await expect(page.getByLabel("MetaHarness folder")).toHaveValue(join(kit, "skill-kit.alt.toml"));
     expect(registers).toEqual([]);
     await page.getByRole("button", { name: "Add", exact: true }).click();
     await expect(page.getByRole("heading", { name: `alt-${stamp}` })).toBeVisible();

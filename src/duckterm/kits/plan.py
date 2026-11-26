@@ -55,14 +55,14 @@ def inside(project: Path, rel: str) -> Path:
     if not rel or Path(rel).is_absolute() or ".." in parts:
         raise PathEscape(f"{rel!r} must be a relative path inside the project")
     if ".git" in parts or parts[0] not in written_roots():
-        raise PathEscape(f"{rel!r} is not a path skill kits write")
+        raise PathEscape(f"{rel!r} is not a path a MetaHarness writes")
     target = project
     for part in parts:
         target = target / part
         if target.is_symlink():
             where = target.relative_to(project).as_posix()
             raise PathEscape(
-                f"{rel!r} goes through a symlink at {where!r}; skill kits write real files"
+                f"{rel!r} goes through a symlink at {where!r}; a MetaHarness writes real files"
             )
     if not target.resolve().is_relative_to(project.resolve()):
         raise PathEscape(f"{rel!r} resolves outside the project")
