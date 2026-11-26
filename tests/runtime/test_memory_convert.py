@@ -216,6 +216,8 @@ def test_a_trash_folder_that_is_a_symlink_is_refused(legacy, tmp_path):
         memory_convert.convert(conn, KEY, trash, tmp_path)
     assert victim.read_bytes() == b"KEEP"
     assert (root / (snapshots[2] + ".jsonl")).is_file()
+    # Refused before anything changed, not after the references were rebound.
+    assert not any("records_sha256" in r for r in saved_refs(conn))
 
 
 def test_a_symlinked_folder_above_the_trash_is_refused(legacy, tmp_path):
