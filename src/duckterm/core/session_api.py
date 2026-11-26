@@ -995,6 +995,20 @@ class SessionAPI:
         ).fetchone()
         return {"all": row["all_count"], "pending": row["pending"], "answered": row["answered"]}
 
+    def peer_mail(self, since_ms: int, limit: int = 50) -> list[dict[str, Any]]:
+        """Agent-to-agent mail since since_ms, newest first: who wrote to
+        whom and when, never the text. Owner sends and test sessions are left
+        out. The Fleet monitor draws these as arrows between ducks."""
+        rows = self.conn.execute(
+            "SELECT q.id, q.sender, q.recipient, q.kind, q.created_at "
+            "FROM session_questions q WHERE q.created_at >= ? AND q.sender != 'owner' "
+            "AND NOT EXISTS (SELECT 1 FROM sessions s WHERE s.test=1 "
+            "AND s.session_key IN (q.sender, q.recipient)) "
+            "ORDER BY q.created_at DESC LIMIT ?",
+            (since_ms, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
     def folder_inbox(
         self,
         folder: str,

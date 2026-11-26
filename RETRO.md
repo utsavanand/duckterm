@@ -1,3 +1,11 @@
+## 2026-11-25 — Preview the layout with the real fleet, not the fixture
+
+The pods looked fine with three fixture agents. With the owner's 33, the
+24-agent team was squeezed into half the width beside a team of three, and the
+arrows were drawn over the duck labels. A team with several pods now takes the
+full row and the arrows draw behind the ducks. Only the real-data preview found
+either problem.
+
 ## 2026-11-25 — Tabs that unmount take the owner's draft with them
 
 The Fleet monitor rendered only the selected tab, so a look at Agent fleet

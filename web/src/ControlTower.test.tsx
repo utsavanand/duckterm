@@ -7,7 +7,7 @@ import { ControlTower } from "./ControlTower";
 import { TowerAgent } from "./tower";
 import { edition, CODE, FULL, LITE } from "./test/editions";
 import { StaticEdition } from "./edition";
-vi.mock("./api", () => ({ authHeaders: () => ({}), api: { controlTower: vi.fn(), messageSession: vi.fn(), oracleChat: vi.fn(), fleetAsk: vi.fn(), clearOracleChat: vi.fn(), relay: vi.fn(), fleetPulse: vi.fn() } }));
+vi.mock("./api", () => ({ authHeaders: () => ({}), api: { controlTower: vi.fn(), messageSession: vi.fn(), oracleChat: vi.fn(), fleetAsk: vi.fn(), clearOracleChat: vi.fn(), relay: vi.fn(), fleetPulse: vi.fn(), fleetMail: vi.fn() } }));
 beforeEach(() => {
   vi.stubGlobal("fetch", vi.fn().mockImplementation(async (url: string) => new Response(JSON.stringify(url === "/tasks" ? { tasks: [] } : { revision: "default", instances: defaultLayout("oracle", oracleWidgets(() => {}, { backup: true })) }))));
   vi.mocked(api.oracleChat).mockResolvedValue({ messages: [] });
@@ -185,11 +185,46 @@ it("starts no polling when its overview capability is unavailable", async () => 
   expect(fetch).not.toHaveBeenCalled();
 });
 
-function fleetMonitor(pulse: PulseEvent[] = []) {
+function fleetMonitor(pulse: PulseEvent[] = [], fleet: TowerAgent[] = agents) {
   vi.mocked(api.controlTower).mockResolvedValue(insights);
   vi.mocked(api.fleetPulse).mockResolvedValue({ events: pulse });
-  render(<ControlTower onAnalytics={() => {}} agents={agents} now={NOW} onBack={() => {}} onOpenTerminal={() => {}} />, { wrapper: edition([...FULL, "fleet_monitor"]) });
+  if (!vi.mocked(api.fleetMail).getMockImplementation()) vi.mocked(api.fleetMail).mockResolvedValue({ messages: [] });
+  render(<ControlTower onAnalytics={() => {}} agents={fleet} now={NOW} onBack={() => {}} onOpenTerminal={() => {}} />, { wrapper: edition([...FULL, "fleet_monitor"]) });
 }
+
+it("with fleet_monitor, Agent fleet splits a team into pods by subfolder and says what each duck is doing", () => {
+  fleetMonitor([], [
+    agent({ key: "lead", group: "Duckterm", progress: { summary: "Shipped the Pulse. Next the pods.", deliverables: [], learnings: [], user_learnings: [], next_actions: [] } }),
+    agent({ key: "dev", group: "Duckterm/core", state: "busy", shownState: "busy", lastTool: "Bash" }),
+    agent({ key: "writer", group: "Duckterm/core", state: "busy", shownState: "busy", progress: { summary: "Rewriting the README intro. Then links.", deliverables: [], learnings: [], user_learnings: [], next_actions: [] } }),
+    agent({ key: "qa", group: "Duckterm/qa", state: "waiting", shownState: "waiting" }),
+  ]);
+  fireEvent.click(screen.getByRole("tab", { name: "Agent fleet" }));
+  const team = screen.getByRole("region", { name: "Teams" });
+  const pods = within(team).getAllByRole("group").map((g) => [g.getAttribute("aria-label"), [...g.querySelectorAll("[data-duck]")].map((d) => d.getAttribute("data-duck"))]);
+  expect(pods).toEqual([["Duckterm", ["lead"]], ["core", ["dev", "writer"]], ["qa", ["qa"]]]);
+  const doing = (key: string) => team.querySelector(`[data-duck="${key}"] .rd-fleet-doing`)?.textContent;
+  expect([doing("lead"), doing("dev"), doing("writer"), doing("qa")]).toEqual(["Idle", "Using Bash", "Rewriting the README intro.", "Waiting on you"]);
+});
+
+it("with fleet_monitor, a new message between agents draws one arrow, and only on Agent fleet", async () => {
+  vi.mocked(api.fleetMail).mockResolvedValueOnce({ messages: [] }).mockResolvedValue({ messages: [{ id: "q1", sender: "main-qa", recipient: "architect", kind: "question", created_at: Date.now() }] });
+  fleetMonitor();
+  expect(api.fleetMail).not.toHaveBeenCalled();
+  vi.useFakeTimers({ shouldAdvanceTime: true });
+  fireEvent.click(screen.getByRole("tab", { name: "Agent fleet" }));
+  await act(async () => { await Promise.resolve(); });
+  expect(document.querySelectorAll(".rd-fleet-arrow")).toHaveLength(0);
+  await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+  expect(document.querySelectorAll(".rd-fleet-arrow")).toHaveLength(1);
+  // The same message on the next poll doesn't fly again, and the arrow clears.
+  await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+  expect(document.querySelectorAll(".rd-fleet-arrow")).toHaveLength(0);
+  fireEvent.click(screen.getByRole("tab", { name: "Ask Oracle" }));
+  const calls = vi.mocked(api.fleetMail).mock.calls.length;
+  await act(async () => { await vi.advanceTimersByTimeAsync(15_000); });
+  expect(vi.mocked(api.fleetMail).mock.calls.length).toBe(calls);
+});
 
 it("with fleet_monitor, opens on Ask Oracle with tabs for the fleet and analytics", async () => {
   fleetMonitor();
