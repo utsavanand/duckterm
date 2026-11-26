@@ -44,3 +44,31 @@
 
 /* Switch foreground and background together when the system theme changes. */
 .rd-tower-widgets .rd-btn { transition: opacity .12s ease; }
+
+/* Fleet monitor (flag fleet_monitor): tabs over Ask Oracle, Agent fleet, Analytics */
+.rd-fleet-tabs { display:flex; gap:2px; padding:0 20px; border-bottom:1px solid var(--border); flex:none }
+.rd-fleet-tabs button { border:0; background:none; color:var(--text-soft); padding:10px 14px; margin-bottom:-1px; border-bottom:2px solid transparent; font:inherit; cursor:pointer }
+.rd-fleet-tabs button.on { color:var(--text); border-bottom-color:var(--brand-green) }
+.rd-fleet-body { flex:1; min-height:0; display:flex; flex-direction:column }
+.rd-fleet-body > .rd-tower-scroll { flex:1 }
+.rd-fleet-body > [hidden] { display:none }
+.rd-fleet-needs-window:focus { outline:none }
+.rd-tower-widgets .rd-fleet-chat { flex:1; width:auto; border:0; padding:12px 20px 4px }
+.rd-fleet-chat .rd-oracle { flex:1; min-height:0 }
+.rd-fleet-needsbar { display:flex; align-items:center; gap:12px; margin:4px 12px 0; padding:10px 12px; border:1px solid var(--amber-border); background:var(--amber-bg); border-radius:10px }
+.rd-fleet-needsbar-ducks { display:flex; flex:none }
+.rd-fleet-needsbar-ducks > * { margin-left:-6px }
+.rd-fleet-needsbar-text { flex:1; min-width:0 }
+.rd-btn.rd-fleet-needsbar-open { background:var(--amber-text); border-color:var(--amber-text); color:var(--bg); font-weight:600 }
+/* The tab already names the chat and the banner already counts what needs you. */
+.rd-fleet-chat .rd-oracle-title, .rd-fleet-chat .rd-relay-count { display:none }
+.rd-fleet .rd-tower-teams { flex-wrap:wrap; overflow:visible }
+.rd-fleet .rd-tower-team { flex:1 1 320px; width:auto }
+.rd-fleet .rd-tower-field { flex-wrap:wrap }
+.rd-fleet-scrim { position:fixed; inset:0; z-index:40; background:rgba(0,0,0,.45) }
+.rd-fleet-needs-window { position:fixed; z-index:41; top:80px; left:50%; transform:translateX(-50%); width:min(780px, calc(100% - 32px)); max-height:calc(100% - 120px); display:flex; flex-direction:column; background:var(--bg); border:1px solid var(--border-strong); border-radius:14px; box-shadow:0 30px 80px rgba(0,0,0,.45) }
+.rd-fleet-needs-window header { display:flex; align-items:center; gap:10px; padding:14px 16px; border-bottom:1px solid var(--border) }
+.rd-fleet-needs-window header h2 { margin:0; font-size:1rem }
+.rd-fleet-needs-window header span { flex:1; color:var(--text-soft); font-size:0.8125rem }
+.rd-fleet-needs-cards { overflow:auto; padding:14px 16px }
+.rd-fleet-needs-cards .rd-tower-needs-list { grid-template-columns:1fr }

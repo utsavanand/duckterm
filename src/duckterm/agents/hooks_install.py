@@ -22,7 +22,7 @@ import json
 import os
 import re
 import shlex
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
@@ -253,20 +253,34 @@ def _spec(agent: str) -> tuple[str, HookSpec]:
     return runtime.name, runtime.hook_spec
 
 
-def settings_path(*, global_scope: bool, project_dir: Path, agent: str = "claude-code") -> Path:
+def settings_path(
+    *,
+    global_scope: bool,
+    project_dir: Path,
+    agent: str = "claude-code",
+    environment: Mapping[str, str] | None = None,
+) -> Path:
     _, spec = _spec(agent)
     # The selected project is a trusted root, like the user's home. Resolve its
     # ancestors before guarding the configuration directories underneath it.
     if not global_scope:
         project_dir = project_dir.resolve()
-    return spec.path(global_scope=global_scope, project_dir=project_dir)
+    return spec.path(global_scope=global_scope, project_dir=project_dir, environment=environment)
 
 
-def install(*, global_scope: bool, project_dir: Path, agent: str = "claude-code") -> Path:
+def install(
+    *,
+    global_scope: bool,
+    project_dir: Path,
+    agent: str = "claude-code",
+    environment: Mapping[str, str] | None = None,
+) -> Path:
     from duckterm.agents.hook_files import _lock, _read, _write, install_file
 
     name, spec = _spec(agent)
-    path = settings_path(global_scope=global_scope, project_dir=project_dir, agent=agent)
+    path = settings_path(
+        global_scope=global_scope, project_dir=project_dir, agent=agent, environment=environment
+    )
     owner = hook_dispatch.profile_key()
     with hook_dispatch.registrations(create=True) as registry:
         if spec.transport == "file-drop":
@@ -286,9 +300,28 @@ def install(*, global_scope: bool, project_dir: Path, agent: str = "claude-code"
                 members = registry.members(path, name, legacy=_has_owned_hooks(config))
                 script = hook_dispatch.ensure_shared_script(hook_script_path())
                 result = spec.build(config, str(script), name)
-                _write(path.name, (json.dumps(result, indent=2) + "\n").encode(), directory)
+                content = (json.dumps(result, indent=2) + "\n").encode()
+                if raw != content:
+                    _write(path.name, content, directory)
         registry.save(path, name, members | {owner})
     return path
+
+
+def prepare_for_launch(runtime: str, cwd: Path, environment: Mapping[str, str]) -> str | None:
+    """Configure supported hook integrations before spawning, never claim delivery.
+
+    Reuse the locked, atomic merge and shared handler. A failure must be visible
+    to the launch caller; continuing would silently launch without status signals.
+    Other harnesses retain their own native preparation or file-drop workflow.
+    """
+    if runtime not in {"claude-code", "codex", "copilot"}:
+        return None
+    try:
+        return str(
+            install(global_scope=True, project_dir=cwd, agent=runtime, environment=environment)
+        )
+    except (OSError, ValueError, TypeError) as exc:
+        raise ValueError(f"Could not configure DuckTerm hooks for {runtime}: {exc}") from exc
 
 
 def _has_owned_hooks(config: dict[str, Any]) -> bool:

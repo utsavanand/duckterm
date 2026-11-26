@@ -4,6 +4,7 @@ and after an install, and how a flow run is started and watched."""
 import json
 import os
 import time
+from pathlib import Path
 
 import pytest
 from test_skill_kits import SAMPLE
@@ -252,6 +253,253 @@ def _registry_kit(tmp_path):
         "---\nname: judge\ndescription: Decides.\n---\nDecide.\n"
     )
     return root
+
+
+def _git_project(tmp_path, name="proj"):
+    import subprocess
+
+    project = tmp_path / name
+    project.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=project, check=True)
+    return project
+
+
+def test_plan_without_a_project_is_the_kit_alone_for_every_harness(tmp_path):
+    out = api.plan_for({"kit": str(SAMPLE), "harnesses": ["claude-code", "codex"]})
+    assert out["plan"]["harnesses"] == ["claude-code", "codex"]
+    assert out["plan"]["conflicts"] == []
+    assert {r["component"] for r in out["plan"]["rows"]} >= {"sample-kit/skill/review-diff"}
+
+
+def test_review_lists_the_matrix_once_and_per_repository_only_what_differs(tmp_path, monkeypatch):
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
+    (tmp_path / "home" / ".codex").mkdir(parents=True)
+    trusted = _git_project(tmp_path, "trusted")
+    other = _git_project(tmp_path, "other")
+    (tmp_path / "home" / ".codex" / "config.toml").write_text(
+        f'[projects."{trusted}"]\ntrust_level = "trusted"\n'
+    )
+    (other / ".claude" / "agents").mkdir(parents=True)
+    (other / ".claude" / "agents" / "reviewer.md").write_text("mine")
+    registry = [{"name": "sample-kit", "path": str(SAMPLE)}]
+    workspaces = [
+        {"name": "payments", "repositories": [str(trusted), str(other)]},
+        {"name": "docs", "repositories": []},
+        {"name": "else", "repositories": [str(tmp_path)]},
+    ]
+    out = api.review(
+        {"kit": "sample-kit", "scope": "workspaces", "workspaces": ["payments", "docs"]},
+        registry,
+        workspaces,
+    )
+    assert out["plan"]["harnesses"] == ["claude-code", "codex", "copilot", "opencode"]
+    assert [
+        (r["workspace"], r["codex_trusted"], len(r["conflicts"])) for r in out["repositories"]
+    ] == [
+        ("payments", True, 0),
+        ("payments", False, 1),
+    ]
+    assert out["pending"] == ["docs"]
+    kinds = [
+        (f["kind"], f.get("projects") or f.get("component") or f.get("path")) for f in out["fixes"]
+    ]
+    assert ("codex-trust", [str(other)]) in kinds
+    assert ("fallback", "sample-kit/knowledge/api-conventions") in kinds
+    assert ("replace", ".claude/agents/reviewer.md") in kinds
+    fixed = api.review(
+        {
+            "kit": "sample-kit",
+            "scope": "workspaces",
+            "workspaces": ["payments"],
+            "fallbacks": ["sample-kit/knowledge/api-conventions"],
+        },
+        registry,
+        workspaces,
+    )
+    row = next(r for r in fixed["plan"]["rows"] if r["component"].endswith("api-conventions"))
+    assert "not supported" not in row["harnesses"].values()
+    assert not any(f["kind"] == "fallback" for f in fixed["fixes"])
+
+
+def test_fix_codex_trust_writes_codex_own_record_and_keeps_the_rest_of_the_config(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
+    config = tmp_path / "home" / ".codex" / "config.toml"
+    config.parent.mkdir(parents=True)
+    a = _git_project(tmp_path, "a")
+    b = _git_project(tmp_path, "b")
+    config.write_text(f'model = "o3"\n\n[projects."{a}"]\ntrust_level = "untrusted"\nnote = 1\n')
+    out = api.fix({"kind": "codex-trust", "projects": [str(a), str(b)]})
+    assert out["trusted"] == [str(a), str(b)]
+    import tomllib
+
+    data = tomllib.loads(config.read_text())
+    assert data["model"] == "o3"
+    assert data["projects"][str(a)] == {"trust_level": "trusted", "note": 1}
+    assert data["projects"][str(b)] == {"trust_level": "trusted"}
+    assert api.codex_trusts(a) and api.codex_trusts(b)
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    with pytest.raises(api.KitApiError, match="not a git repository"):
+        api.fix({"kind": "codex-trust", "projects": [str(plain)]})
+    with pytest.raises(api.KitApiError, match="unknown fix"):
+        api.fix({"kind": "rm-rf", "projects": [str(a)]})
+
+
+def test_copilot_flags_come_from_the_reviewed_install_and_stop_when_the_kit_changes(
+    tmp_path, monkeypatch
+):
+    import shutil
+
+    from duckterm.helpers import instance
+
+    monkeypatch.setattr(instance, "home", lambda: tmp_path / "home")
+    kit = tmp_path / "kit"
+    shutil.copytree(SAMPLE, kit)
+    project = _project(tmp_path)
+    registry = [{"name": "sample-kit", "path": str(kit)}]
+    assert api.copilot_flags(project, registry) == ([], [])
+    api.install_kit({"kit": str(kit), "project": str(project), "harnesses": ["copilot"]})
+    flags, dropped = api.copilot_flags(project, registry)
+    pairs = list(zip(flags[::2], flags[1::2], strict=True))
+    assert ("--allow-tool", "shell(npm test)") in pairs and dropped == []
+    assert all(flag in ("--allow-tool", "--deny-tool") for flag, _ in pairs)
+    # an unreviewed edit of the kit widens nothing: the flags stop, by name
+    manifest = kit / "metaharness.toml"
+    manifest.write_text(manifest.read_text().replace('match = "npm test"', 'match = "*"'))
+    assert api.copilot_flags(project, registry) == ([], ["sample-kit"])
+    # a record an agent wrote into another repository is not believed either
+    (tmp_path / "elsewhere").mkdir()
+    other = _project(tmp_path / "elsewhere")
+    (other / ".duckterm").mkdir()
+    (other / ".duckterm" / "installed.json").write_text(json.dumps({"kits": {"sample-kit": {}}}))
+    assert api.copilot_flags(other, registry) == ([], [])
+
+
+def test_a_permission_match_cannot_end_the_copilot_pattern_early(tmp_path):
+    from test_skill_kits import _tiny_kit
+
+    from duckterm.kits import validate
+
+    kit = _tiny_kit(
+        tmp_path,
+        'manifest_version = 1\nname = "k"\nversion = "1.0.0"\ndescription = "d"\n'
+        '[[components]]\nkind = "permission"\nname = "rules"\n'
+        'rules = [{ tool = "shell", match = "npm test), shell(*", decision = "allow" }]\n',
+        {},
+    )
+    messages = [str(f) for f in validate.validate(kit)]
+    assert any("may not contain" in m for m in messages)
+    assert api.adapters.copilot_flags(kit) == []
+
+
+def test_fix_codex_trust_refuses_an_entry_it_cannot_edit_plainly_and_keeps_astral_paths(
+    tmp_path, monkeypatch
+):
+    import tomllib
+
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
+    config = tmp_path / "home" / ".codex" / "config.toml"
+    config.parent.mkdir(parents=True)
+    odd = _git_project(tmp_path, "odd")
+    before = f'projects = {{ "{odd}" = {{ trust_level = "untrusted" }} }}\n'
+    config.write_text(before)
+    with pytest.raises(api.KitApiError) as e:
+        api.fix({"kind": "codex-trust", "projects": [str(odd)]})
+    assert e.value.status == 409 and "trust it in Codex" in str(e.value)
+    assert config.read_text() == before
+    config.write_text("")
+    emoji = _git_project(tmp_path, "r\U0001f986pository")
+    api.fix({"kind": "codex-trust", "projects": [str(emoji)]})
+    assert tomllib.loads(config.read_text())["projects"][str(emoji)] == {"trust_level": "trusted"}
+
+
+def test_enable_keeps_options_and_fixes_for_the_sessions_that_install_later(tmp_path, monkeypatch):
+    from duckterm.helpers import instance
+
+    monkeypatch.setattr(instance, "home", lambda: tmp_path / "home")
+    registry = [{"name": "sample-kit", "path": str(SAMPLE)}]
+    api.enable(
+        {
+            "kit": "sample-kit",
+            "scope": "all",
+            "options": {"persona": "sport"},
+            "fallbacks": ["sample-kit/knowledge/api-conventions"],
+        },
+        registry,
+        [],
+    )
+    policy = api.policies()["sample-kit"]
+    assert policy["options"] == {"persona": "sport"}
+    assert policy["fallbacks"] == ["sample-kit/knowledge/api-conventions"]
+    later = _git_project(tmp_path, "later")
+    assert api.apply_policies(registry, "anything", str(later)) == ["sample-kit"]
+    record = api.planning.load_record(later)["kits"]["sample-kit"]
+    assert record["options"] == {"persona": "sport"}
+    assert (later / "AGENTS.md").read_text().count("api-conventions") >= 1
+
+
+def test_register_refuses_a_legacy_manifest_instead_of_adding_an_empty_kit(tmp_path):
+    root = tmp_path / "old"
+    root.mkdir()
+    (root / "duckterm-harness.json").write_text(json.dumps({"name": "uv-suite"}))
+    with pytest.raises(api.KitApiError) as e:
+        api.register({"kit": str(root)})
+    assert e.value.status == 400
+    assert "duckterm-harness.json" in str(e.value) and "metaharness.toml" in str(e.value)
+
+
+def test_repositories_collapse_worktrees_and_drop_plain_or_deleted_folders(tmp_path):
+    import subprocess
+
+    def git(*args, cwd):
+        subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
+
+    main = tmp_path / "main"
+    main.mkdir()
+    git("init", "-q", cwd=main)
+    ident = ["-c", "user.email=t@t", "-c", "user.name=t"]
+    git(*ident, "commit", "-q", "--allow-empty", "-m", "i", cwd=main)
+    worktree = tmp_path / "wt"
+    git("worktree", "add", "-q", str(worktree), cwd=main)
+    nested = main / "src"
+    nested.mkdir()
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    gone = tmp_path / "gone"
+    out = api.repositories([str(worktree), str(nested), str(plain), str(gone), str(main)])
+    assert out == [str(main.resolve())]
+    assert api.repositories([str(plain)]) == []
+    # a workspace whose sessions run only in a worktree: nothing installs now,
+    # since the main checkout may serve other workspaces; the worktree gets
+    # the kit at its next session start
+    assert api.repositories([str(worktree)]) == []
+
+
+@pytest.mark.parametrize("change", ["initialize", "remove-metadata", "separate-git-dir"])
+def test_repository_discovery_tracks_git_changes_without_restart(tmp_path, change):
+    import shutil
+    import subprocess
+
+    project = tmp_path / "repo"
+    project.mkdir()
+
+    def git(*args):
+        subprocess.run(["git", "-C", str(project), *args], check=True, capture_output=True)
+
+    if change == "initialize":
+        assert api.repositories([str(project)]) == []
+        git("init", "-q")
+        assert api.repositories([str(project)]) == [str(project)]
+    elif change == "remove-metadata":
+        git("init", "-q")
+        assert api.repositories([str(project)]) == [str(project)]
+        shutil.rmtree(project / ".git")
+        assert api.repositories([str(project)]) == []
+    else:
+        git("init", "-q", "--separate-git-dir", str(tmp_path / "metadata"))
+        assert api.repositories([str(project)]) == [str(project)]
 
 
 def test_register_reads_the_manifest_from_a_folder_or_a_toml_file(tmp_path):

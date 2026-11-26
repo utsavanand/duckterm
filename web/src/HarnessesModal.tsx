@@ -62,9 +62,9 @@ export function HarnessesModal({
   }
 
   return (
-    <Modal title={`Skill kits · ${hostName(sessionKey)}`} onClose={onClose}>
+    <Modal title={`MetaHarnesses · ${hostName(sessionKey)}`} onClose={onClose}>
       <p className="rd-harness-hint">
-        A skill kit is a collection of skills, hooks, sub-agents and
+        A MetaHarness is a collection of skills, hooks, sub-agents and
         guardrails that agents in a project pick up. Add one by its folder (it
         needs a <code>duckterm-harness.json</code>) to see what it contains.
         DuckTerm doesn't install kits yet — use the kit's own instructions.
@@ -78,9 +78,9 @@ export function HarnessesModal({
         />
       ))}
       {harnesses.length === 0 && (
-        <p className="rd-panel-empty">No skill kits added yet.</p>
+        <p className="rd-panel-empty">No MetaHarnesses added yet.</p>
       )}
-      <Field label="Add a skill kit (folder path)">
+      <Field label="Add a MetaHarness (folder path)">
         <div style={{ display: "flex", gap: 8 }}>
           <input
             style={{ ...inputStyle, flex: 1 }}

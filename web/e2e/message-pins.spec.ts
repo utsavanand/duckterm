@@ -2,7 +2,7 @@ import { expect, test } from "@playwright/test";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
-import { apiDelete, apiPost, base } from "./helpers";
+import { apiDelete, apiPost, base, fixtureHookIdentity } from "./helpers";
 
 test("pins persist, open the exact older message, preserve terminal drafts, and retain saved copies", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
@@ -26,6 +26,7 @@ test("pins persist, open the exact older message, preserve terminal drafts, and 
     expect(launch.status).toBe(200);
     key = String(launch.body.session_key);
     await apiPost("/events", {
+      ...(await fixtureHookIdentity(key)),
       event_type: "SessionStart", session_key: key,
       session_id: "pin-test", runtime: "claude-code", cwd, test: true,
     });

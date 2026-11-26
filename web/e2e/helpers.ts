@@ -67,6 +67,16 @@ export async function findSession(
   return (await sessions()).find(predicate);
 }
 
+// Events from supervised fixture processes must carry the current launch identity.
+export async function fixtureHookIdentity(key: string): Promise<{ session_id?: string; launch_generation?: string }> {
+  const listing = await (await api("/sessions")).json();
+  const row = listing.sessions.find((session: SessionRow) => session.session_key === key);
+  if (!row) throw new Error(`Missing fixture session: ${key}`);
+  const control = JSON.parse(row.restart_json || "{}");
+  return { session_id: control.native_binding?.native_id,
+    launch_generation: control.native_binding?.generation ?? control.hook_connection?.generation };
+}
+
 // Post a raw event for a session (e.g. UserPromptSubmit, PreToolUse) so a
 // checkpoint has real prompts/commands to capture. Flagged test=1 so the
 // session never counts as real data (the e2e server uses a throwaway home too).

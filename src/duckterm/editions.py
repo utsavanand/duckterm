@@ -70,7 +70,15 @@ PRESETS: dict[str, EditionConfig] = {edition.name: edition for edition in (LITE,
 # listing it in <home>/flags.json as {"enabled": ["skill_kits"]}. Each flag has
 # a row in docs/feature-flags.md (a test keeps the two in step).
 DEVELOPMENT = frozenset(
-    {"skill_kits", "home", "background_rule_suggestions", "autopilot", "support"}
+    {
+        "skill_kits",
+        "home",
+        "background_rule_suggestions",
+        "autopilot",
+        "oracle_messages",
+        "fleet_monitor",
+        "support",
+    }
 )
 
 # These operations also serve local repository clones. The handler validates

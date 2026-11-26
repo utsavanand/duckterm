@@ -1,5 +1,5 @@
 import { tasksWidget } from "./FolderTasks";
-import { useEffect, useMemo, useRef, useState } from "react";
+import { ReactNode, useEffect, useMemo, useRef, useState } from "react";
 import { useEdition } from "./edition";
 import { AnalyticsTab } from "./analyticsData";
 import { api } from "./api";
@@ -58,6 +58,9 @@ export function ControlTower({
   const analyticsRef = useRef(onAnalytics); analyticsRef.current = onAnalytics;
   const taskOpen = useRef(onOpenTerminal); taskOpen.current = onOpenTerminal;
   const [needsOpen, setNeedsOpen] = useState(false);
+  // The Fleet monitor layout (owner-approved mock A, 2026-11-24): tabs over one page.
+  const fleet = oracle && has("fleet_monitor");
+  const [tab, setTab] = useState<"chat" | "fleet" | "analytics">("chat");
   const registry = useMemo(() => [...oracleWidgets(tab => analyticsRef.current(tab), { oracle, remote, backup, onNeedsYou: () => setNeedsOpen(o => !o) }), ...(inbox ? [tasksWidget(key => taskOpen.current(key))] : [])], [oracle, remote, inbox, backup]);
   const [hover, setHover] = useState<{ key: string; el: HTMLElement } | null>(null);
   const [pinned, setPinned] = useState<{ key: string; el: HTMLElement } | null>(null);
@@ -66,9 +69,12 @@ export function ControlTower({
   // typing, where Escape belongs to the text field.
   const pinnedRef = useRef(pinned);
   pinnedRef.current = pinned;
+  const needsWindowRef = useRef(false);
+  needsWindowRef.current = fleet && needsOpen;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key !== "Escape") return;
+      if (needsWindowRef.current) return setNeedsOpen(false);
       if (pinnedRef.current) return setPinned(null);
       if (e.target instanceof Element && e.target.closest("textarea, input")) return;
       onBack();
@@ -89,6 +95,109 @@ export function ControlTower({
   useEffect(() => { source.emit("needs-you", relay.loaded ? { status: "ready", value: { notes: relay.notes.filter(n => n.status === "open" && n.urgency !== "offer").sort((a, b) => a.created_at - b.created_at), now } } : { status: "loading" }); }, [source, relay.notes, relay.loaded, now]);
 
   if (!overview) return null;
+  const teamsSection = (
+    <>
+      <h2 className="rd-teams-title">Your agents <small>{agents.length} across {teamList.length} {teamList.length === 1 ? "team" : "teams"}</small></h2>
+      <section className="rd-tower-teams" aria-label="Teams">
+        {teamList.length === 0 && <p className="rd-panel-empty">No agents yet.</p>}
+        {teamList.map(team => <div key={team.name} className="rd-tower-team"><div className="rd-tower-team-head"><span className="rd-tower-team-name">{team.name}</span><small>{team.agents.length}</small></div><div className="rd-tower-field">{team.agents.map(a => <AgentDuck key={a.key} agent={a} stuck={looksStuck(a, now)} pinned={pinned?.key === a.key} onHover={el => setHover(el ? { key: a.key, el } : null)} onPin={el => setPinned({ key: a.key, el })} />)}</div></div>)}
+      </section>
+    </>
+  );
+  const needsCards = (
+    <>
+      {needs.length === 0 && <p className="rd-panel-empty">Nothing needs you.</p>}
+      <div className="rd-tower-needs-list">
+        {needs.map((n) => (
+          <div key={n.id} className="rd-tower-need">
+            <OracleDuck agent={agents.find((a) => a.key === n.session_key)} pose="waiting" size={28} />
+            <NoteCard note={n} rules={relay.rules} onChange={relay.refresh} onOpenTerminal={onOpenTerminal} />
+          </div>
+        ))}
+      </div>
+    </>
+  );
+  const widgets = <Widgets surface="oracle" slot="oracle" registry={registry} source={source} kindLabel={oracle ? "Oracle" : "fleet"} />;
+  const factsSection = (
+    <section className="rd-tower-facts" aria-label="Facts">
+      {facts(agents, now).map((f) => (
+        <span key={f.label} className="rd-tower-fact">
+          {f.label}: <b>{f.value}</b>
+        </span>
+      ))}
+    </section>
+  );
+  const agentCard = active && activeAgent && (
+    <AgentCard
+      key={`${activeAgent.key}-${pinned ? "pinned" : "hover"}`}
+      agent={activeAgent}
+      anchor={active.el}
+      pinned={pinned !== null}
+      stuck={looksStuck(activeAgent, now)}
+      now={now}
+      onClose={() => setPinned(null)}
+      onOpenTerminal={() => onOpenTerminal(activeAgent.key)}
+    />
+  );
+
+  if (fleet) {
+    const TABS = [["chat", "Ask Oracle"], ["fleet", "Agent fleet"], ["analytics", "Analytics"]] as const;
+    const panel = (id: typeof tab) => ({ id: `rd-fleet-panel-${id}`, role: "tabpanel", "aria-labelledby": `rd-fleet-tab-${id}`, hidden: tab !== id });
+    const needAgents = new Set(needs.map((n) => n.session_key)).size;
+    return (
+      <div className="rd-tower rd-tower-widgets rd-fleet">
+        <div className="rd-tower-bar">
+          <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={onBack} title="Back to sessions (Esc)">
+            ← Sessions
+          </button>
+          <h1 className="rd-tower-title">
+            Fleet monitor <small>Oracle · all workspaces</small>
+          </h1>
+        </div>
+        <div className="rd-fleet-tabs" role="tablist" aria-label="Fleet monitor" onKeyDown={(e) => {
+          const step = { ArrowRight: 1, ArrowLeft: -1 }[e.key];
+          if (!step) return;
+          const next = TABS[(TABS.findIndex(([id]) => id === tab) + step + TABS.length) % TABS.length][0];
+          setTab(next);
+          e.currentTarget.querySelector<HTMLElement>(`#rd-fleet-tab-${next}`)?.focus();
+        }}>
+          {TABS.map(([id, label]) => (
+            <button key={id} id={`rd-fleet-tab-${id}`} role="tab" aria-selected={tab === id} aria-controls={`rd-fleet-panel-${id}`} tabIndex={tab === id ? 0 : -1} className={tab === id ? "on" : ""} onClick={() => setTab(id)}>{label}</button>
+          ))}
+        </div>
+        {/* Every tab stays mounted, so an unsent draft or a pending Send card
+            survives a look at another tab. */}
+        <div className="rd-fleet-body">
+          <div {...panel("chat")} className="rd-tower-oracle rd-fleet-chat">
+              {needs.length > 0 && (
+                <div className="rd-fleet-needsbar">
+                  <span className="rd-fleet-needsbar-ducks" aria-hidden="true">
+                    {needs.slice(0, 4).map((n) => <OracleDuck key={n.id} agent={agents.find((a) => a.key === n.session_key)} pose="waiting" size={22} />)}
+                  </span>
+                  <span className="rd-fleet-needsbar-text">
+                    <b>{needs.length}</b> {needs.length === 1 ? "request" : "requests"} from {needAgents} {needAgents === 1 ? "agent" : "agents"}. Oldest: {needs[0].name}, {ago(now - needs[0].created_at)} ago
+                  </span>
+                  <button className="rd-btn rd-btn-sm rd-fleet-needsbar-open" onClick={() => setNeedsOpen(true)}>Open Needs you</button>
+                </div>
+              )}
+              <OracleChat relay={relay} onRelayChange={relay.refresh} onOpenTerminal={onOpenTerminal} />
+          </div>
+          <div {...panel("fleet")} className="rd-tower-scroll">{teamsSection}{factsSection}</div>
+          <div {...panel("analytics")} className="rd-tower-scroll">
+            {widgets}
+            <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={() => onAnalytics("tokens")}>Full analytics ↗</button>
+          </div>
+        </div>
+        {needsOpen && (
+          <>
+            <div className="rd-fleet-scrim" onClick={() => setNeedsOpen(false)} />
+            <NeedsWindow count={needs.length} onClose={() => setNeedsOpen(false)}>{needsCards}</NeedsWindow>
+          </>
+        )}
+        {agentCard}
+      </div>
+    );
+  }
   return (
     <div className={`rd-tower rd-tower-widgets${oracle ? "" : " rd-tower-passive"}`}>
       <div className="rd-tower-bar">
@@ -103,57 +212,54 @@ export function ControlTower({
 
       <div className="rd-tower-columns">
       {oracle && <aside className="rd-tower-oracle" aria-label="Ask Oracle">
-        <OracleChat relay={relay} onRelayChange={relay.refresh} onOpenTerminal={onOpenTerminal} />
+        <OracleChat relay={relay} onRelayChange={relay.refresh} onOpenTerminal={onOpenTerminal} agents={agents.map(a => ({ id: a.key, name: a.label, folder: a.group ?? "" }))} />
       </aside>}
       <div className="rd-tower-scroll">
-      <h2 className="rd-teams-title">Your agents <small>{agents.length} across {teamList.length} {teamList.length === 1 ? "team" : "teams"}</small></h2>
-      <section className="rd-tower-teams" aria-label="Teams">
-        {teamList.length === 0 && <p className="rd-panel-empty">No agents yet.</p>}
-        {teamList.map(team => <div key={team.name} className="rd-tower-team"><div className="rd-tower-team-head"><span className="rd-tower-team-name">{team.name}</span><small>{team.agents.length}</small></div><div className="rd-tower-field">{team.agents.map(a => <AgentDuck key={a.key} agent={a} stuck={looksStuck(a, now)} pinned={pinned?.key === a.key} onHover={el => setHover(el ? { key: a.key, el } : null)} onPin={el => setPinned({ key: a.key, el })} />)}</div></div>)}
-      </section>
+      {teamsSection}
       {oracle && needsOpen && (
         <section className="rd-tower-needs" aria-label="Needs you">
           <h2>
             Needs you <span>{needs.length} open, oldest first.</span>
             <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={() => setNeedsOpen(false)}>Close</button>
           </h2>
-          {needs.length === 0 && <p className="rd-panel-empty">Nothing needs you.</p>}
-          <div className="rd-tower-needs-list">
-            {needs.map((n) => (
-              <div key={n.id} className="rd-tower-need">
-                <OracleDuck agent={agents.find((a) => a.key === n.session_key)} pose="waiting" size={28} />
-                <NoteCard note={n} rules={relay.rules} onChange={relay.refresh} onOpenTerminal={onOpenTerminal} />
-              </div>
-            ))}
-          </div>
+          {needsCards}
         </section>
       )}
-      <Widgets surface="oracle" slot="oracle" registry={registry} source={source} kindLabel={oracle ? "Oracle" : "fleet"} />
-
-      <section className="rd-tower-facts" aria-label="Facts">
-        {facts(agents, now).map((f) => (
-          <span key={f.label} className="rd-tower-fact">
-            {f.label}: <b>{f.value}</b>
-          </span>
-        ))}
-      </section>
-
+      {widgets}
+      {factsSection}
       </div>
       </div>
 
-      {active && activeAgent && (
-        <AgentCard
-          key={`${activeAgent.key}-${pinned ? "pinned" : "hover"}`}
-          agent={activeAgent}
-          anchor={active.el}
-          pinned={pinned !== null}
-          stuck={looksStuck(activeAgent, now)}
-          now={now}
-          onClose={() => setPinned(null)}
-          onOpenTerminal={() => onOpenTerminal(activeAgent.key)}
-        />
-      )}
+      {agentCard}
     </div>
+  );
+}
+
+// Focus moves in on open, Tab stays inside, and closing returns focus to
+// whatever opened it (the banner button or the Analytics tile). Escape is
+// handled by the tower's key listener.
+function NeedsWindow({ count, onClose, children }: { count: number; onClose: () => void; children: ReactNode }) {
+  const box = useRef<HTMLElement>(null);
+  useEffect(() => {
+    const previous = document.activeElement;
+    box.current?.focus();
+    return () => { if (previous instanceof HTMLElement && previous.isConnected) previous.focus(); };
+  }, []);
+  return (
+    <section ref={box} className="rd-fleet-needs-window" role="dialog" aria-label="Needs you" aria-modal="true" tabIndex={-1} onKeyDown={(e) => {
+      if (e.key !== "Tab") return;
+      const items = [...e.currentTarget.querySelectorAll<HTMLElement>("button:not(:disabled),input:not(:disabled),textarea:not(:disabled),select:not(:disabled),a[href]")];
+      const first = items[0], last = items[items.length - 1];
+      if (e.shiftKey && (document.activeElement === first || document.activeElement === e.currentTarget)) { e.preventDefault(); last?.focus(); }
+      else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first?.focus(); }
+    }}>
+      <header>
+        <h2>Needs you</h2>
+        <span>{count} open, oldest first</span>
+        <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={onClose}>Close</button>
+      </header>
+      <div className="rd-fleet-needs-cards">{children}</div>
+    </section>
   );
 }
 
