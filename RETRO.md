@@ -1,3 +1,23 @@
+## 2026-11-26 — Dropping the repo's helper doesn't stop the repo choosing the host
+
+#496 dropped repository credential helpers and kept the owner's, so private
+repositories still fetch. Security showed the owner's helpers could still hand
+the GitHub token to someone else. A repo can set `http.proxy`,
+`http.<url>.sslVerify=false`, an `sslCAInfo` for its own CA, `curloptResolve`
+or `remote.<name>.proxy`. Then the request goes to a host the repo picked,
+which answers 401, and git asks the owner's helper for a password. No override
+fixes it: a URL-specific `http.<url>.*` key outranks a general one wherever it
+is set. Network calls now refuse a repository whose own config sets `http.*`,
+`remote.*.proxy`, `url.*.insteadOf`, `core.gitProxy` or `core.askPass`. Push
+URLs stay allowed because fetch never reads them and a real clone set one.
+
+Our tests' proxy cases passed without the fix at first, because curl skips the
+proxy for a loopback origin. The test origin has to be a host that only the
+proxy can reach, as an attacker's would be.
+
+Keeping the owner's credentials means trusting every setting that decides
+where they go, not just the program that hands them out.
+
 ## 2026-11-26 — A -c override loses to a key git reads first-wins
 
 #496 limited fetch to https and ssh and pinned `remote.origin.uploadpack` with

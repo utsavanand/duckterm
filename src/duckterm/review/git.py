@@ -43,6 +43,14 @@ _OFFLINE = ("-c", "protocol.allow=never")
 # remote.origin.uploadpack it reads, so the repo's own beats any -c override.
 _REMOTE_PROTOCOLS = ("https", "ssh", "file")
 _OWNER_SCOPES = ("system", "global", "unknown")
+# Settings that decide where a request goes or which certificate it trusts.
+# Set by the repository, they could send the owner's credentials to another
+# host, and a URL-specific http.<url>.* key there beats any general override,
+# so a call whose repository sets one is refused rather than overridden.
+# Push URLs are left alone: fetch never reads them and DuckTerm never pushes.
+_REPO_NETWORK_KEYS = re.compile(
+    r"^(https?\..*|remote\..*\.proxy|url\..*\.insteadof|core\.gitproxy|core\.askpass)$"
+)
 
 
 def _network_config(path: str | Path) -> dict[str, str]:
@@ -58,7 +66,7 @@ def _network_config(path: str | Path) -> dict[str, str]:
             "--show-scope",
             "-z",
             "--get-regexp",
-            r"^credential\..*helper$|^core\.sshcommand$",
+            r"^credential\..*helper$|^core\.sshcommand$|" + _REPO_NETWORK_KEYS.pattern,
         )
     except ReviewGitError:  # exit 1: no helper or ssh command set anywhere
         out = ""
@@ -75,6 +83,10 @@ def _network_config(path: str | Path) -> dict[str, str]:
     for scope, entry in zip(fields[::2], fields[1::2], strict=False):
         key, _, value = entry.partition("\n")
         if scope not in _OWNER_SCOPES:
+            if _REPO_NETWORK_KEYS.match(key):
+                raise ReviewGitError(f"remote unreachable: the repository sets {key}")
+            continue
+        if _REPO_NETWORK_KEYS.match(key):
             continue
         if key == "core.sshcommand":
             ssh = value
