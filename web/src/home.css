@@ -149,4 +149,8 @@ button.rd-home-nav { cursor:pointer }
   .rd-home-grid { grid-template-columns:1fr; grid-auto-rows:auto }
   .rd-home-grid .rd-home-widget { grid-column:1 !important; grid-row:auto !important; min-height:120px }
   .rd-home-grid .rd-home-widget:has(.rd-home-chat) { min-height:460px }
+  /* Four answer buttons leave the question no room on a phone; they wrap below it. */
+  .rd-home-needs li { flex-wrap:wrap }
+  .rd-home-need-text { flex-basis:calc(100% - 20px) }
+  .rd-home-need-acts { flex-basis:100%; flex-wrap:wrap; padding-left:16px }
 }
