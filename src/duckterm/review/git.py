@@ -38,7 +38,10 @@ _NO_REPO_PROGRAMS = (
     "gpg.x509.program=false",
 )
 _OFFLINE = ("-c", "protocol.allow=never")
-_REMOTE_PROTOCOLS = ("https", "ssh")
+# file covers a clone whose origin is a local folder. It runs upload-pack on
+# this machine, so fetch and ls-remote pass --upload-pack: git keeps the first
+# remote.origin.uploadpack it reads, so the repo's own beats any -c override.
+_REMOTE_PROTOCOLS = ("https", "ssh", "file")
 _OWNER_SCOPES = ("system", "global", "unknown")
 
 
@@ -62,7 +65,6 @@ def _network_config(path: str | Path) -> dict[str, str]:
     pairs = [
         ("protocol.allow", "never"),
         *((f"protocol.{name}.allow", "always") for name in _REMOTE_PROTOCOLS),
-        ("remote.origin.uploadpack", "git-upload-pack"),
         ("core.askPass", ""),
         ("gc.auto", "0"),
         ("maintenance.auto", "false"),
@@ -290,7 +292,15 @@ def remote_heads(repo: str | Path) -> dict[str, str] | None:
     """Branch -> tip sha on origin, from one `ls-remote` round trip. None when
     the remote is unreachable."""
     try:
-        out = run(repo, "ls-remote", "--heads", "origin", timeout=20, network=True)
+        out = run(
+            repo,
+            "ls-remote",
+            "--upload-pack=git-upload-pack",
+            "--heads",
+            "origin",
+            timeout=20,
+            network=True,
+        )
     except ReviewGitError:
         return None
     heads: dict[str, str] = {}
@@ -305,7 +315,7 @@ def fetch(repo: str | Path, refs: list[str], *, tags: bool = True) -> str | None
     """Bring the named remote branches and the tags up to date. Every ref must
     exist on origin (see remote_heads). Bounded and non-fatal: returns the
     error text when the network is unavailable."""
-    args = ["fetch", "--quiet", "--no-recurse-submodules"]
+    args = ["fetch", "--quiet", "--no-recurse-submodules", "--upload-pack=git-upload-pack"]
     if tags:
         args.append("--tags")
     args.append("origin")

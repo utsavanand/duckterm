@@ -1,3 +1,20 @@
+## 2026-11-26 — A -c override loses to a key git reads first-wins
+
+#496 limited fetch to https and ssh and pinned `remote.origin.uploadpack` with
+a command-line override. Both were wrong. The PR-list browser test, and CI, use
+a clone whose origin is a local folder, so `ls-remote` failed and the page said
+the remote was unreachable. The unit tests had passed only because their
+conftest put `file` back. Allowing `file` again exposed the second fault. git
+keeps the first `remote.<name>.uploadpack` it reads, and repo config is read
+before command-line config, so the repo's own program still ran. The test for
+it passed only because https and ssh never run upload-pack locally. Now
+fetch and ls-remote pass `--upload-pack=git-upload-pack`, which overrides the
+remote's value, and `file` is allowed.
+
+Before trusting a `-c` override, check how git combines that key: last-wins,
+first-wins, or a list. And a test fixture that loosens what the product
+allows hides exactly the behaviour a real user hits.
+
 ## 2026-11-26 — A deadline checked after the slow part bounds nothing
 
 The Pulse's 20 s deadline was checked per repository and per tag, but the

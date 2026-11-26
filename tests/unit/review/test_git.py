@@ -171,7 +171,16 @@ def _fetch_hook(repo: Path, program: str) -> Case:
     return ["-C", str(clone), "fetch", "-q", "origin"], lambda: git.fetch(clone, ["main"])
 
 
-@pytest.mark.parametrize("arrange", [_verifier, _lazy_fetch, _ssh_command, _fetch_hook])
+def _upload_pack(repo: Path, program: str) -> Case:
+    clone = repo.parent / "clone"
+    subprocess.run(["git", "clone", "-q", str(repo), str(clone)], check=True)
+    run(clone, "config", "remote.origin.uploadpack", program)
+    return ["-C", str(clone), "ls-remote", "origin"], lambda: git.remote_heads(clone)
+
+
+@pytest.mark.parametrize(
+    "arrange", [_verifier, _lazy_fetch, _ssh_command, _fetch_hook, _upload_pack]
+)
 def test_a_repos_config_cannot_run_a_program(git_repo: Path, tmp_path: Path, arrange) -> None:
     # Sessions report the folders review reads and can write their .git/config.
     marker = tmp_path / "ran"
