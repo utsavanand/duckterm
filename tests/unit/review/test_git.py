@@ -1,4 +1,9 @@
+import contextlib
+import http.server
+import os
 import subprocess
+import threading
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -110,3 +115,231 @@ def test_remote_heads_and_fetch_track_pushes(git_repo: Path, tmp_path: Path) -> 
     assert heads is not None and heads["duckterm/abc"] == run(clone, "rev-parse", "HEAD")
     assert git.fetch(clone, ["main", "duckterm/abc"]) is None
     assert git.ref_exists(clone, "refs/remotes/origin/duckterm/abc")
+
+
+def _signed_head(repo: Path) -> None:
+    head, _, message = run(repo, "cat-file", "commit", "HEAD").partition("\n\n")
+    # Drop a signature the host's own git config may already have added.
+    head = "\n".join(line for line in head.split("\n") if not line.startswith(("gpgsig", " ")))
+    signature = " -----BEGIN PGP SIGNATURE-----\n \n AAAA\n -----END PGP SIGNATURE-----"
+    signed = subprocess.run(
+        ["git", "-C", str(repo), "hash-object", "-t", "commit", "-w", "--stdin"],
+        input=f"{head}\ngpgsig{signature}\n\n{message}\n",
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+    run(repo, "reset", "-q", "--hard", signed)
+
+
+# Each case arranges a repository whose config names `program`, and returns
+# the plain git command that runs it plus the DuckTerm call that must not.
+Case = tuple[list[str], Callable[[], object]]
+
+
+def _verifier(repo: Path, program: str) -> Case:
+    _signed_head(repo)
+    run(repo, "config", "log.showSignature", "true")
+    run(repo, "config", "gpg.program", program)
+    return ["log", "-1"], lambda: git.run(repo, "log", "-1")
+
+
+def _lazy_fetch(repo: Path, program: str) -> Case:
+    run(repo, "config", "core.repositoryformatversion", "1")
+    run(repo, "config", "extensions.partialClone", "origin")
+    run(repo, "config", "remote.origin.url", "ssh://example.invalid/x")
+    run(repo, "config", "remote.origin.promisor", "true")
+    run(repo, "config", "core.sshCommand", program)
+    (repo / ".git/refs/tags/v9").write_text("12" * 20 + "\n")
+    args = ["tag", "--list", "v*", "--sort=-creatordate"]
+    return args, lambda: git.run(repo, *args)
+
+
+def _ssh_command(repo: Path, program: str) -> Case:
+    run(repo, "remote", "add", "origin", "ssh://git@127.0.0.1:1/x")
+    run(repo, "config", "core.sshCommand", program)
+    return ["ls-remote", "--heads", "origin"], lambda: git.remote_heads(repo)
+
+
+def _fetch_hook(repo: Path, program: str) -> Case:
+    clone = repo.parent / "clone"
+    subprocess.run(["git", "clone", "-q", str(repo), str(clone)], check=True)
+    commit(repo, "n.txt", "n\n", "new")
+    hook = clone / ".git/hooks/reference-transaction"
+    hook.write_text(f"#!/bin/sh\nexec {program}\n")
+    hook.chmod(0o755)
+    return ["-C", str(clone), "fetch", "-q", "origin"], lambda: git.fetch(clone, ["main"])
+
+
+def _upload_pack(repo: Path, program: str) -> Case:
+    clone = repo.parent / "clone"
+    subprocess.run(["git", "clone", "-q", str(repo), str(clone)], check=True)
+    run(clone, "config", "remote.origin.uploadpack", program)
+    return ["-C", str(clone), "ls-remote", "origin"], lambda: git.remote_heads(clone)
+
+
+def _filter(kind: str) -> Callable[[Path, str], Case]:
+    def arrange(repo: Path, program: str) -> Case:
+        run(repo, "config", f"filter.x.{kind}", program)
+        (repo / ".git/info").mkdir(exist_ok=True)
+        (repo / ".git/info/attributes").write_text("* filter=x\n")
+        # An index older than a file's mtime makes its entry racy, and git
+        # re-reads a racy file through the filter to compare it.
+        os.utime(repo / ".git/index", (1, 1))
+        return ["diff-files", "--name-only"], lambda: git.run(repo, "diff-files", "--name-only")
+
+    arrange.__name__ = f"_{kind}_filter"
+    return arrange
+
+
+def _merge_driver(repo: Path, program: str) -> Case:
+    run(repo, "checkout", "-q", "-b", "x")
+    commit(repo, "README.md", "x\n", "x")
+    run(repo, "checkout", "-q", "main")
+    commit(repo, "README.md", "main\n", "main")
+    run(repo, "config", "merge.evil.driver", f"{program} %A %B")
+    (repo / ".git/info").mkdir(exist_ok=True)
+    (repo / ".git/info/attributes").write_text("* merge=evil\n")
+    args = ["merge-tree", "--write-tree", "--name-only", "main", "x"]
+    return args, lambda: git.conflicts(repo, "main", "x")
+
+
+@pytest.mark.parametrize(
+    "arrange",
+    [
+        _verifier,
+        _lazy_fetch,
+        _ssh_command,
+        _fetch_hook,
+        _upload_pack,
+        _filter("clean"),
+        _filter("process"),
+        _merge_driver,
+    ],
+    ids=lambda arrange: arrange.__name__,
+)
+def test_a_repos_config_cannot_run_a_program(git_repo: Path, tmp_path: Path, arrange) -> None:
+    # Sessions report the folders review reads and can write their .git/config.
+    marker = tmp_path / "ran"
+    program = tmp_path / "program.sh"
+    program.write_text(f"#!/bin/sh\ntouch {marker}\nexit 1\n")
+    program.chmod(0o755)
+    args, call = arrange(git_repo, str(program))
+    subprocess.run(["git", "-C", str(git_repo), *args], capture_output=True)
+    assert marker.exists()  # plain git really runs it
+    marker.unlink()
+    with contextlib.suppress(git.ReviewGitError):
+        call()
+    assert not marker.exists()
+
+
+class _AskForPassword(http.server.BaseHTTPRequestHandler):
+    def do_GET(self) -> None:  # noqa: N802
+        self.send_response(401)
+        self.send_header("WWW-Authenticate", 'Basic realm="x"')
+        self.end_headers()
+
+    def log_message(self, *args: object) -> None:
+        pass
+
+
+def test_the_owners_credential_helper_runs_and_the_repos_does_not(
+    git_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    server = http.server.HTTPServer(("127.0.0.1", 0), _AskForPassword)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        markers = {}
+        for who in ("owner", "repo"):
+            markers[who] = tmp_path / f"{who}-ran"
+            helper = tmp_path / f"{who}.sh"
+            helper.write_text(f"#!/bin/sh\ntouch {markers[who]}\n")
+            helper.chmod(0o755)
+        (tmp_path / "home").mkdir()
+        (tmp_path / "home/.gitconfig").write_text(
+            f"[credential]\n\thelper = !{tmp_path / 'owner.sh'}\n"
+        )
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        url = f"http://127.0.0.1:{server.server_port}/x"
+        run(git_repo, "remote", "add", "origin", url)
+        run(git_repo, "config", "credential.helper", f"!{tmp_path / 'repo.sh'}")
+        monkeypatch.setattr(git, "_REMOTE_PROTOCOLS", ("http",))
+        subprocess.run(
+            ["git", "-C", str(git_repo), "ls-remote", "origin"],
+            capture_output=True,
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+        )
+        assert markers["repo"].exists()  # plain git really runs it
+        markers["repo"].unlink()
+        markers["owner"].unlink()
+        assert git.remote_heads(git_repo) is None
+        assert markers["owner"].exists() and not markers["repo"].exists()
+    finally:
+        server.shutdown()
+
+
+@pytest.mark.parametrize(
+    "key, value",
+    [
+        ("http.proxy", "http://127.0.0.1:{port}"),
+        ("http.{url}.sslVerify", "false"),
+        ("http.curloptResolve", "127.0.0.1:{port}:127.0.0.1"),
+        ("remote.origin.proxy", "http://127.0.0.1:{port}"),
+        ("url.{url}.insteadOf", "http://unused/"),
+        ("core.gitProxy", "/usr/bin/false"),
+        ("core.askPass", "/usr/bin/false"),
+    ],
+)
+def test_a_repo_that_sets_network_config_is_never_fetched(
+    git_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, key: str, value: str
+) -> None:
+    # Each of these could steer where the owner's credentials are sent; with
+    # it set, plain git still asks the owner's helper, and DuckTerm must not.
+    server = http.server.HTTPServer(("127.0.0.1", 0), _AskForPassword)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    try:
+        marker = tmp_path / "owner-ran"
+        helper = tmp_path / "owner.sh"
+        helper.write_text(f"#!/bin/sh\ntouch {marker}\n")
+        helper.chmod(0o755)
+        (tmp_path / "home").mkdir()
+        (tmp_path / "home/.gitconfig").write_text(f"[credential]\n\thelper = !{helper}\n")
+        monkeypatch.setenv("HOME", str(tmp_path / "home"))
+        port = server.server_port
+        url = f"http://127.0.0.1:{port}/x"
+        # curl skips a proxy for a loopback host, so a proxied origin is one
+        # only the proxy can reach, as an attacker's would be.
+        origin = "http://github.invalid/x" if key.endswith("proxy") else url
+        run(git_repo, "remote", "add", "origin", origin)
+        run(git_repo, "config", key.format(url=url), value.format(url=url, port=port))
+        monkeypatch.setattr(git, "_REMOTE_PROTOCOLS", ("http",))
+        subprocess.run(
+            ["git", "-C", str(git_repo), "ls-remote", "origin"],
+            capture_output=True,
+            env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
+        )
+        assert marker.exists()  # the setting doesn't stop plain git asking
+        marker.unlink()
+        assert git.remote_heads(git_repo) is None
+        assert "the repository sets" in (git.fetch(git_repo, ["main"]) or "")
+        assert not marker.exists()
+    finally:
+        server.shutdown()
+
+
+@pytest.mark.parametrize(
+    "read",
+    [
+        lambda repo, ref: git.commit_time(repo, ref),
+        lambda repo, ref: git.ahead_behind(repo, ref, "main"),
+        lambda repo, ref: git.shortstat(repo, ref, "main"),
+    ],
+    ids=["commit_time", "ahead_behind", "shortstat"],
+)
+def test_a_branch_named_like_an_option_is_never_an_option(
+    git_repo: Path, tmp_path: Path, read
+) -> None:
+    # A range like "<ref>...main" makes git write to "<path>...main".
+    with contextlib.suppress(git.ReviewGitError):
+        read(git_repo, f"--output={tmp_path / 'written'}")
+    assert not list(tmp_path.glob("written*"))

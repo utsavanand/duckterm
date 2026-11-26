@@ -1,3 +1,101 @@
+## 2026-11-26 — Attributes attach programs to files, not just to commands
+
+#496 turned off every program a repository's config can name for a command:
+fsmonitor, hooks, signature verifiers, textconv, ssh and credential helpers.
+Security then found two more that every flag left running. Attributes attach
+these to files, and a repository controls its own attributes through
+`.git/info/attributes`. `diff-files` re-reads a racy index entry through the
+file's `filter.<driver>.clean` (or `.process`), and `merge-tree` hands a
+both-sides change to `merge.<driver>.driver`. Each call now reads the
+repository's filter and merge driver names with one `git config` call, which
+runs nothing, and blanks them. A blanked merge driver fails, so the review
+reports a conflict for that file instead of guessing. The owner's own
+filters, such as git-lfs in the global config, still run.
+
+To check that a git call runs no repository program, list the config it
+reads, and also every attribute that can name a driver for a path.
+
+## 2026-11-26 — Dropping the repo's helper doesn't stop the repo choosing the host
+
+#496 dropped repository credential helpers and kept the owner's, so private
+repositories still fetch. Security showed the owner's helpers could still hand
+the GitHub token to someone else. A repo can set `http.proxy`,
+`http.<url>.sslVerify=false`, an `sslCAInfo` for its own CA, `curloptResolve`
+or `remote.<name>.proxy`. Then the request goes to a host the repo picked,
+which answers 401, and git asks the owner's helper for a password. No override
+fixes it: a URL-specific `http.<url>.*` key outranks a general one wherever it
+is set. Network calls now refuse a repository whose own config sets `http.*`,
+`remote.*.proxy`, `url.*.insteadOf`, `core.gitProxy` or `core.askPass`. Push
+URLs stay allowed because fetch never reads them and a real clone set one.
+
+Our tests' proxy cases passed without the fix at first, because curl skips the
+proxy for a loopback origin. The test origin has to be a host that only the
+proxy can reach, as an attacker's would be.
+
+Keeping the owner's credentials means trusting every setting that decides
+where they go, not just the program that hands them out.
+
+## 2026-11-26 — A -c override loses to a key git reads first-wins
+
+#496 limited fetch to https and ssh and pinned `remote.origin.uploadpack` with
+a command-line override. Both were wrong. The PR-list browser test, and CI, use
+a clone whose origin is a local folder, so `ls-remote` failed and the page said
+the remote was unreachable. The unit tests had passed only because their
+conftest put `file` back. Allowing `file` again exposed the second fault. git
+keeps the first `remote.<name>.uploadpack` it reads, and repo config is read
+before command-line config, so the repo's own program still ran. The test for
+it passed only because https and ssh never run upload-pack locally. Now
+fetch and ls-remote pass `--upload-pack=git-upload-pack`, which overrides the
+remote's value, and `file` is allowed.
+
+Before trusting a `-c` override, check how git combines that key: last-wins,
+first-wins, or a list. And a test fixture that loosens what the product
+allows hides exactly the behaviour a real user hits.
+
+## 2026-11-25 — Hardening one call path leaves its neighbours open
+
+The first #496 closed the signature verifier and lazy fetch. Security's
+recheck found three more in the same helper, all already on main.
+- fetch and ls-remote, exempted as "the calls that must reach a remote", still
+  ran the repo's ssh command, credential helpers and reference-transaction hook.
+- A branch checked out as `--output=<path>` reached `git log` and `rev-list` as
+  an option, through the bare branch name in the PR list.
+- The review diff ran a textconv named by a committed `.gitattributes`.
+
+A fix that names the one key a reviewer found invites the next key. The useful
+question is every way this command can start a program, or read an argument as
+an option.
+
+Two traps while fixing it. A blanket `credential.helper=` would have broken the
+owner's own fetches. Their helpers live in the Xcode git install's config and
+in a global reset-then-`gh auth` pair. So fetch now clears every helper and
+re-adds only those from system, global and the git install, passed through
+GIT_CONFIG_* variables so a crafted key name can't be misparsed. Two
+regression tests passed against the old code at first. `git diff --shortstat`
+never runs textconv, and git reads attributes from the worktree, not the
+compared trees. And `rev-list --output=X...main` writes to `X...main`. Each test
+now proves plain git runs the program, or writes the file, before checking
+DuckTerm doesn't.
+
+## 2026-11-25 — A folder a session names is config the server obeys
+
+review/git turned off a repository's fsmonitor because sessions report the
+folders review reads and can write their .git/config. Two more programs
+in that config were still live. With `log.showSignature=true`, `git log` runs
+the configured gpg program to verify a signed commit. In a partial clone, a
+missing object makes git fetch it on demand through the repo's
+`core.sshCommand`. A plain `git tag --sort` was enough to trigger that. Every
+helper call now turns off signature display and points the gpg programs at
+`false`. It sets GIT_NO_LAZY_FETCH and passes `protocol.allow=never` except
+for the two calls meant to reach a remote (fetch, ls-remote).
+The treat-it-as-hostile list is any config key that names a program, not
+just the one a reviewer found first.
+
+The signature test first passed without the fix. This machine's git signs every
+commit with SSH, so the fixture's commit already carried a signature, and git
+checked that one with the ssh verifier instead of the planted gpg one. A
+security test must first show the plain command really runs the program.
+
 ## 2026-11-26 — git status runs the repo's clean filter
 
 Checkpoints read each session's folder with a bare `git status`, `rev-parse`
