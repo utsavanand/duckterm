@@ -8,6 +8,7 @@ squash-merged PR doesn't appear. Turn ends and state changes are deliberately
 left out (owner, 2026-11-24: too frequent to be a pulse).
 """
 
+import math
 import re
 import time
 from pathlib import Path
@@ -99,7 +100,9 @@ def repo_events(repo: str, since_ms: int, deadline: float) -> list[dict[str, Any
     return events
 
 
-def clones(sessions: list[dict[str, Any]], since_ms: int) -> dict[str, list[dict[str, Any]]]:
+def clones(
+    sessions: list[dict[str, Any]], since_ms: int, deadline: float = math.inf
+) -> dict[str, list[dict[str, Any]]]:
     """Each repository's main clone, with the recent sessions working in it.
 
     Worktrees of one repository share a common git dir, so it is read once."""
@@ -110,10 +113,17 @@ def clones(sessions: list[dict[str, Any]], since_ms: int) -> dict[str, list[dict
         if not path or int(row.get("updated_at") or 0) < since_ms:
             continue
         if path not in roots:
-            if len(roots) >= MAX_PATHS:
+            left = deadline - time.monotonic()
+            if len(roots) >= MAX_PATHS or left <= 0:
                 continue
             try:
-                common = git.run(path, "rev-parse", "--path-format=absolute", "--git-common-dir")
+                common = git.run(
+                    path,
+                    "rev-parse",
+                    "--path-format=absolute",
+                    "--git-common-dir",
+                    timeout=min(15, left),
+                )
                 roots[path] = str(Path(common.strip()).parent)
             except git.ReviewGitError:
                 roots[path] = None
@@ -150,7 +160,7 @@ def collect(
     for e in events:
         del e["first"]
     deadline = time.monotonic() + DEADLINE_S
-    for repo, members in clones(sessions, since).items():
+    for repo, members in clones(sessions, since, deadline).items():
         if time.monotonic() > deadline:
             break
         by_branch = {str(m.get("branch") or ""): m for m in members}

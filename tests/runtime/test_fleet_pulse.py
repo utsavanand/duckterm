@@ -162,7 +162,10 @@ def test_work_per_refresh_is_bounded(repo, tmp_path, monkeypatch) -> None:
     monkeypatch.setattr(fleet_pulse, "MAX_PATHS", 1)
     assert len(fleet_pulse.clones(rows, 0)) == 1
     monkeypatch.setattr(fleet_pulse, "DEADLINE_S", -1.0)
+    asked = []
+    monkeypatch.setattr(fleet_pulse.git, "run", lambda *a, **k: asked.append(a) or "")
     assert fleet_pulse.collect(rows, [], int(time.time() * 1000)) == []
+    assert asked == []  # not even a rev-parse once the time is up
 
 
 def test_overlapping_polls_share_one_refresh(world, monkeypatch) -> None:  # noqa: F811

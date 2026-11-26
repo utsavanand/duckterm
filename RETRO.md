@@ -1,3 +1,10 @@
+## 2026-11-26 — A deadline checked after the slow part bounds nothing
+
+The Pulse's 20 s deadline was checked per repository and per tag, but the
+first step, one `rev-parse` per folder a session reports, ran before it. That
+is up to 40 calls of 15 s each. A deadline has to be checked by every loop that
+calls out, and each call's timeout should be the time left.
+
 ## 2026-11-25 — A ref's name is input, so pass git the commit
 
 The Pulse asked `rev-parse --abbrev-ref origin/HEAD` for the default branch and
