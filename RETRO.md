@@ -1,3 +1,11 @@
+## 2026-11-26 — Session search must include the folder path
+
+The sidebar searched session labels only, hiding relevant sessions when the owner
+searched for their folder. Match the existing folder path as well, including
+ancestor names, and feed those results through the same filters and counts.
+The existing search test explicitly excluded folder matches; update that contract
+and cover nested paths, archived sessions, and moves while a query is active.
+
 ## 2026-11-26 — Copy approved as a phrase loses the test the button had
 
 A revoke action moved from a standalone button to a phrase inside a sentence,
