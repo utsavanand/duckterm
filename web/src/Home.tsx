@@ -98,7 +98,7 @@ function AutopilotTile() {
   const { autopilot } = useContext(HomeActions);
   if (!autopilot) return <div className="rd-home-nav" aria-disabled="true">
     <span className="rd-home-nav-title">Autopilot</span>
-    <span className="rd-home-nav-sub">The software factory: skill-kit flows run unattended on remote workers.</span>
+    <span className="rd-home-nav-sub">The software factory: MetaHarness flows run unattended on remote workers.</span>
     <span className="rd-home-chips"><span className="rd-home-chip">Not available yet</span></span>
   </div>;
   // Waiting at a gate is the only count that asks the owner to act, so it leads.

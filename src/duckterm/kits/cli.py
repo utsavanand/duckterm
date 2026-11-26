@@ -17,13 +17,18 @@ from duckterm.kits import runner
 
 
 def add_parser(sub: Any) -> None:
-    parser = sub.add_parser("kit", help="validate, plan, install, uninstall or verify a skill kit")
+    parser = sub.add_parser(
+        "metaharness",
+        aliases=["kit"],  # installed /flow shortcuts call `duckterm kit run`
+        help="validate, plan, install, uninstall or verify a MetaHarness",
+    )
     actions = parser.add_subparsers(dest="kit_action", required=True)
 
     def common(p: argparse.ArgumentParser, *, kit: bool = True) -> None:
         if kit:
             p.add_argument(
-                "kit", help="path to the kit folder (holds skill-kit.toml), or to a manifest file"
+                "kit",
+                help="path to the MetaHarness folder (holds metaharness.toml) or a manifest file",
             )
         p.add_argument("--project", default=".", help="repository to install into (default: cwd)")
         p.add_argument(

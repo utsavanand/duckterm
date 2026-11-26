@@ -219,7 +219,7 @@ def test_optional_cli_gate_uses_release_flags_over_legacy(isolated, monkeypatch,
     monkeypatch.setenv("DUCKTERM_EDITION", "full")
     (isolated / "flags.json").write_text(json.dumps({"enabled": [] if enabled else ["skill_kits"]}))
     configure(isolated, skill_kits=enabled)
-    sample = Path(__file__).resolve().parents[2] / "examples/skill-kits/sample-kit"
+    sample = Path(__file__).resolve().parents[2] / "examples/metaharnesses/sample-kit"
     assert cli.main(["kit", "validate", str(sample)]) == (0 if enabled else 1)
     out = capsys.readouterr()
     if enabled:
