@@ -1,3 +1,22 @@
+## 2026-11-25 — A folder a session names is config the server obeys
+
+review/git turned off a repository's fsmonitor because sessions report the
+folders review reads and can write their .git/config. Two more programs
+in that config were still live. With `log.showSignature=true`, `git log` runs
+the configured gpg program to verify a signed commit. In a partial clone, a
+missing object makes git fetch it on demand through the repo's
+`core.sshCommand`. A plain `git tag --sort` was enough to trigger that. Every
+helper call now turns off signature display and points the gpg programs at
+`false`. It sets GIT_NO_LAZY_FETCH and passes `protocol.allow=never` except
+for the two calls meant to reach a remote (fetch, ls-remote).
+The treat-it-as-hostile list is any config key that names a program, not
+just the one a reviewer found first.
+
+The signature test first passed without the fix. This machine's git signs every
+commit with SSH, so the fixture's commit already carried a signature, and git
+checked that one with the ssh verifier instead of the planted gpg one. A
+security test must first show the plain command really runs the program.
+
 ## 2026-11-25 — Fixture completion and retry deadlines need explicit evidence
 
 A tmux fixture exposed its JSON path before write_text finished, so a reader
