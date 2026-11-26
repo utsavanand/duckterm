@@ -17,7 +17,7 @@ test("artifact selections and whole-file feedback reach their agent, with isolat
       return (await response.json()).artifact;
     };
     await register("/tmp/feedback-report.md", "Report", "# Clearer heading\n\nPlease review this report.");
-    await register("/tmp/feedback-layout.html", "Layout", '<h1>Layout heading</h1><script>window.artifactAttack=true;fetch("/artifact-leak")</script><img src="/artifact-leak"><p>Mockup body</p>');
+    await register("/tmp/feedback-layout.html", "Layout", '<h1>Layout heading</h1><script>window.artifactAttack=true;fetch("/artifact-leak")</script><img src="/artifact-leak"><p>Mockup body</p><svg><a xlink:href="https://example.invalid/artifact-leak">Bad link</a></svg><script>location.href="https://example.invalid/artifact-leak";const m=document.createElement("meta");m.httpEquiv="refresh";m.content="0;url=https://example.invalid/artifact-leak";document.head.append(m)</script>');
     await register("/tmp/feedback-notes.txt", "Notes", "Text selection works here.");
     await register("/tmp/feedback-image.svg", "Diagram", '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100"><text x="10" y="50">Diagram</text></svg>');
     await page.goto(base());
@@ -34,9 +34,10 @@ test("artifact selections and whole-file feedback reach their agent, with isolat
       if (title === "Layout") {
         writeFileSync("/tmp/duckterm-feedback-native.json", JSON.stringify({ source: await page.locator(".rd-artifact-frame").getAttribute("srcdoc"), origin: base() }));
         const attack = await text.evaluate(node => (node.ownerDocument.defaultView as Window & { artifactAttack?: boolean }).artifactAttack);
-        // Bundled scripts now run in the opaque frame; network and parent access remain blocked.
-        expect(attack).toBe(true);
+        // Browser previews never execute document scripts; native mode is checked separately.
+        expect(attack).toBeUndefined();
         expect(leaks).toEqual([]);
+        expect(await text.evaluate(node => node.ownerDocument.querySelector("[href], [xlink\\:href], meta[http-equiv=refresh]") !== null)).toBe(false);
         const nonce = (await page.locator(".rd-artifact-frame").getAttribute("srcdoc"))!.match(/nonce="([a-f0-9]+)"/)![1];
         await page.evaluate(channel => window.postMessage({ type: "artifact-selection", channel, quote: "Spoofed", left: 0, bottom: 0 }, "*"), nonce);
         await expect(page.getByRole("dialog", { name: "Artifact feedback" })).toHaveCount(0);

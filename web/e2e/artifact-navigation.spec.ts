@@ -7,6 +7,8 @@ import { apiDelete, apiPatch, apiPost, base, expandFolder } from "./helpers";
 
 test("top-level readers filter artifacts, run bundled React, and retain versioned file feedback", async ({ page }) => {
   test.setTimeout(90_000);
+  // Exercise native-only interactive rendering; WKWebView tests cover its navigation delegate.
+  await page.addInitScript(() => { window.__rubbertermDesktop = { currentTarget: "local", targets: [{ id: "local", name: "This Mac" }] }; });
   await page.setViewportSize({ width: 1600, height: 1000 });
   const root = realpathSync(mkdtempSync(join(tmpdir(), "artifact-nav-")));
   const moved = root + "-moved";

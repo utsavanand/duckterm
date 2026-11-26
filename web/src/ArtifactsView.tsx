@@ -13,10 +13,12 @@ const POLICY = `<meta http-equiv="Content-Security-Policy" content="default-src 
 const PAPER = `<style>html{color-scheme:light}body{margin:0;padding:32px 38px;background:#fafbf8;color:#27352c;font:15px/1.65 -apple-system,BlinkMacSystemFont,sans-serif;overflow-wrap:anywhere}h1{font-size:27px;line-height:1.25}h2{font-size:19px;margin-top:28px}pre{white-space:pre-wrap;background:#edf0e9;padding:14px;border-radius:6px}code{font-size:13px}img{max-width:100%}table{border-collapse:collapse;width:100%}td,th{border:1px solid #d8dfd5;padding:8px}blockquote{border-left:3px solid #a8b9aa;margin-left:0;padding-left:16px;color:#536758}</style>`;
 
 export function previewDocument(source: string, markdown: boolean, bridge?: { nonce: string; origin: string }, interactive = false): string {
+  // Only the native navigation delegate can block a script navigating its own frame.
+  interactive = interactive && !!window.__rubbertermDesktop;
   let clean = DOMPurify.sanitize(markdown ? html(source) : source, {
     WHOLE_DOCUMENT: true,
     FORBID_TAGS: ["script", "iframe", "object", "embed", "meta", "base", "link", "form"],
-    FORBID_ATTR: ["href", "action", "formaction", "srcdoc", "target", "nonce"],
+    FORBID_ATTR: ["href", "xlink:href", "action", "formaction", "srcdoc", "target", "nonce"],
   });
   // Interactive HTML is explicitly rendered inside an opaque sandbox. Bundled
   // inline scripts and event handlers run; no remote scripts, eval, forms, popup windows,
@@ -26,7 +28,7 @@ export function previewDocument(source: string, markdown: boolean, bridge?: { no
     doc.querySelectorAll("iframe,object,embed,meta,base,link").forEach(node => node.remove());
     doc.querySelectorAll("*").forEach(node => {
       for (const attribute of [...node.attributes]) {
-        if (["href", "action", "formaction", "srcdoc", "target", "nonce"].includes(attribute.name)) node.removeAttribute(attribute.name);
+        if (["href", "xlink:href", "action", "formaction", "srcdoc", "target", "nonce"].includes(attribute.name)) node.removeAttribute(attribute.name);
       }
     });
     doc.querySelectorAll("script").forEach(script => {
@@ -40,12 +42,12 @@ export function previewDocument(source: string, markdown: boolean, bridge?: { no
   const reporter = bridge ? `<script nonce="${bridge.nonce}">(() => {
     const report = () => {
       const selection = window.getSelection(), quote = selection?.toString().trim();
-      if (!quote || quote.length > 8000 || !selection.rangeCount) return;
+      if (!quote || !selection.rangeCount) return;
       const rect = selection.getRangeAt(0).getBoundingClientRect();
-      parent.postMessage({type: 'artifact-selection', channel: ${JSON.stringify(bridge.nonce)}, quote, left: rect.left, bottom: rect.bottom}, ${JSON.stringify(bridge.origin)});
+      parent.postMessage({type: 'artifact-selection', channel: ${JSON.stringify(bridge.nonce)}, quote: quote.slice(0, 1000), truncated: quote.length > 1000, left: rect.left, bottom: rect.bottom}, ${JSON.stringify(bridge.origin)});
     };
     window.addEventListener('message', event => {
-      if (event.source !== parent || event.origin !== ${JSON.stringify(bridge.origin)} || event.data?.channel !== ${JSON.stringify(bridge.nonce)} || event.data?.type !== 'artifact-locate' || typeof event.data.quote !== 'string' || event.data.quote.length > 8000) return;
+      if (event.source !== parent || event.origin !== ${JSON.stringify(bridge.origin)} || event.data?.channel !== ${JSON.stringify(bridge.nonce)} || event.data?.type !== 'artifact-locate' || typeof event.data.quote !== 'string' || event.data.quote.length > 1000) return;
       const status = (${locateFileQuote.toString()})(document.body, event.data.quote);
       parent.postMessage({type: 'artifact-locate-result', channel: ${JSON.stringify(bridge.nonce)}, status}, ${JSON.stringify(bridge.origin)});
     });
@@ -79,9 +81,9 @@ export function ArtifactPreview({ artifact, onSelect, onEscape, source = false, 
       if (data.type === "artifact-locate-result" && typeof data.status === "string" && data.status.length < 200) { onLocate?.(data.status); return; }
       if (data.type === "artifact-escape") { onEscape(); return; }
       if (data.type !== "artifact-selection") return;
-      if (typeof data.quote !== "string" || !data.quote.trim() || data.quote.length > 8000 || !Number.isFinite(data.left) || !Number.isFinite(data.bottom)) return;
+      if (typeof data.quote !== "string" || !data.quote.trim() || data.quote.length > 1000 || !Number.isFinite(data.left) || !Number.isFinite(data.bottom)) return;
       const box = frame.current.getBoundingClientRect();
-      onSelect({ quote: data.quote.trim(), left: box.left + Math.max(0, Math.min(data.left, box.width)), bottom: box.top + Math.max(0, Math.min(data.bottom, box.height)) });
+      onSelect({ quote: data.quote.trim(), pageSupplied: true, truncated: data.truncated === true, left: box.left + Math.max(0, Math.min(data.left, box.width)), bottom: box.top + Math.max(0, Math.min(data.bottom, box.height)) });
     };
     window.addEventListener("message", receive);
     return () => window.removeEventListener("message", receive);
@@ -89,6 +91,8 @@ export function ArtifactPreview({ artifact, onSelect, onEscape, source = false, 
   useEffect(() => {
     if (!locate) return;
     if (textElement.current) onLocate?.(locateFileQuote(textElement.current, locate.quote));
+    // An opaque srcdoc origin cannot be addressed by a concrete targetOrigin.
+    // Send only to this exact frame; source/origin/channel checks correlate replies.
     else frame.current?.contentWindow?.postMessage({ type: "artifact-locate", channel: nonce, quote: locate.quote }, "*");
   }, [locate, nonce, onLocate]);
   function selectText(event: React.MouseEvent<HTMLElement> | React.KeyboardEvent<HTMLElement>) {

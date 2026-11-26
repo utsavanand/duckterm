@@ -118,7 +118,7 @@ export function FileReader({ session, savedKey, selection, back: backToList, sav
         {onOpenArtifact && <button className="rd-file-saved-link" onClick={() => onOpenArtifact(artifact.id)}>Open in Artifacts</button>}</>}
     </div>
     {stored && <p className="rd-file-source-note">{selection.file.source_state === "missing" ? "Content-only: the original file is missing. This is the stored artifact snapshot." : selection.file.source_state === "outside_root" ? "The original path is outside this worktree; its presence is not checked here." : selection.file.source_state === "unavailable" ? "Original file availability is unknown. You are reading the stored artifact snapshot." : "Saved artifact snapshot. The current file may have changed since registration."}</p>}
-    {content?.media_type === "text/html" && !source && <p className="rd-file-source-note">Interactive preview · bundled scripts run in isolation. External resources and network requests are blocked.</p>}
+    {content?.media_type === "text/html" && !source && <p className="rd-file-source-note">{window.__rubbertermDesktop ? "Interactive preview · The Mac app blocks frame navigation; external resources are blocked." : "Static preview · Page scripts and external resources are disabled. Open in the Mac app for interactive content."}</p>}
     {metadataError && <p className="rd-files-note" role="alert">{metadataError}</p>}
     {feedbackStatus && <p className="rd-files-note" role="status">{feedbackStatus}</p>}
     {locateStatus && <p className="rd-files-note" role="status">{locateStatus}</p>}

@@ -1,3 +1,11 @@
+## 2026-11-26 — CSP does not block frame self-navigation
+
+A sandboxed iframe can navigate itself even when connect-src is none. Keep
+interactive artifacts behind the Mac navigation delegate; ordinary browsers use
+a sanitized static preview. Test location changes, refresh tags and SVG links,
+not just fetch. A selection channel identifies a frame, not trustworthy text:
+the document shares its realm, so show quote bounds and label it untrusted.
+
 ## 2026-11-25 — Review content by identity and version, not storage location
 
 A worktree disappearing must not move an artifact into a different tab. Keep

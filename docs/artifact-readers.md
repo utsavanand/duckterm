@@ -22,7 +22,11 @@ not install packages, invoke builds or start a development server when opening a
 artifact. Producers must bundle scripts, styles and assets before registration;
 external modules, CDN dependencies, network APIs and eval are not supported.
 
-Interactive HTML runs in an iframe with `sandbox="allow-scripts"`, without
+Interactive HTML runs only in the native Mac app. Browser clients use a sanitized
+static preview with document scripts and navigation attributes removed. This is
+necessary because browser CSP cannot prevent script-driven self-navigation.
+
+Native interactive HTML runs in an iframe with `sandbox="allow-scripts"`, without
 same-origin, forms, popups, downloads or top-navigation privileges. Its content
 security policy allows inline scripts/styles and data images/fonts, while
 blocking connections, external scripts, child frames and workers. Markdown still
@@ -31,7 +35,11 @@ policy also rejects subframe navigation outside about:srcdoc/about:blank and
 never opens an external browser on behalf of an artifact. Native message bridges
 continue to require the authenticated main dashboard frame.
 
-Selections are untrusted messages. The parent validates the exact iframe window,
+Selections are untrusted messages, including when their channel matches: page
+scripts share the reporter realm and can forge quoted content. Frame selections
+are limited to 1,000 characters, visibly marked when shortened, and labelled as
+untrusted document content in the delivered prompt. The channel correlates
+messages; it does not authenticate the quote. The parent validates the exact iframe window,
 opaque origin, random per-preview channel, text bounds and coordinates. Messages
 can open the feedback composer; only an explicit owner Send invokes delivery.
 Downloads use application/octet-stream blobs so opening saved HTML outside its
