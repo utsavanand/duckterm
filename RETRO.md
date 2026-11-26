@@ -13,6 +13,12 @@ Read identities through a worker-owned, read-only SQLite snapshot. Moving
 the expensive call requires moving its expensive arguments too; do not
 reuse the loop's SQLite connection from a thread.
 
+TokenLedger had its own whole-suffix read/split allocation, independent of
+the MessageCache reader fixed earlier. Stream its raw input too, preserving
+byte line splitting and the incomplete trailing record. Chunking reduces
+temporary allocation; it does not eliminate full-history scan time or bound
+the largest individual record and retained accounting state.
+
 ## 2026-11-25 — Tabs that unmount take the owner's draft with them
 
 The Fleet monitor rendered only the selected tab, so a look at Agent fleet
