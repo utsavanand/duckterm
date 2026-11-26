@@ -116,6 +116,11 @@ def component_name(kind: str, fields: dict[str, Any]) -> str:
     return kind
 
 
+def has_manifest(root: Path) -> bool:
+    """Does this folder hold a manifest, under the current name or the old one?"""
+    return (root / MANIFEST).is_file() or (root / OLD_MANIFEST).is_file()
+
+
 def load(root: Path) -> Kit:
     """Read a kit from its directory, or from a manifest file named directly
     (`uv-suite/skill-kit.fast.toml`: one repository, several kits sharing its
