@@ -491,9 +491,15 @@ def test_inbox_counts_distinguish_unanswered_from_informational_notices(scenario
     assert counts["counts"]["peer"] == 4
 
 
-@pytest.mark.parametrize("paused", [False, True], ids=["ended", "resumable-stop"])
-def test_read_priority_stops_counting_only_when_recipient_permanently_ends(scenario, paused):
+@pytest.mark.parametrize(
+    "rest_state", ["terminated", "stopped", "interrupted", "archived", "merged"]
+)
+@pytest.mark.parametrize("via_event", [False, True], ids=["set-state", "lifecycle-event"])
+def test_read_priority_stops_counting_only_when_recipient_permanently_ends(
+    scenario, rest_state, via_event
+):
     history, server, owner, creds = scenario
+    paused = rest_state in ("stopped", "interrupted")
     send(server, owner, "Please acknowledge", "end-priority")
     send(server, owner, "Informational notice", "end-info", priority=False)
     messages = call(history, creds["claude"], "GET", "/inbox")[1]["messages"]
@@ -501,18 +507,31 @@ def test_read_priority_stops_counting_only_when_recipient_permanently_ends(scena
     counts = dispatch(server, "GET", "/session-inbox-counts", owner)[1]
     assert counts["unanswered_counts"] == {"claude": 1, "peer": 1, "codex": 1}
 
-    if paused:
-        history.set_state("claude", "stopped")
+    now = int(time.time() * 1000)
+    if via_event:
+        history.record(
+            {
+                "_id": "priority-recipient-lifecycle",
+                "_ts": now,
+                "event_type": "Notification",
+                "session_key": "claude",
+                "lifecycle": rest_state,
+                "test": True,
+            }
+        )
+    else:
+        history.set_state("claude", rest_state)
+    # A late process exit must not turn a resumable interruption into a final end.
     history.record(
         {
             "_id": "end-priority-recipient",
-            "_ts": int(time.time() * 1000),
+            "_ts": now + 1,
             "event_type": "SessionEnd",
             "session_key": "claude",
             "test": True,
         }
     )
-    assert history.session("claude")["state"] == ("stopped" if paused else "terminated")
+    assert history.session("claude")["state"] == rest_state
     with pytest.raises(APIError) as exc:
         call(history, creds["claude"], "GET", "/self")
     assert exc.value.status == 401
@@ -533,3 +552,25 @@ def test_read_priority_stops_counting_only_when_recipient_permanently_ends(scena
         cancelled = message["priority"] and not paused
         assert row["status"] == ("cancelled" if cancelled else "read")
         assert bool(row["answered_at"]) is bool(cancelled)
+    if paused:
+        history.record(
+            {
+                "_id": "priority-recipient-resume",
+                "_ts": now + 2,
+                "event_type": "SessionStart",
+                "session_key": "claude",
+                "runtime": "claude-code",
+                "test": True,
+            }
+        )
+        fresh = enroll(history, "claude")
+        with pytest.raises(APIError) as exc:
+            call(history, creds["claude"], "GET", "/self")
+        assert exc.value.status == 401
+        restored = call(history, fresh, "GET", "/inbox")[1]["messages"]
+        assert {m["id"] for m in restored} == {m["id"] for m in messages}
+        priority = next(m for m in restored if m["priority"])
+        assert priority["status"] == "read"
+        call(history, fresh, "POST", f"/questions/{priority['id']}/answer", {"text": "Recovered"})
+        counts = dispatch(server, "GET", "/session-inbox-counts", owner)[1]
+        assert counts["unanswered_counts"] == {"peer": 1, "codex": 1}

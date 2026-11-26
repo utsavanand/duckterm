@@ -504,9 +504,11 @@ class HistoryStore:
             native_identity.record(self._conn, key, event)
             row = self.session(key)
             if row and row["state"] in AT_REST_STATES:
-                # Use the folded state: late SessionEnd events after Stop must
-                # not cancel the suspended exchange. Archive remains final.
-                self.session_api.revoke(key, cancel_pending=row["state"] != "stopped")
+                # A late SessionEnd after a stop or interruption must not cancel
+                # resumable work. Archive and permanent ends still cancel it.
+                self.session_api.revoke(
+                    key, cancel_pending=row["state"] not in ("stopped", "interrupted")
+                )
             elif row:
                 self.session_api.ensure(key)
             kind = classify(event)
@@ -1092,7 +1094,7 @@ class HistoryStore:
         if row and row["state"] == "merged" and state != "merged":
             return False
         if state in AT_REST_STATES:
-            self.session_api.revoke(key, cancel_pending=state != "stopped")
+            self.session_api.revoke(key, cancel_pending=state not in ("stopped", "interrupted"))
         if state in ("stopped", "interrupted", "terminated"):
             cur = self._conn.execute(
                 "UPDATE sessions SET state = ?, ended_at = ? WHERE session_key = ?",
