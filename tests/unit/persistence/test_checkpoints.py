@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 
 from duckterm.persistence.checkpoints import (
+    MAX_DIRTY_FILES,
     _git_state,
     build_checkpoint,
     load_record,
@@ -136,7 +137,7 @@ def test_dirty_files_list_staged_unstaged_and_untracked(git_repo: Path) -> None:
     assert sorted(_git_state(git_repo)["dirty_files"]) == ["README.md", "new.txt", "staged.txt"]
 
 
-@pytest.mark.parametrize("hook", ["filter", "fsmonitor"])
+@pytest.mark.parametrize("hook", ["filter", "racy_filter", "fsmonitor"])
 def test_reading_git_state_runs_no_program_from_the_repo(
     git_repo: Path, tmp_path: Path, hook: str
 ) -> None:
@@ -150,15 +151,50 @@ def test_reading_git_state_runs_no_program_from_the_repo(
         _git(git_repo, "add", ".gitattributes")
         _git(git_repo, "commit", "-q", "-m", "attributes")
         _git(git_repo, "config", "filter.x.clean", str(program))
+    elif hook == "racy_filter":
+        # diff-files re-reads a racy entry (index no newer than the file)
+        # through the filter the repository's own info/attributes names.
+        (git_repo / ".git/info").mkdir(exist_ok=True)
+        (git_repo / ".git/info/attributes").write_text("* filter=x\n")
+        _git(git_repo, "config", "filter.x.clean", str(program))
     else:
         _git(git_repo, "config", "core.fsmonitor", str(program))
-    os.utime(git_repo / "README.md", (1, 1))  # stat-dirty, content unchanged
-    subprocess.run(["git", "-C", str(git_repo), "status"], capture_output=True)
-    assert marker.exists()  # plain git status really runs it
+    if hook == "racy_filter":
+        os.utime(git_repo / ".git/index", (1, 1))
+        subprocess.run(["git", "-C", str(git_repo), "diff-files"], capture_output=True)
+    else:
+        os.utime(git_repo / "README.md", (1, 1))  # stat-dirty, content unchanged
+        subprocess.run(["git", "-C", str(git_repo), "status"], capture_output=True)
+    assert marker.exists()  # plain git really runs it
     marker.unlink()
-    os.utime(git_repo / "README.md", (2, 2))
+    if hook != "racy_filter":
+        os.utime(git_repo / "README.md", (2, 2))
     _git_state(git_repo)
     assert not marker.exists()
+
+
+def test_a_repo_pointed_at_another_folder_records_none_of_its_files(
+    git_repo: Path, tmp_path: Path
+) -> None:
+    elsewhere = tmp_path / "home"
+    elsewhere.mkdir()
+    (elsewhere / "secret.txt").write_text("s\n")
+    _git(git_repo, "config", "core.worktree", str(elsewhere))
+    out = subprocess.run(
+        ["git", "-C", str(git_repo), "ls-files", "--others"], capture_output=True, text=True
+    ).stdout
+    assert "secret.txt" in out  # plain git lists the other folder
+    state = _git_state(git_repo)
+    assert state["git"] is False
+    assert "secret.txt" not in str(state)
+
+
+def test_dirty_files_are_capped_and_counted(git_repo: Path) -> None:
+    for i in range(MAX_DIRTY_FILES + 5):
+        (git_repo / f"new{i}.txt").write_text("n\n")
+    state = _git_state(git_repo)
+    assert len(state["dirty_files"]) == MAX_DIRTY_FILES
+    assert state["dirty_count"] == MAX_DIRTY_FILES + 5
 
 
 def test_checkpoint_notes_non_git_dir(tmp_path: Path) -> None:

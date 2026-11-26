@@ -105,9 +105,12 @@ re-reads every file whose stat data changed through the repo's own
 `filter.<driver>.clean`, chosen by a committed `.gitattributes`, so a session
 could have the server run a program at its next checkpoint. Checkpoints now go
 through review/git with a 5 s timeout. Dirty files come from `diff-index
---cached`, `diff-files` and `ls-files --others`, which compare stat data and
-never read content through a filter. The cost: a file touched but unchanged is
-listed as dirty.
+--cached`, `diff-files` and `ls-files --others`. These compare stat data, so a
+file touched but unchanged is listed as dirty. `diff-files` still re-reads a
+racy entry through a filter. Security found that on the second pass, and
+review/git now blanks the repository's filters. Checkpoints also refuse a
+repository whose worktree is somewhere else (`core.worktree`, a gitdir file),
+and keep at most 200 dirty file names.
 
 The parity test found an older bug. The status output was `.strip()`ped before
 each line was cut at column 3. The first line's leading space went, so the first

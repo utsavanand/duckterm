@@ -19,6 +19,8 @@ from duckterm.helpers import paths
 from duckterm.review import git as review_git
 
 Event = dict[str, Any]
+# The record keeps this many dirty file names; dirty_count has the total.
+MAX_DIRTY_FILES = 200
 
 
 @dataclass
@@ -79,25 +81,36 @@ def _git_state(cwd: Path) -> dict[str, Any]:
         return {"git": False, "path": str(cwd)}
 
     # A session reports cwd and can write its .git/config, so git runs through
-    # review/git (repo programs off, bounded). Dirty files come from the index's
-    # stat data: `git status` re-reads stat-dirty files through the repo's own
-    # clean filter. A file touched but unchanged is listed as dirty.
+    # review/git, which runs none of the repository's programs and has a
+    # timeout. Dirty files come from the index's stat data rather than `git
+    # status`, which re-reads every stat-dirty file through a filter; a file
+    # touched but unchanged is listed as dirty.
     def git(*args: str) -> str:
         try:
             return review_git.run(cwd, *args, timeout=5).strip()
         except review_git.ReviewGitError:
             return ""
 
-    dirty = [
-        *git("diff-index", "--cached", "--name-only", "HEAD").splitlines(),
-        *git("diff-files", "--name-only").splitlines(),
-        *git("ls-files", "--others", "--exclude-standard").splitlines(),
-    ]
+    # core.worktree or a gitdir file can point the repository at another
+    # folder, such as $HOME, whose file names would land in the record.
+    top = git("rev-parse", "--show-toplevel")
+    if not top or Path(top).resolve() != cwd.resolve():
+        return {"git": False, "path": str(cwd)}
+    dirty = list(
+        dict.fromkeys(
+            [
+                *git("diff-index", "--cached", "--name-only", "HEAD").splitlines(),
+                *git("diff-files", "--name-only").splitlines(),
+                *git("ls-files", "--others", "--exclude-standard").splitlines(),
+            ]
+        )
+    )
     return {
         "git": True,
         "repo": cwd.name,
         "branch": git("rev-parse", "--abbrev-ref", "HEAD"),
-        "dirty_files": list(dict.fromkeys(dirty)),
+        "dirty_files": dirty[:MAX_DIRTY_FILES],
+        "dirty_count": len(dirty),
         "last_commit": git("log", "-1", "--oneline"),
     }
 
@@ -249,7 +262,7 @@ def _render_markdown(label: str, record: dict[str, Any], summary: str) -> str:
             f"- repo: {record['repo']}",
             f"- branch: {record['branch']}",
             f"- last commit: {record.get('last_commit') or '(none)'}",
-            f"- uncommitted files: {len(record.get('dirty_files', []))}",
+            f"- uncommitted files: {record.get('dirty_count', len(record.get('dirty_files', [])))}",
         ]
     else:
         lines.append(f"- not a git repo ({record.get('path')})")
