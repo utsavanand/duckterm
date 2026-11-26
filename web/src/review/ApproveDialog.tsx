@@ -63,6 +63,10 @@ export function ApproveDialog({ repo, target, prNumber, ratedHead, onClose, onAp
     setBusy(true); setError("");
     try {
       const { payload } = await api.approvalChallenge(repo, target);
+      // The challenge names the head it approves; a push since Home rated
+      // the PR would otherwise be signed unrated.
+      const head = /^head=(.*)$/m.exec(payload)?.[1];
+      if (ratedHead && head !== ratedHead) throw new Error(`#${prNumber} changed after Home rated it Safe. Review it again before approving.`);
       const signature = await signer.sign(payload);
       const result = await api.approvalSubmit(repo, target, { payload, signature });
       if (alive.current) setRecord(result);

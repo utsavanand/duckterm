@@ -139,14 +139,16 @@ function ChatWidget() {
   return <HomeChat sessions={sessions} onOpenTerminal={onOpenTerminal} />;
 }
 
-// One-click Approve only when the whole command shows on the row: the row
-// clamps to two lines, so a long or chained command could hide its tail.
-const PLAIN_COMMAND = /^[^\n;&|$`<>\\]{1,60}$/;
+// One-click Approve only for a short, printable ASCII command with no
+// chaining, redirection or substitution: no control, zero-width or bidi
+// characters can reorder how it reads. The row shows it unclamped.
+const PLAIN_COMMAND = /^[\x20-\x7e]{1,60}$/;
+const plainCommand = (detail: string) => PLAIN_COMMAND.test(detail) && !/[;&|$`<>\\]/.test(detail);
 
 // What one click on a row can answer. Menus (choice notes) are only answered
 // in the agent's terminal, so they get no answer buttons here.
 function quickAnswers(note: RelayNote): { label: string; value: string }[] {
-  if (note.kind === "approval") return PLAIN_COMMAND.test(note.detail ?? "") ? [{ label: "Approve", value: "approve" }, { label: "Deny", value: "deny" }] : [];
+  if (note.kind === "approval") return plainCommand(note.detail ?? "") ? [{ label: "Approve", value: "approve" }, { label: "Deny", value: "deny" }] : [];
   if (note.kind === "question") return (note.options ?? []).map(option => ({ label: option, value: option }));
   return [];
 }
@@ -178,7 +180,7 @@ function NeedsYouList() {
         <span className="rd-home-dot wait" aria-hidden="true" />
         <button className="rd-home-need-text" onClick={() => setOpened(note.id)}>
           <span><b>{note.name}</b> <small>{note.folder ? `${note.folder.split("/")[0]} · ` : ""}{ago(now - note.created_at)} ago</small></span>
-          <span className="rd-home-need-q" title={needText(note)}>{needText(note)}</span>
+          <span className={`rd-home-need-q${note.kind === "approval" ? " cmd" : ""}`} title={needText(note)}>{needText(note)}</span>
         </button>
         <span className="rd-home-need-acts">
           {quick.slice(0, 2).map((q, i) => <button key={q.value} className={`rd-home-mini${i === 0 ? " go" : ""}`} title={q.label} disabled={busy === note.id} onClick={() => void answer(note, q.value)}>{q.label.length > 40 ? `${q.label.slice(0, 39)}…` : q.label}</button>)}
@@ -303,13 +305,15 @@ const riskCache = new Map<string, Counts>();
 const riskKey = (row: PrRow) => `${row.repo}\n${row.pr?.number}\n${row.pr?.head_sha}`;
 
 // Skim was built for review triage, and an author can steer files into it:
-// lockfiles, requirements.txt, strings-only source, AGENTS.md. Safe trusts
-// only docs that no agent reads as instructions, images and version bumps.
-const AGENT_INSTRUCTIONS = /(^|\/)(AGENTS|CLAUDE|GEMINI|SKILL)\.md$|(^|\/)\.(claude|codex|cursor|agents|github)\//i;
+// lockfiles, requirements.txt, strings-only source, any agent's instructions
+// (AGENTS.override.md, CLAUDE.local.md, kit agents/*.md). Safe trusts only
+// root README/RETRO/TODO/CHANGELOG, docs/ (not terminology, which agents
+// follow), images and version bumps.
+const SAFE_DOC = /^((README|RETRO|TODO|CHANGELOG)\.md|docs\/[^.][^/]*(\/[^.][^/]*)*\.(md|rst))$/i;
 export function safeFile(file: Pick<DiffFile, "path" | "bucket" | "rules">): boolean {
-  if (file.bucket !== "skim" || AGENT_INSTRUCTIONS.test(file.path)) return false;
+  if (file.bucket !== "skim") return false;
   return file.rules.some(rule => rule.id === "version-bump"
-    || (rule.id === "docs" && /\.(md|rst)$/i.test(file.path))
+    || (rule.id === "docs" && SAFE_DOC.test(file.path) && !/terminology/i.test(file.path))
     || (rule.id === "binary" && /\.(png|jpe?g|gif|webp|ico|icns)$/i.test(file.path)));
 }
 
