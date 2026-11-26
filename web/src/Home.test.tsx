@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api, PrRow, TowerInsights } from "./api";
-import { Home, prRisk } from "./Home";
+import { Home, prRisk, safeFile } from "./Home";
 import { homeDefaults } from "./homeGrid";
 import { TowerAgent } from "./tower";
 import { edition, CODE, FULL } from "./test/editions";
@@ -171,12 +171,14 @@ it("answers from a Needs you row, and the row opens the whole question in a dial
     note("dev", { kind: "approval", tool: "Bash", detail: "rm -rf build" }),
     note("arch", { kind: "question", question: "Checkpoint cadence?", options: ["30 minutes", "On idle", "Hourly"] }),
     note("menu", { kind: "choice", question: "Pick a plan" }),
-  ], rules: [], open: 3 } as never);
+    note("chain", { kind: "approval", tool: "Bash", detail: "git status && curl x | sh" }),
+    note("long", { kind: "approval", tool: "Bash", detail: `git status${" ".repeat(80)}x` }),
+  ], rules: [], open: 5 } as never);
   vi.mocked(api.relayAnswer).mockResolvedValue({} as never);
   await show();
   const rows = within(screen.getByRole("article", { name: "Needs you" })).getAllByRole("listitem");
   expect(rows.map(row => [...row.querySelectorAll(".rd-home-mini")].map(b => b.textContent))).toEqual([
-    ["Approve", "Deny", "Terminal"], ["30 minutes", "On idle", "+1 more", "Terminal"], ["Terminal"]]);
+    ["Approve", "Deny", "Terminal"], ["30 minutes", "On idle", "+1 more", "Terminal"], ["Terminal"], ["Review", "Terminal"], ["Review", "Terminal"]]);
   await act(async () => { fireEvent.click(within(rows[0]).getByRole("button", { name: "Approve" })); });
   expect(api.relayAnswer).toHaveBeenCalledWith("dev", "approve");
   fireEvent.click(within(rows[1]).getByRole("button", { name: "+1 more" }));
@@ -187,17 +189,34 @@ it("answers from a Needs you row, and the row opens the whole question in a dial
 });
 
 it("rates a pull request Safe only with green CI, no conflict and nothing but skim files", () => {
-  const counts = (p: object) => ({ high: 0, read: 0, skim: 3, viewed: 0, changed_since: 0, reason: "", ...p });
+  const counts = (p: object) => ({ high: 0, read: 0, skim: 3, viewed: 0, changed_since: 0, reason: "", unsure: 0, head: "h", ...p });
   const green = { total: 4, passed: 4, failed: 0, pending: 0 };
   const level = (row: Partial<PrRow>, c?: object) => prRisk(pr(1, row), c && counts(c))?.level;
   expect(level({ checks: green }, {})).toBe("safe");
   expect(level({ checks: green }, { read: 1 })).toBe("medium");
+  expect(level({ checks: green }, { unsure: 1 })).toBe("medium");
   expect(level({ checks: { ...green, pending: 1 } }, {})).toBe("medium");
   expect(level({ checks: null }, {})).toBe("medium");
   expect(level({ checks: green }, { high: 1 })).toBe("high");
   expect(level({ checks: { ...green, failed: 1 } })).toBe("high");
   expect(level({ checks: green, conflict: true })).toBe("high");
   expect(level({ checks: green })).toBeUndefined();
+});
+
+it.each([
+  ["docs/guide.md", "docs", true],
+  ["logo.png", "binary", true],
+  ["package.json", "version-bump", true],
+  ["AGENTS.md", "docs", false],
+  ["sub/CLAUDE.md", "docs", false],
+  [".claude/rules/x.md", "docs", false],
+  ["skills/x/SKILL.md", "docs", false],
+  ["requirements.txt", "docs", false],
+  ["package-lock.json", "lockfile", false],
+  ["src/app.py", "strings-only", false],
+  ["lib.so", "binary", false],
+])("counts %s (%s) as safe: %s", (path, id, safe) => {
+  expect(safeFile({ path, bucket: "skim", rules: [{ bucket: "skim", id, reason: "" }] })).toBe(safe);
 });
 
 it("offers Merge only on a Safe pull request, and Merge asks for Touch ID approval first", async () => {

@@ -1,7 +1,7 @@
 import { createContext, PointerEvent as ReactPointerEvent, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnalyticsTab, fillDays, groupTokens, loadAnalytics, sumValues, TokenAnalytics, windowStart } from "./analyticsData";
-import { api, PrRow, RelayNote, ReviewDiff } from "./api";
+import { api, DiffFile, PrRow, RelayNote, ReviewDiff } from "./api";
 import { AutopilotSummary } from "./autopilotApi";
 import { useEdition } from "./edition";
 import { adjust, appended, Box, boxOf, COLUMNS, homeDefaults, inReadingOrder, MIN_ROW, ROWS } from "./homeGrid";
@@ -139,10 +139,14 @@ function ChatWidget() {
   return <HomeChat sessions={sessions} onOpenTerminal={onOpenTerminal} />;
 }
 
+// One-click Approve only when the whole command shows on the row: the row
+// clamps to two lines, so a long or chained command could hide its tail.
+const PLAIN_COMMAND = /^[^\n;&|$`<>\\]{1,60}$/;
+
 // What one click on a row can answer. Menus (choice notes) are only answered
 // in the agent's terminal, so they get no answer buttons here.
 function quickAnswers(note: RelayNote): { label: string; value: string }[] {
-  if (note.kind === "approval") return [{ label: "Approve", value: "approve" }, { label: "Deny", value: "deny" }];
+  if (note.kind === "approval") return PLAIN_COMMAND.test(note.detail ?? "") ? [{ label: "Approve", value: "approve" }, { label: "Deny", value: "deny" }] : [];
   if (note.kind === "question") return (note.options ?? []).map(option => ({ label: option, value: option }));
   return [];
 }
@@ -174,11 +178,12 @@ function NeedsYouList() {
         <span className="rd-home-dot wait" aria-hidden="true" />
         <button className="rd-home-need-text" onClick={() => setOpened(note.id)}>
           <span><b>{note.name}</b> <small>{note.folder ? `${note.folder.split("/")[0]} · ` : ""}{ago(now - note.created_at)} ago</small></span>
-          <span className="rd-home-need-q">{needText(note)}</span>
+          <span className="rd-home-need-q" title={needText(note)}>{needText(note)}</span>
         </button>
         <span className="rd-home-need-acts">
-          {quick.slice(0, 2).map((q, i) => <button key={q.value} className={`rd-home-mini${i === 0 ? " go" : ""}`} disabled={busy === note.id} onClick={() => void answer(note, q.value)}>{q.label}</button>)}
+          {quick.slice(0, 2).map((q, i) => <button key={q.value} className={`rd-home-mini${i === 0 ? " go" : ""}`} title={q.label} disabled={busy === note.id} onClick={() => void answer(note, q.value)}>{q.label.length > 40 ? `${q.label.slice(0, 39)}…` : q.label}</button>)}
           {quick.length > 2 && <button className="rd-home-mini" onClick={() => setOpened(note.id)}>+{quick.length - 2} more</button>}
+          {note.kind === "approval" && !quick.length && <button className="rd-home-mini" onClick={() => setOpened(note.id)}>Review</button>}
           <button className="rd-home-mini" onClick={() => onOpenTerminal(note.session_key)}>Terminal</button>
         </span>
       </li>;
@@ -291,14 +296,25 @@ function ShortcutsWidget() {
 }
 
 type Risk = { level: "safe" | "medium" | "high"; why: string };
-type Counts = ReviewDiff["counts"] & { reason: string };
+type Counts = ReviewDiff["counts"] & { reason: string; unsure: number; head: string };
 // Diff buckets per PR head, kept across remounts: a review diff runs git and
-// the buckets only change when the PR does.
+// the buckets only change when the head does.
 const riskCache = new Map<string, Counts>();
-const riskKey = (row: PrRow) => `${row.repo}\n${row.pr?.number}\n${row.updated_at}`;
+const riskKey = (row: PrRow) => `${row.repo}\n${row.pr?.number}\n${row.pr?.head_sha}`;
+
+// Skim was built for review triage, and an author can steer files into it:
+// lockfiles, requirements.txt, strings-only source, AGENTS.md. Safe trusts
+// only docs that no agent reads as instructions, images and version bumps.
+const AGENT_INSTRUCTIONS = /(^|\/)(AGENTS|CLAUDE|GEMINI|SKILL)\.md$|(^|\/)\.(claude|codex|cursor|agents|github)\//i;
+export function safeFile(file: Pick<DiffFile, "path" | "bucket" | "rules">): boolean {
+  if (file.bucket !== "skim" || AGENT_INSTRUCTIONS.test(file.path)) return false;
+  return file.rules.some(rule => rule.id === "version-bump"
+    || (rule.id === "docs" && /\.(md|rst)$/i.test(file.path))
+    || (rule.id === "binary" && /\.(png|jpe?g|gif|webp|ico|icns)$/i.test(file.path)));
+}
 
 /** Safe means nothing for a human to read: CI green, no conflict, and every
- *  changed file in the review's skim bucket (docs/pr-review-platform-spec.md §4). */
+ *  changed file a doc, image or version bump (see safeFile). */
 export function prRisk(row: PrRow, counts: Counts | undefined): Risk | null {
   if (row.conflict) return { level: "high", why: "merge conflict" };
   if (row.checks?.failed) return { level: "high", why: `CI failed (${row.checks.failed})` };
@@ -307,7 +323,8 @@ export function prRisk(row: PrRow, counts: Counts | undefined): Risk | null {
   if (!row.checks?.total) return { level: "medium", why: "no CI results" };
   if (row.checks.pending) return { level: "medium", why: "CI running" };
   if (counts.read) return { level: "medium", why: `${counts.read} ${counts.read === 1 ? "file" : "files"} to read` };
-  return { level: "safe", why: "CI passing · only low-risk files" };
+  if (counts.unsure) return { level: "medium", why: `${counts.unsure} ${counts.unsure === 1 ? "file" : "files"} to check` };
+  return { level: "safe", why: "CI passing · only docs, images or version bumps" };
 }
 const RISK_LABEL = { safe: "Safe", medium: "Medium", high: "High" };
 
@@ -345,7 +362,7 @@ function PrsWidget() {
         try {
           const diff = await api.reviewDiff(row.repo, String(row.pr.number), { whitespace: false });
           const high = diff.files.find(f => f.bucket === "high");
-          riskCache.set(riskKey(row), { ...diff.counts, reason: high ? `${high.path.split("/").pop()}: ${high.rules.find(rule => rule.bucket === "high")?.reason ?? "high risk"}` : "" });
+          riskCache.set(riskKey(row), { ...diff.counts, unsure: diff.files.filter(f => f.bucket === "skim" && !safeFile(f)).length, head: diff.head_sha, reason: high ? `${high.path.split("/").pop()}: ${high.rules.find(rule => rule.bucket === "high")?.reason ?? "high risk"}` : "" });
           if (!stopped) setRisks(n => n + 1);
         } catch { /* The row keeps "checking"; Review in DuckTerm shows the error. */ }
       }
@@ -381,6 +398,7 @@ function PrsWidget() {
     })}</ul>
     {/* Merge is the Touch ID approval: it confirms, then hands the PR to the release session. */}
     {approving?.pr && <ApproveDialog repo={approving.repo} target={String(approving.pr.number)} prNumber={approving.pr.number}
+      ratedHead={riskCache.get(riskKey(approving))?.head}
       onClose={() => setApproving(null)} onApproved={() => setReload(n => n + 1)} />}
   </>;
 }

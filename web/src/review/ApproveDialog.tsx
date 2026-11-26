@@ -26,8 +26,10 @@ export function approvalLabel(record: ApprovalRecord): string {
 
 /** Approve = merge and release, confirmed with Touch ID in the Mac app. The
  *  server re-checks every condition and the signature; this only shows them. */
-export function ApproveDialog({ repo, target, prNumber, onClose, onApproved }: {
+export function ApproveDialog({ repo, target, prNumber, ratedHead, onClose, onApproved }: {
   repo: string; target: string; prNumber: number; onClose: () => void; onApproved: () => void;
+  // The head Home rated Safe; a later push means the rating no longer applies.
+  ratedHead?: string;
 }) {
   const [state, setState] = useState<ApprovalState | null>(null);
   const [bound, setBound] = useState<"checking" | "bound" | "unavailable" | "refused">("checking");
@@ -70,7 +72,8 @@ export function ApproveDialog({ repo, target, prNumber, onClose, onApproved }: {
   }
 
   const current = record && state && record.head_sha === state.head_sha ? record : null;
-  const canApprove = !!state?.ready && bound === "bound" && !current && !busy;
+  const moved = !!ratedHead && !!state && state.head_sha !== ratedHead;
+  const canApprove = !!state?.ready && bound === "bound" && !current && !busy && !moved;
   return <Modal title={`Approve #${prNumber}: merge and release`} onClose={onClose}>
     <div className="rd-approve">
       <p className="rd-card-meta">
@@ -88,6 +91,7 @@ export function ApproveDialog({ repo, target, prNumber, onClose, onApproved }: {
         <strong>This release touches:</strong>
         <ul>{state.flags.map(flag => <li key={flag.name}>{flag.name}: <code>{flag.hits.join(", ")}</code></li>)}</ul>
       </div>}
+      {moved && <p className="rd-prs-note" role="alert">#{prNumber} changed after Home rated it Safe. Review it again before approving.</p>}
       {current && <p className="rd-prs-note" role="status">{approvalLabel(current)}</p>}
       {bound === "unavailable" && <p className="rd-prs-note">Approve with Touch ID works in the DuckTerm Mac app on this computer.</p>}
       {bound === "refused" && <p className="rd-prs-note" role="alert">{bindError}</p>}

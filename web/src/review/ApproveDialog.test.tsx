@@ -50,6 +50,15 @@ it("in a browser, shows the conditions and what the release touches but cannot a
   expect(api.approvalKey).not.toHaveBeenCalled();
 });
 
+it("refuses to approve a head other than the one Home rated Safe", async () => {
+  vi.mocked(api.approvalState).mockResolvedValue(state);
+  vi.mocked(api.approvalKey).mockResolvedValue(state.key);
+  inMacApp(() => "SIG");
+  render(<ApproveDialog repo="/r" target="312" prNumber={312} ratedHead="1111111" onClose={vi.fn()} onApproved={vi.fn()} />);
+  expect(await screen.findByRole("alert")).toHaveTextContent("#312 changed after Home rated it Safe");
+  expect(screen.getByRole("button", { name: "Approve with Touch ID" })).toBeDisabled();
+});
+
 it("in the Mac app, binds the key, signs the server's challenge and hands it back", async () => {
   vi.mocked(api.approvalState).mockResolvedValue(state);
   vi.mocked(api.approvalKey).mockResolvedValue(state.key);
