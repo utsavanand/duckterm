@@ -1,6 +1,7 @@
 import { createContext, PointerEvent as ReactPointerEvent, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { AnalyticsTab, fillDays, groupTokens, loadAnalytics, sumValues, TokenAnalytics, windowStart } from "./analyticsData";
 import { api, PrRow } from "./api";
+import { AutopilotSummary } from "./autopilotApi";
 import { useEdition } from "./edition";
 import { adjust, appended, Box, boxOf, COLUMNS, homeDefaults, inReadingOrder } from "./homeGrid";
 import { HomeChat } from "./HomeChat";
@@ -14,8 +15,10 @@ import "./oracleWidgets.css";
 import "./home.css";
 
 type Relay = ReturnType<typeof useRelay>;
-type Actions = { agents: TowerAgent[]; relay: Relay | null; now: number; onTeams: () => void; onOpenTerminal: (key: string) => void; onAnalytics: (tab: AnalyticsTab) => void };
-const HomeActions = createContext<Actions>({ agents: [], relay: null, now: 0, onTeams: () => undefined, onOpenTerminal: () => undefined, onAnalytics: () => undefined });
+// Autopilot is null where the edition or the `autopilot` flag has no view to open.
+type Autopilot = { summary: AutopilotSummary | null; open: () => void } | null;
+type Actions = { agents: TowerAgent[]; relay: Relay | null; now: number; autopilot: Autopilot; onTeams: () => void; onOpenTerminal: (key: string) => void; onAnalytics: (tab: AnalyticsTab) => void };
+const HomeActions = createContext<Actions>({ agents: [], relay: null, now: 0, autopilot: null, onTeams: () => undefined, onOpenTerminal: () => undefined, onAnalytics: () => undefined });
 const CATALOG_GROUPS = ["Navigate", "Core", "Pulse", "Teams"];
 const CATALOG: Record<string, { group: string; description: string }> = {
   teams: { group: "Navigate", description: "Your sessions and folders. Opens the current dashboard." },
@@ -38,8 +41,8 @@ const PR_POLL_MS = 5 * 60_000;
 // The page DuckTerm opens on (docs/feature-flags.md, `home`): one chat over
 // everything, the ways into Teams and Autopilot, and fleet widgets on a
 // 12-column grid. Oracle's chat and Needs you fold in here.
-export function Home({ agents, now, onTeams, onOpenTerminal, onAnalytics }: {
-  agents: TowerAgent[]; now: number; onTeams: () => void; onOpenTerminal: (key: string) => void; onAnalytics: (tab: AnalyticsTab) => void;
+export function Home({ agents, now, autopilot = null, onTeams, onOpenTerminal, onAnalytics }: {
+  agents: TowerAgent[]; now: number; autopilot?: Autopilot; onTeams: () => void; onOpenTerminal: (key: string) => void; onAnalytics: (tab: AnalyticsTab) => void;
 }) {
   const { has } = useEdition();
   const oracle = has("oracle"), remote = oracle && has("remote_workspaces"), prs = has("pr_review");
@@ -51,7 +54,7 @@ export function Home({ agents, now, onTeams, onOpenTerminal, onAnalytics }: {
   useEffect(() => {
     source.emit("needs-you", relay.loaded ? { status: "ready", value: { notes: relay.notes.filter(n => n.status === "open" && n.urgency !== "offer").sort((a, b) => a.created_at - b.created_at), now } } : { status: "loading" });
   }, [source, relay.notes, relay.loaded, now]);
-  const actions = useMemo(() => ({ agents, relay: oracle ? relay : null, now, onTeams, onOpenTerminal, onAnalytics: (tab: AnalyticsTab) => analytics.current(tab) }), [agents, oracle, relay, now, onTeams, onOpenTerminal]);
+  const actions = useMemo(() => ({ agents, relay: oracle ? relay : null, now, autopilot, onTeams, onOpenTerminal, onAnalytics: (tab: AnalyticsTab) => analytics.current(tab) }), [agents, oracle, relay, now, autopilot, onTeams, onOpenTerminal]);
   return <HomeActions.Provider value={actions}>
     <div className="rd-home"><HomeGrid registry={registry} source={source} /></div>
   </HomeActions.Provider>;
@@ -92,11 +95,26 @@ function TeamsTile({ agents }: { agents: TowerAgent[] }) {
 }
 
 function AutopilotTile() {
-  return <div className="rd-home-nav" aria-disabled="true">
+  const { autopilot } = useContext(HomeActions);
+  if (!autopilot) return <div className="rd-home-nav" aria-disabled="true">
     <span className="rd-home-nav-title">Autopilot</span>
     <span className="rd-home-nav-sub">The software factory: skill-kit flows run unattended on remote workers.</span>
     <span className="rd-home-chips"><span className="rd-home-chip">Not available yet</span></span>
   </div>;
+  // Waiting at a gate is the only count that asks the owner to act, so it leads.
+  // A failed summary shows no counts rather than zeros.
+  const s = autopilot.summary;
+  return <button className="rd-home-nav" onClick={autopilot.open}>
+    <span className="rd-home-nav-title">Autopilot <span aria-hidden="true">→</span></span>
+    {/* One line, so four chips fit the tile's default two rows. */}
+    <span className="rd-home-nav-sub">Skill-kit flows running unattended</span>
+    {s && <span className="rd-home-chips">
+      <span className={`rd-home-chip${s.waiting_gate ? " wait" : ""}`}>{s.waiting_gate} need you</span>
+      <span className="rd-home-chip busy">{s.active} running</span>
+      <span className="rd-home-chip">{s.done_today} done today</span>
+      <span className={`rd-home-chip${s.failed_today ? " bad" : ""}`}>{s.failed_today} failed</span>
+    </span>}
+  </button>;
 }
 
 function ChatWidget() {

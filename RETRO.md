@@ -46,6 +46,118 @@ overflow, it strands it: `Check now` dropped to its own line, right-aligned
 away from the text it acts on. Decide where a wrap lands rather than letting the
 leftover margin decide.
 
+## 2026-11-25 — Tabs that unmount take the owner's draft with them
+
+The Fleet monitor rendered only the selected tab, so a look at Agent fleet
+discarded an unsent Ask Oracle message. Keep every panel mounted and hide the
+others. Its Needs you window said role=dialog but never took focus; a dialog
+needs initial focus, contained Tab and focus returned to its opener. And a
+count of notes labelled "agents" overstated the agents when one asked twice.
+
+## 2026-11-25 — The per-agent holding folder was opened after the database changed
+
+Security's recheck of #461: convert() opened the holding folder up front, but
+each agent's subfolder inside it was created and opened only when the files
+moved, after the records were written and the references rebound. A symlink
+planted there made the run change the database and then refuse the move.
+Nothing was lost, but "a failed open leaves the DB untouched" was not true.
+The whole destination, subfolder included, is now opened before the lock.
+Lesson: "open the destination first" means the folder the files actually land
+in, not its parent.
+
+## 2026-11-25 — A text check doesn't vouch for the recipient
+
+Ask Oracle sent free text at once when the model's message was a span of the
+owner's words. That checked the text, not who the model picked or whether the
+sentence was a send at all, so a wrong agent or a negated question became an
+owner message with no click. Model-routed sends now always wait for Send.
+Idempotency keyed per recipient didn't cover the chat log either: a retried
+send delivered once but saved twice, so the history is now keyed by message id.
+
+## 2026-11-24 — The conversion's Trash was unreachable and only its last folder was checked
+
+QA's re-check of #461: O_NOFOLLOW on a whole path only refuses a symlink in
+the last component, so a symlinked ~/.Trash was still followed. Checking that
+by hand turned up a bigger gap: macOS refuses to let this process open
+~/.Trash at all without Full Disk Access. The conversion rebinds every reference first and
+moves files last, so a real run would have changed the database and then failed
+on every agent. No test or rehearsal used the real Trash. The owner chose a
+holding folder, ~/.duckterm/removed/<date>, which they delete when satisfied.
+It is opened one component at a time below ~/.duckterm, before anything
+changes, and the CLI stops up front if it can't open it. Lesson: rehearse
+against the real destination too, not only a stand-in for it; OS protections
+live there.
+
+## 2026-11-24 — Moving files to the Trash could overwrite through a symlink
+
+QA found it on #461: the conversion moved raw copies with mkdir(exist_ok) and
+shutil.move. If the Trash folder for an agent was a symlink, files landed
+wherever it pointed and replaced what was there. Moves now go through
+directories opened without following symlinks, as a hard link plus unlink, so
+an existing file is never replaced and a Trash on another volume is refused
+rather than copied. A re-run also recognises a file it already linked. The
+dry run now opens the database read-only, without schema setup. Lesson: a
+"safe" destination needs the same no-follow, no-clobber care as the source;
+moving to the Trash is still writing.
+
+## 2026-11-24 — An interrupted conversion left raw copies no re-run would move
+
+Security found it on #461: the conversion binds every reference first, then
+moves the raw copies to the Trash. A crash between the two left raw files that
+the next run ignored, because it only looked for unbound references. The data
+was safe, but 4.4 GB could stay behind with nothing reporting it. A re-run (and
+the dry-run plan) now also picks up bound versions whose raw copy is still in
+place, checks them again and finishes the move, pointers before the copies
+they point into. The dry run also stopped creating empty folders. Lesson: a
+multi-step migration's "what's left" must be derived from what's on disk, not
+only from the step that marks progress.
+
+## 2026-11-22 — Converting old memory copies needs every citation found first
+
+Converting raw conversation copies to extracted records means binding each
+database reference to its new records digest before the raw file can go. The
+references live in three places (checkpoint `memory_sources`, checkpoint
+`memory_source`, and summary revisions), and that list came from scanning the
+real database, not from reading the writers. While tracing them, a #436 bug
+surfaced: an idle agent's next checkpoint re-saved an old version as records,
+and the references made before that (which have no digest) were refused.
+
+The conversion reads each cited version the old way, writes records, reads them
+back through the new reference and compares, and only then updates the rows and
+moves the raw files to the Trash. Rehearsed on clones of the real data: 839
+citations read back identically, and the 4.4 GB of cited raw copies became 87 MB.
+Lesson: before a migration that removes the old form, scan the live data for
+every reference to it, and rehearse on a clone of that data.
+
+## 2026-11-25 — Finish a tooltip interaction before testing the next control
+
+A browser check left a keyboard-focused Oracle tooltip open and then tried to
+click a button beneath it. The CI trace showed pointer interception, not a slow
+backend. Move focus to the next control and assert the tooltip closes before
+clicking; do not force the click or raise the timeout to conceal the obstruction.
+
+## 2026-11-25 — Foreground inbox reads must not repeat historical retirement
+
+Badge counts invoked full cleanup twice, and protected old mail made that work
+repeat indefinitely. Expire deadlines on every read, but schedule physical
+retirement with a monotonic interval and force it at startup. Keep preservation
+callbacks before retirement and advance the interval only after a successful
+commit. Extract checkpoint retention metadata once per statement; malformed
+markers must still protect history. Test scheduling, immediate expiry, retries,
+SELECT/DELETE parity and exactly-once analytics separately.
+
+## 2026-11-24 — A cache budget applied after parsing cannot bound read memory
+
+Reading an entire transcript suffix, decoding it and splitting all its lines
+created several large simultaneous copies before cache eviction ran. Read fixed
+chunks, keep only the unfinished line between them, and evict unrelated LRU
+records before the next allocation. Preserve the old Unicode splitlines semantics
+because annotation identities include line indices. An unchanged partial tail
+must still avoid parsing, and a failed read must not commit a partial append.
+This bounds temporary source buffers by chunk plus longest line, not total memory:
+parsed records, oversized individual lines and full response serialization still
+need explicit paging and record-size policies.
+
 ## 2026-11-24 — Exercise empty-input keys and Unicode highlight boundaries
 
 Search must release Escape to sidebar navigation after clearing its own value.

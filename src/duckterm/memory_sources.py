@@ -34,12 +34,16 @@ NORMALIZATION = "native-blocks-v2"
 RECORDS_FORMAT = "records-v1"
 
 
-def directory(key: str) -> Path:
+def location(key: str) -> Path:
+    """Where a session's memory is kept, without creating it."""
     if not re.fullmatch(r"[A-Za-z0-9._-]{1,128}", key) or key in {".", ".."}:
         raise APIError(400, "Invalid session identity")
-    root = paths.home() / "checkpoints"
-    target = root / key / "memory"
-    for part in (root, root / key, target):
+    return paths.home() / "checkpoints" / key / "memory"
+
+
+def directory(key: str) -> Path:
+    target = location(key)
+    for part in (target.parent.parent, target.parent, target):
         if part.is_symlink():
             raise APIError(409, "Memory storage must not be a symbolic link")
         part.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -129,7 +133,7 @@ def snapshot_file(key: str, snapshot: str) -> tuple[Path, int | None]:
     raise APIError(409, "Retained conversation reference cycle")
 
 
-def _record_line(record: dict[str, Any]) -> bytes:
+def record_line(record: dict[str, Any]) -> bytes:
     # Most messages have no tool blocks, so their summary text is the text itself.
     stored = {k: v for k, v in record.items() if not (k == "summary_text" and v == record["text"])}
     return (json.dumps(stored, ensure_ascii=False, separators=(",", ":")) + "\n").encode()
@@ -236,23 +240,10 @@ def retained_path(key: str, snapshot: str, bound: str | None) -> Path:
     return found[0] if found is not None else snapshot_file(key, snapshot)[0]
 
 
-def _retain_records(
-    key: str,
-    source: dict[str, Any],
-    version: str,
-    size: int,
-    attachments: int,
-    records: list[dict[str, Any]],
-    prefixes: dict[int, str],
-) -> str:
-    """Write one version's records and return their digest for the reference.
-
-    Keeps one whole copy per growing conversation.
-    """
-    import fcntl
-
-    root = directory(key)
-    lines = [_record_line(record) for record in records]
+def write_records(
+    root: Path, version: str, size: int, attachments: int, lines: list[bytes]
+) -> dict[str, Any]:
+    """Atomically write a whole records copy and return its header."""
     meta = {
         "format": RECORDS_FORMAT,
         "version": version,
@@ -275,6 +266,27 @@ def _retain_records(
         os.replace(name, destination)
     finally:
         Path(name).unlink(missing_ok=True)
+    return meta
+
+
+def _retain_records(
+    key: str,
+    source: dict[str, Any],
+    version: str,
+    size: int,
+    attachments: int,
+    records: list[dict[str, Any]],
+    prefixes: dict[int, str],
+) -> str:
+    """Write one version's records and return their digest for the reference.
+
+    Keeps one whole copy per growing conversation.
+    """
+    import fcntl
+
+    root = directory(key)
+    lines = [record_line(record) for record in records]
+    meta = write_records(root, version, size, attachments, lines)
     identity = source["runtime"] + ":" + source["native_id"]
     with (root / "latest.lock").open("a") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)

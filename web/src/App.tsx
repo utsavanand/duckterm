@@ -356,6 +356,9 @@ function Dashboard() {
 
   const towerVisible = towerOpen && !focusOpen && gridFolder === null;
   const closeHome = useCallback(() => setHomeOpen(false), []);
+  const homeAutopilot = useMemo(() => sidebarAutopilot
+    ? { summary: autopilotSummary, open: () => { setHomeOpen(false); setTowerMode("autopilot"); setTowerOpen(true); setAnalyticsTab(null); } }
+    : null, [sidebarAutopilot, autopilotSummary]);
   const towerLayer = towerVisible && <div className="rd-tower-layer">
     {towerMode === "autopilot" && sidebarAutopilot ? <AutopilotPage /> : analyticsTab ? <Analytics initialTab={analyticsTab} sessions={agents} onBack={() => setAnalyticsTab(null)} /> : <LiveControlTower
       onAnalytics={setAnalyticsTab}
@@ -398,9 +401,9 @@ function Dashboard() {
           className={`rd-btn rd-btn-ghost rd-btn-sm${towerOpen ? " rd-btn-active" : ""}`}
           aria-pressed={towerOpen}
           onClick={() => { setTowerMode("oracle"); setTowerOpen((o) => !o); setFocusOpen(false); setGridFolder(null); setHomeOpen(false); }}
-          title={has("oracle") ? "Control tower: fleet insights, every agent at a glance, and Oracle chat" : "Control tower: fleet insights and every agent at a glance"}
+          title={has("oracle") && has("fleet_monitor") ? "Fleet monitor: Ask Oracle, your agent fleet and analytics" : has("oracle") ? "Control tower: fleet insights, every agent at a glance, and Oracle chat" : "Control tower: fleet insights and every agent at a glance"}
         >
-          {has("oracle") ? "Oracle" : "Overview"}
+          {has("oracle") ? (has("fleet_monitor") ? "Fleet monitor" : "Oracle") : "Overview"}
           {has("oracle") && relayOpen > 0 && <span className="rd-rules-badge" aria-label={`${relayOpen} need you`}>{relayOpen}</span>}
         </button>}
         <button
@@ -437,6 +440,7 @@ function Dashboard() {
           leaves Agents interactive; other editions retain the fleet overview. */}
       {homeOpen && <div className="rd-home-layer">
         <LiveHome agents={agents} onTeams={closeHome} onOpenTerminal={key => { setSelectedKey(key); setView("terminal"); }}
+          autopilot={homeAutopilot}
           onAnalytics={tab => { setHomeOpen(false); setTowerOpen(true); setAnalyticsTab(tab); }} />
       </div>}
       {!sidebarOracle && towerLayer}

@@ -3164,3 +3164,15 @@ select {
 
 .st-unknown { color: var(--text-soft); }
 .st-unknown .dot { background: var(--text-soft); }
+
+/* Ask Oracle: message one agent */
+.rd-oracle-at { align-self: flex-end; font-weight: 600; min-width: 30px; }
+.rd-oracle-to { display: flex; align-items: center; gap: 6px; margin: 0 12px -6px; font-size: 0.75rem; color: var(--muted); }
+.rd-oracle-to b { color: var(--fg); }
+.rd-oracle-picker { display: grid; gap: 2px; max-height: 240px; overflow-y: auto; margin: 0 12px -6px; padding: 6px; border: 1px solid var(--border); border-radius: 10px; background: var(--bg-soft); }
+.rd-oracle-picker input { box-sizing: border-box; width: 100%; margin-bottom: 4px; padding: 6px 8px; border: 1px solid var(--border); border-radius: 6px; background: var(--bg); color: inherit; font: inherit; }
+.rd-oracle-picker button { display: flex; gap: 8px; align-items: baseline; padding: 5px 8px; border: 0; border-radius: 6px; background: none; color: inherit; text-align: left; cursor: pointer; font: inherit; }
+.rd-oracle-picker button:hover, .rd-oracle-picker button[aria-selected="true"] { background: var(--amber-bg); }
+.rd-oracle-picker b { white-space: nowrap; }
+.rd-oracle-picker small { min-width: 0; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rd-oracle-send .rd-relay-quote { margin: 0; }

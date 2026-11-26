@@ -209,15 +209,19 @@ def retention_predicate(kind: str) -> str:
           SELECT 1 FROM pins c WHERE c.session_key=e.session_key AND
             CASE WHEN c.rule IS NULL THEN e.rowid BETWEEN c.first_id AND c.last_id
               ELSE c.rule END)"""
-    scope = "(c.session_key=q.recipient OR c.session_key=q.sender)"
-    pin = (
-        "EXISTS (SELECT 1 FROM json_each(json_extract(c.record_json,'$.mail_ids')) m "
-        "WHERE m.value=q.id)"
-    )
-    # Extract the guarded array first: json_each would otherwise parse the whole
-    # checkpoint again, including potentially megabytes of unrelated evidence.
-    # CASE prevents SQLite from invoking JSON functions on corrupt data.
-    return f"NOT EXISTS (SELECT 1 FROM checkpoints c WHERE {scope} AND {_retention_rule(pin)})"
+    # Protected old mail survives every sweep. Parse checkpoint metadata once
+    # per statement instead of parsing its evidence again for each old message.
+    rule = _retention_rule("NULL")
+    return f"""NOT EXISTS (
+      WITH pins AS MATERIALIZED (
+        SELECT c.session_key, {rule} AS rule,
+          CASE WHEN json_valid(c.record_json)
+            THEN json_extract(c.record_json,'$.mail_ids') END AS mail_ids
+        FROM checkpoints c)
+      SELECT 1 FROM pins c WHERE (c.session_key=q.recipient OR c.session_key=q.sender) AND
+        CASE WHEN c.rule IS NULL THEN
+          EXISTS (SELECT 1 FROM json_each(c.mail_ids) m WHERE m.value=q.id)
+          ELSE c.rule END)"""
 
 
 def _retention_rule(pin: str) -> str:

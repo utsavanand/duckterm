@@ -67,10 +67,10 @@ def test_exactly_once_before_after_sweep_and_reopen(store, tmp_path):
     before = snapshot(store)
     assert sum(d["sent"] for d in before["daily"]) == 1
     assert sum(d["answered"] for d in before["daily"]) == 1
-    store.session_api._sweep()
+    store.session_api._sweep(force_retire=True)
     assert store._conn.execute("SELECT COUNT(*) FROM session_questions").fetchone()[0] == 0
     assert snapshot(store) == before
-    store.session_api._sweep()
+    store.session_api._sweep(force_retire=True)
     assert snapshot(store) == before
     reopened = HistoryStore(tmp_path / "db.sqlite")
     assert snapshot(reopened) == before
@@ -89,11 +89,11 @@ def test_failed_delete_rolls_back_counts(store):
         "BEGIN SELECT RAISE(ABORT,'injected'); END"
     )
     with pytest.raises(sqlite3.IntegrityError, match="injected"):
-        store.session_api._sweep()
+        store.session_api._sweep(force_retire=True)
     assert store._conn.execute("SELECT COUNT(*) FROM mail_rollup_v1").fetchone()[0] == 0
     assert store._conn.execute("SELECT COUNT(*) FROM session_questions").fetchone()[0] == 1
     store._conn.execute("DROP TRIGGER fail_delete")
-    store.session_api._sweep()
+    store.session_api._sweep(force_retire=True)
     assert sum(d["sent"] for d in snapshot(store)["daily"]) == 1
 
 
@@ -120,7 +120,7 @@ def test_expiry_and_open_now(store):
     seed(store, "expired", status="queued", expires=NOW - 8 * mail.DAY)
     seed(store, "queued", status="queued", created=NOW - 1000)
     seed(store, "accepted", status="accepted", created=NOW - 2000)
-    store.session_api._sweep()
+    store.session_api._sweep(force_retire=True)
     data = snapshot(store)
     assert sum(d["expired"] for d in data["daily"]) == 1
     assert data["open_now"]["queued"] == data["open_now"]["accepted"] == 1
@@ -150,7 +150,7 @@ def test_test_sessions_are_never_counted(store):
         }
     )
     assert snapshot(store)["daily"] == []
-    store.session_api._sweep()
+    store.session_api._sweep(force_retire=True)
     store.delete_session("a")
     assert snapshot(store)["daily"] == []
 
@@ -163,7 +163,7 @@ def test_broadcast_and_nudge_survive_retirement(store):
     )
     store._conn.commit()
     before = snapshot(store)
-    store.session_api._sweep()
+    store.session_api._sweep(force_retire=True)
     mail.retire_events(store._conn, "ts < ?", (NOW - 30 * mail.DAY,))
     assert snapshot(store) == before
     assert sum(d["broadcasts"] for d in before["daily"]) == 1
@@ -186,7 +186,7 @@ def test_v5_migration_counts_retained_rows_only(store, tmp_path):
 
 def test_v6_restart_migration_preserves_retired_mail_counts(store, tmp_path):
     seed(store)
-    store.session_api._sweep()
+    store.session_api._sweep(force_retire=True)
     before = snapshot(store)
     store._conn.execute("ALTER TABLE sessions DROP COLUMN restart_json")
     store._conn.execute("PRAGMA user_version=6")
@@ -250,7 +250,7 @@ def test_folder_scope_includes_either_endpoint_once_before_and_after_retirement(
     assert selected["open_now"]["queued"] == 1
     both = mail.snapshot(store._conn, None, now=NOW, sessions={"inside", "b"})
     assert sum(row["sent"] for row in both["daily"]) == 3
-    store.session_api._sweep()
+    store.session_api._sweep(force_retire=True)
     assert mail.snapshot(store._conn, None, now=NOW, sessions={"inside"}) == selected
     assert mail.snapshot(store._conn, None, now=NOW, sessions=set())["daily"] == []
 
@@ -280,7 +280,7 @@ def test_checkpoint_retains_closed_mail_and_broadcast_once(store, tmp_path):
     )
     before = snapshot(store)
     for _ in range(2):
-        store.session_api._sweep()
+        store.session_api._sweep(force_retire=True)
         assert {r[0] for r in store._conn.execute("SELECT id FROM session_questions")} == {
             "held-q",
             "held-b",
@@ -295,7 +295,7 @@ def test_checkpoint_retains_closed_mail_and_broadcast_once(store, tmp_path):
         assert snapshot(reopened) == before
         reopened._conn.execute("DELETE FROM checkpoints WHERE id='pin'")
         reopened._conn.commit()
-        reopened.session_api._sweep()
+        reopened.session_api._sweep(force_retire=True)
         assert not reopened._conn.execute("SELECT id FROM session_questions").fetchall()
         assert snapshot(reopened) == before
     finally:
@@ -314,5 +314,5 @@ def test_unrecognized_marker_suspends_normal_retirement_for_its_session(store, r
         (record, NOW),
     )
     store._conn.commit()
-    store.session_api._sweep()
+    store.session_api._sweep(force_retire=True)
     assert store._conn.execute("SELECT id FROM session_questions").fetchone()[0] == "held"

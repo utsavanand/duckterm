@@ -294,4 +294,6 @@ def test_old_persistent_assignment_retained_for_seven_days_after_cancellation(
     assert result["answered_at"] == int(future * 1000)
     assert len(history.session_api.inbox("recipient", owner=True)["messages"]) == 1
     monkeypatch.setattr("duckterm.core.session_api.time.time", lambda: future + 8 * 86400)
+    # Test the retention rule independently of the monotonic cleanup schedule.
+    history.session_api._sweep(force_retire=True)
     assert history.session_api.inbox("recipient", owner=True)["messages"] == []

@@ -80,7 +80,7 @@ def test_direct_owner_question_retry_reply_and_retirement(app):  # noqa: F811
         (old, old, message["message_id"]),
     )
     conn.commit()
-    app.history.session_api._sweep()
+    app.history.session_api._sweep(force_retire=True)
     assert (
         conn.execute(
             "SELECT COUNT(*) FROM session_questions WHERE id = ?", (message["message_id"],)
