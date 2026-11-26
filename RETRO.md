@@ -1,3 +1,24 @@
+## 2026-11-25 — A cache does not share work while it is empty
+
+Home requests PR rows for several folders together. Every cold request saw
+the same expired branch-owner cache and started its own event scan and Git
+lookups. Twelve simultaneous calls reproduced twelve rebuilds. Share one
+in-flight rebuild, cache only successful results, and let it finish when one
+caller disconnects. Test the overlap and failure path with explicit gates,
+not machine-wide CPU stress.
+
+The analytics worker also received identities computed on the event loop:
+argument evaluation scanned all event JSON before the worker ever started.
+Read identities through a worker-owned, read-only SQLite snapshot. Moving
+the expensive call requires moving its expensive arguments too; do not
+reuse the loop's SQLite connection from a thread.
+
+TokenLedger had its own whole-suffix read/split allocation, independent of
+the MessageCache reader fixed earlier. Stream its raw input too, preserving
+byte line splitting and the incomplete trailing record. Chunking reduces
+temporary allocation; it does not eliminate full-history scan time or bound
+the largest individual record and retained accounting state.
+
 ## 2026-11-25 — The Autopilot page matched its mock and still looked wrong
 
 The owner's first real view was the empty page in dark mode on a wide screen.
