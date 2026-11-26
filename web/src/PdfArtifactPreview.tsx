@@ -1,10 +1,12 @@
 import { useEffect, useRef, useState } from "react";
-import { version, getDocument, GlobalWorkerOptions, TextLayer, type PDFDocumentProxy, type RenderTask } from "pdfjs-dist";
-import workerUrl from "pdfjs-dist/build/pdf.worker.min.mjs?url";
+import { version, getDocument, GlobalWorkerOptions, TextLayer, type PDFDocumentProxy, type RenderTask } from "pdfjs-dist/legacy/build/pdf.mjs";
+import workerUrl from "pdfjs-dist/legacy/build/pdf.worker.min.mjs?url";
 import type { ArtifactSelection } from "./ArtifactFeedback";
 import { locateFileQuote } from "./locateFileQuote";
 import "./pdfArtifact.css";
 
+// WebKit on supported macOS versions lacks newer Map methods; use PDF.js's
+// matching compatibility renderer and worker instead of host-specific polyfills.
 GlobalWorkerOptions.workerSrc = workerUrl;
 const resources = new URL(import.meta.env.DEV ? "/node_modules/pdfjs-dist/" : `${import.meta.env.BASE_URL}assets/pdfjs-${version}/`, window.location.href).href;
 export default function PdfArtifactPreview({ data, title, onSelect, locate, onLocate }: {

@@ -70,7 +70,8 @@ page's extracted text. Scanned pages remain visible and support Comment on page;
 DuckTerm does not perform OCR. Password-protected and unreadable PDFs offer a
 clear error while preserving Download and comment history.
 
-The bundled PDF.js renderer and worker load only when a PDF is opened. Fonts,
+The bundled PDF.js compatibility renderer and matching worker load only when a
+PDF is opened. This supports WebKit without the newest JavaScript Map methods. Fonts,
 character maps and image decoders ship in versioned local assets, without CDN
 requests. Only canvas and text layers are rendered: document scripts, embedded
 HTML, links, forms and actions are not executed. Canvas allocation is bounded,

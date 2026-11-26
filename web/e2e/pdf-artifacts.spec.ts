@@ -15,7 +15,12 @@ function samplePdf(): Buffer {
 }
 
 test("PDF pages, selections, scans and feedback preserve exact versions", async ({ page }) => {
-  test.setTimeout(90_000); await page.setViewportSize({ width: 1600, height: 1000 });
+  test.setTimeout(90_000);
+  // Native WebKit lacks these methods even when the current Chromium has them.
+  await page.addInitScript(() => {
+    for (const prototype of [Map.prototype, WeakMap.prototype]) Reflect.deleteProperty(prototype, "getOrInsertComputed");
+  });
+  await page.setViewportSize({ width: 1600, height: 1000 });
   const root = realpathSync(mkdtempSync(join(tmpdir(), "pdf-review-")));
   const pdf = samplePdf(); writeFileSync(join(root, "guide.pdf"), pdf);
   const launched = await apiPost("/sessions/launch", { command: "python3 -u -c 'import sys; print(\"READY\"); [print(\"RECEIVED \"+line) for line in sys.stdin]'", cwd: root, runtime: "generic", name: "PDF review", in_terminal: false, test: true });
