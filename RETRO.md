@@ -1,3 +1,15 @@
+## 2026-11-25 — A ref's name is input, so pass git the commit
+
+The Pulse asked `rev-parse --abbrev-ref origin/HEAD` for the default branch and
+handed the name to `git log`. Refnames can't start with "-", but a branch can
+be called `refs/heads/--output=/path`, and its short name can. A session that
+pointed origin/HEAD at one made the server write the merge log, with commit
+subjects it controls, to any file the server can write. The Pulse now resolves
+origin/HEAD to a commit id and passes `--end-of-options` before every
+revision. The same review found the refresh unbounded: every folder a session
+names costs git calls, and overlapping 30 s polls each ran their own. Folders,
+tags and total time per refresh are now capped, and polls share one refresh.
+
 ## 2026-11-25 — A path a session names is code the server may run
 
 The Pulse runs `git log` on every recent session's folder, and the folder

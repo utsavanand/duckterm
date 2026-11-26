@@ -5179,18 +5179,24 @@ class Server:
 
     async def _fleet_pulse(self, writer: asyncio.StreamWriter) -> None:
         """Artifacts, PR merges and releases for the Fleet monitor's Pulse.
-        Git reads are cached briefly: every open dashboard polls this."""
+        Git reads are cached briefly: every open dashboard polls this. One
+        refresh runs at a time; polls that arrive during it wait for it."""
         now = int(time.time() * 1000)
         cached = getattr(self, "_pulse_cache", None)
         if cached is None or now - cached[0] >= self._PULSE_TTL_MS:
-            since = now - fleet_pulse.WINDOW_MS
-            events = await asyncio.to_thread(
-                fleet_pulse.collect,
-                self.history.sessions(),
-                self.history.artifacts.recent(since, fleet_pulse.LIMIT),
-                now,
-            )
-            cached = self._pulse_cache = (now, events)
+            refresh = getattr(self, "_pulse_refresh", None)
+            if refresh is None or refresh.done():
+                since = now - fleet_pulse.WINDOW_MS
+                refresh = self._pulse_refresh = asyncio.ensure_future(
+                    asyncio.to_thread(
+                        fleet_pulse.collect,
+                        self.history.sessions(),
+                        self.history.artifacts.recent(since, fleet_pulse.LIMIT),
+                        now,
+                    )
+                )
+            # A dropped poll must not cancel the refresh other polls share.
+            cached = self._pulse_cache = (now, await asyncio.shield(refresh))
         await _write_json(writer, 200, {"events": cached[1]})
 
     async def _control_tower(self, writer: asyncio.StreamWriter) -> None:

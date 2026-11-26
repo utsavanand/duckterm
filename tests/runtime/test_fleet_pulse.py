@@ -1,13 +1,15 @@
 """The Fleet monitor's Pulse reads PR merges and release tags from the clones
 sessions work in, plus artifacts made, and nothing else."""
 
+import asyncio
 import base64
 import subprocess
+import threading
 import time
 
 import pytest
 from tests.runtime.test_relay import world  # noqa: F401  (fixture)
-from tests.runtime.test_session_api import dispatch
+from tests.runtime.test_session_api import Writer, dispatch
 
 from duckterm.core import fleet_pulse
 from duckterm.editions import EditionConfig
@@ -139,6 +141,55 @@ def test_a_repos_signature_verifier_never_runs(repo, tmp_path) -> None:
     marker.unlink()
     fleet_pulse.collect([session(repo)], [], int(time.time() * 1000))
     assert not marker.exists()
+
+
+def test_a_branch_named_like_an_option_is_never_an_option(repo, tmp_path) -> None:
+    # Security #485: origin/HEAD pointing at "--output=<path>" made git log
+    # write the merge log to that path.
+    target = tmp_path / "written"
+    git(repo, "update-ref", f"refs/heads/--output={target}", "HEAD")
+    git(repo, "symbolic-ref", "refs/remotes/origin/HEAD", f"refs/heads/--output={target}")
+    events = fleet_pulse.collect([session(repo)], [], int(time.time() * 1000))
+    assert not target.exists()
+    assert [e["title"] for e in events if e["kind"] == "pr"] == ["#470 Needs you counts match"]
+
+
+def test_work_per_refresh_is_bounded(repo, tmp_path, monkeypatch) -> None:
+    other = tmp_path / "other"
+    subprocess.run(["cp", "-R", str(repo), str(other)], check=True)
+    rows = [session(repo), session(other, session_key="s2")]
+    assert len(fleet_pulse.clones(rows, 0)) == 2
+    monkeypatch.setattr(fleet_pulse, "MAX_PATHS", 1)
+    assert len(fleet_pulse.clones(rows, 0)) == 1
+    monkeypatch.setattr(fleet_pulse, "DEADLINE_S", -1.0)
+    assert fleet_pulse.collect(rows, [], int(time.time() * 1000)) == []
+
+
+def test_overlapping_polls_share_one_refresh(world, monkeypatch) -> None:  # noqa: F811
+    server = world[0]
+    calls = []
+    release = threading.Event()
+
+    def collect(sessions, artifacts, now):
+        calls.append(now)
+        release.wait(5)
+        return [{"kind": "release", "at": now, "title": "v1", "repo": "r", "detail": ""}]
+
+    monkeypatch.setattr(fleet_pulse, "collect", collect)
+
+    async def polls() -> list[Writer]:
+        writers = [Writer(), Writer()]
+        first = asyncio.ensure_future(server._fleet_pulse(writers[0]))
+        await asyncio.sleep(0.05)
+        second = asyncio.ensure_future(server._fleet_pulse(writers[1]))
+        await asyncio.sleep(0.05)
+        release.set()
+        await asyncio.gather(first, second)
+        return writers
+
+    writers = asyncio.run(polls())
+    assert len(calls) == 1
+    assert all(b'"v1"' in w.data for w in writers)
 
 
 def test_route_needs_the_flag_and_returns_artifacts(world) -> None:  # noqa: F811
