@@ -1,3 +1,18 @@
+## 2026-11-25 — A cache does not share work while it is empty
+
+Home requests PR rows for several folders together. Every cold request saw
+the same expired branch-owner cache and started its own event scan and Git
+lookups. Twelve simultaneous calls reproduced twelve rebuilds. Share one
+in-flight rebuild, cache only successful results, and let it finish when one
+caller disconnects. Test the overlap and failure path with explicit gates,
+not machine-wide CPU stress.
+
+The analytics worker also received identities computed on the event loop:
+argument evaluation scanned all event JSON before the worker ever started.
+Read identities through a worker-owned, read-only SQLite snapshot. Moving
+the expensive call requires moving its expensive arguments too; do not
+reuse the loop's SQLite connection from a thread.
+
 ## 2026-11-25 — Tabs that unmount take the owner's draft with them
 
 The Fleet monitor rendered only the selected tab, so a look at Agent fleet

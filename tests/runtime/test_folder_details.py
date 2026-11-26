@@ -1,6 +1,7 @@
 """Folder counts and artifact metadata preserve scope, content, and owner choices."""
 
 import base64
+import threading
 
 import pytest
 from tests.runtime.test_folder_view import app as folder_fixture
@@ -76,6 +77,14 @@ def test_categories_keep_registration_and_removed_provenance(app):
 
 
 def test_folder_stats_exact_scope_periods_and_removed_counts(app, monkeypatch):
+    loop_thread = threading.get_ident()
+    read_identities = app._token_identities
+
+    def worker_identities():
+        assert threading.get_ident() != loop_thread
+        return read_identities()
+
+    monkeypatch.setattr(app, "_token_identities", worker_identities)
     monkeypatch.setattr(
         app._tokens,
         "analytics",
