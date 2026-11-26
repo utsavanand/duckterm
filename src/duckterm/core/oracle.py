@@ -34,6 +34,8 @@ class Nudge:
     ids: frozenset[str]
     at_ms: int
     read_ids: frozenset[str] = frozenset()
+    # The reminder never left the prompt, or couldn't be written at all.
+    undelivered: bool = False
 
 
 def pick_mail(
@@ -72,6 +74,10 @@ def should_nudge(
         return []
     if now_ms - last_owner_input_ms < TYPING_QUIET_MS:
         return []
+    # Typing into this terminal just failed; new mail must not make Oracle
+    # retry every minute (one session got 9 stuck reminders, 2026-11-01..08).
+    if previous and previous.undelivered and now_ms - previous.at_ms < RENUDGE_MS:
+        return []
     # The settle wait keeps peer mail from hammering an agent that just
     # stopped; the owner's priority message skips it (design, 2026-09-30).
     settled = now_ms - turn_ended_ms >= SETTLE_MS
@@ -96,11 +102,16 @@ def record_nudge(
     picked: list[dict[str, Any]],
     mail: list[dict[str, Any]],
     now_ms: int,
+    *,
+    delivered: bool = True,
 ) -> Nudge:
-    """Retain per-item history across newer mail, pruning closed items."""
+    """Retain per-item history across newer mail, pruning closed items.
+    Mail from an undelivered reminder stays unseen, so it is retried."""
     open_ids = {str(m["id"]) for m in mail}
     ids = (previous.ids if previous else frozenset()) & open_ids
     read_ids = (previous.read_ids if previous else frozenset()) & open_ids
+    if not delivered:
+        return Nudge(ids, now_ms, read_ids, undelivered=True)
     return Nudge(
         frozenset(ids | {str(m["id"]) for m in picked}),
         now_ms,

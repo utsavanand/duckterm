@@ -177,7 +177,7 @@ export interface RelayNote {
   folder: string;
   runtime: string;
   kind: "approval" | "choice" | "question";
-  status: "open" | "answered" | "handled";
+  status: "open" | "answered" | "handled" | "ended";
   created_at: number;
   closed_at?: number;
   question?: string; // choice: the agent's question; question: the classifier's one-line ask

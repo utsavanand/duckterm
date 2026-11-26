@@ -17,6 +17,7 @@ function when(ts: number): string {
 
 // What happened to a closed note, in words.
 export function closedLine(n: RelayNote): string {
+  if (n.status === "ended") return "The session stopped before this was answered.";
   if (n.status === "handled") {
     return n.kind === "question"
       ? "Answered in its terminal."
@@ -46,7 +47,8 @@ export function NoteCard({
   note: RelayNote;
   rules: RelayRule[];
   onChange: () => void;
-  onPropose: (text: string) => void;
+  // Without it there is no chat to draft a rule in, so no rule button.
+  onPropose?: (text: string) => void;
   onOpenTerminal?: (key: string) => void;
 }) {
   const [reply, setReply] = useState(note.suggestion?.reply ?? "");
@@ -111,13 +113,15 @@ export function NoteCard({
         <div className="rd-relay-actions">
           <button className="rd-btn rd-btn-primary rd-btn-sm" disabled={busy} onClick={() => void answer("approve")}>Approve</button>
           <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={busy} onClick={() => void answer("deny")}>Deny</button>
-          <button
-            className="rd-btn rd-btn-ghost rd-btn-sm"
-            disabled={busy}
-            onClick={() => void answer("approve", () => onPropose(`Always approve "${note.detail}"${note.folder ? ` in ${note.folder.split("/")[0]}` : ""}`))}
-          >
-            Approve and make a rule
-          </button>
+          {onPropose && (
+            <button
+              className="rd-btn rd-btn-ghost rd-btn-sm"
+              disabled={busy}
+              onClick={() => void answer("approve", () => onPropose(`Always approve "${note.detail}"${note.folder ? ` in ${note.folder.split("/")[0]}` : ""}`))}
+            >
+              Approve and make a rule
+            </button>
+          )}
         </div>
       )}
       {open && onOpenTerminal && (

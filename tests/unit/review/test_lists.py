@@ -441,3 +441,96 @@ def test_folder_members_leave_out_test_sessions(tmp_path: Path) -> None:
         )
         history.set_meta(key, group="team")
     assert [row["session_key"] for row in lists.folder_members(history, "team")] == ["real"]
+
+
+def review_author(sessions: list[dict], owners: dict, repo: Path, branch: str) -> str | None:
+    """Server._review_author against these sessions and first-push owners,
+    with real git for every checkout."""
+    import asyncio
+
+    from duckterm.server import Server
+
+    class History:
+        def sessions(self) -> list[dict]:
+            return sessions
+
+    class Subject:
+        history = History()
+        _branch_owners_cache = (float("inf"), owners)
+        _branch_owners = Server._branch_owners
+
+    root = lists.git.repo_root(str(repo))
+    found = asyncio.run(Server._review_author(Subject(), root, branch))  # type: ignore[arg-type]
+    return found["key"] if found else None
+
+
+def test_review_author_is_the_first_pusher_even_after_it_ended(git_repo: Path) -> None:
+    run(git_repo, "checkout", "-q", "-b", "topic")
+    sessions = [
+        {"session_key": "pusher", "cwd": "/gone", "ended_at": 1},
+        {"session_key": "sitter", "cwd": str(git_repo), "branch": "topic"},
+    ]
+    owners = {(lists.git.repo_root(str(git_repo)), "topic"): "pusher"}
+    assert review_author(sessions, owners, git_repo, "topic") == "pusher"
+    assert review_author(sessions, {}, git_repo, "topic") == "sitter"
+    sessions[1]["ended_at"] = 2
+    assert review_author(sessions, {}, git_repo, "topic") is None
+
+
+def test_review_author_follows_the_checkout_as_it_changes(git_repo: Path, tmp_path: Path) -> None:
+    """No answer outlives the checkout: switching branches moves the author
+    at once, and a checkout made after a miss is found on the next look."""
+    run(git_repo, "checkout", "-q", "-b", "topic")
+    sessions = [{"session_key": "s", "cwd": str(git_repo), "branch": "topic"}]
+    assert review_author(sessions, {}, git_repo, "topic") == "s"
+    run(git_repo, "checkout", "-q", "-b", "other")
+    assert review_author(sessions, {}, git_repo, "topic") is None
+    assert review_author(sessions, {}, git_repo, "other") == "s"
+    # A detached checkout is on no branch, whatever branch was recorded.
+    sessions[0]["branch"] = "other"
+    run(git_repo, "checkout", "-q", "--detach", "HEAD")
+    assert review_author(sessions, {}, git_repo, "other") is None
+
+    later = tmp_path / "later"
+    sessions = [{"session_key": "late", "cwd": str(later)}]
+    assert review_author(sessions, {}, git_repo, "main") is None
+    later.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "main", str(later)], check=True)
+    assert review_author(sessions, {}, later, "main") == "late"
+
+
+def test_review_author_must_be_in_the_reviewed_repository(git_repo: Path, tmp_path: Path) -> None:
+    run(git_repo, "checkout", "-q", "-b", "topic")
+    elsewhere = tmp_path / "elsewhere"
+    subprocess.run(["git", "init", "-q", "-b", "topic", str(elsewhere)], check=True)
+    sessions = [{"session_key": "b", "cwd": str(elsewhere), "branch": "topic"}]
+    assert review_author(sessions, {}, git_repo, "topic") is None
+    sessions.append({"session_key": "a", "cwd": str(git_repo), "branch": "main"})
+    assert review_author(sessions, {}, git_repo, "topic") == "a"
+
+
+@pytest.mark.parametrize("mode", ["detached", "rebase"])
+def test_a_detached_session_keeps_the_pr_it_pushed(
+    clone: Path, monkeypatch: pytest.MonkeyPatch, mode: str
+) -> None:
+    """Off any branch (mid-rebase too), a session claims no checkout branch
+    but still lists the PR it pushed, and drops nothing it didn't push."""
+    run(clone, "checkout", "-q", "-b", "topic")
+    tip = commit(clone, "README.md", "topic change\n", "topic work")
+    run(clone, "push", "-q", "-u", "origin", "topic")
+    monkeypatch.setattr(lists.github, "pulls", lambda *a: [pull(7, "topic", head_sha=tip)])
+    rows = [session("s", clone)]
+    owners = lists.branch_owners([("s", 1, "git push origin topic", str(clone))])
+    assert [r["branch"] for r in lists.build(rows, owners=owners)["rows"]] == ["topic"]
+    if mode == "detached":
+        run(clone, "checkout", "-q", "--detach", "HEAD")
+    else:
+        run(clone, "checkout", "-q", "main")
+        commit(clone, "README.md", "main change\n", "conflicting main work")
+        run(clone, "checkout", "-q", "topic")
+        rebase = subprocess.run(["git", "-C", str(clone), "rebase", "main"], capture_output=True)
+        assert rebase.returncode == 1
+    assert run(clone, "branch", "--show-current") == ""
+    built = lists.build(rows, owners=owners, refresh=True)
+    assert [(r["branch"], r["pr"]["number"]) for r in built["rows"]] == [("topic", 7)]
+    assert lists.build(rows, owners={}, refresh=True)["rows"] == []

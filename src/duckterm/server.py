@@ -1315,9 +1315,12 @@ class Server:
             await _write_json(writer, 401, {"error": "owner credential required"})
             return
         counts = self.history.session_api.pending_counts()
+        unanswered = self.history.session_api.pending_counts(requires_reply=True, sweep=False)
+        # Cross-computer pending mail consists of questions requiring replies.
         for key, count in self.collaboration.pending_counts().items():
             counts[key] = counts.get(key, 0) + count
-        await _write_json(writer, 200, {"counts": counts})
+            unanswered[key] = unanswered.get(key, 0) + count
+        await _write_json(writer, 200, {"counts": counts, "unanswered_counts": unanswered})
 
     async def _session_inbox(
         self, writer: asyncio.StreamWriter, session_key: str, headers: dict[str, str], query: str
@@ -1809,6 +1812,8 @@ class Server:
             await self._folder_stats(writer, folder)
         elif view == "chat":
             self.history.session_api._sweep()
+            # Live replies must not wait for the historical-retirement interval.
+            self.history.folder_chats.refresh_dispatches(self.history._conn)
             _, messages = self.history.folder_chats.snapshot(folder)
             await _write_json(writer, 200, {"messages": messages})
         else:
@@ -1870,7 +1875,7 @@ class Server:
             target = await asyncio.to_thread(workspace.resolve, repo, ref, refresh=flag)
             if part == "":
                 result = await asyncio.to_thread(workspace.header, target)
-                result["session"] = await self._review_author(target.branch)
+                result["session"] = await self._review_author(target.repo, target.branch)
             elif part == "diff":
                 result = await asyncio.to_thread(
                     workspace.diff_payload,
@@ -1900,26 +1905,35 @@ class Server:
             return
         await _write_json(writer, 200, result)
 
-    async def _review_author(self, branch: str) -> dict[str, Any] | None:
-        """The session whose checkout is on this PR's head branch, with its
-        digest. Rows are read on the loop thread; the git look-ups run in a
-        worker, the same claim rule the PR lists use."""
+    async def _review_author(self, repo: str, branch: str) -> dict[str, Any] | None:
+        """The session that made this PR's head branch, with its digest: the
+        session that first pushed it (the PR lists' rule), else a live session
+        whose checkout is on it in this repository. Every review page waits on
+        this, and asking git about every session's checkout took seconds, so
+        ended sessions are skipped. Checkouts are asked fresh each time: a
+        cached answer went stale when a session switched branches."""
         from duckterm.review import lists
 
-        rows = [r for r in self.history.sessions() if r.get("worktree_path") or r.get("cwd")]
-        rows.sort(key=lambda r: bool(r.get("ended_at")))
+        sessions = self.history.sessions()
+        owner = (await self._branch_owners(False)).get((repo, branch))
+        row = next((r for r in sessions if r["session_key"] == owner), None)
+        if row is None:
+            live = [
+                r
+                for r in sessions
+                if not r.get("ended_at") and (r.get("worktree_path") or r.get("cwd"))
+            ]
+            # A recorded branch is only a hint (it can be stale, or name the
+            # same branch in another repository), so it orders the checks.
+            live.sort(key=lambda r: r.get("branch") != branch)
 
-        def find() -> dict[str, Any] | None:
-            for row in rows:
-                if row.get("branch") == branch:
-                    return row
-            for row in rows:
-                found = lists._worktree_branch(row)
-                if found and found[1] == branch:
-                    return row
-            return None
+            def find() -> dict[str, Any] | None:
+                for candidate in live:
+                    if lists._worktree_branch(candidate) == (repo, branch):
+                        return candidate
+                return None
 
-        row = await asyncio.to_thread(find)
+            row = await asyncio.to_thread(find)
         if row is None:
             return None
         return {
@@ -1960,7 +1974,7 @@ class Server:
             if not isinstance(question, str) or not question.strip() or len(question) > 8000:
                 raise workspace.ReviewError(400, "question must be 1 to 8000 characters")
             hunk = payload.get("hunk")
-            author = await self._review_author(target.branch)
+            author = await self._review_author(target.repo, target.branch)
             digest = author.get("progress") if author else None
             diff = await asyncio.to_thread(
                 workspace.diff_payload, target, since=None, whitespace=True
@@ -2032,7 +2046,7 @@ class Server:
         from duckterm.review import approvals, cards, workspace
 
         header = await asyncio.to_thread(workspace.header, target)
-        author = await self._review_author(target.branch)
+        author = await self._review_author(target.repo, target.branch)
         release_row = (
             approvals.release_session(self.history.sessions(), author["folder"]) if author else None
         )
@@ -2237,7 +2251,7 @@ class Server:
         from duckterm.review import author, cards, lists, workspace
 
         # Session data is read here, on the loop thread, before the worker runs.
-        owner = await self._review_author(target.branch)
+        owner = await self._review_author(target.repo, target.branch)
         author_facts = author.facts(self.history, owner["key"]) if owner else None
 
         async def run() -> None:
@@ -4472,18 +4486,20 @@ class Server:
             events.PRE_TOOL_USE,
             events.POST_TOOL_USE,
             events.STOP,
-            events.SESSION_END,
         ):
             # The agent moved on, so the question was answered. An agent whose
             # question doesn't block (Codex) carries on with it still queued;
             # only a submitted prompt (the answer, or one that discards it)
-            # or the session ending closes that note.
+            # or the session ending (below) closes that note.
             self.relay.close_for_session(key, {"choice"}, "handled", now)
-        if et in (events.USER_PROMPT_SUBMIT, events.SESSION_END, events.SESSION_START):
+        if et in (events.SESSION_END, events.SESSION_START):
+            # A new or finished conversation means nobody answered these.
+            self.relay.close_for_session(key, {"question", "choice"}, "ended", now)
+        if et == events.USER_PROMPT_SUBMIT:
             kinds = {"question", "choice"}
             answered = (
                 self._answered_choice(key, str(event.get("prompt") or ""))
-                if et == events.USER_PROMPT_SUBMIT and not harness.owner_prompt_blocks
+                if not harness.owner_prompt_blocks
                 else None
             )
             if answered is not None:
@@ -4876,8 +4892,22 @@ class Server:
         )
         return note
 
+    def _relay_retire_ended(self) -> None:
+        """Close notes whose session stopped without a SessionEnd event: a
+        killed terminal or a server restart marks it interrupted, and its
+        questions otherwise stayed in Needs you for days."""
+        now = int(time.time() * 1000)
+        for key in {n["session_key"] for n in self.relay.open_notes() if n["kind"] != "approval"}:
+            row = self.history.session(key)
+            if row is None or row.get("state") in AT_REST_STATES:
+                self.relay.close_for_session(key, {"question", "choice"}, "ended", now)
+
     async def _relay_list(self, writer: asyncio.StreamWriter) -> None:
         self._relay_sync_approvals()
+        self._relay_retire_ended()
+        # Every open note, however old, plus recent history: the count below
+        # covers all open notes, so the list must too.
+        older_open = [n for n in self.relay.notes[:-200] if n["status"] == "open"]
         await _write_json(
             writer,
             200,
@@ -4891,7 +4921,7 @@ class Server:
                             else note.get("urgency", "blocked")
                         ),
                     }
-                    for note in self.relay.notes[-200:]
+                    for note in older_open + self.relay.notes[-200:]
                 ],
                 "rules": self.relay.rules,
                 "open": len(self.relay.needs_you()),
@@ -4900,6 +4930,7 @@ class Server:
 
     async def _relay_count(self, writer: asyncio.StreamWriter) -> None:
         self._relay_sync_approvals()
+        self._relay_retire_ended()
         await _write_json(writer, 200, {"open": len(self.relay.needs_you())})
 
     async def _relay_answer(self, writer: asyncio.StreamWriter, note_id: str, body: bytes) -> None:
@@ -7437,14 +7468,14 @@ class Server:
             if not text:
                 continue
             status = await self._submit_prompt(key, text, source="oracle")
-            if status == "failed":
-                continue
             if pinned and status == "submitted":
                 # A stuck paste isn't delivery: the status stays "pending
                 # next turn" and the Stop-hook notice still carries it.
                 self._delivered(key, pinned[1])
             ids = sorted(str(m["id"]) for m in picked)
-            nudge = oracle.record_nudge(previous, picked, mail, now)
+            nudge = oracle.record_nudge(
+                previous, picked, mail, now, delivered=status == "submitted"
+            )
             self._oracle_nudges[key] = nudge
             self.bus.publish(
                 {
@@ -7452,6 +7483,7 @@ class Server:
                     "session_key": key,
                     "text": text,
                     "submitted": status == "submitted",
+                    "delivery": status,
                     "mail_ids": ids,
                     "seen_mail_ids": sorted(nudge.ids),
                     "read_reminder_ids": sorted(nudge.read_ids),
@@ -7470,6 +7502,7 @@ class Server:
             frozenset(str(i) for i in event.get("seen_mail_ids", event["mail_ids"])),
             ts,
             frozenset(str(i) for i in event.get("read_reminder_ids", [])),
+            undelivered=event.get("submitted") is False,
         )
 
     def _archive_swept(self, key: str) -> None:

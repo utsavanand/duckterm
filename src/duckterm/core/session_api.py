@@ -180,6 +180,9 @@ def _inbox_view(view: str, alias: str = "") -> str:
     return predicates[view]
 
 
+RETIRE_INTERVAL_SECONDS = 600
+
+
 class SessionAPI:
     def __init__(
         self,
@@ -190,6 +193,7 @@ class SessionAPI:
     ) -> None:
         self.edition = edition or editions.configured()
         self.before_retire: Callable[[], None] = lambda: None
+        self._next_retire_at = 0.0
         self.conn = conn
         self.credential_dir = credential_dir
         self.artifacts = ArtifactStore(conn)
@@ -550,13 +554,15 @@ class SessionAPI:
         ).fetchone()
         return {"sent": int(row["sent"]), "answered": int(row["answered"])}
 
-    def pending_counts(self) -> dict[str, int]:
-        self._sweep()
+    def pending_counts(self, *, requires_reply: bool = False, sweep: bool = True) -> dict[str, int]:
+        if sweep:
+            self._sweep()
+        predicate = _inbox_view("pending") if requires_reply else "status IN ('queued', 'accepted')"
         return {
             row["recipient"]: row["n"]
             for row in self.conn.execute(
                 "SELECT recipient, COUNT(*) AS n FROM session_questions "
-                "WHERE status IN ('queued', 'accepted') GROUP BY recipient"
+                f"WHERE {predicate} GROUP BY recipient"
             ).fetchall()
         }
 
@@ -871,8 +877,16 @@ class SessionAPI:
             raise APIError(404, "session not available")
         return target
 
-    def _sweep(self) -> None:
-        self.before_retire()
+    def _sweep(self, *, force_retire: bool = False) -> None:
+        """Expire deadlines immediately; amortize historical cleanup across reads.
+
+        Keep preservation callbacks and retirement on the connection's owner
+        thread. Old history may remain up to one maintenance interval longer;
+        checkpoint protection and the seven-day eligibility rule are unchanged.
+        """
+        retire = force_retire or time.monotonic() >= self._next_retire_at
+        if retire:
+            self.before_retire()
         now = int(time.time() * 1000)
         with self.conn:
             self.conn.execute(
@@ -880,6 +894,8 @@ class SessionAPI:
                 "WHERE status IN ('queued', 'accepted') AND expires_at > 0 AND expires_at <= ?",
                 (now,),
             )
+            if not retire:
+                return
             mail_analytics.retire_mail(
                 self.conn,
                 "status NOT IN ('queued', 'accepted') "
@@ -901,6 +917,8 @@ class SessionAPI:
                 "DELETE FROM session_inbox_delivery WHERE question_id NOT IN "
                 "(SELECT id FROM session_questions)"
             )
+        # A failed callback, statement or commit must leave maintenance due.
+        self._next_retire_at = time.monotonic() + RETIRE_INTERVAL_SECONDS
 
     def inbox(
         self,

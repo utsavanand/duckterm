@@ -112,7 +112,7 @@ test("Inbox scrolls independently, preserves open replies on refresh, and adapts
   await page.getByRole("button", { name: "All 50" }).click();
   await page.getByRole("searchbox", { name: "Search loaded messages" }).fill("Release review");
   await expect(page.locator(".rd-inbox-message")).toHaveCount(1);
-  await page.getByRole("searchbox").fill("");
+  await page.getByRole("searchbox", { name: "Search loaded messages" }).fill("");
   await page.screenshot({ path: "/tmp/duckterm-inbox-layout-desktop.png" });
   await page.setViewportSize({ width: 1280, height: 900 });
   expect(await list.evaluate((e) => e.scrollWidth <= e.clientWidth)).toBe(true);

@@ -211,6 +211,7 @@ def test_question_expires_while_stopped(store: HistoryStore, monkeypatch) -> Non
     store.set_state("b", "stopped")
     monkeypatch.setattr("duckterm.core.session_api.time.time", lambda: 1400)
     assert store.session_api.pending_counts() == {}
+    assert store.session_api.pending_counts(requires_reply=True) == {}
     store.set_state("b", "busy")
     b = enroll(store, "b")
     path = f"/questions/{question['id']}"
@@ -461,6 +462,36 @@ def test_pending_counts_survive_reading_and_clear_on_answer(store: HistoryStore)
     assert store.session_api.pending_counts() == {}
 
 
+def test_badge_response_expires_deadlines_once_for_both_counts(store, monkeypatch):
+    a = token_for(store, "a")
+    late = ask(store, a, "late")
+    ask(store, a, "open")
+    store._conn.execute("UPDATE session_questions SET expires_at=1 WHERE id=?", (late["id"],))
+    store._conn.commit()
+    sweeps = 0
+    original = store.session_api._sweep
+
+    def counted(**kwargs):
+        nonlocal sweeps
+        sweeps += 1
+        return original(**kwargs)
+
+    monkeypatch.setattr(store.session_api, "_sweep", counted)
+    server = Server(history=store)
+    status, body = dispatch(
+        server, "GET", "/session-inbox-counts", {"x-duckterm-token": server.token}
+    )
+    assert status == 200
+    assert body == {"counts": {"b": 1}, "unanswered_counts": {"b": 1}}
+    assert sweeps == 1
+    assert (
+        store._conn.execute(
+            "SELECT status FROM session_questions WHERE id=?", (late["id"],)
+        ).fetchone()[0]
+        == "expired"
+    )
+
+
 def test_moving_entire_automatic_group_joins_destination_root(store: HistoryStore) -> None:
     a, b = token_for(store, "a"), token_for(store, "b")
     question = ask(store, a)
@@ -499,3 +530,21 @@ def test_mail_analytics_owner_route_and_range_validation(store: HistoryStore) ->
         assert status == 200 and result["days"] == days
         assert result["timezone"] == "UTC" and result["version"] == 1
         assert result["daily"] == []  # Fixture sessions are explicitly test:true.
+
+
+@pytest.mark.parametrize("action", ["answer", "decline", "cancel"])
+def test_reply_required_counts_follow_request_lifecycle(store: HistoryStore, action: str) -> None:
+    a, b = token_for(store, "a"), token_for(store, "b")
+    q = ask(store, a)
+    assert store.session_api.pending_counts(requires_reply=True) == {"b": 1}
+    call(store, b, "GET", "/inbox")
+    call(store, b, "POST", f"/questions/{q['id']}/accept")
+    assert store.session_api.pending_counts(requires_reply=True) == {"b": 1}
+    call(
+        store,
+        a if action == "cancel" else b,
+        "POST",
+        f"/questions/{q['id']}/{action}",
+        {"text": "Done"},
+    )
+    assert store.session_api.pending_counts(requires_reply=True) == {}

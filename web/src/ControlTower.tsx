@@ -6,6 +6,7 @@ import { api } from "./api";
 import { Duck, poseFor } from "./Duck";
 import { SessionLocationDuck, sessionLocation } from "./SessionLocationDuck";
 import { OracleChat } from "./OracleChat";
+import { NoteCard } from "./RelayNotes";
 import { useRelay } from "./relay";
 import {
   TowerAgent,
@@ -56,7 +57,8 @@ export function ControlTower({
   const [source] = useState(() => new WidgetStreams());
   const analyticsRef = useRef(onAnalytics); analyticsRef.current = onAnalytics;
   const taskOpen = useRef(onOpenTerminal); taskOpen.current = onOpenTerminal;
-  const registry = useMemo(() => [...oracleWidgets(tab => analyticsRef.current(tab), { oracle, remote, backup }), ...(inbox ? [tasksWidget(key => taskOpen.current(key))] : [])], [oracle, remote, inbox, backup]);
+  const [needsOpen, setNeedsOpen] = useState(false);
+  const registry = useMemo(() => [...oracleWidgets(tab => analyticsRef.current(tab), { oracle, remote, backup, onNeedsYou: () => setNeedsOpen(o => !o) }), ...(inbox ? [tasksWidget(key => taskOpen.current(key))] : [])], [oracle, remote, inbox, backup]);
   const [hover, setHover] = useState<{ key: string; el: HTMLElement } | null>(null);
   const [pinned, setPinned] = useState<{ key: string; el: HTMLElement } | null>(null);
 
@@ -109,6 +111,23 @@ export function ControlTower({
         {teamList.length === 0 && <p className="rd-panel-empty">No agents yet.</p>}
         {teamList.map(team => <div key={team.name} className="rd-tower-team"><div className="rd-tower-team-head"><span className="rd-tower-team-name">{team.name}</span><small>{team.agents.length}</small></div><div className="rd-tower-field">{team.agents.map(a => <AgentDuck key={a.key} agent={a} stuck={looksStuck(a, now)} pinned={pinned?.key === a.key} onHover={el => setHover(el ? { key: a.key, el } : null)} onPin={el => setPinned({ key: a.key, el })} />)}</div></div>)}
       </section>
+      {oracle && needsOpen && (
+        <section className="rd-tower-needs" aria-label="Needs you">
+          <h2>
+            Needs you <span>{needs.length} open, oldest first.</span>
+            <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={() => setNeedsOpen(false)}>Close</button>
+          </h2>
+          {needs.length === 0 && <p className="rd-panel-empty">Nothing needs you.</p>}
+          <div className="rd-tower-needs-list">
+            {needs.map((n) => (
+              <div key={n.id} className="rd-tower-need">
+                <OracleDuck agent={agents.find((a) => a.key === n.session_key)} pose="waiting" size={28} />
+                <NoteCard note={n} rules={relay.rules} onChange={relay.refresh} onOpenTerminal={onOpenTerminal} />
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
       <Widgets surface="oracle" slot="oracle" registry={registry} source={source} kindLabel={oracle ? "Oracle" : "fleet"} />
 
       <section className="rd-tower-facts" aria-label="Facts">
@@ -119,36 +138,6 @@ export function ControlTower({
         ))}
       </section>
 
-      {needs.length > 0 && (
-        <section className="rd-tower-needs" aria-label="Needs you">
-          <h2>
-            Needs you <span>{needs.length} open, oldest first.</span>
-          </h2>
-          <div className="rd-tower-needs-list">
-            {needs.map((n) => (
-              <button
-                key={n.id}
-                className="rd-tower-need"
-                onClick={() => (n.kind === "choice" ? onOpenTerminal(n.session_key) : showNote(n.id))}
-              >
-                <OracleDuck agent={agents.find((a) => a.key === n.session_key)} pose="waiting" size={28} />
-                <span className="rd-tower-need-who">
-                  <b>{n.name}</b>{n.folder ? ` · ${n.folder.split("/")[0]}` : ""}
-                  <small>
-                    {n.kind === "approval"
-                      ? `Wants to run ${n.detail || n.tool}`
-                      : n.kind === "choice"
-                        ? `${n.questions?.[0]?.question ?? n.question ?? "A menu question"} Answer in its terminal.`
-                        : n.question}
-                  </small>
-                </span>
-                <span className="rd-tower-urgency">{n.urgency === "offer" ? "Offer" : n.urgency === "approval" ? "Approval" : "Blocked"}</span>
-                <span className="rd-tower-need-age">{ago(now - n.created_at)}</span>
-              </button>
-            ))}
-          </div>
-        </section>
-      )}
       </div>
       </div>
 
@@ -371,18 +360,6 @@ function AgentCard({
       )}
     </div>
   );
-}
-
-// Scroll the chat's own list to a note. scrollIntoView would also scroll the
-// tower around it (the bug that hid the header).
-function showNote(id: string) {
-  const note = document.querySelector<HTMLElement>(`[data-note="${CSS.escape(id)}"]`);
-  const log = note?.closest<HTMLElement>(".rd-oracle-log");
-  if (!note || !log) return;
-  log.scrollTop = note.offsetTop - log.offsetTop - 16;
-  note.classList.add("flash");
-  setTimeout(() => note.classList.remove("flash"), 1200);
-  note.querySelector<HTMLElement>("textarea, button")?.focus({ preventScroll: true });
 }
 
 function firstSentence(text: string): string {

@@ -73,6 +73,7 @@ export interface SessionView {
   remoteTransfer?: { id: string; stage: string; target?: string; session_key?: string };
   celebration?: DuckCelebration; // browser-only; never restored from persisted rows
   inboxPending?: number;
+  inboxUnanswered?: number;
   pinned?: boolean;
   key: string;
   label: string;

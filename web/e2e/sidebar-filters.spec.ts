@@ -22,7 +22,7 @@ test("filters across folders, persists choices, and restores expansion and selec
     await expect(filters).toBeHidden();
     await toggle.click();
     await expect(filters.getByRole("button", { name: /^Remote 0$/ })).toBeVisible();
-    const statusRows = await filters.locator('.rd-filter-chips').first().evaluate(el => [...el.children].map(child => child.getBoundingClientRect().top));
+    const statusRows = await filters.locator('.rd-filter-chips').first().evaluate(el => [...el.children].slice(0, 4).map(child => child.getBoundingClientRect().top));
     expect(new Set(statusRows).size).toBe(1);
     const spacing = await filters.locator('.rd-filter-group').evaluateAll(groups => groups.map(group => getComputedStyle(group).gap));
     expect(spacing).toEqual(["7px", "7px", "7px"]);

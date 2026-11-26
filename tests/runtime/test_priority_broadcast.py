@@ -147,7 +147,7 @@ def test_open_priority_is_never_swept_but_a_replied_one_is(scenario, monkeypatch
     call(history, creds["claude"], "POST", f"/questions/{ids['claude']}/answer", {"text": "ok"})
     later = time.time() + 30 * 86400
     monkeypatch.setattr("duckterm.core.session_api.time.time", lambda: later)
-    history.session_api.pending_counts()  # runs the sweep
+    history.session_api._sweep(force_retire=True)  # force physical retention in this test
     remaining = {
         r[0]
         for r in history._conn.execute(
@@ -461,3 +461,31 @@ def test_a_summary_cancelled_while_oracle_pastes_is_not_delivered(scenario, monk
     asyncio.run(server._oracle_tick())
     assert merge_events(history) == []
     assert status(server, owner, "merge:peer:1") == {"claude": "cancelled"}
+
+
+def test_inbox_counts_distinguish_unanswered_from_informational_notices(scenario, monkeypatch):
+    history, server, owner, creds = scenario
+    send(server, owner, "For your information", "counts-info", priority=False)
+    assert dispatch(server, "GET", "/session-inbox-counts", {})[0] == 401
+    counts = dispatch(server, "GET", "/session-inbox-counts", owner)[1]
+    assert counts["counts"] == {"claude": 1, "peer": 1, "codex": 1}
+    assert counts["unanswered_counts"] == {}
+    send(server, owner, "Please acknowledge", "counts-reply", priority=True)
+    call(history, creds["claude"], "GET", "/inbox")
+    counts = dispatch(server, "GET", "/session-inbox-counts", owner)[1]
+    assert "claude" not in counts["counts"]  # legacy badge counts stay unchanged
+    assert counts["unanswered_counts"] == {"claude": 1, "peer": 1, "codex": 1}
+    message = next(
+        m for m in history.session_api.inbox("claude", owner=True)["messages"] if m["priority"]
+    )
+    call(
+        history,
+        creds["claude"],
+        "POST",
+        f"/questions/{message['id']}/answer",
+        {"text": "Acknowledged"},
+    )
+    monkeypatch.setattr(server.collaboration, "pending_counts", lambda: {"peer": 2})
+    counts = dispatch(server, "GET", "/session-inbox-counts", owner)[1]
+    assert counts["unanswered_counts"] == {"peer": 3, "codex": 1}
+    assert counts["counts"]["peer"] == 4

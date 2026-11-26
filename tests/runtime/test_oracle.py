@@ -381,6 +381,29 @@ def test_read_followup_obeys_delay_and_repeat_cooldown() -> None:
     assert oracle.should_nudge(**{**GATES, "mail": [read], "previous": previous}) == []
 
 
+def test_undelivered_reminder_backs_off_then_retries_the_same_mail() -> None:
+    new = {**OLD_PEER, "id": "q2"}
+    recorded = oracle.record_nudge(None, [OLD_PEER], [OLD_PEER], NOW, delivered=False)
+    # New mail doesn't restart a retry every minute after a stuck paste.
+    soon = {**GATES, "mail": [OLD_PEER, new], "previous": recorded, "now_ms": NOW + 60_000}
+    assert oracle.should_nudge(**soon) == []
+    later = {**soon, "now_ms": NOW + oracle.RENUDGE_MS}
+    assert oracle.should_nudge(**later) == [OLD_PEER, new]
+
+
+def test_failed_reminder_is_recorded_and_survives_restart(idle_recipient, monkeypatch) -> None:
+    server, sup = idle_recipient
+    monkeypatch.setattr(sup, "write_bytes", lambda data: False)
+    asyncio.run(server._oracle_tick())
+    event, _ = server.history.last_event("b", "OracleNudge")
+    assert (event["submitted"], event["delivery"], event["seen_mail_ids"]) == (False, "failed", [])
+    monkeypatch.setattr(sup, "write_bytes", FakeSupervisor.write_bytes.__get__(sup))
+    restarted = Server(history=server.history)
+    monkeypatch.setattr(restarted.orchestrator, "get", lambda key: sup if key == "b" else None)
+    asyncio.run(restarted._oracle_tick())
+    assert sup.pasted == []
+
+
 def test_delayed_read_reminder_survives_server_restart(idle_recipient, monkeypatch) -> None:
     server, sup = idle_recipient
     server.history.session_api.inbox("b")

@@ -53,6 +53,12 @@ test("location icons preserve names and expose remote identity, disconnection an
     await page.mouse.move(0,0);
     await oracleRemote.focus();
     await expect(page.getByRole('tooltip')).toContainText('Remote · Build server');
+    const needsButton = page.getByRole('button', { name: 'Show everything that needs you' });
+    // Finish the keyboard-tooltip check before clicking another control that
+    // the focused card can cover when earlier tests leave a longer agent list.
+    await needsButton.focus();
+    await expect(page.getByRole('tooltip')).toHaveCount(0);
+    await needsButton.click();
     const need = page.locator('.rd-tower-need', {hasText:'remote-reviewer'});
     await expect(need.locator('.rd-location-cloud')).toBeVisible();
     await expect(need.locator('[tabindex]')).toHaveCount(0);
@@ -60,7 +66,7 @@ test("location icons preserve names and expose remote identity, disconnection an
     await need.locator('.rd-session-location').hover();
     expect(await need.locator('.rd-session-location').evaluate(n=>getComputedStyle(n,'::after').visibility)).toBe('visible');
     await page.mouse.move(0,0);
-    await need.focus();
+    await need.getByRole('button', { name: /terminal/ }).focus();
     await page.screenshot({path:'/tmp/needs-focus.png'});
     expect(await need.locator('.rd-session-location').evaluate(n=>getComputedStyle(n,'::after').visibility), 'Needs-you host tooltip visible on keyboard focus').toBe('visible');
     await oracleRemote.click();
@@ -72,7 +78,7 @@ test("location icons preserve names and expose remote identity, disconnection an
     const disconnected = remote.getByRole('group', { name: 'Remote · Build server · Disconnected', exact: true });
     await expect(oracleRemote).toHaveAccessibleName(/Disconnected/);
     await expect(need.locator('.rd-location-cloud path')).toHaveCount(2);
-    await expect(need.locator('[aria-label]')).toHaveAttribute('aria-label','Remote · Build server · Disconnected');
+    await expect(need.locator('.rd-session-location[aria-label]')).toHaveAttribute('aria-label','Remote · Build server · Disconnected');
     await expect(oracleRemote.locator('.rd-location-cloud path')).toHaveCount(2);
     await page.screenshot({ path: '/tmp/oracle-remote-cloud-offline.png' });
     await page.getByRole('button', { name: '← Sessions', exact: true }).click();

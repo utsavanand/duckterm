@@ -31,12 +31,15 @@ for (const transport of ["lost", "pending"] as const) test(`recovers the exact s
     const folder = page.locator(".rd-group-head", { hasText: "Recovery QA" });
     if (await folder.locator(".rd-group-caret").textContent() === "▸") await folder.locator(".rd-group-caret").click();
     await page.locator(".rd-row", { hasText: "Checkpoint recovery" }).locator(".rd-row-click").click();
-    const receiptResponse = page.waitForResponse(response => response.url().includes(`/sessions/${key}/checkpoint-attempts/`) && response.status() === 200);
+    // The first successful poll can legitimately report an in-flight attempt.
+    // Wait for the terminal receipt while preserving all identity/result checks.
+    const receiptResponse = page.waitForResponse(async response => response.url().includes(`/sessions/${key}/checkpoint-attempts/`) && response.status() === 200 && (await response.json()).state === "complete");
     await (await sessionMenu(page)).getByRole("menuitem", { name: "Checkpoint", exact: true }).click();
     await confirmCheckpoint(page);
     const receipt = await (await receiptResponse).json();
     expect(receipt.request_id).toBe(requestId);
     expect(receipt.state).toBe("complete");
+    await expect.poll(() => checkpointId).not.toBe("");
     expect(receipt.result.id).toBe(checkpointId);
     expect(receipt.result.id).not.toBe(earlier.id);
     const progress = page.getByRole("region", { name: "Checkpoint progress" });

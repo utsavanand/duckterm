@@ -127,3 +127,57 @@ it("keeps active counts and clear available while the chip panel is closed", () 
   view.rerender(<SidebarFilters sessions={[session("one")]} now={0} filters={EMPTY_FILTERS} onToggle={vi.fn()} onClear={onClear} saveError={false} expanded={false} />);
   expect(screen.queryByRole("region", { name: "Session filters" })).not.toBeInTheDocument();
 });
+
+it("unanswered inbox matches requests across states, unions with status, and persists", () => {
+  const unanswered = { ...EMPTY_FILTERS, status: ["unanswered"] };
+  for (const state of ["busy", "waiting", "idle", "stopped", "interrupted", "terminated"] as const) {
+    expect(matchesFilters(session(state, { state, inboxUnanswered: 2 }), unanswered, 0)).toBe(true);
+  }
+  expect(matchesFilters(session("notice", { inboxPending: 3 }), unanswered, 0)).toBe(false);
+  expect(matchesFilters(session("answered", { inboxUnanswered: 0 }), unanswered, 0)).toBe(false);
+  expect(matchesFilters(session("archived", { state: "archived", inboxUnanswered: 1 }), unanswered, 0)).toBe(false);
+  const union = { ...unanswered, status: ["busy", "unanswered"], runtime: ["codex"] };
+  expect(matchesFilters(session("working"), union, 0)).toBe(true);
+  expect(matchesFilters(session("idle", { state: "idle", inboxUnanswered: 1 }), union, 0)).toBe(true);
+  expect(matchesFilters(session("other", { runtime: "claude-code", inboxUnanswered: 1 }), union, 0)).toBe(false);
+  expect(readFilters(JSON.stringify(union))).toEqual(union);
+});
+
+it("counts unanswered sessions once, respects other facets, and refreshes after answers", () => {
+  const sessions = [session("one", { inboxUnanswered: 3 }), session("two", { state: "idle", inboxUnanswered: 1 }), session("other", { runtime: "claude-code", inboxUnanswered: 1 })];
+  const filters = { ...EMPTY_FILTERS, status: ["busy", "unanswered"], runtime: ["codex"] };
+  const props = { now: 0, filters, onToggle: vi.fn(), onClear: vi.fn(), saveError: false, expanded: true };
+  const view = render(<SidebarFilters {...props} sessions={sessions} />);
+  expect(screen.getByRole("button", { name: "Unanswered inbox 2" })).toHaveAttribute("aria-pressed", "true");
+  expect(screen.getByRole("status")).toHaveTextContent("2 of 3");
+  view.rerender(<SidebarFilters {...props} sessions={sessions.map(s => ({ ...s, inboxUnanswered: 0 }))} />);
+  expect(screen.getByRole("button", { name: "Unanswered inbox 0" })).toBeInTheDocument();
+  expect(screen.getByRole("status")).toHaveTextContent("1 of 3");
+});
+
+it("search finds nested and remote agent names while preserving filters and expansion", () => {
+  const onOpen = vi.fn();
+  const props = { sessions: [session("UI-dev", { inboxUnanswered: 1 }), session("QA-dev", { host: "remote", group: "Other", parentKey: "parent", inboxUnanswered: 1 }), session("parent", { group: "Other" }), session("docs", { group: "dev", inboxUnanswered: 1 })], now: 0,
+    folders: ["Project", "Other", "dev"], selectedKey: "UI-dev", onOpen,
+    onFoldersChanged: vi.fn(), onSessionMoved: vi.fn(), onOpenGrid: vi.fn(), onNewSessionIn: vi.fn(), folderThemes: {} };
+  const view = render(<ControlledTree {...props} />);
+  fireEvent.click(screen.getByRole("button", { name: "Expand Project" }));
+  const search = screen.getByRole("searchbox", { name: "Search agents by name" });
+  fireEvent.change(search, { target: { value: " DEV " } });
+  expect(view.container.querySelectorAll(".rd-row")).toHaveLength(2);
+  expect(view.container.querySelectorAll(".rd-row-name mark")).toHaveLength(2);
+  expect(screen.queryByText("docs", { exact: true })).not.toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Filters" }));
+  fireEvent.click(screen.getByRole("button", { name: "Unanswered inbox 2" }));
+  fireEvent.click(screen.getByRole("button", { name: "Remote 1" }));
+  expect(view.container.querySelectorAll(".rd-row")).toHaveLength(1);
+  expect(view.container.querySelector(".rd-row-name")).toHaveTextContent("QA-dev");
+  fireEvent.keyDown(search, { key: "Escape" });
+  expect(search).toHaveValue("");
+  expect(screen.getByRole("button", { name: "Remote 1" })).toHaveAttribute("aria-pressed", "true");
+  fireEvent.click(screen.getByRole("button", { name: "Clear filters" }));
+  expect(screen.getByRole("button", { name: "Collapse Project" })).toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "Expand Other" })).toBeInTheDocument();
+  expect(view.container.querySelector(".rd-row.selected")).toHaveTextContent("UI-dev");
+  expect(onOpen).not.toHaveBeenCalled();
+});
