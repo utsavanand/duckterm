@@ -82,6 +82,7 @@ class ClaudeCodeRuntime(Harness):
         repo_rel=Path(".claude") / "settings.json",
         build=claude_style_build,
         strip=claude_style_strip,
+        config_env="CLAUDE_CONFIG_DIR",
     )
 
     def __init__(self, command: str = "claude") -> None:
@@ -94,9 +95,10 @@ class ClaudeCodeRuntime(Harness):
         return argv
 
     def detect_state(self, recent_output: str) -> SessionState | None:
-        # Fallback only; the hook adapter normally drives state. Treat a trailing
-        # prompt-for-input marker as waiting; other output carries no state evidence.
-        if "│ Do you want" in recent_output or "❯" in recent_output:
+        # The editable input arrow stays visible during active turns and at idle.
+        # It is not a request for the owner. Hooks drive activity and approvals;
+        # retain only the existing explicit dialog fallback here.
+        if "│ Do you want" in recent_output:
             return "waiting"
         return None
 

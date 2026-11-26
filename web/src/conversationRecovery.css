@@ -4,6 +4,13 @@
 .rd-conversation-health p { font-size:0.8125rem; margin:6px 0 12px; }
 .rd-conversation-health details { margin-top:14px; font-size:0.75rem; color:var(--text-soft); }
 .rd-conversation-health summary { cursor:pointer; }
+.rd-activity-tracking { margin:12px 0; font-size:0.8125rem; }
+.rd-activity-tracking dl { display:flex; justify-content:space-between; flex-wrap:wrap; gap:6px 16px; margin:0; }
+.rd-activity-tracking dt { color:var(--text-soft); }
+.rd-activity-tracking dd { margin:0; }
+.rd-activity-tracking-connected { color:var(--brand-green); }
+.rd-activity-tracking-awaiting, .rd-activity-tracking-unconfirmed { color:var(--amber-text); }
+.rd-activity-tracking-unknown, .rd-activity-tracking-inactive { color:var(--text-soft); }
 .rd-conversation-actions { display:flex; flex-wrap:wrap; gap:8px; }
 .rd-conversation-health button { font-size:0.75rem; }
 .rd-conversation-dialog { color:var(--text); background:var(--bg); border:1px solid var(--border-strong); border-radius:6px; width:min(920px,calc(100% - 32px)); max-height:calc(100dvh - 32px); padding:0; overflow:hidden; }
