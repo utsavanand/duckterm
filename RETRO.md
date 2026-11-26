@@ -1,3 +1,28 @@
+## 2026-11-26 — A derived boolean cannot drive a control that states intent
+
+The connector panel's "share with agents" button became a switch. Wiring its
+`aria-checked` to `agents_use` looked obviously right and was wrong:
+`agents_use` is the AND of two doors -- the owner's choice and whether every
+chosen harness still has an entry. A missing Codex entry therefore rendered a
+switch in exactly the position the owner would have left it by turning agents
+off, under the deliberate-withdrawal wording. That is the conflation the
+two-door split exists to prevent, reintroduced through the new control.
+
+A switch states intent, so it must read the field that records intent
+(`agents_off_by_choice`). Breakage belongs in an alert beside it, not in the
+control's position. Before binding a control to a status field, ask whether
+that field is a cause or a consequence; a consequence cannot be toggled back.
+
+Found by rendering the state, not by reading the diff. Both fixtures pass the
+same `agents_use: false`, so no amount of re-reading the component showed it --
+the screenshots did.
+
+Second lesson from the same change. Replacing the editor's "Close" button with
+"Cancel" silently dropped its accessible name, and the sidebar-fit e2e test
+located that control by name, so it timed out rather than failing an assertion.
+A renamed control is an API change for anything that queries by role and name.
+Keep the accessible name when the visible word changes, with aria-label.
+
 ## 2026-11-26 — The narrow-strip rule never hid Oracle's subtitle
 
 Compacting the sidebar rows for short windows first saved only the Autopilot

@@ -28,9 +28,11 @@ it("says Duckterm still uses the credential when agents are turned off", async (
   vi.mocked(api.connectors).mockResolvedValue({ connectors: [off] });
   render(<Connectors />);
   // The bug this view exists to fix: one "disabled" line for two independent
-  // facts read as Duckterm having dropped the credential too.
-  expect(await screen.findByText("Duckterm uses it")).toBeVisible();
-  expect(screen.getByText("Agents cannot use it")).toBeVisible();
+  // facts read as Duckterm having dropped the credential too. The switch now
+  // carries the agents door -- off -- and says Duckterm's is still open.
+  const share = await screen.findByRole("switch", { name: /Share GitHub with agents/ });
+  expect(share).toHaveAttribute("aria-checked", "false");
+  expect(screen.getByText(/Duckterm still uses this credential/)).toBeVisible();
 });
 
 it("distinguishes a lost harness entry from the owner turning agents off", async () => {
@@ -52,7 +54,8 @@ it("connects straight from the CLI login without asking for a paste", async () =
   render(<Connectors />);
   fireEvent.click(await screen.findByText("Connect"));
   await waitFor(() => expect(api.enableConnector).toHaveBeenCalledWith("github", undefined, "gh-cli", "", ["claude-code", "codex"]));
-  expect(await screen.findByText(/^Agents use it/)).toBeVisible();
+  expect(await screen.findByRole("switch", { name: /Share GitHub with agents/ }))
+    .toHaveAttribute("aria-checked", "true");
 });
 
 it("warns that agents get nothing when no MCP server can run here", async () => {
@@ -81,11 +84,13 @@ it("withdraws from agents without deleting the credential", async () => {
   vi.mocked(api.connectors).mockResolvedValue({ connectors: [live] });
   vi.mocked(api.disableConnector).mockResolvedValue({ ...live, enabled: false, agents_use: false, agents_off_by_choice: true });
   render(<Connectors />);
-  fireEvent.click(await screen.findByText("Stop sharing with agents"));
+  fireEvent.click(await screen.findByRole("switch", { name: /Share GitHub with agents/ }));
   await waitFor(() => expect(api.disableConnector).toHaveBeenCalledWith("github", ""));
+  // Withdrawing is not signing out: the credential must survive it.
   expect(api.forgetConnector).not.toHaveBeenCalled();
-  expect(await screen.findByText("Share with agents")).toBeVisible();
-  expect(screen.getByText("Duckterm uses it")).toBeVisible();
+  await waitFor(() => expect(screen.getByRole("switch", { name: /Share GitHub with agents/ }))
+    .toHaveAttribute("aria-checked", "false"));
+  expect(screen.getByText(/Duckterm still uses this credential/)).toBeVisible();
 });
 
 it("does not expose secret administration on the hosted agent dashboard", async () => {
@@ -161,7 +166,9 @@ it("cannot submit with no agent selected", async () => {
 it("names the agents a connector reaches instead of reporting a config entry", async () => {
   vi.mocked(api.connectors).mockResolvedValue({ connectors: [{ ...live, harnesses: ["claude-code"] }] });
   render(<Connectors />);
-  expect(await screen.findByText(/Agents use it — Claude Code/)).toBeVisible();
+  // Naming the agents, not reporting a config entry. One chosen harness, so
+  // "Codex" must not appear.
+  expect(await screen.findByText(/^Claude Code can use it/)).toBeVisible();
 });
 
 it("says an agent is missing rather than implying the connector serves it", async () => {
@@ -200,13 +207,13 @@ it("sends the revoke link to the page the server chose, in a new tab", async () 
     connectors: [{ ...live, revoke_url: "https://github.com/settings/applications" }],
   });
   render(<Connectors />);
-  const link = await screen.findByRole("link", { name: /on github\.com/ });
+  const link = await screen.findByRole("link", { name: /Revoke at github\.com/ });
   expect(link).toHaveAttribute("href", "https://github.com/settings/applications");
   // A new tab, and no referrer leaked to github.com.
   expect(link).toHaveAttribute("target", "_blank");
   expect(link).toHaveAttribute("rel", "noreferrer");
-  // Placement: inside the connected block, beside Sign out.
-  expect(link.closest(".rd-connector-installed")).not.toBeNull();
+  // Placement: in the card footer, where card-level actions live.
+  expect(link.closest(".rd-card-foot")).not.toBeNull();
 });
 
 it("does not offer a revoke link before there is anything to revoke", async () => {
@@ -214,4 +221,21 @@ it("does not offer a revoke link before there is anything to revoke", async () =
   render(<Connectors />);
   await screen.findByText("Not connected");
   expect(screen.queryByRole("link", { name: /github\.com/ })).toBeNull();
+});
+
+it("shows the share switch on when only a harness entry is missing", async () => {
+  // agents_use is the AND of both doors, so driving the switch from it made a
+  // lost Codex entry render identically to the owner turning agents off --
+  // the exact conflation the two-door split exists to prevent. The switch
+  // reports intent (agents_off_by_choice); the alert reports the breakage.
+  const lost: Connector = {
+    ...live, enabled: false, agents_use: false,
+    agents_off_by_choice: false, unreachable_harnesses: ["codex"],
+  };
+  vi.mocked(api.connectors).mockResolvedValue({ connectors: [lost] });
+  render(<Connectors />);
+  expect(await screen.findByRole("switch", { name: /Share GitHub with agents/ }))
+    .toHaveAttribute("aria-checked", "true");
+  expect(screen.getByText(/On, but Codex cannot reach it/)).toBeVisible();
+  expect(screen.queryByText(/Duckterm still uses this credential/)).toBeNull();
 });
