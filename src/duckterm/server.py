@@ -6548,8 +6548,13 @@ class Server:
             update = await self.progress_coordinator.refresh_result(
                 session_key, captured, on_progress=on_progress
             )
-        except APIError:
-            update = SummaryUpdate.failed("source_unavailable")
+        except APIError as exc:
+            update = SummaryUpdate.failed(
+                "source_changed" if exc.status == 409 else "source_unavailable",
+                diagnostic=(
+                    "freeze:memory_conflict" if exc.status == 409 else "freeze:memory_unavailable"
+                ),
+            )
         except Exception as exc:
             # Retain history and a fixed failure code, never raw provider output.
             print(
