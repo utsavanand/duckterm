@@ -33,6 +33,9 @@ export function HomeChat({ sessions, onOpenTerminal }: { sessions: ChatSession[]
   const [log, setLog] = useState<OracleExchange[]>([]);
   const [q, setQ] = useState(""), [pending, setPending] = useState<string | null>(null), [error, setError] = useState("");
   const logRef = useRef<HTMLDivElement>(null), input = useRef<HTMLTextAreaElement>(null);
+  // The session the owner picked from the @ list. Names repeat across folders
+  // and may hold spaces, so a pick is held by key, never looked up by name.
+  const [picked, setPicked] = useState<ChatSession | null>(null);
   useEffect(() => {
     let stale = false;
     api.oracleChat().then(r => { if (!stale) setLog(r.messages); }, (e: Error) => { if (!stale) setError(`Could not load the conversation: ${e.message}`); });
@@ -49,18 +52,32 @@ export function HomeChat({ sessions, onOpenTerminal }: { sessions: ChatSession[]
   // While the owner types "@na", offer the sessions whose names match.
   const typing = messaging ? /^@(\S*)$/.exec(q)?.[1] : undefined;
   const matches = typing === undefined ? [] : sessions.filter(s => s.name.toLowerCase().includes(typing.toLowerCase())).slice(0, 6);
-  function pick(name: string) { setQ(`@${name} `); input.current?.focus(); }
+  function pick(session: ChatSession) { setPicked(session); setQ(`@${session.name} `); input.current?.focus(); }
 
   async function ask(text: string) {
     const question = text.trim();
     if (!question || pending !== null) return;
-    const mention = messaging ? /^@(\S+)\s+([\s\S]+)$/.exec(question) : null;
-    const to = mention && sessions.find(s => s.name.toLowerCase() === mention[1].toLowerCase());
-    if (mention && !to) { setError(`No session is named "${mention[1]}". Pick one from the @ list.`); return; }
-    setPending(question); setQ(""); setError("");
+    let to: ChatSession | undefined, body = "";
+    if (messaging && picked && question.startsWith(`@${picked.name} `)) {
+      to = sessions.find(s => s.key === picked.key);
+      if (!to) { setError(`${picked.name} is no longer running. Nothing was sent.`); return; }
+      body = question.slice(picked.name.length + 2).trim();
+    } else if (messaging && question.startsWith("@")) {
+      // Typed without the list: only a name that is one session's, whole.
+      const mention = /^@(\S+)\s+([\s\S]+)$/.exec(question);
+      const named = mention ? sessions.filter(s => s.name.toLowerCase() === mention[1].toLowerCase()) : [];
+      if (!mention || named.length !== 1) {
+        setError(named.length > 1 ? `${named.length} sessions are named "${mention![1]}". Pick the one you mean from the @ list. Nothing was sent.`
+          : `No session is named "${mention ? mention[1] : question.slice(1)}". Pick one from the @ list. Nothing was sent.`);
+        return;
+      }
+      [to] = named; body = mention[2].trim();
+    }
+    if (to && !body) { setError(`Write a question for ${to.name}.`); return; }
+    setPending(question); setQ(""); setError(""); setPicked(null);
     try {
-      if (to && mention) {
-        const { exchange } = await api.messageSession(to.key, mention[2].trim(), "inbox", requestKey(), question);
+      if (to) {
+        const { exchange } = await api.messageSession(to.key, body, "inbox", requestKey(), question);
         if (exchange) setLog(l => [...l, exchange]);
       } else {
         const r = await api.fleetAsk(question);
@@ -93,7 +110,7 @@ export function HomeChat({ sessions, onOpenTerminal }: { sessions: ChatSession[]
     <div className="rd-home-compose-wrap">
       {matches.length > 0 && <div className="rd-home-mention" role="listbox" aria-label="Ask a session">
         <small>Oracle sends your question to</small>
-        {matches.map(s => <button key={s.key} type="button" role="option" aria-selected="false" onClick={() => pick(s.name)}>
+        {matches.map(s => <button key={s.key} type="button" role="option" aria-selected="false" onClick={() => pick(s)}>
           <b>{s.name}</b> <small>{[s.folder?.split("/")[0], s.state].filter(Boolean).join(" · ")}</small>
         </button>)}
       </div>}
@@ -102,7 +119,7 @@ export function HomeChat({ sessions, onOpenTerminal }: { sessions: ChatSession[]
           placeholder={messaging ? "Ask about your teams, or @ a session to ask it…" : "Ask about your teams, the factory, PRs or spend…"}
           onChange={event => setQ(event.target.value)}
           onKeyDown={event => {
-            if ((event.key === "Tab" || event.key === "Enter") && matches.length) { event.preventDefault(); pick(matches[0].name); return; }
+            if ((event.key === "Tab" || event.key === "Enter") && matches.length) { event.preventDefault(); pick(matches[0]); return; }
             if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void ask(q); }
           }} />
         <button className="rd-btn rd-btn-primary rd-btn-sm" disabled={pending !== null}>Ask</button>
