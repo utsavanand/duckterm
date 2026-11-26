@@ -1,3 +1,11 @@
+## 2026-11-25 — Repeated browser checks must not inherit moved fixture folders
+
+The unnest browser test used the fixed child name `Inner` and left it behind
+at the top level. Running the file twice on unchanged main made the second
+locator match both old and new folders. Give the child a unique name, target
+its exact folder path, and remove the owned session and both possible folder
+locations in `finally`. Keep the move and indentation assertions intact.
+
 ## 2026-11-24 — A timed-out probe may never reach its first line
 
 The cleanup test gave a Python child 300ms to start and write its PID. Under
