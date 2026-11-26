@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,6 +15,7 @@ test("add a skill kit, install it into a workspace and read a skill; the kit's s
 }) => {
   const kit = mkdtempSync(join(tmpdir(), "rd-e2e-kit-"));
   const project = realpathSync(mkdtempSync(join(tmpdir(), "rd-e2e-kit-project-")));
+  execFileSync("git", ["init", "-q"], { cwd: project }); // only repositories take kits
   const stamp = Date.now();
   mkdirSync(join(kit, "skills", "ship-it"), { recursive: true });
   writeFileSync(
@@ -78,6 +80,7 @@ test("add a skill kit, install it into a workspace and read a skill; the kit's s
 test("the dry-run matrix stays readable at 390px in both themes", async ({ page }, testInfo) => {
   const kit = mkdtempSync(join(tmpdir(), "rd-e2e-kit-"));
   const project = realpathSync(mkdtempSync(join(tmpdir(), "rd-e2e-kit-project-")));
+  execFileSync("git", ["init", "-q"], { cwd: project }); // only repositories take kits
   const stamp = Date.now();
   mkdirSync(join(kit, "skills", "review-and-ship"), { recursive: true });
   mkdirSync(join(kit, "teams"));
@@ -146,12 +149,13 @@ test("the dry-run matrix stays readable at 390px in both themes", async ({ page 
   rmSync(kit, { recursive: true, force: true });
 });
 
-// A repository deleted since its last session stays in workspace history, so
-// the dry run for it is refused (400). The Enable step shows the refusal with
-// the full path, and at 390px that path wraps instead of widening the page.
+// A repository deleted between the page's catalog load and Review is refused
+// by the dry run (400). The Enable step shows the refusal with the full path,
+// and at 390px that path wraps instead of widening the page.
 test("a refused dry run is shown in the wizard at 390px without widening the page", async ({ page }) => {
   const kit = mkdtempSync(join(tmpdir(), "rd-e2e-kit-"));
   const project = realpathSync(mkdtempSync(join(tmpdir(), "rd-e2e-kit-project-")));
+  execFileSync("git", ["init", "-q"], { cwd: project }); // only repositories take kits
   const stamp = Date.now();
   mkdirSync(join(kit, "skills", "ship-it"), { recursive: true });
   writeFileSync(join(kit, "skills", "ship-it", "SKILL.md"), "---\nname: ship-it\ndescription: Ships.\n---\n");
@@ -161,7 +165,6 @@ test("a refused dry run is shown in the wizard at 390px without widening the pag
   );
   const workspace = `kit-ws-${stamp}`;
   await seedSession(`kit-session-${stamp}`, { name: "kit agent", group: workspace, cwd: project });
-  rmSync(project, { recursive: true, force: true });
 
   await page.setViewportSize({ width: 390, height: 1000 });
   await page.goto("/");
@@ -173,6 +176,9 @@ test("a refused dry run is shown in the wizard at 390px without widening the pag
   await page.getByRole("button", { name: "Next: choose workspaces" }).click();
   await page.getByLabel("These workspaces").check();
   await page.getByLabel(workspace, { exact: true }).check();
+  // Deleted after the page listed it: the catalog drops a missing repository
+  // on its next load, so this is the window the alert exists for.
+  rmSync(project, { recursive: true, force: true });
   await page.getByRole("button", { name: "Review what will change" }).click();
 
   const alert = page.getByRole("alert");

@@ -143,6 +143,47 @@ def test_plan_reports_each_harness_honestly(tmp_path):
     assert not any(path.endswith("feature-squad.toml") for path in paths)
 
 
+@pytest.mark.parametrize("paths", [["**/*"], ["**/*", "src/**"]])
+def test_a_path_scope_over_every_file_installs_as_always_everywhere(tmp_path, paths):
+    """uv-suite scoped its guardrails to `**/*`, which is every file; Codex and
+    OpenCode then showed "not supported" for a rule that was always-on anyway.
+    Globs are alternatives: one universal member makes the scope universal."""
+    kit = _tiny_kit(
+        tmp_path,
+        'manifest_version = 1\nname = "k"\nversion = "1.0.0"\ndescription = "d"\n'
+        '[[components]]\nkind = "knowledge"\npath = "rule.md"\n'
+        f"load = {{ paths = {json.dumps(paths)} }}\n",
+        {"rule.md": "# Rule\nNo slop.\n"},
+    )
+    report = validate.validate(kit)
+    assert [f.message for f in report if f.level == "warning"] == [
+        "load.paths matches every file; that is load = 'always' and installs as such"
+    ]
+    p = plan.build(kit, tmp_path / "proj", ALL)
+    assert adapters.NOT_SUPPORTED not in _statuses(p, "k/knowledge/rule").values()
+    row = next(r for r in p.rows() if r["component"] == "k/knowledge/rule")
+    assert any("paths match every file, so this loads always" in n for n in row["notes"])
+    assert ".claude/rules/k-rule.md" not in {f.path for f in p.files()}
+
+
+def test_a_fallback_names_the_harness_that_forced_always_on(tmp_path):
+    kit = _tiny_kit(
+        tmp_path,
+        'manifest_version = 1\nname = "k"\nversion = "1.0.0"\ndescription = "d"\n'
+        '[[components]]\nkind = "knowledge"\npath = "rule.md"\nload = { paths = ["**/*.md"] }\n'
+        'fallback = "always"\n',
+        {"rule.md": "# Rule\nNo slop.\n"},
+    )
+    p = plan.build(kit, tmp_path / "proj", ["claude-code", "codex"])
+    row = next(r for r in p.rows() if r["component"] == "k/knowledge/rule")
+    assert any(
+        "codex cannot scope by path, so this loads always, for every harness" in n
+        for n in row["notes"]
+    )
+    scoped = plan.build(kit, tmp_path / "proj2", ["claude-code", "copilot"])
+    assert ".claude/rules/k-rule.md" in {f.path for f in scoped.files()}
+
+
 def test_copilot_refuses_a_blocking_hook_on_an_event_exit_2_cannot_block(tmp_path):
     kit = _tiny_kit(
         tmp_path,

@@ -14,6 +14,19 @@ if prompt.startswith("Classify the latest owner request in a DuckTerm folder cha
     else:
         response = {"action": "answer"}
     print(json.dumps(response))
+elif prompt.startswith("Classify the owner's latest message in DuckTerm's Ask Oracle chat."):
+    data = json.loads(prompt.strip().rsplit("\n", 1)[-1])
+    agents, said = data["agents"], data["owner_message"]
+    named = lambda name: [a["id"] for a in agents if a["name"] == name]
+    if said.startswith("Tell release-dev to ") and named("release-dev"):
+        response = {"action": "message", "session_id": named("release-dev")[0], "text": said.removeprefix("Tell release-dev to ")}
+    elif said == "get release-dev to hold 470" and named("release-dev"):
+        response = {"action": "message", "session_id": named("release-dev")[0], "text": "Please hold PR #470 until QA passes."}
+    elif said.startswith("tell main-dev to "):
+        response = {"action": "clarify", "candidates": [a["id"] for a in agents if a["name"].startswith("main-dev")], "text": said.removeprefix("tell main-dev to ")}
+    else:
+        response = {"action": "answer"}
+    print(json.dumps(response))
 elif "ORIGINAL RECORDS WITH ATTRIBUTION AND SOURCE REFERENCES:" in prompt:
     records = json.loads(prompt.split("ORIGINAL RECORDS WITH ATTRIBUTION AND SOURCE REFERENCES:")[1].split("CURRENT CONTEXT AND SESSION/FOLDER/HARNESS IDENTITIES:")[0].strip())
     ref = records[0]["ref"]

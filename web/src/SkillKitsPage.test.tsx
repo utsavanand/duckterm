@@ -93,7 +93,7 @@ it("enables a kit for chosen workspaces: reviews the repositories known now, ins
   fireEvent.click(screen.getByLabelText("These workspaces"));
   fireEvent.click(screen.getByLabelText("payments"));
   fireEvent.click(screen.getByLabelText("Ungrouped"));
-  expect(screen.getByText(/no session yet; installs at the first one/)).toBeVisible();
+  expect(screen.getByText(/no repository yet; installs when a session starts in one/)).toBeVisible();
   fireEvent.click(screen.getByRole("button", { name: "Review what will change" }));
   await waitFor(() => expect(api.kitsPlan).toHaveBeenCalledWith({ kit: "/kits/sample", project: "/ws/payments", harnesses: catalog.harnesses, options: {} }, ""));
   expect(await screen.findByText("opencode: 1 not supported")).toBeVisible();
@@ -126,6 +126,19 @@ it("a dry run the server refuses stays in the wizard, names the repository, and 
   fireEvent.click(screen.getByRole("button", { name: "Back" }));
   expect(await screen.findByRole("heading", { name: /sample-kit/ })).toBeVisible();
   expect(screen.queryByRole("alert")).toBeNull();
+});
+
+it("a manifest error is shown once in the review however many repositories the dry run covers", async () => {
+  vi.mocked(api.kitsCatalog).mockResolvedValue({ ...catalog, kits: [uvSuite, sample] });
+  const broken = { ...plan, rows: [], files: [], conflicts: [], findings: [{ level: "error" as const, component: "manifest", message: "a kit lists at least one component" }] };
+  vi.mocked(api.kitsPlan).mockResolvedValue({ inventory: sample.inventory!, plan: broken });
+  render(<SkillKitsPage onClose={() => {}} fallback={null} />);
+  fireEvent.click((await screen.findAllByRole("button", { name: "Open" }))[1]);
+  fireEvent.click(await screen.findByRole("button", { name: "Enable for workspaces…" }));
+  fireEvent.click(screen.getByRole("button", { name: "Review what will change" }));
+  expect(await screen.findByRole("heading", { name: /2 repositories/ })).toBeVisible();
+  expect(screen.getAllByText("manifest: a kit lists at least one component")).toHaveLength(1);
+  expect(screen.getByText("1 errors")).toBeVisible();
 });
 
 it("enabling for all workspaces with nothing to install keeps the choice without a review", async () => {

@@ -9,6 +9,15 @@ The whole destination, subfolder included, is now opened before the lock.
 Lesson: "open the destination first" means the folder the files actually land
 in, not its parent.
 
+## 2026-11-25 — A text check doesn't vouch for the recipient
+
+Ask Oracle sent free text at once when the model's message was a span of the
+owner's words. That checked the text, not who the model picked or whether the
+sentence was a send at all, so a wrong agent or a negated question became an
+owner message with no click. Model-routed sends now always wait for Send.
+Idempotency keyed per recipient didn't cover the chat log either: a retried
+send delivered once but saved twice, so the history is now keyed by message id.
+
 ## 2026-11-24 — The conversion's Trash was unreachable and only its last folder was checked
 
 QA's re-check of #461: O_NOFOLLOW on a whole path only refuses a symlink in

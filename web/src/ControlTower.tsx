@@ -103,7 +103,7 @@ export function ControlTower({
 
       <div className="rd-tower-columns">
       {oracle && <aside className="rd-tower-oracle" aria-label="Ask Oracle">
-        <OracleChat relay={relay} onRelayChange={relay.refresh} onOpenTerminal={onOpenTerminal} />
+        <OracleChat relay={relay} onRelayChange={relay.refresh} onOpenTerminal={onOpenTerminal} agents={agents.map(a => ({ id: a.key, name: a.label, folder: a.group ?? "" }))} />
       </aside>}
       <div className="rd-tower-scroll">
       <h2 className="rd-teams-title">Your agents <small>{agents.length} across {teamList.length} {teamList.length === 1 ? "team" : "teams"}</small></h2>
