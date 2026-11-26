@@ -254,6 +254,68 @@ def _registry_kit(tmp_path):
     return root
 
 
+def test_register_refuses_a_legacy_manifest_instead_of_adding_an_empty_kit(tmp_path):
+    root = tmp_path / "old"
+    root.mkdir()
+    (root / "duckterm-harness.json").write_text(json.dumps({"name": "uv-suite"}))
+    with pytest.raises(api.KitApiError) as e:
+        api.register({"kit": str(root)})
+    assert e.value.status == 400
+    assert "duckterm-harness.json" in str(e.value) and "skill-kit.toml" in str(e.value)
+
+
+def test_repositories_collapse_worktrees_and_drop_plain_or_deleted_folders(tmp_path):
+    import subprocess
+
+    def git(*args, cwd):
+        subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True)
+
+    main = tmp_path / "main"
+    main.mkdir()
+    git("init", "-q", cwd=main)
+    ident = ["-c", "user.email=t@t", "-c", "user.name=t"]
+    git(*ident, "commit", "-q", "--allow-empty", "-m", "i", cwd=main)
+    worktree = tmp_path / "wt"
+    git("worktree", "add", "-q", str(worktree), cwd=main)
+    nested = main / "src"
+    nested.mkdir()
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    gone = tmp_path / "gone"
+    out = api.repositories([str(worktree), str(nested), str(plain), str(gone), str(main)])
+    assert out == [str(main.resolve())]
+    assert api.repositories([str(plain)]) == []
+    # a workspace whose sessions run only in a worktree: nothing installs now,
+    # since the main checkout may serve other workspaces; the worktree gets
+    # the kit at its next session start
+    assert api.repositories([str(worktree)]) == []
+
+
+@pytest.mark.parametrize("change", ["initialize", "remove-metadata", "separate-git-dir"])
+def test_repository_discovery_tracks_git_changes_without_restart(tmp_path, change):
+    import shutil
+    import subprocess
+
+    project = tmp_path / "repo"
+    project.mkdir()
+
+    def git(*args):
+        subprocess.run(["git", "-C", str(project), *args], check=True, capture_output=True)
+
+    if change == "initialize":
+        assert api.repositories([str(project)]) == []
+        git("init", "-q")
+        assert api.repositories([str(project)]) == [str(project)]
+    elif change == "remove-metadata":
+        git("init", "-q")
+        assert api.repositories([str(project)]) == [str(project)]
+        shutil.rmtree(project / ".git")
+        assert api.repositories([str(project)]) == []
+    else:
+        git("init", "-q", "--separate-git-dir", str(tmp_path / "metadata"))
+        assert api.repositories([str(project)]) == [str(project)]
+
+
 def test_register_reads_the_manifest_from_a_folder_or_a_toml_file(tmp_path):
     root = _registry_kit(tmp_path)
     assert api.register({"kit": str(root)})["name"] == "regkit"

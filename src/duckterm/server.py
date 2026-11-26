@@ -2927,9 +2927,13 @@ class Server:
         asyncio.get_running_loop().create_task(run())
 
     def _kit_workspaces(self) -> list[dict[str, Any]]:
-        """Every workspace with the repositories its sessions run in (the
-        worktree when there is one, else the repository, else the cwd). A
-        kit installs into those; a workspace with none cannot take a kit yet."""
+        """Every workspace with the repositories its sessions run in directly:
+        a linked worktree counts for nothing here (its main checkout may be
+        where other workspaces' sessions run; the worktree gets the kit at its
+        next session start), nor does a plain or deleted folder. Enable
+        installs into these now."""
+        from duckterm.kits import api as kits_api
+
         repos: dict[str, set[str]] = {name: set() for name in self.history.folders()}
         for row in self.history.sessions():
             root = row.get("worktree_path") or row.get("repo_path") or row.get("cwd")
@@ -2937,7 +2941,7 @@ class Server:
                 continue
             repos.setdefault(str(row.get("grp") or ""), set()).add(str(root))
         return [
-            {"name": name, "repositories": sorted(paths)}
+            {"name": name, "repositories": kits_api.repositories(sorted(paths))}
             for name, paths in sorted(repos.items(), key=lambda kv: (kv[0] == "", kv[0]))
         ]
 

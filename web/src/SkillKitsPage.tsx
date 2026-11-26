@@ -574,7 +574,7 @@ function EnableView({ kit, workspaces, busy, fromAdd, error, onBack, onReview, n
       <div className="rd-kits-head">
         <div>
           <h1>Enable {kit.name} for…</h1>
-          <p>{fromAdd ? "Step 3 of 3 · " : ""}A kit installs into the repository a workspace's sessions run in, for every harness. A workspace with no session yet gets it when its first session starts.</p>
+          <p>{fromAdd ? "Step 3 of 3 · " : ""}A kit installs into the repositories a workspace's sessions run in, for every harness; a worktree counts as its repository and gets the kit at its next session. A workspace with no repository yet gets it when a session starts in one.</p>
         </div>
       </div>
       <div className="rd-kits-table">
@@ -590,7 +590,7 @@ function EnableView({ kit, workspaces, busy, fromAdd, error, onBack, onReview, n
               <input type="checkbox" checked={chosen.has(w.name)} onChange={() => toggle(w.name)} aria-label={workspaceLabel(w.name)} />
               <span>
                 <strong>{workspaceLabel(w.name)}</strong>
-                {w.repositories.length === 0 && <span className="rd-kits-sub"> · no session yet; installs at the first one</span>}
+                {w.repositories.length === 0 && <span className="rd-kits-sub"> · no repository yet; installs when a session starts in one</span>}
                 {w.repositories.map((r) => <span key={r} className="rd-kits-sub rd-kits-mono" style={{ display: "block" }}>{r}</span>)}
               </span>
             </label>
@@ -630,7 +630,8 @@ function ReviewView({ kit, plans, busy, onBack, onEnable }: {
   const [replace, setReplace] = useState(false);
   const soft = plans.flatMap((p) => p.plan.conflicts.filter((c) => c.kind === "file-exists").map((c) => ({ ...c, project: p.project })));
   const hard = plans.flatMap((p) => p.plan.conflicts.filter((c) => c.kind !== "file-exists").map((c) => ({ ...c, project: p.project })));
-  const errors = plans.flatMap((p) => p.plan.findings.filter((f) => f.level === "error"));
+  // A manifest error is the kit's, not a repository's: one line however many repositories.
+  const errors = Array.from(new Map(plans.flatMap((p) => p.plan.findings.filter((f) => f.level === "error")).map((f) => [f.component + f.message, f])).values());
   const hooks = kit.inventory?.components.hook?.length ?? 0;
   return (
     <>

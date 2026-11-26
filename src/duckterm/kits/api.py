@@ -353,12 +353,65 @@ def register(body: dict[str, Any]) -> dict[str, Any]:
     kit = _kit(body.get("kit"))
     text = str(body.get("kit") or "").strip()
     path = Path(text).expanduser().resolve()
+    if kit.legacy:
+        raise KitApiError(
+            400,
+            f"{path} holds {m.LEGACY_MANIFEST}, the retired format, which lists no "
+            f"components; write a {m.MANIFEST} for it first",
+        )
     return {
         "name": kit.name,
         "path": str(path),
         "version": kit.version,
         "description": kit.description,
     }
+
+
+def repositories(paths: list[str]) -> list[str]:
+    """The repositories a workspace's sessions run in directly, from the
+    folders its session rows name: a folder inside a main working tree
+    counts as that repository; a linked worktree counts for nothing here,
+    because its main checkout is where other workspaces' sessions may run
+    (hooks included), and the worktree itself gets the kit at its next
+    session start (policy_target). A plain folder, a deleted one or a bare
+    repository is left out. Git is asked every time: metadata changes while
+    DuckTerm runs (a `git init`, a removed `.git`), and a Git directory
+    need not be named `.git` (`--separate-git-dir`)."""
+    import subprocess
+
+    out: set[str] = set()
+    for folder in sorted({str(p) for p in paths}):
+        if not os.path.isdir(folder):
+            continue
+        try:
+            proc = subprocess.run(
+                [
+                    "git",
+                    "-c",
+                    "core.fsmonitor=false",
+                    "-C",
+                    folder,
+                    "rev-parse",
+                    "--path-format=absolute",
+                    "--absolute-git-dir",
+                    "--git-common-dir",
+                    "--show-toplevel",
+                ],
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            continue
+        parts = proc.stdout.strip().splitlines() if proc.returncode == 0 else []
+        if len(parts) != 3:
+            continue
+        git_dir, common, top = parts
+        if git_dir != common:  # a linked worktree: its next session start installs there
+            continue
+        if os.path.isdir(top):
+            out.add(top)
+    return sorted(out)
 
 
 def catalog(entries: list[dict[str, Any]], workspaces: list[dict[str, Any]]) -> dict[str, Any]:
