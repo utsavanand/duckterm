@@ -8,6 +8,7 @@ export default defineConfig({
     name: "pdf-resources",
     generateBundle() {
       const version = JSON.parse(readFileSync(new URL("./node_modules/pdfjs-dist/package.json", import.meta.url), "utf8")).version;
+      this.emitFile({ type: "asset", fileName: `assets/pdfjs-${version}/LICENSE`, source: readFileSync(new URL("./node_modules/pdfjs-dist/LICENSE", import.meta.url)) });
       for (const folder of ["cmaps", "standard_fonts", "wasm"]) {
         const directory = new URL(`./node_modules/pdfjs-dist/${folder}/`, import.meta.url);
         for (const name of readdirSync(directory)) this.emitFile({ type: "asset", fileName: `assets/pdfjs-${version}/${folder}/${name}`, source: readFileSync(new URL(name, directory)) });
