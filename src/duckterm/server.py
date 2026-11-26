@@ -68,7 +68,7 @@ from duckterm import bug_reports, connectors, editions, release_features, suites
 from duckterm.agents import tmux
 from duckterm.agents.terminal import available_terminals, open_in_terminal
 from duckterm.autopilot import api as ap_api
-from duckterm.core import events, fleet_questions, oracle
+from duckterm.core import events, fleet_questions, oracle, oracle_intent
 from duckterm.core.approvals import Approval, ApprovalRegistry
 from duckterm.core.backup_jobs import BackupJobs
 from duckterm.core.eventbus import EventBus
@@ -4285,6 +4285,40 @@ class Server:
             }
         }
 
+    async def _oracle_message(self, question: str) -> dict[str, Any] | None:
+        """An Ask Oracle message that tells one agent something. Nothing is
+        sent here: the model chose the recipient, so the owner confirms a plan
+        or picks from candidates (Contracts §7.4). None means it is a question
+        to answer."""
+        agents = [
+            {
+                "id": str(r["session_key"]),
+                "name": str(r.get("name") or r["session_key"]),
+                "folder": str(r.get("grp") or ""),
+            }
+            for r in self.history.sessions()
+            if r.get("state") not in AT_REST_STATES
+        ]
+        if not agents:
+            return None
+        result = await asyncio.to_thread(
+            summarize, oracle_intent.routing_prompt(question, agents), tier="fast"
+        )
+        if not result.text:
+            return None
+        by_id = {a["id"]: a for a in agents}
+        intent = oracle_intent.parse_intent(result.text, set(by_id))
+        if intent["action"] == "answer":
+            return None
+        if intent["action"] == "clarify":
+            return {
+                "clarify": {
+                    "text": intent["text"],
+                    "candidates": [by_id[c] for c in intent["candidates"]],
+                }
+            }
+        return {"plan": {**by_id[intent["session_id"]], "text": intent["text"]}}
+
     async def _fleet_ask(self, writer: asyncio.StreamWriter, body: bytes) -> None:
         """Route explicit folder messages; answer other questions from session digests."""
         try:
@@ -4312,6 +4346,19 @@ class Server:
         if not question:
             await _write_json(writer, 400, {"error": "question required"})
             return
+        if folder is None and "request_key" in req and self.edition.includes("oracle_messages"):
+            key = req["request_key"]
+            if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,59}", key):
+                await _write_json(writer, 400, {"error": "Invalid request_key"})
+                return
+            try:
+                routed = await self._oracle_message(question)
+            except APIError as exc:
+                await _write_json(writer, exc.status, {"error": str(exc)})
+                return
+            if routed is not None:
+                await _write_json(writer, 200, routed)
+                return
         if folder is not None and "request_key" in req:
             key = req["request_key"]
             if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,59}", key):
@@ -5195,7 +5242,24 @@ class Server:
                 return
             if priority:
                 self._oracle_soon()  # an idle agent shouldn't wait for the next pass
-            await _write_json(writer, 200, {"delivered": "inbox", "message_id": message_id})
+            reply: dict[str, Any] = {"delivered": "inbox", "message_id": message_id}
+            asked = req.get("oracle_chat")
+            if (
+                isinstance(asked, str)
+                and asked.strip()
+                and self.edition.includes("oracle_messages")
+            ):
+                # Sent from Ask Oracle: keep it in the chat history like a
+                # plain-language send, so it survives a reload.
+                row = self.history.session(session_key) or {}
+                reply["exchange"] = oracle.append_chat(
+                    paths.home() / "oracle-chat.json",
+                    asked.strip()[:8000],
+                    _sent_line(str(row.get("name") or session_key), str(req.get("text"))),
+                    int(time.time() * 1000),
+                    key=message_id,
+                )
+            await _write_json(writer, 200, reply)
             return
         text = req.get("text")
         if not isinstance(text, str) or not text.strip() or len(text.encode()) > 16384:
@@ -7459,6 +7523,10 @@ class Server:
             return
         self._set_lifecycle(key, "archived")
         self.approvals.drop_session(key)
+
+
+def _sent_line(name: str, text: str) -> str:
+    return f"Sent to **{name}**: \u201c{text}\u201d. It's in its inbox."
 
 
 def _pid_alive(pid: int) -> bool:
