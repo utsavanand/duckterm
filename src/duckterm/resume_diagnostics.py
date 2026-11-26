@@ -112,7 +112,10 @@ def hook_status(runtime: str, cwd: Path | None) -> str:
     spec = REGISTRY[runtime].hook_spec
     if spec is None:
         return "not applicable"
-    candidates = [Path.home() / spec.global_rel]
+    try:
+        candidates = [spec.path(global_scope=True, project_dir=cwd or Path.home())]
+    except ValueError:
+        return "unknown"
     if cwd:
         candidates.append(cwd / spec.repo_rel)
     found = []

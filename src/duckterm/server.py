@@ -1186,6 +1186,7 @@ class Server:
             return
         # Only the supervisor may assign identity; hooks can report observations.
         raw.pop("_assigned_native_id", None)
+        raw.pop("hook_setup", None)  # only the supervisor can record configuration
         # agent_pid comes from an external hook ($PPID) and is later fed to
         # os.kill in the liveness sweep — coerce to a positive int or drop it.
         if "agent_pid" in raw:
