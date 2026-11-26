@@ -1,3 +1,25 @@
+## 2026-11-25 — Interrupted sessions retain unfinished requests
+
+QA caught a regression in the Unanswered cleanup fix: both lifecycle paths
+treated interrupted sessions as final, despite interruption being resumable.
+The original regression covered explicit Stop but not a terminal crash. Both
+paths now preserve pending requests for stopped and interrupted sessions while
+still revoking credentials. Tests cover every resting state through direct
+state changes and events, late exits, and resuming to answer retained work.
+Lesson: derive lifecycle test cases from the runtime's state contract; testing
+one resumable state does not cover the other.
+
+## 2026-11-25 — Reading a priority message does not finish it
+
+Final session cleanup cancelled queued and accepted inbox requests, but missed
+priority broadcasts that the agent had read without acknowledging. Those rows
+still counted as Unanswered after the recipient ended and lost its credentials.
+Cleanup now cancels those unfinished broadcasts too, preserving their history.
+Resumable stops keep them pending; informational read notices stay unchanged.
+Lesson: when adding a pending message state, check lifecycle cleanup as well as
+inbox counts. The regression exercises inbox read, SessionEnd, revoked access,
+and the actual Unanswered count, including the resumable-stop case.
+
 ## 2026-11-25 — A cache does not share work while it is empty
 
 Home requests PR rows for several folders together. Every cold request saw
