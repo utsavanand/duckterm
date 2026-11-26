@@ -110,7 +110,17 @@ def _changed_since(repo: str, since: str | None, head_ref: str) -> set[str] | No
     if not since or git.resolve(repo, since) is None:
         return None
     try:
-        out = git.run(repo, "diff", "--name-only", "--find-renames", since, head_ref)
+        out = git.run(
+            repo,
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--name-only",
+            "--find-renames",
+            "--end-of-options",
+            since,
+            head_ref,
+        )
     except git.ReviewGitError:
         return None
     return set(out.splitlines())
@@ -120,8 +130,10 @@ def diff_payload(target: Target, *, since: str | None, whitespace: bool) -> dict
     args = (
         "diff",
         "--no-ext-diff",
+        "--no-textconv",
         "--no-color",
         "--find-renames",
+        "--end-of-options",
         target.base_sha,
         target.head_ref,
     )

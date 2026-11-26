@@ -17,14 +17,17 @@ class ReviewGitError(RuntimeError):
     pass
 
 
-# A repository's own config can name programs git will run: an fsmonitor, a
-# signature verifier under log.showSignature, and an ssh command or remote
-# helper when a partial clone lazily fetches a missing object. Sessions report
-# the folders read here and can write their .git/config, so none of them may
-# run as the server. Only fetch and remote_heads are meant to reach a remote.
+# A repository's own config can name programs git will run: an fsmonitor,
+# hooks, a signature verifier under log.showSignature, a diff textconv, and an
+# ssh command, credential helper or remote helper when git reaches a remote.
+# Sessions report the folders read here and can write their .git/config, so
+# none of them may run as the server. Only fetch and remote_heads are meant to
+# reach a remote; see _network_config for what they keep.
 _NO_REPO_PROGRAMS = (
     "-c",
     "core.fsmonitor=false",
+    "-c",
+    "core.hooksPath=/dev/null",
     "-c",
     "log.showSignature=false",
     "-c",
@@ -35,6 +38,52 @@ _NO_REPO_PROGRAMS = (
     "gpg.x509.program=false",
 )
 _OFFLINE = ("-c", "protocol.allow=never")
+_REMOTE_PROTOCOLS = ("https", "ssh")
+_OWNER_SCOPES = ("system", "global", "unknown")
+
+
+def _network_config(path: str | Path) -> dict[str, str]:
+    """Config for a call that reaches a remote, as GIT_CONFIG_* variables so a
+    crafted key can't be misparsed. The owner's own credential helpers and ssh
+    command (system, global or the git install's own file) are kept; the
+    repository's are dropped: an empty credential.helper given last clears
+    every helper read so far, and the owner's are given again after it."""
+    try:
+        out = run(
+            path,
+            "config",
+            "--show-scope",
+            "-z",
+            "--get-regexp",
+            r"^credential\..*helper$|^core\.sshcommand$",
+        )
+    except ReviewGitError:  # exit 1: no helper or ssh command set anywhere
+        out = ""
+    pairs = [
+        ("protocol.allow", "never"),
+        *((f"protocol.{name}.allow", "always") for name in _REMOTE_PROTOCOLS),
+        ("remote.origin.uploadpack", "git-upload-pack"),
+        ("core.askPass", ""),
+        ("gc.auto", "0"),
+        ("maintenance.auto", "false"),
+        ("credential.helper", ""),
+    ]
+    ssh = "ssh"
+    fields = out.split("\0")
+    for scope, entry in zip(fields[::2], fields[1::2], strict=False):
+        key, _, value = entry.partition("\n")
+        if scope not in _OWNER_SCOPES:
+            continue
+        if key == "core.sshcommand":
+            ssh = value
+        else:
+            pairs.append((key, value))
+    pairs.append(("core.sshCommand", ssh))
+    env = {"GIT_CONFIG_COUNT": str(len(pairs)), "GIT_TERMINAL_PROMPT": "0"}
+    for i, (key, value) in enumerate(pairs):
+        env[f"GIT_CONFIG_KEY_{i}"] = key
+        env[f"GIT_CONFIG_VALUE_{i}"] = value
+    return env
 
 
 def _env() -> dict[str, str]:
@@ -49,14 +98,16 @@ def _env() -> dict[str, str]:
 
 
 def run(path: str | Path, *args: str, timeout: float = 15, network: bool = False) -> str:
-    offline = () if network else _OFFLINE
+    env = _env()
+    if network:
+        env.update(_network_config(path))
     try:
         result = subprocess.run(
-            ["git", *_NO_REPO_PROGRAMS, *offline, "-C", str(path), *args],
+            ["git", *_NO_REPO_PROGRAMS, *(() if network else _OFFLINE), "-C", str(path), *args],
             capture_output=True,
             text=True,
             timeout=timeout,
-            env=_env(),
+            env=env,
         )
     except subprocess.TimeoutExpired as exc:
         raise ReviewGitError(f"git {args[0]} timed out") from exc
@@ -101,7 +152,7 @@ def default_branch(repo: str | Path) -> str:
 
 def ref_exists(repo: str | Path, ref: str) -> bool:
     try:
-        run(repo, "rev-parse", "--verify", "--quiet", ref)
+        run(repo, "rev-parse", "--verify", "--quiet", "--end-of-options", ref)
         return True
     except ReviewGitError:
         return False
@@ -109,7 +160,12 @@ def ref_exists(repo: str | Path, ref: str) -> bool:
 
 def resolve(repo: str | Path, ref: str) -> str | None:
     try:
-        return run(repo, "rev-parse", "--verify", "--quiet", f"{ref}^{{commit}}").strip() or None
+        return (
+            run(
+                repo, "rev-parse", "--verify", "--quiet", "--end-of-options", f"{ref}^{{commit}}"
+            ).strip()
+            or None
+        )
     except ReviewGitError:
         return None
 
@@ -138,13 +194,15 @@ def slug_from_url(url: str) -> str | None:
 
 
 def ahead_behind(repo: str | Path, base: str, head: str) -> tuple[int, int]:
-    out = run(repo, "rev-list", "--left-right", "--count", f"{base}...{head}").split()
+    out = run(
+        repo, "rev-list", "--left-right", "--count", "--end-of-options", f"{base}...{head}"
+    ).split()
     return int(out[1]), int(out[0])
 
 
 def merge_base(repo: str | Path, base: str, head: str) -> str | None:
     try:
-        return run(repo, "merge-base", base, head).strip() or None
+        return run(repo, "merge-base", "--end-of-options", base, head).strip() or None
     except ReviewGitError:
         return None
 
@@ -165,6 +223,7 @@ def conflicts(repo: str | Path, base: str, head: str) -> bool | None:
                 "merge-tree",
                 "--write-tree",
                 "--name-only",
+                "--end-of-options",
                 base,
                 head,
             ],
@@ -184,7 +243,15 @@ def conflicts(repo: str | Path, base: str, head: str) -> bool | None:
 
 def shortstat(repo: str | Path, base: str, head: str) -> dict[str, int] | None:
     try:
-        out = run(repo, "diff", "--no-ext-diff", "--shortstat", f"{base}...{head}")
+        out = run(
+            repo,
+            "diff",
+            "--no-ext-diff",
+            "--no-textconv",
+            "--shortstat",
+            "--end-of-options",
+            f"{base}...{head}",
+        )
     except ReviewGitError:
         return None
     files = additions = deletions = 0
@@ -204,7 +271,7 @@ def shortstat(repo: str | Path, base: str, head: str) -> dict[str, int] | None:
 
 def commit_time(repo: str | Path, ref: str) -> int | None:
     try:
-        return int(run(repo, "log", "-1", "--format=%ct", ref).strip())
+        return int(run(repo, "log", "-1", "--format=%ct", "--end-of-options", ref).strip())
     except (ReviewGitError, ValueError):
         return None
 
@@ -212,7 +279,7 @@ def commit_time(repo: str | Path, ref: str) -> int | None:
 def tag_containing(repo: str | Path, sha: str) -> str | None:
     """The first release tag (creation order) that contains a commit."""
     try:
-        out = run(repo, "tag", "--contains", sha, "--sort=creatordate", "--list", "v*")
+        out = run(repo, "tag", f"--contains={sha}", "--sort=creatordate", "--list", "v*")
     except ReviewGitError:
         return None
     tags = out.split()
