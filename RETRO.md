@@ -1,3 +1,14 @@
+## 2026-11-25 — The per-agent holding folder was opened after the database changed
+
+Security's recheck of #461: convert() opened the holding folder up front, but
+each agent's subfolder inside it was created and opened only when the files
+moved, after the records were written and the references rebound. A symlink
+planted there made the run change the database and then refuse the move.
+Nothing was lost, but "a failed open leaves the DB untouched" was not true.
+The whole destination, subfolder included, is now opened before the lock.
+Lesson: "open the destination first" means the folder the files actually land
+in, not its parent.
+
 ## 2026-11-24 — The conversion's Trash was unreachable and only its last folder was checked
 
 QA's re-check of #461: O_NOFOLLOW on a whole path only refuses a symlink in
