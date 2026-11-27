@@ -148,6 +148,17 @@ public struct HostSnapshot: Decodable {
               notices.allSatisfy({ ["attention", "turn_finished"].contains($0.kind) }) else { throw DuckyError.invalidResponse }
     }
 }
+/// The Mac's answer to a wait for changes: whether anything follows the phone's cursor.
+public struct EventsResult: Decodable {
+    public let version: Int
+    public let hostID: String
+    public let changed: Bool
+    public let cursor: String
+    enum CodingKeys: String, CodingKey { case version, changed, cursor; case hostID = "host_id" }
+    public func validate(hostID expected: String) throws {
+        guard version == 1, hostID == expected, !cursor.isEmpty, cursor.count <= 64 else { throw DuckyError.invalidResponse }
+    }
+}
 public struct NoticeTracker {
     private var seen: [String] = []
     public init() {}

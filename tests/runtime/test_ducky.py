@@ -467,6 +467,137 @@ def test_tls_pairing_snapshot_and_disable_on_real_socket(app):
     asyncio.run(run())
 
 
+def test_events_answer_on_change_after_the_wait_and_never_after_revocation(app, monkeypatch):
+    import duckterm.mobile.bridge as bridge_module
+
+    server, root = app
+    (root / "ducky-bridge.json").write_text("{}")
+    bridge = Bridge(server, root)
+    token, device = paired(bridge.grants)
+    bridge.grants.approve(device["id"])
+    headers = {"authorization": "Ducky " + token}
+    monkeypatch.setattr(bridge_module, "EVENTS_WAIT_SECONDS", 0.2)
+    monkeypatch.setattr(bridge_module, "EVENTS_COALESCE_SECONDS", 0)
+
+    async def events(cursor):
+        return await bridge.dispatch("GET", f"/v2/events?cursor={cursor}", headers, b"")
+
+    async def run():
+        _, first = await bridge.dispatch("GET", "/v2/snapshot", headers, b"")
+        cursor = first["cursor"]
+        # Nothing new: the request waits out its budget and says so.
+        code, idle = await events(cursor)
+        assert code == 200 and idle["changed"] is False and idle["cursor"] == cursor
+        # An event during the wait answers it with the new cursor.
+        waiting = asyncio.create_task(events(cursor))
+        await asyncio.sleep(0.05)
+        assert not waiting.done()
+        published = server.bus.publish({"event_type": "Stop", "session_key": "a", "test": True})
+        code, changed = await asyncio.wait_for(waiting, 1)
+        assert code == 200 and changed["changed"] is True
+        assert changed["cursor"] == published["_id"]
+        # A phone that missed events gets an answer at once.
+        code, behind = await asyncio.wait_for(events(cursor), 0.1)
+        assert code == 200 and behind["changed"] is True
+        # Revocation during the wait wins over the answer.
+        waiting = asyncio.create_task(events(published["_id"]))
+        await asyncio.sleep(0.05)
+        bridge.grants.revoke(device["id"])
+        assert (await asyncio.wait_for(waiting, 1))[0] == 403
+        for bad in ("", "not-alnum!", "a" * 65):
+            assert (await events(bad))[0] in {400, 403}
+
+    asyncio.run(run())
+
+
+def test_phone_connection_is_reused_only_after_an_authorized_keep_alive_request(app):
+    server, root = app
+    configure(root, "127.0.0.1", 4430)
+    config = json.loads((root / "ducky-bridge.json").read_text())
+    config["port"] = 0
+    (root / "ducky-bridge.json").write_text(json.dumps(config))
+
+    async def run():
+        bridge = await start(server)
+        assert bridge is not None
+        token, device = paired(bridge.grants)
+        bridge.grants.approve(device["id"])
+        port = bridge.listener.sockets[0].getsockname()[1]
+        context = ssl.create_default_context(cafile=str(root / "ducky-cert.pem"))
+
+        async def exchange(reader, writer, path, auth):
+            head = f"GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: keep-alive\r\n"
+            head += f"Authorization: Ducky {auth}\r\n\r\n"
+            writer.write(head.encode())
+            await writer.drain()
+            raw = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), 2)
+            length = int(raw.split(b"Content-Length: ")[1].split(b"\r\n")[0])
+            body = await reader.readexactly(length)
+            return int(raw.split()[1]), raw, json.loads(body)
+
+        try:
+            reader, writer = await asyncio.open_connection(
+                "127.0.0.1", port, ssl=context, server_hostname="127.0.0.1"
+            )
+            for _ in range(3):
+                code, raw, _ = await exchange(reader, writer, "/v2/snapshot", token)
+                assert code == 200 and b"Connection: keep-alive" in raw
+            # A refused request closes the connection, so failures never ride a kept one.
+            code, raw, _ = await exchange(reader, writer, "/v2/snapshot", "x" * 43)
+            assert code == 403 and b"Connection: close" in raw
+            assert await asyncio.wait_for(reader.read(), 2) == b""
+            writer.close()
+            # An unauthenticated first request is never kept, even when it asks.
+            reader, writer = await asyncio.open_connection(
+                "127.0.0.1", port, ssl=context, server_hostname="127.0.0.1"
+            )
+            code, raw, _ = await exchange(reader, writer, "/v2/snapshot", "y" * 43)
+            assert code == 403 and await asyncio.wait_for(reader.read(), 2) == b""
+            writer.close()
+            lines = (root / "ducky-bridge.log").read_text().splitlines()
+            assert [line.split()[2:5] for line in lines] == [
+                ["GET", "/v2/snapshot", "200"],
+                ["GET", "/v2/snapshot", "200"],
+                ["GET", "/v2/snapshot", "200"],
+                ["GET", "/v2/snapshot", "403"],
+                ["GET", "/v2/snapshot", "403"],
+            ]
+        finally:
+            await bridge.close()
+
+    asyncio.run(run())
+
+
+def test_close_does_not_wait_for_a_pending_events_request(app):
+    server, root = app
+    configure(root, "127.0.0.1", 4430)
+    config = json.loads((root / "ducky-bridge.json").read_text())
+    config["port"] = 0
+    (root / "ducky-bridge.json").write_text(json.dumps(config))
+
+    async def run():
+        bridge = await start(server)
+        token, device = paired(bridge.grants)
+        bridge.grants.approve(device["id"])
+        port = bridge.listener.sockets[0].getsockname()[1]
+        context = ssl.create_default_context(cafile=str(root / "ducky-cert.pem"))
+        reader, writer = await asyncio.open_connection(
+            "127.0.0.1", port, ssl=context, server_hostname="127.0.0.1"
+        )
+        cursor = bridge.latest_cursor()
+        writer.write(
+            f"GET /v2/events?cursor={cursor} HTTP/1.1\r\nHost: x\r\n"
+            f"Authorization: Ducky {token}\r\n\r\n".encode()
+        )
+        await writer.drain()
+        await asyncio.sleep(0.2)
+        assert bridge.handlers
+        await asyncio.wait_for(bridge.close(), 2)
+        writer.close()
+
+    asyncio.run(run())
+
+
 def test_unconfigured_bridge_creates_no_identity_or_listener(app):
     server, root = app
     before = set(root.iterdir())
