@@ -16,7 +16,7 @@ from duckterm.cloud.store import Store
 from duckterm.editions import LITE, EditionConfig
 from duckterm.mobile import account
 from duckterm.mobile.account import AccountError, matching_code
-from duckterm.mobile.bridge import Bridge
+from duckterm.mobile.bridge import Bridge, start
 from duckterm.mobile.cli import configure
 from duckterm.persistence.history import HistoryStore
 from duckterm.server import Server
@@ -177,3 +177,115 @@ def test_sign_out_forgets_the_account_even_when_the_service_is_unreachable(app, 
     assert not (root / "ducky-account.json").exists()
     with pytest.raises(AccountError, match="isn't signed in"):
         account.verify_ticket(root, "a.b", "c" * 32)
+
+
+def _signed_in_mac_and_phone(server, root, service, github):
+    configure(root, "127.0.0.1", 4430)
+    remote_edition(server)
+    user = GitHubUser(7, "octo")
+    account.sign_in(
+        root,
+        "Studio Mac",
+        say=lambda _: None,
+        call=routed(service, github, user),
+        sleep=lambda _: 0,
+    )
+    phone = phone_session(service, github, user=user)
+    host_id = json.loads((root / "ducky-account.json").read_text())["host_id"]
+
+    def ticket():
+        _, issued, _ = asyncio.run(
+            service.dispatch(
+                "POST",
+                "/v1/tickets",
+                {"authorization": "Bearer " + phone["session_token"]},
+                json.dumps({"host_id": host_id}).encode(),
+                "p",
+            )
+        )
+        return issued["ticket"]
+
+    return Bridge(server, root), ticket
+
+
+def test_a_ticket_makes_one_claim_and_a_phone_appears_once(app, cloud):
+    server, root = app
+    service, github = cloud
+    bridge, ticket = _signed_in_mac_and_phone(server, root, service, github)
+    first = ticket()
+
+    def claim(value, token=None, peer="192.0.2.1"):
+        body = json.dumps({"ticket": value, "token": token or secrets.token_urlsafe(32)})
+        return asyncio.run(
+            bridge.dispatch("POST", "/v1/pair/account", {}, body.encode(), peer=peer)
+        )
+
+    code, pending = claim(first)
+    assert code == 202
+    bridge.grants.approve(pending["id"])
+    # Allowed: neither the same ticket nor a fresh one adds a second entry for this phone.
+    assert claim(first)[0] == 403
+    assert claim(ticket())[0] == 403
+    assert [device["status"] for device in bridge.grants.devices()] == ["active"]
+    # Removed: the spent ticket stays spent, in every spelling; a new ticket works.
+    bridge.grants.revoke(pending["id"])
+    for replay in (first, first + "=", first + "!!"):
+        assert claim(replay)[0] == 403
+    assert bridge.grants.devices() == []
+    assert claim(ticket())[0] == 202
+
+
+def test_forged_account_claims_spend_only_their_own_addresss_budget(app, cloud):
+    server, root = app
+    service, github = cloud
+    bridge, ticket = _signed_in_mac_and_phone(server, root, service, github)
+
+    def claim(value, peer):
+        body = json.dumps({"ticket": value, "token": secrets.token_urlsafe(32)})
+        return asyncio.run(
+            bridge.dispatch("POST", "/v1/pair/account", {}, body.encode(), peer=peer)
+        )[0]
+
+    attempts = [claim("forged.ticket", "203.0.113.9") for _ in range(25)]
+    assert attempts == [403] * 10 + [429] * 15
+    # Another address, and QR pairing, still have their whole budgets.
+    assert claim(ticket(), "192.0.2.1") == 202
+    invite = json.dumps({"invite": "x", "token": secrets.token_urlsafe(32), "name": "Phone"})
+    assert asyncio.run(bridge.dispatch("POST", "/v1/pair", {}, invite.encode()))[0] == 403
+
+
+def test_account_claim_bodies_are_small(app):
+    server, root = app
+    configure(root, "127.0.0.1", 4430)
+    remote_edition(server)
+    config = json.loads((root / "ducky-bridge.json").read_text())
+    config["port"] = 0
+    (root / "ducky-bridge.json").write_text(json.dumps(config))
+
+    async def run():
+        bridge = await start(server)
+        port = bridge.listener.sockets[0].getsockname()[1]
+        context = ssl.create_default_context(cafile=str(root / "ducky-cert.pem"))
+        try:
+            reader, writer = await asyncio.open_connection(
+                "127.0.0.1", port, ssl=context, server_hostname="127.0.0.1"
+            )
+            writer.write(
+                b"POST /v1/pair/account HTTP/1.1\r\nHost: x\r\nContent-Length: 4097\r\n\r\n"
+            )
+            await writer.drain()
+            head = await asyncio.wait_for(reader.readuntil(b"\r\n\r\n"), 2)
+            assert head.split()[1] == b"413"
+            writer.close()
+        finally:
+            await bridge.close()
+
+    asyncio.run(run())
+
+
+def test_the_account_service_address_must_be_https(monkeypatch):
+    monkeypatch.setenv("DUCKY_CLOUD_URL", "http://cloud.example")
+    with pytest.raises(AccountError, match="https"):
+        account.cloud_url()
+    monkeypatch.setenv("DUCKY_CLOUD_URL", "https://cloud.example/")
+    assert account.cloud_url() == "https://cloud.example"

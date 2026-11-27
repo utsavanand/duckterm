@@ -348,15 +348,28 @@ class Grants:
                 for key, value in state["devices"].items()
                 if value["status"] != "pending" or value["expires_at"] > now
             }
+            spent = {
+                nonce: expires_at
+                for nonce, expires_at in state.get("spent_tickets", {}).items()
+                if expires_at > now
+            }
+            # Each ticket makes one claim, so a copied ticket can't come back
+            # after the owner removes the device it created.
+            if claims["nonce"] in spent:
+                raise Denied("Account ticket already used")
+            # One entry per signed-in phone, allowed or waiting: a leaked ticket
+            # can't add a second "Utsav's iPhone" for the owner to confuse with
+            # the real one.
+            if any(
+                value.get("account", {}).get("phone_id") == claims["phone_id"]
+                for value in state["devices"].values()
+            ):
+                raise Denied("This phone is already on this Mac")
             waiting = [
                 value
                 for value in state["devices"].values()
                 if value.get("account") and value["status"] == "pending"
             ]
-            # One waiting entry per signed-in phone: a leaked ticket can't add a
-            # second "Utsav's iPhone" for the owner to confuse with the real one.
-            if any(value["account"]["phone_id"] == claims["phone_id"] for value in waiting):
-                raise Denied("This phone is already waiting for approval")
             if len(waiting) >= 4:
                 raise ValueError("Too many phones are waiting for approval on this Mac")
             if len(state["devices"]) >= 32:
@@ -372,6 +385,8 @@ class Grants:
                 "account": {"login": claims["login"], "phone_id": claims["phone_id"]},
                 "code": code,
             }
+            spent[claims["nonce"]] = claims["expires_at"]
+            state["spent_tickets"] = spent
             return {"id": identifier, "status": "pending", "host_id": state["host_id"]}
 
     def devices(self) -> list[dict[str, Any]]:

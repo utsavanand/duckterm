@@ -73,7 +73,11 @@ def load(directory: Path) -> dict[str, Any] | None:
 
 
 def cloud_url() -> str:
-    return os.environ.get("DUCKY_CLOUD_URL", CLOUD_URL).rstrip("/")
+    url = os.environ.get("DUCKY_CLOUD_URL", CLOUD_URL).rstrip("/")
+    # The session token and ticket secret travel to this address.
+    if not url.startswith("https://"):
+        raise AccountError("DUCKY_CLOUD_URL must be an https:// address")
+    return url
 
 
 def sign_in(
