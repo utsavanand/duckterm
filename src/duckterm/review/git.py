@@ -39,6 +39,13 @@ _NO_REPO_PROGRAMS = (
     "gpg.x509.program=false",
     "-c",
     "core.alternateRefsCommand=true",
+    # ext:: runs a command as the transport and fd:: talks to an open file
+    # descriptor. A repository's protocol.<name>.allow beats protocol.allow,
+    # so these two are pinned on every call.
+    "-c",
+    "protocol.ext.allow=never",
+    "-c",
+    "protocol.fd.allow=never",
 )
 _OFFLINE = ("-c", "protocol.allow=never")
 # file covers a clone whose origin is a local folder. It runs upload-pack on
@@ -50,9 +57,12 @@ _OWNER_SCOPES = ("system", "global", "unknown")
 # Set by the repository, they could send the owner's credentials to another
 # host, and a URL-specific http.<url>.* key there beats any general override,
 # so a call whose repository sets one is refused rather than overridden.
-# Push URLs are left alone: fetch never reads them and DuckTerm never pushes.
+# protocol.<name>.allow and remote.<name>.vcs choose the transport, which for
+# a remote helper is a program. Push URLs are left alone: fetch never reads
+# them and DuckTerm never pushes.
 _REPO_NETWORK_KEYS = re.compile(
-    r"^(https?\..*|remote\..*\.proxy|url\..*\.insteadof|core\.gitproxy|core\.askpass)$"
+    r"^(https?\..*|remote\..*\.proxy|url\..*\.insteadof|core\.gitproxy|core\.askpass"
+    r"|protocol\..*|remote\..*\.vcs)$"
 )
 
 
@@ -117,6 +127,8 @@ def _config_pairs(path: str | Path, timeout: float, network: bool) -> list[tuple
     ssh = "ssh"
     for scope, entry in zip(fields[::2], fields[1::2], strict=False):
         key, _, value = entry.partition("\n")
+        if scope == "command":  # DuckTerm's own -c settings
+            continue
         owner = scope in _OWNER_SCOPES
         if _REPO_DRIVERS.match(key):
             if not owner:
@@ -195,11 +207,17 @@ def ref_exists(repo: str | Path, ref: str) -> bool:
         return False
 
 
-def resolve(repo: str | Path, ref: str) -> str | None:
+def resolve(repo: str | Path, ref: str, timeout: float = 15) -> str | None:
     try:
         return (
             run(
-                repo, "rev-parse", "--verify", "--quiet", "--end-of-options", f"{ref}^{{commit}}"
+                repo,
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                "--end-of-options",
+                f"{ref}^{{commit}}",
+                timeout=timeout,
             ).strip()
             or None
         )

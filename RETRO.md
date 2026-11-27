@@ -1,3 +1,49 @@
+## 2026-11-27 — A hardened runner only protects the calls that use it
+
+#496 routed review's git calls through one runner that turns off every
+program a repository can name. QA testing the duplicate #520 found a plain
+`git fetch --all` in `git/worktrees.py`. That fetch lists branches for the new
+worktree picker, in a repository sessions work in, so its reference-transaction
+hook ran as the server. It now goes through review/git, fetches only origin,
+and has a timeout.
+
+When hardening a shared runner, search for every other caller of the same
+command, not only the runner's own callers.
+
+## 2026-11-26 — A deadline checked between calls still waits for the slowest one
+
+Pulse's refresh stopped starting new git calls after 20 s. Each call still
+had its own 15 s timeout, so a refresh could run up to 15 s past its
+deadline. `git tag --list` also returned every v* tag before Python kept ten.
+Now each call's timeout is whatever remains of the deadline, at most 15 s,
+and `for-each-ref --count` cuts the tag list inside git.
+
+A time budget has to be passed into each call, not just checked between
+them.
+
+## 2026-11-26 — A specific allow beats a general deny, whoever sets it
+
+#496 blocked every transport except https, ssh and file by passing
+`protocol.allow=never`. git checks `protocol.<name>.allow` first, though,
+from any scope. A repository could set `protocol.ext.allow=always` with an
+`ext::<command>` origin, which runs the command as the transport. It could
+also set `remote.origin.vcs` and allow that name, which runs
+`git-remote-<name>` from PATH. Every call now pins ext and fd to `never`, and
+network calls refuse a repository whose own config sets any `protocol.*`
+or `remote.*.vcs`. The first run broke every fetch: `--show-scope` reports
+DuckTerm's own `-c` pins as scope `command`, and the check took them for the
+repository's. Those entries are now skipped.
+
+A deny by default is only as strong as the most specific allow anyone can
+add. Check how git ranks a key before trusting a general setting.
+
+## 2026-11-26 — Improve readability without replacing the app theme
+
+Page-local overrides of shared colors made AGENTS.md look like a different app.
+Use the existing background, control, font and secondary-text tokens instead;
+keep semantic color on small labels and status edges. Review both themes in
+context after preview approval, rather than judging an isolated palette alone.
+
 ## 2026-11-27 — A diff against HEAD is empty once something commits the work
 
 The runner built workspace.diff against HEAD. Autopilot's executor commits
@@ -283,6 +329,14 @@ remote's value, and `file` is allowed.
 Before trusting a `-c` override, check how git combines that key: last-wins,
 first-wins, or a list. And a test fixture that loosens what the product
 allows hides exactly the behaviour a real user hits.
+
+## 2026-11-25 — Preview the layout with the real fleet, not the fixture
+
+The pods looked fine with three fixture agents. With the owner's 33, the
+24-agent team was squeezed into half the width beside a team of three, and the
+arrows were drawn over the duck labels. A team with several pods now takes the
+full row and the arrows draw behind the ducks. Only the real-data preview found
+either problem.
 
 ## 2026-11-26 — A deadline checked after the slow part bounds nothing
 

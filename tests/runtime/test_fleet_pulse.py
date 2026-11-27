@@ -168,6 +168,23 @@ def test_work_per_refresh_is_bounded(repo, tmp_path, monkeypatch) -> None:
     assert asked == []  # not even a rev-parse once the time is up
 
 
+def test_every_git_call_ends_by_the_deadline(repo, monkeypatch) -> None:
+    # The deadline is checked between calls, so each call's own timeout must
+    # also stop at it, not at the usual 15 s.
+    monkeypatch.setattr(fleet_pulse, "DEADLINE_S", 3.0)
+    timeouts = []
+    real = fleet_pulse.git.run
+
+    def run(*args, **kwargs):
+        timeouts.append(kwargs.get("timeout"))
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(fleet_pulse.git, "run", run)
+    assert fleet_pulse.collect([session(repo)], [], int(time.time() * 1000))
+    assert len(timeouts) > 3
+    assert all(t is not None and t <= 3.0 for t in timeouts)
+
+
 def test_overlapping_polls_share_one_refresh(world, monkeypatch) -> None:  # noqa: F811
     server = world[0]
     calls = []

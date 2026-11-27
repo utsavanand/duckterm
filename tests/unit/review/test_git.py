@@ -178,6 +178,13 @@ def _upload_pack(repo: Path, program: str) -> Case:
     return ["-C", str(clone), "ls-remote", "origin"], lambda: git.remote_heads(clone)
 
 
+def _ext_remote(repo: Path, program: str) -> Case:
+    # A repository's protocol.ext.allow beats a general protocol.allow.
+    run(repo, "config", "protocol.ext.allow", "always")
+    run(repo, "remote", "add", "origin", f"ext::{program} %S")
+    return ["ls-remote", "origin"], lambda: (git.remote_heads(repo), git.fetch(repo, ["main"]))
+
+
 def _alternate_refs(repo: Path, program: str) -> Case:
     # Fetch negotiation lists the refs of every alternate object store by
     # running the repository's core.alternateRefsCommand.
@@ -225,6 +232,7 @@ def _merge_driver(repo: Path, program: str) -> Case:
         _ssh_command,
         _fetch_hook,
         _upload_pack,
+        _ext_remote,
         _alternate_refs,
         _filter("clean"),
         _filter("process"),
@@ -302,6 +310,7 @@ def test_the_owners_credential_helper_runs_and_the_repos_does_not(
         ("url.{url}.insteadOf", "http://unused/"),
         ("core.gitProxy", "/usr/bin/false"),
         ("core.askPass", "/usr/bin/false"),
+        ("protocol.http.allow", "always"),
     ],
 )
 def test_a_repo_that_sets_network_config_is_never_fetched(
@@ -339,6 +348,29 @@ def test_a_repo_that_sets_network_config_is_never_fetched(
         assert not marker.exists()
     finally:
         server.shutdown()
+
+
+def test_a_repo_chosen_remote_helper_never_runs(
+    git_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # remote.<name>.vcs names git-remote-<vcs> on PATH as the transport, and
+    # the repository can allow that transport for itself.
+    marker = tmp_path / "ran"
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    helper = bin_dir / "git-remote-evil"
+    helper.write_text(f"#!/bin/sh\ntouch {marker}\nexit 1\n")
+    helper.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    run(git_repo, "remote", "add", "origin", "https://example.invalid/x")
+    run(git_repo, "config", "remote.origin.vcs", "evil")
+    run(git_repo, "config", "protocol.evil.allow", "always")
+    subprocess.run(["git", "-C", str(git_repo), "ls-remote", "origin"], capture_output=True)
+    assert marker.exists()  # plain git really runs it
+    marker.unlink()
+    assert git.remote_heads(git_repo) is None
+    assert git.fetch(git_repo, ["main"])
+    assert not marker.exists()
 
 
 @pytest.mark.parametrize(

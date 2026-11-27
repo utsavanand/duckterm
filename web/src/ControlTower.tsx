@@ -7,6 +7,7 @@ import { Duck, poseFor } from "./Duck";
 import { SessionLocationDuck, sessionLocation } from "./SessionLocationDuck";
 import { OracleChat } from "./OracleChat";
 import { NoteCard } from "./RelayNotes";
+import { FleetArrows } from "./FleetArrows";
 import { FleetPulse } from "./FleetPulse";
 import { useRelay } from "./relay";
 import {
@@ -15,6 +16,7 @@ import {
   compact,
   facts,
   looksStuck,
+  pods,
   runningSubagents,
   teamOf,
   teams,
@@ -62,6 +64,7 @@ export function ControlTower({
   // The Fleet monitor layout (owner-approved mock A, 2026-11-24): tabs over one page.
   const fleet = oracle && has("fleet_monitor");
   const [tab, setTab] = useState<"chat" | "fleet" | "analytics">("chat");
+  const fieldRef = useRef<HTMLElement>(null);
   const registry = useMemo(() => [...oracleWidgets(tab => analyticsRef.current(tab), { oracle, remote, backup, onNeedsYou: () => setNeedsOpen(o => !o) }), ...(inbox ? [tasksWidget(key => taskOpen.current(key))] : [])], [oracle, remote, inbox, backup]);
   const [hover, setHover] = useState<{ key: string; el: HTMLElement } | null>(null);
   const [pinned, setPinned] = useState<{ key: string; el: HTMLElement } | null>(null);
@@ -119,6 +122,32 @@ export function ControlTower({
     </>
   );
   const widgets = <Widgets surface="oracle" slot="oracle" registry={registry} source={source} kindLabel={oracle ? "Oracle" : "fleet"} />;
+  // The Agent fleet tab: teams split into pods by subfolder, each duck saying
+  // what it is doing, with arrows when one agent writes to another.
+  const fleetTeams = (
+    <>
+      <h2 className="rd-teams-title">Your agents <small>{agents.length} across {teamList.length} {teamList.length === 1 ? "team" : "teams"}</small></h2>
+      <section ref={fieldRef} className="rd-tower-teams rd-fleet-teams" aria-label="Teams">
+        {teamList.length === 0 && <p className="rd-panel-empty">No agents yet.</p>}
+        {teamList.map((team) => { const teamPods = pods(team.agents); return (
+          <div key={team.name} className={`rd-tower-team${teamPods.length > 1 ? " rd-fleet-multi" : ""}`}>
+            <div className="rd-tower-team-head"><span className="rd-tower-team-name">{team.name}</span><small>{team.agents.length}</small></div>
+            <div className="rd-fleet-pods">
+            {teamPods.map((pod) => (
+              <div key={pod.name} className="rd-fleet-pod" role="group" aria-label={pod.name || team.name}>
+                {pod.name && <div className="rd-fleet-pod-name">{pod.name}</div>}
+                <div className="rd-tower-field">
+                  {pod.agents.map((a) => <AgentDuck key={a.key} agent={a} stuck={looksStuck(a, now)} doing={doing(a, looksStuck(a, now))} pinned={pinned?.key === a.key} onHover={el => setHover(el ? { key: a.key, el } : null)} onPin={el => setPinned({ key: a.key, el })} />)}
+                </div>
+              </div>
+            ))}
+            </div>
+          </div>
+        ); })}
+        <FleetArrows field={fieldRef} active={tab === "fleet"} />
+      </section>
+    </>
+  );
   const factsSection = (
     <section className="rd-tower-facts" aria-label="Facts">
       {facts(agents, now).map((f) => (
@@ -184,7 +213,7 @@ export function ControlTower({
               )}
               <OracleChat relay={relay} onRelayChange={relay.refresh} onOpenTerminal={onOpenTerminal} />
           </div>
-          <div {...panel("fleet")} className="rd-tower-scroll">{teamsSection}{factsSection}</div>
+          <div {...panel("fleet")} className="rd-tower-scroll">{fleetTeams}{factsSection}</div>
           <div {...panel("analytics")} className="rd-tower-scroll">
             {widgets}
             <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={() => onAnalytics("tokens")}>Full analytics ↗</button>
@@ -276,12 +305,14 @@ function OracleDuck({ agent, pose, size }: { agent?: TowerAgent; pose: Parameter
 function AgentDuck({
   agent,
   stuck,
+  doing,
   pinned,
   onHover,
   onPin,
 }: {
   agent: TowerAgent;
   stuck: boolean;
+  doing?: string;
   pinned: boolean;
   onHover: (el: HTMLElement | null) => void;
   onPin: (el: HTMLElement) => void;
@@ -314,6 +345,7 @@ function AgentDuck({
         )}
       </span>
       <span className="rd-tower-duck-name">{agent.label}</span>
+      {doing && <span className="rd-fleet-doing">{doing}</span>}
     </button>
   );
 }
@@ -472,6 +504,12 @@ function AgentCard({
       )}
     </div>
   );
+}
+
+function doing(a: TowerAgent, stuck: boolean): string {
+  if (stuck) return "Looks stuck";
+  if (a.shownState === "busy") return a.progress?.summary ? firstSentence(a.progress.summary) : a.lastTool ? `Using ${a.lastTool}` : "Working";
+  return a.shownState === "unknown" ? "Status unavailable" : STATE_WORD[a.shownState] ?? a.shownState;
 }
 
 function firstSentence(text: string): string {

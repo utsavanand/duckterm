@@ -8,6 +8,7 @@ squash-merged PR doesn't appear. Turn ends and state changes are deliberately
 left out (owner, 2026-11-24: too frequent to be a pulse).
 """
 
+import contextlib
 import math
 import re
 import time
@@ -28,12 +29,21 @@ DEADLINE_S = 20.0
 _MERGE = re.compile(r"Merge pull request #(\d+) from [^/\s]+/(\S+)")
 
 
+def _left(deadline: float) -> float:
+    """A call's timeout: what remains of the refresh, at most 15 s."""
+    return min(15.0, deadline - time.monotonic())
+
+
 def repo_events(repo: str, since_ms: int, deadline: float) -> list[dict[str, Any]]:
     """PR merges and release tags in one clone since since_ms, newest first."""
     # A commit id, never the ref's name: a session can name a branch
     # "--output=<path>" and point origin/HEAD at it.
-    head = git.resolve(repo, "refs/remotes/origin/HEAD") or git.resolve(repo, "HEAD")
-    if head is None:
+    if _left(deadline) <= 0:
+        return []
+    head = git.resolve(repo, "refs/remotes/origin/HEAD", _left(deadline)) or git.resolve(
+        repo, "HEAD", _left(deadline)
+    )
+    if head is None or _left(deadline) <= 0:
         return []
     name = Path(repo).name
     events: list[dict[str, Any]] = []
@@ -48,6 +58,7 @@ def repo_events(repo: str, since_ms: int, deadline: float) -> list[dict[str, Any
             "--format=%ct%x1f%s%x1f%b%x1e",
             "--end-of-options",
             head,
+            timeout=_left(deadline),
         )
     except git.ReviewGitError:
         log = ""
@@ -69,25 +80,27 @@ def repo_events(repo: str, since_ms: int, deadline: float) -> list[dict[str, Any
                 "branch": match[2],
             }
         )
-    # Newest tags first, stopping at the window: a repo can have hundreds.
-    try:
-        tags = git.run(
-            repo,
-            "tag",
-            "--list",
-            "v*",
-            "--sort=-creatordate",
-            "--format=%(refname:short)%00%(creatordate:unix)",
-        ).splitlines()
-    except git.ReviewGitError:
-        tags = []
+    # Newest tags first, stopping at the window: a repo can have hundreds, so
+    # git returns only one more than is used (the previous release's name).
+    tags: list[str] = []
+    if _left(deadline) > 0:
+        with contextlib.suppress(git.ReviewGitError):
+            tags = git.run(
+                repo,
+                "for-each-ref",
+                f"--count={MAX_TAGS + 1}",
+                "--sort=-creatordate",
+                "--format=%(refname:short)%00%(creatordate:unix)",
+                "refs/tags/v*",
+                timeout=_left(deadline),
+            ).splitlines()
     for i, line in enumerate(tags[:MAX_TAGS]):
         tag, _, when = line.partition("\x00")
         at = int(when or 0) * 1000
-        if at < since_ms or time.monotonic() > deadline:
+        if at < since_ms or _left(deadline) <= 0:
             break
         previous = tags[i + 1].partition("\x00")[0] if i + 1 < len(tags) else None
-        merged = len(_merges(repo, previous, tag))
+        merged = len(_merges(repo, previous, tag, _left(deadline)))
         events.append(
             {
                 "kind": "release",
@@ -113,7 +126,7 @@ def clones(
         if not path or int(row.get("updated_at") or 0) < since_ms:
             continue
         if path not in roots:
-            left = deadline - time.monotonic()
+            left = _left(deadline)
             if len(roots) >= MAX_PATHS or left <= 0:
                 continue
             try:
@@ -122,7 +135,7 @@ def clones(
                     "rev-parse",
                     "--path-format=absolute",
                     "--git-common-dir",
-                    timeout=min(15, left),
+                    timeout=left,
                 )
                 roots[path] = str(Path(common.strip()).parent)
             except git.ReviewGitError:
