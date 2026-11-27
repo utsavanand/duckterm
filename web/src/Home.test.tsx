@@ -194,6 +194,25 @@ it("totals seven days of tokens and splits them by agent", async () => {
   expect(usage).toHaveTextContent("Today 3k");
 });
 
+it("loads the week of tokens once for Spend and Usage, so one can't fail while the other loads", async () => {
+  saved = { instances: [...homeDefaults(), { id: "usage", type: "usage", slot: "home", position: 6, params: { x: 0, y: 8, w: 3, h: 3 } as never }], revision: "default" };
+  let calls = 0;
+  const layoutFetch = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (path, init) => {
+    // Only the first request succeeds, as when the owner's Usage showed "Load failed".
+    if (String(path).startsWith("/analytics/tokens")) return ++calls === 1 ? new Response(JSON.stringify(tokens)) : Promise.reject(new TypeError("Load failed"));
+    return layoutFetch(path, init);
+  });
+  // Past the minute an earlier test's week of tokens is kept for.
+  const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 3_600_000);
+  try {
+    await show();
+    expect(calls).toBe(1);
+    expect(screen.getByRole("button", { name: "Open token analytics" })).toHaveTextContent("4ktokens");
+    expect(within(screen.getByRole("article", { name: "Spend" })).getByText("today")).toBeVisible();
+  } finally { clock.mockRestore(); }
+});
+
 it("turns a session named in an answer into a chip that opens it", async () => {
   vi.mocked(api.oracleChat).mockResolvedValue({ messages: [{ q: "Who is stuck?", a: "**b** is busy; **nobody** else.", at: 2 }] } as never);
   const onOpenTerminal = vi.fn();
