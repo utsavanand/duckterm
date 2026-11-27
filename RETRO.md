@@ -1,3 +1,21 @@
+## 2026-11-27 — The fleet chat had summaries all along; it just didn't say what they were
+
+A spec said the fleet chat ignored checkpoint summaries because it read the
+empty `checkpoints.summary` column. It didn't: `history.checkpoints()` runs every
+row through `resolve_checkpoint`, which swaps in the revision prose. A snapshot of
+the owner's database showed 65 of 66 agents already passing a ready summary. A
+grep of the ask path for `summary_revision` found nothing because the join
+happens in persistence, one call away.
+
+What was wrong was presentation. The digest printed `last checkpoint:` with no
+state or date, so stale or unverified prose read as current fact, and the prompt
+described digests as "state, goal, recent terminal output" without mentioning a
+summary. Each line now names the summary's state and date, or says there is none,
+and the prompt tells the model how to weigh summary against scrollback.
+
+Before building a fix for "X never reads Y", run the production read path on
+real data and look at what comes out. A grep only shows where Y is named.
+
 ## 2026-11-27 — A hardened runner only protects the calls that use it
 
 #496 routed review's git calls through one runner that turns off every
