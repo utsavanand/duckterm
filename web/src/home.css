@@ -49,10 +49,12 @@
 .rd-home-add .rd-widget-add button:hover { background:var(--m-panel) }
 
 /* The grid's 1px gaps over a line-colored ground are the borders between widgets. */
-.rd-home-grid { --home-row:58px; display:grid; grid-template-columns:repeat(12,minmax(0,1fr)); grid-auto-rows:var(--home-row); gap:1px; position:relative; background:var(--m-line); border:1px solid var(--m-line) }
+/* Each widget draws its own hairline into the 1px gap, so cells no widget
+   covers stay page-coloured instead of showing a grey grid background. */
+.rd-home-grid { --home-row:58px; display:grid; grid-template-columns:repeat(12,minmax(0,1fr)); grid-auto-rows:var(--home-row); gap:1px; position:relative; background:var(--m-bg); border:1px solid var(--m-line) }
 /* Row lines while editing show the cells widgets snap to. */
 .rd-home-grid.editing { background-image:linear-gradient(var(--m-muted) 1px, transparent 1px); background-size:100% calc(var(--home-row) + 1px); touch-action:none }
-.rd-home-widget { background:var(--m-bg); border:0; border-radius:0; display:flex; flex-direction:column; min-width:0; min-height:0; overflow:hidden; position:relative }
+.rd-home-widget { background:var(--m-bg); box-shadow:0 0 0 1px var(--m-line); border:0; border-radius:0; display:flex; flex-direction:column; min-width:0; min-height:0; overflow:hidden; position:relative }
 .rd-home-widget > header { display:flex; align-items:center; gap:6px; padding:12px 14px 0; min-height:30px }
 .rd-home-widget h3 { margin:0 }
 .rd-home-tools { margin-left:auto; display:flex; gap:2px }
@@ -66,10 +68,11 @@
 .rd-home-widget .rd-tower-tile { border:0; width:100%; text-align:left; background:transparent; padding:0 }
 .rd-home-widget .rd-tower-label { display:none }
 
-.rd-home-teams .rd-home-body, .rd-home-autopilot .rd-home-body { padding:0 }
+/* rd-home-w-<type> is a widget's own class; rd-home-<name> without the w- names elements inside widgets. */
+.rd-home-w-teams .rd-home-body, .rd-home-w-autopilot .rd-home-body { padding:0 }
 /* The tile names itself, so while editing its tools float over the top edge
    instead of taking a row, and the tile stops navigating. */
-.rd-home-teams > header, .rd-home-autopilot > header { position:absolute; top:0; left:0; right:0; z-index:1 }
+.rd-home-w-teams > header, .rd-home-w-autopilot > header { position:absolute; top:0; left:0; right:0; z-index:1 }
 .editing .rd-home-nav { pointer-events:none }
 .rd-home-nav { display:flex; flex-direction:column; gap:2px; width:100%; height:100%; padding:12px 14px; border:0; background:none; color:var(--m-fg); text-align:left; font:inherit }
 button.rd-home-nav { cursor:pointer }

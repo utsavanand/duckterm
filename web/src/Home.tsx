@@ -13,6 +13,7 @@ import { ApproveDialog } from "./review/ApproveDialog";
 import { ReviewWorkspace } from "./review/ReviewWorkspace";
 import { useRelay } from "./relay";
 import { ago, compact, TowerAgent, teams } from "./tower";
+import { SessionState } from "./types";
 import { Layout, requestLayout, WidgetContent, WidgetInstance, WidgetType } from "./Widgets";
 import { WidgetStreams } from "./widgetStreams";
 import "./oracleWidgets.css";
@@ -146,9 +147,14 @@ function AutopilotTile() {
   </button>;
 }
 
+const LIVE = new Set<SessionState>(["idle", "busy", "waiting", "unknown"]);
+
 function ChatWidget() {
   const { agents, onOpenTerminal } = useContext(HomeActions);
-  const sessions = useMemo(() => agents.map(a => ({ key: a.key, name: a.label, folder: a.group, state: a.shownState })), [agents]);
+  // Only sessions that can still answer: a message to an ended session would
+  // wait under the question forever.
+  const sessions = useMemo(() => agents.filter(a => LIVE.has(a.shownState))
+    .map(a => ({ key: a.key, name: a.label, folder: a.group, state: a.shownState })), [agents]);
   return <HomeChat sessions={sessions} onOpenTerminal={onOpenTerminal} />;
 }
 
@@ -229,13 +235,28 @@ function NeedDialog({ note, rules, onChange, onClose, onOpenTerminal }: {
 const AGENT_NAMES: Record<string, string> = { "claude-code": "Claude Code", codex: "Codex" };
 const AGENT_COLORS = ["var(--brand-green)", "var(--busy)", "var(--wait)"];
 
+// Spend and Usage read the same slow week of tokens. They share one request,
+// so they can't disagree (one loaded, the other "Load failed"). Usage mounts
+// only after the saved layout loads, so a result is kept for a minute; a
+// failure is not kept, so the next mount tries again.
+const WEEK_KEPT_MS = 60_000;
+let week: { load: Promise<TokenAnalytics>; at: number } | null = null;
+function loadWeekOfTokens() {
+  if (!week || Date.now() - week.at > WEEK_KEPT_MS) {
+    const load = loadAnalytics<TokenAnalytics>("tokens", new URLSearchParams({ days: "7" }), new AbortController().signal);
+    const entry = { load, at: Date.now() };
+    load.catch(() => { if (week === entry) week = null; });
+    week = entry;
+  }
+  return week.load;
+}
+
 function useWeekOfTokens() {
   const [data, setData] = useState<TokenAnalytics | null>(null), [error, setError] = useState("");
   useEffect(() => {
-    const controller = new AbortController();
-    loadAnalytics<TokenAnalytics>("tokens", new URLSearchParams({ days: "7" }), controller.signal)
-      .then(setData, (e: Error) => { if (!controller.signal.aborted) setError(e.message); });
-    return () => controller.abort();
+    let stale = false;
+    loadWeekOfTokens().then(d => { if (!stale) setData(d); }, (e: Error) => { if (!stale) setError(e.message); });
+    return () => { stale = true; };
   }, []);
   return { data, error };
 }
@@ -577,7 +598,7 @@ function HomeGrid({ registry, source }: { registry: WidgetType[]; source: Widget
     <div ref={grid} className={`rd-home-grid${editing ? " editing" : ""}`} onPointerMove={move} onPointerUp={end} onPointerCancel={end}>
       {shown.map(item => {
         const type = registry.find(t => t.type === item.type)!, b = boxOf(item);
-        return <article key={item.id} aria-label={type.title} className={`rd-home-widget rd-home-${item.type}${dragging === item.id ? " dragging" : ""}`}
+        return <article key={item.id} aria-label={type.title} className={`rd-home-widget rd-home-w-${item.type}${dragging === item.id ? " dragging" : ""}`}
           style={{ gridColumn: `${b.x + 1} / span ${b.w}`, gridRow: `${b.y + 1} / span ${b.h}` }}>
           {(editing || !NAV.has(item.type)) && <header onPointerDown={event => start(event, item.id, "move")}>
             {!NAV.has(item.type) && <h3>{type.title}</h3>}

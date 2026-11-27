@@ -1,3 +1,50 @@
+## 2026-11-27 — A diff against HEAD is empty once something commits the work
+
+The runner built workspace.diff against HEAD. Autopilot's executor commits
+after every step, so on the first real run the review step got an empty diff
+and passed only because the reviewer looked at HEAD on its own. A diff that
+stands for "what this run changed" needs the run's starting commit, recorded
+at start, not whatever HEAD is when the diff is taken.
+
+## 2026-11-26 — Automatic checkpoints failed on busy agents, and one fallback checkpointed old work
+
+The first night of automatic checkpoints: 86 succeeded, 8 failed, every
+failure on an agent that was mid-turn. The 50-message trigger fires while the
+agent is still writing, so copying the conversation kept hitting a changing
+file. One failure was a KeyError: when the live conversation can't be read,
+memory substitutes an older saved copy (meant for search), and the checkpoint
+read that copy's fingerprint, which old-format copies lack. With a new-format
+copy there was no error at all: the checkpoint summarized old work and called
+it current. Message-count checkpoints now wait for a turn end or a quiet
+minute, the fallback copy is refused, and the log says which step refused.
+Lesson: a fallback that is right for one reader (search) can be wrong for
+another (a checkpoint); mark it, and have each reader decide.
+
+## 2026-11-26 — A waiting reply needs a recipient that can still answer
+
+Home's @ offered every session, so a question to an ended one showed "Waiting"
+forever, and each saved answer was copied whole (up to 256 KB, 200 kept). When
+the UI waits on someone, list only who can answer, have the server refuse the
+rest, and bound what is copied into a history by bytes, not just by count.
+
+## 2026-11-26 — Verify hardening advice against the pinned dependency
+
+Serve static assets with nosniff alongside correct MIME types, including PDF
+workers and decoders. Verify suggested library switches before adding them:
+PDF.js 6.5 has removed isEvalSupported and its eval path. Treat optional
+dependency removal as a build change; Rollup needs its optional native package,
+so omitting every optional package breaks the release build.
+
+## 2026-11-26 — Test bundled document readers through the real server
+
+A PDF worker built successfully but failed in the app because the static server
+served .mjs as application/octet-stream. The modern PDF.js build also used Map
+methods missing in macOS WebKit; bundle the matching legacy renderer/worker and
+probe the actual native engine. Verify worker/resource URLs and MIME
+types through the packaged server, not just Vite. Page comments need both a
+content hash and a page number: identical text on different pages must not make
+feedback jump to the wrong occurrence. Scanned pages still need page comments.
+
 ## 2026-11-26 — The narrow-strip rule never hid Oracle's subtitle
 
 Compacting the sidebar rows for short windows first saved only the Autopilot
