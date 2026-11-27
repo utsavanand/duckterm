@@ -118,3 +118,31 @@ def test_an_unknown_run_is_a_key_error(tmp_path: Path, monkeypatch: pytest.Monke
     monkeypatch.setattr(store, "root", lambda: tmp_path / "autopilot")
     with pytest.raises(KeyError):
         runs.detail("../r1")
+
+
+def test_files_the_sandbox_wrote_are_read_only_up_to_their_caps(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _run(tmp_path, monkeypatch, ".duckterm/runs/r-1/spec/1/spec.md")
+    monkeypatch.setattr(runs, "SPEC_CAP", 6)
+    monkeypatch.setattr(runs, "DIFF_CAP", 40)
+    d = runs.detail("r1")
+    assert d["spec"] == "# Spec"
+    assert len(d["changes"]["patch"]) == 40 and d["changes"]["cut"] is True
+    monkeypatch.setattr(runs, "RECEIPT_CAP", 10)
+    d = runs.detail("r1")
+    assert d["attempts"] == [] and d["spec"] is None
+
+
+def test_the_clones_diff_driver_does_not_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # the clone's .git/config is the sandbox's to write
+    repo = _run(tmp_path, monkeypatch, "none.md")
+    ran = tmp_path / "ran"
+    driver = tmp_path / "driver.sh"
+    driver.write_text(f"#!/bin/sh\ntouch {ran}\n")
+    driver.chmod(0o755)
+    _git(repo, "config", "diff.external", str(driver))
+    assert "+three" in runs.detail("r1")["changes"]["patch"]
+    assert not ran.exists()

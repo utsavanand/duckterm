@@ -3,7 +3,7 @@ import {
   AutopilotAttempt, AutopilotChanges, AutopilotDraft, AutopilotEntry, AutopilotFlow, AutopilotOverview, AutopilotRun,
   AutopilotRunDetail, AutopilotSummary, autopilotApi, TriggerType,
 } from "./autopilotApi";
-import { html } from "./render";
+import { modelHtml } from "./render";
 import { api } from "./api";
 import { Button, inputStyle, Modal } from "./ui";
 import "./autopilot.css";
@@ -325,13 +325,13 @@ function RunDetail({ id, back, onBack }: { id: string; back: string; onBack: () 
             {run.loops[attempt.step] ? ` · looped back ${run.loops[attempt.step]}×` : ""}
           </div>
           {attempt.reason
-            ? <div className="ap-doc" dangerouslySetInnerHTML={{ __html: html(attempt.reason) }} />
+            ? <div className="ap-doc" dangerouslySetInnerHTML={{ __html: modelHtml(attempt.reason) }} />
             : <p className="ap-muted">{attempt.status === "started" ? "Still running." : "This step left no summary."}</p>}
         </section>}
       </div>)}
 
     {tab === "spec" && (run.spec
-      ? <div className="ap-doc ap-doc-box" dangerouslySetInnerHTML={{ __html: html(run.spec) }} />
+      ? <div className="ap-doc ap-doc-box" dangerouslySetInnerHTML={{ __html: modelHtml(run.spec) }} />
       : <p className="ap-muted">This run wrote no spec.</p>)}
 
     {tab === "changes" && <Changes changes={run.changes} />}
@@ -339,7 +339,7 @@ function RunDetail({ id, back, onBack }: { id: string; back: string; onBack: () 
     {tab === "issue" && <div className="ap-doc-box">
       <h3>{run.item.title ?? "Untitled"}</h3>
       {run.issue_body
-        ? <div className="ap-doc" dangerouslySetInnerHTML={{ __html: html(run.issue_body) }} />
+        ? <div className="ap-doc" dangerouslySetInnerHTML={{ __html: modelHtml(run.issue_body) }} />
         : <p className="ap-muted">The issue has no description.</p>}
       {run.item.url && <p className="ap-small"><a href={run.item.url} target="_blank" rel="noreferrer">Open on GitHub</a></p>}
     </div>}

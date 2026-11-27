@@ -201,25 +201,42 @@ def spec_text(project: Path, state: dict[str, Any]) -> str | None:
         spec = (attempt.get("outputs") or {}).get("spec")
         if isinstance(spec, dict) and spec.get("path"):
             found = str(spec["path"])
-    if not found:
+    if not found or Path(found).is_absolute() or ".." in Path(found).parts:
         return None
-    path = project / found
-    if path.is_symlink() or not path.resolve().is_relative_to(project.resolve()):
-        return None
-    return path.read_text(errors="replace") if path.is_file() else None
+    data = _read_capped(project, found, SPEC_CAP)
+    return None if data is None else data.decode(errors="replace")
 
 
+SPEC_CAP = 1_000_000
+RECEIPT_CAP = 1_000_000
 DIFF_CAP = 400_000
+
+
+def _read_capped(root: Path, rel: str, cap: int) -> bytes | None:
+    """At most cap bytes of root/rel, a file the sandbox may have written:
+    None when any part of the path is a link or the file is missing. The
+    last part is opened with O_NOFOLLOW, so a link swapped in after the
+    check is refused too."""
+    path = root
+    for part in Path(rel).parts:
+        path = path / part
+        if path.is_symlink():
+            return None
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    except OSError:
+        return None
+    with os.fdopen(fd, "rb") as f:
+        return f.read(cap)
 
 
 def changes(project: Path, base: str) -> dict[str, Any] | None:
     """The run's change against the commit it started from: each file's line
-    counts and the patch, cut at DIFF_CAP characters."""
+    counts and the patch, cut at DIFF_CAP bytes."""
     try:
+        numstat, _ = _git_capped(project, DIFF_CAP, "--numstat", base)
         files = []
-        for line in _git_out(
-            project, "diff", "--numstat", "--no-renames", base, "HEAD"
-        ).splitlines():
+        for line in numstat.splitlines():
             added, removed, path = line.split("\t", 2)
             binary = added == "-"
             files.append(
@@ -230,10 +247,32 @@ def changes(project: Path, base: str) -> dict[str, Any] | None:
                     "binary": binary,
                 }
             )
-        patch = _git_out(project, "diff", "--no-renames", "--no-color", base, "HEAD")
+        patch, cut = _git_capped(project, DIFF_CAP, "--no-color", base)
     except (OSError, subprocess.SubprocessError, ValueError):
         return None
-    return {"files": files, "patch": patch[:DIFF_CAP], "cut": len(patch) > DIFF_CAP}
+    return {"files": files, "patch": patch, "cut": cut}
+
+
+def _git_capped(project: Path, cap: int, *args: str) -> tuple[str, bool]:
+    """`git diff <args> HEAD`, read up to cap bytes and then stopped, and
+    whether it was cut. The clone's config is the sandbox's, so no external
+    diff driver, textconv or fsmonitor runs."""
+    argv = ["git", "-c", "core.fsmonitor=false", "-C", str(project), "diff", "--no-renames"]
+    argv += ["--no-ext-diff", "--no-textconv", *args[:-1], "--end-of-options", args[-1], "HEAD"]
+    with subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL) as proc:
+        assert proc.stdout is not None
+        timer = threading.Timer(60, proc.kill)
+        timer.start()
+        try:
+            out = proc.stdout.read(cap + 1)
+        finally:
+            timer.cancel()
+        if len(out) > cap:
+            proc.kill()
+            return out[:cap].decode(errors="replace"), True
+        if proc.wait(timeout=60):
+            raise subprocess.CalledProcessError(proc.returncode, argv)
+    return out.decode(errors="replace").strip(), False
 
 
 def _git_out(project: Path, *args: str) -> str:
@@ -350,7 +389,16 @@ def summary() -> dict[str, Any]:
 
 def _receipt(root: Path) -> dict[str, Any] | None:
     found = sorted((root / "repo" / runner.RUNS).glob("*/run.json"))
-    return json.loads(found[-1].read_text()) if found else None
+    if not found:
+        return None
+    raw = _read_capped(root, str(found[-1].relative_to(root)), RECEIPT_CAP + 1)
+    if raw is None or len(raw) > RECEIPT_CAP:
+        return None
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return None
+    return data if isinstance(data, dict) else None
 
 
 _META_LOCK = threading.Lock()

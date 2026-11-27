@@ -17,7 +17,7 @@ function detail(id: string): AutopilotRunDetail {
       { step: "build", attempt: 1, kind: "run", status: "completed", exit: 1, choice: null,
         reason: "Tests failed in test_badge.py.", started_at: 1047, finished_at: 1324 },
     ],
-    issue_body: "The badge stays after closing all items.",
+    issue_body: "The badge stays after closing all items.\n\n![](https://tracker.example/p.gif)",
     spec: "# Spec: inbox badge\n\n## Problem\n\nThe count is read too early.",
     changes: {
       files: [{ path: "web/src/inbox.ts", added: 2, removed: 1, binary: false }],
@@ -122,6 +122,8 @@ it("a run row opens the run: each step with its time and output, the error and t
 
   await act(async () => { fireEvent.click(screen.getByRole("tab", { name: "Issue" })); });
   expect(screen.getByText("The badge stays after closing all items.")).toBeInTheDocument();
+  // an outside author wrote the issue: opening the run must not fetch their image
+  expect(document.body.innerHTML).not.toContain("tracker.example");
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "← Autopilot" })); });
   expect(screen.getByText("Badge colour")).toBeInTheDocument();
 });
