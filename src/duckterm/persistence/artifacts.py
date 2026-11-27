@@ -182,6 +182,19 @@ class ArtifactStore:
             )
         ]
 
+    def recent(self, since_ms: int, limit: int) -> builtins.list[dict[str, Any]]:
+        """Artifacts made since since_ms across every session, newest first."""
+        return [
+            dict(row)
+            for row in self.conn.execute(
+                "SELECT a.id, a.session_key, a.title, a.created_at, "
+                "COALESCE(NULLIF(s.name, ''), s.session_key) AS session_name "
+                "FROM artifacts a JOIN sessions s ON s.session_key = a.session_key "
+                "WHERE a.created_at >= ? ORDER BY a.created_at DESC LIMIT ?",
+                (since_ms, limit),
+            )
+        ]
+
     def list_folder(
         self,
         folder: str,

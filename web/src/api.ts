@@ -165,6 +165,9 @@ export interface FolderMessagePlan {
   recipients: { session_id: string; name: string }[];
 }
 
+// One Fleet monitor Pulse item from GET /fleet/pulse (needs-you items come from relay notes).
+export interface PulseEvent { kind: "needs" | "pr" | "release" | "artifact"; at: number; title: string; name?: string; session_key?: string; repo?: string; detail?: string; count?: number }
+
 export interface FleetAnswer { answer: string; exchange: OracleExchange; sessions: string[] }
 
 // Ask Oracle reading a message as a send to one agent (flag oracle_messages).
@@ -723,6 +726,7 @@ export const api = {
       (r) => r.json() as Promise<{ messages: OracleExchange[] }>,
     ),
   controlTower: () => get<TowerInsights>("/control-tower"),
+  fleetPulse: () => get<{ events: PulseEvent[] }>("/fleet/pulse"),
   relay: (signal?: AbortSignal) => get<RelayState>("/relay", undefined, { signal }),
   voiceStatus: () => get<LocalVoiceStatus>("/voice/status"),
   voiceInstall: async (): Promise<LocalVoiceStatus> => {

@@ -10,6 +10,17 @@ and has a timeout.
 When hardening a shared runner, search for every other caller of the same
 command, not only the runner's own callers.
 
+## 2026-11-26 — A deadline checked between calls still waits for the slowest one
+
+Pulse's refresh stopped starting new git calls after 20 s. Each call still
+had its own 15 s timeout, so a refresh could run up to 15 s past its
+deadline. `git tag --list` also returned every v* tag before Python kept ten.
+Now each call's timeout is whatever remains of the deadline, at most 15 s,
+and `for-each-ref --count` cuts the tag list inside git.
+
+A time budget has to be passed into each call, not just checked between
+them.
+
 ## 2026-11-26 — A specific allow beats a general deny, whoever sets it
 
 #496 blocked every transport except https, ssh and file by passing
@@ -318,6 +329,38 @@ remote's value, and `file` is allowed.
 Before trusting a `-c` override, check how git combines that key: last-wins,
 first-wins, or a list. And a test fixture that loosens what the product
 allows hides exactly the behaviour a real user hits.
+
+## 2026-11-26 — A deadline checked after the slow part bounds nothing
+
+The Pulse's 20 s deadline was checked per repository and per tag, but the
+first step, one `rev-parse` per folder a session reports, ran before it. That
+is up to 40 calls of 15 s each. A deadline has to be checked by every loop that
+calls out, and each call's timeout should be the time left.
+
+## 2026-11-25 — A ref's name is input, so pass git the commit
+
+The Pulse asked `rev-parse --abbrev-ref origin/HEAD` for the default branch and
+handed the name to `git log`. Refnames can't start with "-", but a branch can
+be called `refs/heads/--output=/path`, and its short name can. A session that
+pointed origin/HEAD at one made the server write the merge log, with commit
+subjects it controls, to any file the server can write. The Pulse now resolves
+origin/HEAD to a commit id and passes `--end-of-options` before every
+revision. The same review found the refresh unbounded: every folder a session
+names costs git calls, and overlapping 30 s polls each ran their own. Folders,
+tags and total time per refresh are now capped, and polls share one refresh.
+
+## 2026-11-25 — A path a session names is code the server may run
+
+The Pulse runs `git log` on every recent session's folder, and the folder
+comes from hook reports. Security found that a repository's own config with
+`log.showSignature=true` makes `git log` run its `gpg.program` to verify a
+signed commit, so any agent able to write a .git/config could have the server
+run its program every 30 s. review/git already turned off the fsmonitor for
+the same reason; signature verifiers are the same class. Every review git call
+now passes `log.showSignature=false` and points all three gpg programs at
+`false`. The first regression test passed without the fix because the signed
+commit wasn't a merge, which `--merges` never shows; it now signs the PR merge
+and checks the program really runs without the overrides.
 
 ## 2026-11-25 — Hardening one call path leaves its neighbours open
 
