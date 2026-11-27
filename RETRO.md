@@ -1,3 +1,19 @@
+## 2026-11-26 — A specific allow beats a general deny, whoever sets it
+
+#496 blocked every transport except https, ssh and file by passing
+`protocol.allow=never`. git checks `protocol.<name>.allow` first, though,
+from any scope. A repository could set `protocol.ext.allow=always` with an
+`ext::<command>` origin, which runs the command as the transport. It could
+also set `remote.origin.vcs` and allow that name, which runs
+`git-remote-<name>` from PATH. Every call now pins ext and fd to `never`, and
+network calls refuse a repository whose own config sets any `protocol.*`
+or `remote.*.vcs`. The first run broke every fetch: `--show-scope` reports
+DuckTerm's own `-c` pins as scope `command`, and the check took them for the
+repository's. Those entries are now skipped.
+
+A deny by default is only as strong as the most specific allow anyone can
+add. Check how git ranks a key before trusting a general setting.
+
 ## 2026-11-26 — The narrow-strip rule never hid Oracle's subtitle
 
 Compacting the sidebar rows for short windows first saved only the Autopilot
