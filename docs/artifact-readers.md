@@ -60,3 +60,27 @@ under Earlier versions. Show quote only operates on the current hash and selects
 one unique exact match in the active reader mode; missing or repeated text is
 reported without guessing. Message comments are not attributed by similar text.
 No annotation schema changes are required.
+
+
+## PDFs
+
+PDFs open in Code explorer and saved Artifacts with page navigation, fit-width
+or percentage zoom, and a selectable text layer. Text mode shows the current
+page's extracted text. Scanned pages remain visible and support Comment on page;
+DuckTerm does not perform OCR. Password-protected and unreadable PDFs offer a
+clear error while preserving Download and comment history.
+
+The bundled PDF.js compatibility renderer and matching worker load only when a
+PDF is opened. This supports WebKit without the newest JavaScript Map methods. Fonts,
+character maps and image decoders ship in versioned local assets, without CDN
+requests. Only canvas and text layers are rendered: document scripts, embedded
+HTML, links, forms and actions are not executed. Canvas allocation is bounded,
+and only the selected page is rendered. Closing or replacing a document cancels
+work and destroys its worker.
+
+PDF comments add a one-based page number to the existing version-bound feedback
+context. Selected quotes are limited to 1,000 characters; page comments can omit
+a quote. The server validates the page field's type and bounds but does not
+parse PDFs or certify their page count. The current reader checks page existence
+before navigation. Go to page is available only for the current content hash;
+earlier versions remain in history without anchoring them to changed pages.

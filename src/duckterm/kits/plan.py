@@ -251,6 +251,9 @@ def build(
             placements += adapters.place_settings(kit, c, active)
         elif c.kind == "flow":
             placements += adapters.place_flow(kit, c, active)
+    plugin = adapters.opencode_plugin_placement(kit, placements)
+    if plugin:
+        placements.append(plugin)
     for team in kit.teams:
         placements.append(adapters.place_team(kit, team))
     placements = _dedupe(placements)

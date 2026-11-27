@@ -6,6 +6,90 @@ and passed only because the reviewer looked at HEAD on its own. A diff that
 stands for "what this run changed" needs the run's starting commit, recorded
 at start, not whatever HEAD is when the diff is taken.
 
+## 2026-11-26 — Automatic checkpoints failed on busy agents, and one fallback checkpointed old work
+
+The first night of automatic checkpoints: 86 succeeded, 8 failed, every
+failure on an agent that was mid-turn. The 50-message trigger fires while the
+agent is still writing, so copying the conversation kept hitting a changing
+file. One failure was a KeyError: when the live conversation can't be read,
+memory substitutes an older saved copy (meant for search), and the checkpoint
+read that copy's fingerprint, which old-format copies lack. With a new-format
+copy there was no error at all: the checkpoint summarized old work and called
+it current. Message-count checkpoints now wait for a turn end or a quiet
+minute, the fallback copy is refused, and the log says which step refused.
+Lesson: a fallback that is right for one reader (search) can be wrong for
+another (a checkpoint); mark it, and have each reader decide.
+
+## 2026-11-26 — A waiting reply needs a recipient that can still answer
+
+Home's @ offered every session, so a question to an ended one showed "Waiting"
+forever, and each saved answer was copied whole (up to 256 KB, 200 kept). When
+the UI waits on someone, list only who can answer, have the server refuse the
+rest, and bound what is copied into a history by bytes, not just by count.
+
+## 2026-11-26 — Verify hardening advice against the pinned dependency
+
+Serve static assets with nosniff alongside correct MIME types, including PDF
+workers and decoders. Verify suggested library switches before adding them:
+PDF.js 6.5 has removed isEvalSupported and its eval path. Treat optional
+dependency removal as a build change; Rollup needs its optional native package,
+so omitting every optional package breaks the release build.
+
+## 2026-11-26 — Test bundled document readers through the real server
+
+A PDF worker built successfully but failed in the app because the static server
+served .mjs as application/octet-stream. The modern PDF.js build also used Map
+methods missing in macOS WebKit; bundle the matching legacy renderer/worker and
+probe the actual native engine. Verify worker/resource URLs and MIME
+types through the packaged server, not just Vite. Page comments need both a
+content hash and a page number: identical text on different pages must not make
+feedback jump to the wrong occurrence. Scanned pages still need page comments.
+
+## 2026-11-26 — The narrow-strip rule never hid Oracle's subtitle
+
+Compacting the sidebar rows for short windows first saved only the Autopilot
+row: `.rd-sidebar-tops small` ties `.rd-oracle-row small` on specificity, and
+oracleNavigation.css loads later, so Oracle and Support kept their subtitles
+and 26px icons. The narrow-window strip had lost the same way since it was
+added: its Oracle cell kept a subtitle and stood 57px tall instead of 38. Unit tests can't see media queries; the
+screenshot's measured height was the only signal. Scope container overrides
+with `> button` and measure the rows, not just the first one.
+
+## 2026-11-25 — A pinned short window is a budget every sidebar row spends
+
+sidebar-order.spec.ts pins a 652px window to force a scrolling agent list,
+and drags a session onto a folder header about 320px away. Main's agent
+search box and #473's Support row each took height from the tree, leaving
+285px, and CI failed deterministically only after both met in one branch.
+When a spec pins a short viewport, say what the geometry needs next to it,
+and re-check it when anything is added above the tree.
+
+## 2026-11-25 — An icon tile on a theme token needs that token's foreground
+
+The Support sidebar icon filled its tile with --accent and drew the glyph in
+white. Dark mode makes --accent near-white, so the question mark measured
+1.09:1 and disappeared; browser tests and visibility checks still passed.
+Pair a theme-dependent background with its foreground token (--accent-fg)
+and check new icons in both themes. The same PR broke an e2e that counted
+feature-flag rows as a magic number; it now derives the count from
+/feature-flags.
+
+## 2026-11-26 — Hook text cannot authorize an owner question
+
+The permission-question fast path trusted Stop hook text before reading the
+session transcript. A forged hook could create Waiting and feed an owner answer
+rule. Verify the final text against the recorded conversation before either
+operation. Keep the no-model path for verified asks and allow one settle retry
+when the transcript has not flushed; a new turn invalidates that retry.
+
+## 2026-11-26 — Human and session sender identities must stay distinct
+
+Message cleanup used the same sender/recipient predicate for all unfinished
+mail. An event-created session named owner collided with the human sender and
+could cancel messages to other sessions. Reserve that identity in session
+validation and event storage, and limit read-broadcast cleanup to the recipient.
+Protect queued human mail too, including revocation from an older saved row.
+
 ## 2026-11-26 — CSP does not block frame self-navigation
 
 A sandboxed iframe can navigate itself even when connect-src is none. Keep
