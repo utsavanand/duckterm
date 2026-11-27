@@ -539,7 +539,8 @@ export interface KitRun extends KitRunSummary {
   attempts: { step: string; attempt: number; kind: string; status: string; choice: string | null; reason: string; outputs: Record<string, unknown> }[];
   gates: { step: string; visit: number; question: string | null; show: unknown; choices: string[]; response: unknown }[];
 }
-export interface KitTeam { folder: string; team: string; description: string; kit: string; kit_version: string | null; project: string; roles: Record<string, { purpose: string; skills: string[] }>; rules: Record<string, unknown>[]; created_at: number }
+export interface KitTeam { folder: string; team: string; description: string; kit: string; kit_version: string | null; project: string | null; roles: Record<string, { purpose: string; skills: string[] }>; rules: Record<string, unknown>[]; created_at: number; harness?: string | null; sessions?: { role: string; session_key: string }[] }
+export interface HarnessPreferences { default_harness: string | null; present: string[]; effective: string | null }
 export interface KitsOverview { project: string; kits: KitInstalled[]; procedures: KitProcedure[]; harnesses_present: Record<string, boolean>; runs: KitRunSummary[] }
 export interface KitInstall { workspace: string; project: string; version: string | null; harnesses: string[]; installed_at: number | null; trusted: boolean; verify: { ok: boolean | null; missing: string[]; drifted: string[] } }
 export interface KitPolicy { scope: "all" | "workspaces"; workspaces?: string[]; options?: Record<string, string>; fallbacks?: string[] }
@@ -841,8 +842,10 @@ export const api = {
   kitsRunDetail: (project: string, run_id: string, context?: string) =>
     post<{ run: KitRun; steps: { id: string; kind: string; skill?: string | null; question?: string | null; routes?: Record<string, string> | null }[] }>("/kits/run-detail", { project, run_id }, context),
   kitsTeams: (context?: string) => post<{ teams: KitTeam[] }>("/kits/teams", {}, context),
-  kitsCreateTeam: (body: { project?: string | null; kit_path?: string; kit: string; team: string; name?: string }, context?: string) =>
-    post<{ team: KitTeam }>("/kits/team", body, context),
+  kitsCreateTeam: (body: { project?: string | null; kit_path?: string; kit: string; team: string; name?: string; sessions?: boolean; harness?: string }, context?: string) =>
+    post<{ team: KitTeam; sessions?: { role: string; session_key: string }[]; failed?: { role: string; error: string }[]; harness?: string | null }>("/kits/team", body, context),
+  harnessPreferences: () => get<HarnessPreferences>("/harness-preferences", undefined, { authed: true }),
+  setHarnessPreferences: (default_harness: string | null) => post<HarnessPreferences>("/harness-preferences", { default_harness }),
   kitsGate: (project: string, run_id: string, step: string, answer: string, context?: string) =>
     post<{ run_id: string; resumed: boolean }>("/kits/gate", { project, run_id, step, answer }, context),
   // Legacy skill-kit registry (duckterm-harness.json suites, e.g. uv-suite before its manifest).

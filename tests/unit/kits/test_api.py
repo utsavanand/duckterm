@@ -724,6 +724,51 @@ def test_runs_and_run_detail_are_scoped_to_the_session_that_started_them(tmp_pat
         assert refused.value.status == 404
 
 
+def test_create_team_takes_the_folder_before_the_kit_is_installed_there(tmp_path, monkeypatch):
+    """New team asks for the folder the team works in; the kit may not be
+    installed there yet (Create team installs it before the first session)."""
+    from duckterm.helpers import instance
+
+    monkeypatch.setattr(instance, "home", lambda: tmp_path / "home")
+    project = _project(tmp_path)
+    out = api.create_team(
+        {
+            "kit": "sample-kit",
+            "team": "feature-squad",
+            "kit_path": str(SAMPLE),
+            "project": str(project),
+        }
+    )
+    team = out["team"]
+    assert team["project"] == str(project) and team["kit_version"] == "0.1.0"
+    assert team["harness"] is None and team["sessions"] == []
+    prompt = api.role_prompt(team, "dev")
+    assert prompt.startswith(
+        "You are the dev of the feature-squad team, workspace 'feature-squad'."
+    )
+    assert "Builds what was asked; raises the PR." in prompt
+    assert "Your skills: /raise-pr." in prompt
+    assert "Your work is reviewed by the reviewer." in prompt
+    assert "The other roles are reviewer" in prompt
+    assert "You may not push." in api.role_prompt(team, "reviewer")
+    noted = api.note_team_sessions(
+        "feature-squad", "claude-code", [{"role": "dev", "session_key": "k1"}]
+    )
+    assert noted["harness"] == "claude-code" and noted["sessions"][0]["role"] == "dev"
+    assert api.team_for_folder("feature-squad")["sessions"] == [
+        {"role": "dev", "session_key": "k1"}
+    ]
+    assert (
+        oct((tmp_path / "home" / "teams" / "feature-squad.json").stat().st_mode & 0o777) == "0o644"
+    )
+    # a project with no record of the kit and no kit_path is still the old 404
+    with pytest.raises(api.KitApiError) as missing:
+        api.create_team(
+            {"kit": "sample-kit", "team": "feature-squad", "project": str(project), "name": "x"}
+        )
+    assert missing.value.status == 404
+
+
 def test_create_team_from_an_added_kit_needs_no_install(tmp_path, monkeypatch):
     from duckterm.helpers import instance
 

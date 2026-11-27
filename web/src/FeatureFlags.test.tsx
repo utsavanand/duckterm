@@ -35,6 +35,22 @@ it("offers New team beside New session and New workspace only where MetaHarnesse
   fireEvent.click(screen.getByRole("button", { name: "New team" }));
   expect(onAction).toHaveBeenCalledWith("team");
 });
+it("offers the default harness in Settings only where MetaHarnesses are on", () => {
+  const onChange = vi.fn();
+  const harness = { present: ["claude-code", "codex"], value: null, effective: "claude-code", onChange };
+  render(<StaticEdition features={core}><HeaderMenus density="standard" onDensity={() => {}} notifyOn={false} onNotify={() => {}} harness={harness} onAction={() => {}} /></StaticEdition>);
+  fireEvent.click(screen.getByRole("button", { name: /Settings/ }));
+  expect(screen.queryByLabelText("Default harness")).toBeNull();
+  cleanup();
+  render(<StaticEdition features={[...core, "skill_kits"]}><HeaderMenus density="standard" onDensity={() => {}} notifyOn={false} onNotify={() => {}} harness={harness} onAction={() => {}} /></StaticEdition>);
+  fireEvent.click(screen.getByRole("button", { name: /Settings/ }));
+  const select = screen.getByLabelText("Default harness");
+  expect([...(select as HTMLSelectElement).options].map((o) => o.textContent)).toEqual(["Automatic (claude-code)", "claude-code", "codex"]);
+  fireEvent.change(select, { target: { value: "codex" } });
+  expect(onChange).toHaveBeenCalledWith("codex");
+  fireEvent.change(select, { target: { value: "" } });
+  expect(onChange).toHaveBeenLastCalledWith(null);
+});
 it("shows the server's effective flags without editable switches", async () => {
   vi.mocked(api.featureFlags).mockResolvedValue({ restart_required: true, flags: [{id:"backup", name:"Backup", default:false, enabled:true, reason:"Local override"}] });
   render(<FeatureFlagsModal onClose={() => {}} />);

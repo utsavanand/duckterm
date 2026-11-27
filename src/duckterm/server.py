@@ -292,6 +292,9 @@ _LOCKED_PAGE = """<!doctype html><meta charset="utf-8"><title>DuckTerm</title>
 # fmt: off
 _ROUTES: list[Route] = [
     Route("GET", "/edition", lambda s, r, w, h, b, seg: s._edition(w)),
+    Route("GET", "/harness-preferences", lambda s, r, w, h, b, seg: s._harness_preferences(w)),
+    Route("POST", "/harness-preferences",
+          lambda s, r, w, h, b, seg: s._harness_preferences(w, b)),
     Route("GET", "/checkpoint-settings", lambda s, r, w, h, b, seg: s._checkpoint_settings(w)),
     Route("GET", "/checkpoint-health", lambda s, r, w, h, b, seg: s._checkpoint_health(w)),
     Route("POST", "/checkpoint-settings", lambda s, r, w, h, b, seg: s._checkpoint_settings(w, b)),
@@ -3036,12 +3039,60 @@ class Server:
             raise kits_api.KitApiError(
                 500, f"the workspace could not be registered: {exc}"
             ) from exc
-        # The team's first session installs the kit if it is not there yet; the
-        # policy pins the kit tree the owner has just read on the kit page.
+        # The kit is enabled for the new workspace, pinned to the tree the owner
+        # has just read on the kit page, and installed into the team's folder
+        # now, before any session starts there (SessionStart repairs later).
         await asyncio.to_thread(
             kits_api.add_policy_workspace, kit, folder, str(kit_path) if kit_path else None
         )
+        project = result["team"].get("project")
+        if project:
+            registry = [dict(r) for r in self.history.harnesses()]
+            try:
+                await asyncio.to_thread(kits_api.apply_policies, registry, folder, project)
+            except (OSError, kits_api.KitApiError) as exc:
+                print(f"[duckterm] team {folder}: install into {project}: {exc}", file=sys.stderr)
+        if project and payload.get("sessions", True):
+            # Owner, 2026-11-27: a team starts with one session per role, on the
+            # default coding harness; the role cards add a second one later.
+            result.update(await self._start_team_sessions(kits_api, result["team"], payload))
         return result
+
+    async def _start_team_sessions(
+        self, kits_api: Any, team: dict[str, Any], payload: dict[str, Any]
+    ) -> dict[str, Any]:
+        from duckterm import harness_preferences
+
+        folder, project = str(team["folder"]), str(team["project"])
+        harness = harness_preferences.pick(
+            harness_preferences.present(),
+            harness_preferences.load()["default_harness"],
+            payload.get("harness"),
+        )
+        sessions: list[dict[str, str]] = []
+        failed: list[dict[str, str]] = []
+        if harness is None:
+            failed.append({"role": "*", "error": "no coding harness is installed on this machine"})
+        for role in team.get("roles", {}):
+            if harness is None:
+                break
+            command = harness_preferences.command_for(harness)
+            try:
+                key = await self.orchestrator.launch(
+                    runtime=_build_runtime(harness, command),
+                    cwd=project,
+                    prompt=kits_api.role_prompt(team, role),
+                    name=role,
+                    test=payload.get("test") is True,
+                )
+            except (GitError, ValueError, OSError) as exc:
+                failed.append({"role": role, "error": str(exc)})
+                continue
+            self.history.set_meta(key, name=role, group=folder)
+            self._remember_launch(key, project)
+            sessions.append({"role": role, "session_key": key})
+        updated = await asyncio.to_thread(kits_api.note_team_sessions, folder, harness, sessions)
+        return {"team": updated, "sessions": sessions, "failed": failed, "harness": harness}
 
     def _suites_for(self, directory: object) -> list[str]:
         """Which installed skill kits (e.g. uv-suite) a
@@ -6398,6 +6449,25 @@ class Server:
         try:
             result = await checkpoint_plan.preview(self, session_key)
             await _write_json(writer, 200, result)
+        except APIError as exc:
+            await _write_json(writer, exc.status, {"error": str(exc)})
+
+    async def _harness_preferences(
+        self, writer: asyncio.StreamWriter, body: bytes | None = None
+    ) -> None:
+        """The default coding harness (Settings): GET describes the setting,
+        the harnesses present and the one a new session would get; POST sets
+        {default_harness: <harness> | null}."""
+        from duckterm import harness_preferences
+
+        try:
+            if body is not None:
+                try:
+                    payload = json.loads(body)
+                except ValueError as exc:
+                    raise APIError(400, "Invalid harness preferences JSON") from exc
+                await asyncio.to_thread(harness_preferences.save, payload)
+            await _write_json(writer, 200, await asyncio.to_thread(harness_preferences.describe))
         except APIError as exc:
             await _write_json(writer, exc.status, {"error": str(exc)})
 
