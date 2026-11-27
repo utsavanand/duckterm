@@ -143,7 +143,7 @@ export function NewTeamModal({
                 style={{ ...inputStyle, flex: 1 }}
                 value={path}
                 onChange={(e) => setPath(e.target.value)}
-                placeholder="a repository on this Mac"
+                placeholder="a git repository on this Mac"
                 disabled={!selected}
               />
               <Button size="sm" variant="ghost" onClick={() => setBrowsing(true)} disabled={!selected}>Browse…</Button>
@@ -152,6 +152,7 @@ export function NewTeamModal({
           {browsing && (
             <DirBrowser browse={api.browse} start={path || undefined} pickLabel="Use this folder" onPick={(r) => { setPath(r.path); setBrowsing(false); }} onCancel={() => setBrowsing(false)} />
           )}
+          <p className="rd-modal-hint" style={{ marginTop: -6 }}>A git repository, not your home folder: the MetaHarness is installed into it and the sessions run there.</p>
           <label className="rd-modal-hint" style={{ display: "flex", gap: 8, alignItems: "flex-start", cursor: prefs?.effective ? "pointer" : "default" }}>
             <input type="checkbox" checked={willStart} disabled={!prefs?.effective} onChange={(e) => setStartSessions(e.target.checked)} style={{ marginTop: 3 }} />
             <span>

@@ -315,8 +315,11 @@ several (`harness-preferences.json` under the home; `GET|POST
 /harness-preferences`). Autopilot runs keep their own harness choice. The role
 cards' "New session as …" buttons add a second session of a role; unticking
 "Start one session per role" creates the workspace alone, as does a machine
-with no coding harness. A folder that is not a repository takes the sessions
-but not the MetaHarness, which installs only into repositories. `kit-policy.json` is written atomically
+with no coding harness. The folder must be a git root, and never the home
+folder or one above it, the rule a SessionStart install follows, since the
+MetaHarness's hooks would otherwise run in every session on the machine; a
+template may name at most 12 roles (lowercase names, a card under 300
+characters). `kit-policy.json` is written atomically
 and never through a symlink. A MetaHarness's name is unique in the registry;
 registering a second MetaHarness or suite of that name is refused.
 

@@ -145,9 +145,24 @@ def test_create_team_installs_the_kit_and_starts_one_session_per_role_on_the_def
                     port, server.token, "/kits/team", {**body, "name": "Quiet", "sessions": False}
                 )
             )
+            # a plain folder (or the home folder) is refused before anything is
+            # written, installed or started: the kit's hooks would run everywhere
+            plain = tmp_path / "plain"
+            plain.mkdir()
+            out.append(
+                await _owner_post(
+                    port,
+                    server.token,
+                    "/kits/team",
+                    {**body, "name": "Nowhere", "project": str(plain)},
+                )
+            )
         return out
 
-    prefs, created, saved, second, quiet = asyncio.run(scenario())
+    prefs, created, saved, second, quiet, nowhere = asyncio.run(scenario())
+    assert nowhere[0] == 400 and "git root" in nowhere[1]["error"]
+    assert api.team_for_folder("Nowhere") is None and "Nowhere" not in store.folders()
+    assert not (tmp_path / "plain" / ".claude").exists()
     assert prefs == (
         200,
         {"default_harness": None, "present": ["claude-code", "codex"], "effective": "claude-code"},

@@ -485,6 +485,32 @@ def _refs(value: Any) -> list[str]:
     return []
 
 
+# A template's roles become sessions, one each, on one click (security review of
+# #518): bounded in number, named plainly, with a card that fits a prompt.
+MAX_ROLES = 12
+ROLE_NAME = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
+MAX_PURPOSE = 300
+MAX_RULES = 48
+
+
+def role_problems(roles: dict[str, str], rules: int = 0) -> list[str]:
+    """What is wrong with a template's roles (name → purpose) for a team:
+    the same limits at validate time and at Create team."""
+    out = []
+    if len(roles) > MAX_ROLES:
+        out.append(f"{len(roles)} roles; a team has at most {MAX_ROLES}")
+    for name, purpose in roles.items():
+        if not ROLE_NAME.match(name):
+            out.append(f"role {name!r}: a name is lowercase letters, digits and dashes, 32 at most")
+        if len(purpose) > MAX_PURPOSE:
+            out.append(
+                f"role {name!r}: purpose is {len(purpose)} characters, {MAX_PURPOSE} at most"
+            )
+    if rules > MAX_RULES:
+        out.append(f"{rules} rules; at most {MAX_RULES}")
+    return out
+
+
 def _check_team(kit: m.Kit, team: str, err: Report, skills: dict[str, m.Component]) -> None:
     path = kit.root / team
     cid = f"{kit.name}/team/{Path(team).stem}"
@@ -503,6 +529,15 @@ def _check_team(kit: m.Kit, team: str, err: Report, skills: dict[str, m.Componen
     if not isinstance(roles, dict) or not roles:
         err(cid, "template needs `roles`")
         return
+    purposes = {
+        str(role): (
+            str((spec.get("card") or {}).get("purpose", "")) if isinstance(spec, dict) else ""
+        )
+        for role, spec in roles.items()
+    }
+    rules = data.get("rules", [])
+    for problem in role_problems(purposes, len(rules) if isinstance(rules, list) else 0):
+        err(cid, problem)
     for role, spec in roles.items():
         names = spec.get("skills") or [] if isinstance(spec, dict) else []
         for skill in names:

@@ -159,6 +159,7 @@ def test_create_team_records_the_procedure_under_the_home_and_refuses_twice(tmp_
 
     monkeypatch.setattr(instance, "home", lambda: tmp_path / "home")
     project = _project(tmp_path)
+    (project / ".git").mkdir()  # a team's folder is a git root
     api.install_kit({"kit": str(SAMPLE), "project": str(project), "harnesses": ["claude-code"]})
     out = api.create_team({"project": str(project), "kit": "sample-kit", "team": "feature-squad"})
     team = out["team"]
@@ -731,6 +732,7 @@ def test_create_team_takes_the_folder_before_the_kit_is_installed_there(tmp_path
 
     monkeypatch.setattr(instance, "home", lambda: tmp_path / "home")
     project = _project(tmp_path)
+    (project / ".git").mkdir()  # a team's folder is a git root
     out = api.create_team(
         {
             "kit": "sample-kit",
@@ -767,6 +769,79 @@ def test_create_team_takes_the_folder_before_the_kit_is_installed_there(tmp_path
             {"kit": "sample-kit", "team": "feature-squad", "project": str(project), "name": "x"}
         )
     assert missing.value.status == 404
+
+
+def test_create_team_refuses_a_folder_a_kit_may_not_be_installed_into(tmp_path, monkeypatch):
+    """Security review of #518: the team's folder takes the kit's hooks and
+    runs its sessions, so it follows the SessionStart install rule: a git
+    root, never the home folder or one above it."""
+    from pathlib import Path
+
+    from duckterm.helpers import instance
+
+    monkeypatch.setattr(instance, "home", lambda: tmp_path / "dthome")
+    fake_home = tmp_path / "users" / "me"
+    (fake_home / ".git").mkdir(parents=True)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: fake_home))
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    above = tmp_path / "users"
+    (above / ".git").mkdir()
+    for folder in (plain, fake_home, above):
+        with pytest.raises(api.KitApiError) as refused:
+            api.create_team(
+                {
+                    "kit": "sample-kit",
+                    "team": "feature-squad",
+                    "kit_path": str(SAMPLE),
+                    "project": str(folder),
+                }
+            )
+        assert refused.value.status == 400 and "git root" in str(refused.value)
+        assert not (tmp_path / "dthome" / "teams").exists()
+    repo = tmp_path / "users" / "me" / "work" / "repo"
+    (repo / ".git").mkdir(parents=True)
+    assert api.may_install_into(repo) and not api.may_install_into(fake_home)
+    out = api.create_team(
+        {
+            "kit": "sample-kit",
+            "team": "feature-squad",
+            "kit_path": str(SAMPLE),
+            "project": str(repo),
+        }
+    )
+    assert out["team"]["project"] == str(repo.resolve())
+
+
+def test_create_team_refuses_a_template_with_too_many_or_badly_named_roles(tmp_path, monkeypatch):
+    from duckterm.helpers import instance
+    from duckterm.kits import validate
+
+    monkeypatch.setattr(instance, "home", lambda: tmp_path / "dthome")
+    root = tmp_path / "bigkit"
+    (root / "teams").mkdir(parents=True)
+    (root / "metaharness.toml").write_text(
+        'manifest_version = 1\nname = "bigkit"\nversion = "1.0.0"\ndescription = "d"\n'
+        'teams = ["teams/crowd.toml", "teams/odd.toml"]\n'
+        '[[components]]\nkind = "knowledge"\npath = "k.md"\n'
+    )
+    (root / "k.md").write_text("rules\n")
+    crowd = 'name = "crowd"\n' + "".join(
+        f'[roles.r{i}]\ncard = {{ purpose = "p" }}\nskills = []\n' for i in range(13)
+    )
+    (root / "teams" / "crowd.toml").write_text(crowd)
+    (root / "teams" / "odd.toml").write_text(
+        'name = "odd"\n[roles."Dev Lead"]\ncard = { purpose = "' + "x" * 301 + '" }\nskills = []\n'
+    )
+    kit = api._kit(str(root))
+    messages = [str(f) for f in validate.validate(kit)]
+    assert any("13 roles; a team has at most 12" in msg for msg in messages)
+    assert any("role 'Dev Lead': a name is lowercase" in msg for msg in messages)
+    assert any("purpose is 301 characters" in msg for msg in messages)
+    for team, text in (("crowd", "13 roles"), ("odd", "Dev Lead")):
+        with pytest.raises(api.KitApiError) as refused:
+            api.create_team({"kit": "bigkit", "team": team, "kit_path": str(root)})
+        assert refused.value.status == 400 and text in str(refused.value)
 
 
 def test_create_team_from_an_added_kit_needs_no_install(tmp_path, monkeypatch):
