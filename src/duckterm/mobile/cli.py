@@ -5,6 +5,7 @@ import base64
 import hashlib
 import ipaddress
 import json
+import platform
 import re
 import ssl
 import subprocess
@@ -172,8 +173,42 @@ def add_parser(sub: Any) -> None:
     pair.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
     for name in ("enable", "disable", "invite", "devices"):
         commands.add_parser(name)
+    # Account sign-in is in development behind the ducky_remote flag.
+    commands.add_parser("signin", help=argparse.SUPPRESS).add_argument("--name")
+    commands.add_parser("signout", help=argparse.SUPPRESS)
+    commands.add_parser("account", help=argparse.SUPPRESS)
     for name in ("approve", "revoke"):
         commands.add_parser(name).add_argument("device_id")
+
+
+def account_command(directory: Path, args: argparse.Namespace) -> int:
+    from duckterm import editions
+    from duckterm.mobile import account
+
+    if not editions.configured(prefer_saved=True).includes("ducky_remote"):
+        print("duckterm: Ducky accounts are in development (flag ducky_remote)", file=sys.stderr)
+        return 1
+    if args.ducky_command == "signin":
+        name = args.name or platform.node().removesuffix(".local") or "Mac"
+        signed_in = account.sign_in(directory, name)
+        print(f"Signed in as {signed_in['login']}. Phones on this account can now find this Mac.")
+        print("Each new phone still needs your approval here.")
+    elif args.ducky_command == "signout":
+        account.sign_out(directory)
+        print("Signed out. Phones already allowed keep working until you remove them.")
+    else:
+        current = account.load(directory)
+        print(
+            json.dumps(
+                (
+                    {key: current[key] for key in ("login", "account_id", "device_id", "cloud_url")}
+                    if current
+                    else None
+                ),
+                indent=2,
+            )
+        )
+    return 0
 
 
 def run(args: argparse.Namespace) -> int:
@@ -188,6 +223,8 @@ def run(args: argparse.Namespace) -> int:
             from duckterm.mobile.pairing import pair
 
             return pair(directory, selected_address=args.address, port=args.port)
+        if args.ducky_command in {"signin", "signout", "account"}:
+            return account_command(directory, args)
         if args.ducky_command == "setup":
             configure(directory, args.address, args.port, replace=args.replace)
             if args.replace:

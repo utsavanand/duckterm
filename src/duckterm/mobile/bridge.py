@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import hashlib
 import json
 import os
 import secrets
@@ -17,6 +18,7 @@ from urllib.parse import parse_qs, urlsplit
 
 from duckterm.helpers import instance
 from duckterm.helpers.private_files import private_read
+from duckterm.mobile import account
 from duckterm.mobile.analysis import Analysis, AnalysisError
 from duckterm.mobile.conversation import (
     ConversationNotFound,
@@ -40,6 +42,7 @@ LOG_LIMIT = 256 * 1024
 LOGGED_ROUTES = frozenset(
     {
         "/v1/pair",
+        "/v1/pair/account",
         "/v1/pair/status",
         "/v1/snapshot",
         "/v2/snapshot",
@@ -131,13 +134,29 @@ class Bridge:
         if not (self.directory / "ducky-bridge.json").is_file():
             return 503, {"error": "Ducky access is disabled"}
         try:
-            if method == "POST" and target == "/v1/pair":
+            if method == "POST" and target in {"/v1/pair", "/v1/pair/account"}:
+                if target == "/v1/pair/account" and not self.server.edition.includes(
+                    "ducky_remote"
+                ):
+                    return 404, {"error": "Endpoint unavailable"}
                 now = time.monotonic()
                 while self.claims and self.claims[0] < now - 60:
                     self.claims.popleft()
                 if len(self.claims) >= 20:
                     return 429, {"error": "Too many pairing attempts; try again shortly"}
                 self.claims.append(now)
+            if method == "POST" and target == "/v1/pair/account":
+                request = json.loads(body)
+                if (
+                    not isinstance(request, dict)
+                    or set(request) != {"ticket", "token"}
+                    or not all(isinstance(value, str) for value in request.values())
+                ):
+                    raise ValueError("Expected account ticket and device credential")
+                return 202, await asyncio.to_thread(
+                    self.claim_account, request["ticket"], request["token"]
+                )
+            if method == "POST" and target == "/v1/pair":
                 request = json.loads(body)
                 if (
                     not isinstance(request, dict)
@@ -279,6 +298,17 @@ class Bridge:
         except (ValueError, TypeError):
             return 400, {"error": "Invalid Ducky request"}
 
+    def claim_account(self, ticket: str, token: str) -> dict[str, Any]:
+        with self.grants.locked() as state:
+            host_id = state["host_id"]
+        try:
+            claims = account.verify_ticket(self.directory, ticket, host_id)
+        except ValueError as exc:
+            raise Denied(str(exc)) from exc
+        certificate = ssl.PEM_cert_to_DER_cert((self.directory / "ducky-cert.pem").read_text())
+        code = account.matching_code(token, hashlib.sha256(certificate).hexdigest())
+        return self.grants.claim_account(token, claims, code)
+
     async def recheck(self, device: dict[str, Any], required: str) -> None:
         await asyncio.to_thread(
             self.grants.authenticated_by_id, device["id"], required, host_id=device["host_id"]
@@ -306,7 +336,13 @@ class Bridge:
                 limit = (
                     32768
                     if method == "POST"
-                    and target in {"/v2/messages", "/v2/analysis/context", "/v2/analysis/questions"}
+                    and target
+                    in {
+                        "/v1/pair/account",
+                        "/v2/messages",
+                        "/v2/analysis/context",
+                        "/v2/analysis/questions",
+                    }
                     else 2048
                 )
                 if int(headers.get("content-length", "0")) > limit:
