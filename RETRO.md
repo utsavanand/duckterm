@@ -28,6 +28,19 @@ and has a timeout.
 When hardening a shared runner, search for every other caller of the same
 command, not only the runner's own callers.
 
+## 2026-11-26 — The top folder can be right while the git folder is someone else's
+
+#504's check that git's top folder is the session's folder missed a `.git`
+file that names another repository's git folder. Its top folder is still
+the session's folder, but the branch, the index and the tracked file names
+are the other repository's, so they went into the checkpoint. The git folder
+must now be the folder's own `.git`. For a `.git` file, it must be a linked
+worktree whose git folder points back at it, or a submodule whose
+`core.worktree` does.
+
+A repository has a worktree and a git folder, and either can be pointed
+elsewhere. Check both.
+
 ## 2026-11-26 — A deadline checked between calls still waits for the slowest one
 
 Pulse's refresh stopped starting new git calls after 20 s. Each call still
@@ -188,93 +201,18 @@ ancestor names, and feed those results through the same filters and counts.
 The existing search test explicitly excluded folder matches; update that contract
 and cover nested paths, archived sessions, and moves while a query is active.
 
-## 2026-11-26 — Copy approved as a phrase loses the test the button had
+## 2026-11-26 — A security check written for the root broke the subfolder
 
-A revoke action moved from a standalone button to a phrase inside a sentence,
-which the owner preferred and approved. The wording was reviewed; the coverage
-was not. Nothing had asserted the old button either, so the change did not
-delete a test -- it inherited an absence, and the review of the new wording felt
-like the review of the behaviour.
+The #504 follow-up rejected a repository whose worktree is somewhere else by
+requiring git's top folder to equal the session folder. Sessions often start
+in a subfolder, and every one of those then recorded no git state. Our tests
+covered the attack and the repository root, but no subfolder. main-qa-2 caught
+it. The check now finds the nearest folder up the physical path that holds a
+`.git`, the same folder git itself would find, and requires the top folder to
+be that one. A worktree pointed somewhere else is still refused.
 
-The uncovered part was not the link's presence but its destination, which is
-chosen server-side from the credential source: /settings/applications for a
-`gh auth login` OAuth grant, /settings/tokens for a pasted PAT. Neither page
-lists the other's entry, so a wrong destination shows the owner a list their
-credential is absent from -- indistinguishable from already revoked. A one-line
-UI element can still carry a branch, and a branch with two wrong-looking-correct
-outcomes deserves a test per outcome.
-
-Rule: when a control becomes prose, ask what asserted it before. "It is only a
-link" describes the markup, not the consequence. Mutation-check the new test
-before trusting it: collapsing the server branch to a single page, and
-hardcoding the href in the component, each had to fail something.
-
-## 2026-11-25 — A tooltip shouldn't take clicks
-
-The Oracle tower's hover and focus card is fixed-position and drawn above the
-page. Left open, it intercepted the click meant for the Needs you tile beneath
-it, which CI saw as a 30 s timeout (three times). fb421590 changed the spec to
-dismiss it first; the product now lets clicks through until the card is pinned.
-
-## 2026-11-25 — Choosing a recipient isn't approving the words
-
-Ask Oracle sent at once after the owner picked an agent on a "which agent?"
-card, whenever the model's text was a substring of what the owner typed. A
-fragment can flip the meaning ("not to merge" becomes "merge"), and the owner
-never saw it. A pick now opens the same Send card as any other plan.
-
-## 2026-11-25 — Interrupted sessions retain unfinished requests
-
-QA caught a regression in the Unanswered cleanup fix: both lifecycle paths
-treated interrupted sessions as final, despite interruption being resumable.
-The original regression covered explicit Stop but not a terminal crash. Both
-paths now preserve pending requests for stopped and interrupted sessions while
-still revoking credentials. Tests cover every resting state through direct
-state changes and events, late exits, and resuming to answer retained work.
-Lesson: derive lifecycle test cases from the runtime's state contract; testing
-one resumable state does not cover the other.
-
-## 2026-11-25 — Reading a priority message does not finish it
-
-Final session cleanup cancelled queued and accepted inbox requests, but missed
-priority broadcasts that the agent had read without acknowledging. Those rows
-still counted as Unanswered after the recipient ended and lost its credentials.
-Cleanup now cancels those unfinished broadcasts too, preserving their history.
-Resumable stops keep them pending; informational read notices stay unchanged.
-Lesson: when adding a pending message state, check lifecycle cleanup as well as
-inbox counts. The regression exercises inbox read, SessionEnd, revoked access,
-and the actual Unanswered count, including the resumable-stop case.
-
-## 2026-11-25 — A cache does not share work while it is empty
-
-Home requests PR rows for several folders together. Every cold request saw
-the same expired branch-owner cache and started its own event scan and Git
-lookups. Twelve simultaneous calls reproduced twelve rebuilds. Share one
-in-flight rebuild, cache only successful results, and let it finish when one
-caller disconnects. Test the overlap and failure path with explicit gates,
-not machine-wide CPU stress.
-
-The analytics worker also received identities computed on the event loop:
-argument evaluation scanned all event JSON before the worker ever started.
-Read identities through a worker-owned, read-only SQLite snapshot. Moving
-the expensive call requires moving its expensive arguments too; do not
-reuse the loop's SQLite connection from a thread.
-
-TokenLedger had its own whole-suffix read/split allocation, independent of
-the MessageCache reader fixed earlier. Stream its raw input too, preserving
-byte line splitting and the incomplete trailing record. Chunking reduces
-temporary allocation; it does not eliminate full-history scan time or bound
-the largest individual record and retained accounting state.
-
-## 2026-11-25 — The Autopilot page matched its mock and still looked wrong
-
-The owner's first real view was the empty page in dark mode on a wide screen.
-It led with four tiles of zeros, offered the same action twice, hid the flows
-the owner had decided it should list, and shrank to its content because the
-page was a flex child without `flex: 1`, so its button floated mid-screen.
-Every earlier check used a populated page at one width. Check a page empty and
-in use, in both themes, at a wide and a narrow width, before calling it done;
-an empty state is the first thing a new feature shows.
+When a check tightens what counts as valid input, test the ordinary inputs
+around the case it was written for, not just the case itself.
 
 ## 2026-11-26 — Sweep the option list, not just the reports
 
@@ -431,6 +369,115 @@ The signature test first passed without the fix. This machine's git signs every
 commit with SSH, so the fixture's commit already carried a signature, and git
 checked that one with the ssh verifier instead of the planted gpg one. A
 security test must first show the plain command really runs the program.
+
+## 2026-11-26 — git status runs the repo's clean filter
+
+Checkpoints read each session's folder with a bare `git status`, `rev-parse`
+and `log`: no fsmonitor override and no timeout. The folder is session-reported
+and its .git/config session-writable. Beyond the fsmonitor, `git status`
+re-reads every file whose stat data changed through the repo's own
+`filter.<driver>.clean`, chosen by a committed `.gitattributes`, so a session
+could have the server run a program at its next checkpoint. Checkpoints now go
+through review/git with a 5 s timeout. Dirty files come from `diff-index
+--cached`, `diff-files` and `ls-files --others`. These compare stat data, so a
+file touched but unchanged is listed as dirty. `diff-files` still re-reads a
+racy entry through a filter. Security found that on the second pass, and
+review/git now blanks the repository's filters. Checkpoints also refuse a
+repository whose worktree is somewhere else (`core.worktree`, a gitdir file),
+and keep at most 200 dirty file names.
+
+The parity test found an older bug. The status output was `.strip()`ped before
+each line was cut at column 3. The first line's leading space went, so the first
+unstaged file lost its first letter (`README.md` became `EADME.md`). Stripping a
+fixed-column format corrupts it.
+
+## 2026-11-26 — Copy approved as a phrase loses the test the button had
+
+A revoke action moved from a standalone button to a phrase inside a sentence,
+which the owner preferred and approved. The wording was reviewed; the coverage
+was not. Nothing had asserted the old button either, so the change did not
+delete a test -- it inherited an absence, and the review of the new wording felt
+like the review of the behaviour.
+
+The uncovered part was not the link's presence but its destination, which is
+chosen server-side from the credential source: /settings/applications for a
+`gh auth login` OAuth grant, /settings/tokens for a pasted PAT. Neither page
+lists the other's entry, so a wrong destination shows the owner a list their
+credential is absent from -- indistinguishable from already revoked. A one-line
+UI element can still carry a branch, and a branch with two wrong-looking-correct
+outcomes deserves a test per outcome.
+
+Rule: when a control becomes prose, ask what asserted it before. "It is only a
+link" describes the markup, not the consequence. Mutation-check the new test
+before trusting it: collapsing the server branch to a single page, and
+hardcoding the href in the component, each had to fail something.
+
+## 2026-11-25 — A tooltip shouldn't take clicks
+
+The Oracle tower's hover and focus card is fixed-position and drawn above the
+page. Left open, it intercepted the click meant for the Needs you tile beneath
+it, which CI saw as a 30 s timeout (three times). fb421590 changed the spec to
+dismiss it first; the product now lets clicks through until the card is pinned.
+
+## 2026-11-25 — Choosing a recipient isn't approving the words
+
+Ask Oracle sent at once after the owner picked an agent on a "which agent?"
+card, whenever the model's text was a substring of what the owner typed. A
+fragment can flip the meaning ("not to merge" becomes "merge"), and the owner
+never saw it. A pick now opens the same Send card as any other plan.
+
+## 2026-11-25 — Interrupted sessions retain unfinished requests
+
+QA caught a regression in the Unanswered cleanup fix: both lifecycle paths
+treated interrupted sessions as final, despite interruption being resumable.
+The original regression covered explicit Stop but not a terminal crash. Both
+paths now preserve pending requests for stopped and interrupted sessions while
+still revoking credentials. Tests cover every resting state through direct
+state changes and events, late exits, and resuming to answer retained work.
+Lesson: derive lifecycle test cases from the runtime's state contract; testing
+one resumable state does not cover the other.
+
+## 2026-11-25 — Reading a priority message does not finish it
+
+Final session cleanup cancelled queued and accepted inbox requests, but missed
+priority broadcasts that the agent had read without acknowledging. Those rows
+still counted as Unanswered after the recipient ended and lost its credentials.
+Cleanup now cancels those unfinished broadcasts too, preserving their history.
+Resumable stops keep them pending; informational read notices stay unchanged.
+Lesson: when adding a pending message state, check lifecycle cleanup as well as
+inbox counts. The regression exercises inbox read, SessionEnd, revoked access,
+and the actual Unanswered count, including the resumable-stop case.
+
+## 2026-11-25 — A cache does not share work while it is empty
+
+Home requests PR rows for several folders together. Every cold request saw
+the same expired branch-owner cache and started its own event scan and Git
+lookups. Twelve simultaneous calls reproduced twelve rebuilds. Share one
+in-flight rebuild, cache only successful results, and let it finish when one
+caller disconnects. Test the overlap and failure path with explicit gates,
+not machine-wide CPU stress.
+
+The analytics worker also received identities computed on the event loop:
+argument evaluation scanned all event JSON before the worker ever started.
+Read identities through a worker-owned, read-only SQLite snapshot. Moving
+the expensive call requires moving its expensive arguments too; do not
+reuse the loop's SQLite connection from a thread.
+
+TokenLedger had its own whole-suffix read/split allocation, independent of
+the MessageCache reader fixed earlier. Stream its raw input too, preserving
+byte line splitting and the incomplete trailing record. Chunking reduces
+temporary allocation; it does not eliminate full-history scan time or bound
+the largest individual record and retained accounting state.
+
+## 2026-11-25 — The Autopilot page matched its mock and still looked wrong
+
+The owner's first real view was the empty page in dark mode on a wide screen.
+It led with four tiles of zeros, offered the same action twice, hid the flows
+the owner had decided it should list, and shrank to its content because the
+page was a flex child without `flex: 1`, so its button floated mid-screen.
+Every earlier check used a populated page at one width. Check a page empty and
+in use, in both themes, at a wide and a narrow width, before calling it done;
+an empty state is the first thing a new feature shows.
 
 ## 2026-11-25 — Fixture completion and retry deadlines need explicit evidence
 

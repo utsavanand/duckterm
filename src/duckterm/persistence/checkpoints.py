@@ -6,9 +6,9 @@ record fields and renders Markdown; it never generates an independent summary.
 A rendered file is derived from the database and is not a provider backup.
 """
 
-import subprocess
 import uuid
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -17,8 +17,11 @@ from typing import Any
 # `events`, which would shadow a module import inside the functions below.
 from duckterm.core.events import POST_TOOL_USE, PRE_TOOL_USE, USER_PROMPT_SUBMIT
 from duckterm.helpers import paths
+from duckterm.review import git as review_git
 
 Event = dict[str, Any]
+# The record keeps this many dirty file names; dirty_count has the total.
+MAX_DIRTY_FILES = 200
 
 
 @dataclass
@@ -74,19 +77,64 @@ def _extract(events: list[Event]) -> dict[str, Any]:
     }
 
 
+def _owns_gitdir(root: Path, git: Callable[..., str]) -> bool:
+    """A .git file can name another repository's git folder, whose branch
+    and file names would then be recorded as this folder's. The git folder
+    must be root/.git itself, or a linked worktree's or submodule's that
+    points back at root."""
+    gitdir = Path(git("rev-parse", "--absolute-git-dir")).resolve()
+    if gitdir == (root / ".git").resolve():
+        return True
+    if not (root / ".git").is_file():
+        return False
+    try:  # a linked worktree's git folder names its .git file
+        back = (gitdir / "gitdir").read_text().strip()
+        if Path(back).resolve() == (root / ".git").resolve():
+            return True
+    except OSError:
+        pass
+    worktree = git("config", "--get", "core.worktree")  # a submodule's
+    return bool(worktree) and (gitdir / worktree).resolve() == root
+
+
 def _git_state(cwd: Path) -> dict[str, Any]:
-    if not (cwd / ".git").exists():
+    # A session can start in a subfolder; its repository is the nearest
+    # folder up the physical path that holds a .git.
+    root = next((p for p in [cwd.resolve(), *cwd.resolve().parents] if (p / ".git").exists()), None)
+    if root is None:
         return {"git": False, "path": str(cwd)}
 
+    # A session reports cwd and can write its .git/config, so git runs through
+    # review/git, which runs none of the repository's programs and has a
+    # timeout. Dirty files come from the index's stat data rather than `git
+    # status`, which re-reads every stat-dirty file through a filter; a file
+    # touched but unchanged is listed as dirty.
     def git(*args: str) -> str:
-        r = subprocess.run(["git", "-C", str(cwd), *args], capture_output=True, text=True)
-        return r.stdout.strip() if r.returncode == 0 else ""
+        try:
+            return review_git.run(root, *args, timeout=5).strip()
+        except review_git.ReviewGitError:
+            return ""
 
+    # core.worktree or a gitdir file can point the repository at another
+    # folder, such as $HOME, whose file names would land in the record.
+    top = git("rev-parse", "--show-toplevel")
+    if not top or Path(top).resolve() != root or not _owns_gitdir(root, git):
+        return {"git": False, "path": str(cwd)}
+    dirty = list(
+        dict.fromkeys(
+            [
+                *git("diff-index", "--cached", "--name-only", "HEAD").splitlines(),
+                *git("diff-files", "--name-only").splitlines(),
+                *git("ls-files", "--others", "--exclude-standard").splitlines(),
+            ]
+        )
+    )
     return {
         "git": True,
-        "repo": cwd.name,
+        "repo": root.name,
         "branch": git("rev-parse", "--abbrev-ref", "HEAD"),
-        "dirty_files": [ln[3:] for ln in git("status", "--porcelain").splitlines()],
+        "dirty_files": dirty[:MAX_DIRTY_FILES],
+        "dirty_count": len(dirty),
         "last_commit": git("log", "-1", "--oneline"),
     }
 
@@ -238,7 +286,7 @@ def _render_markdown(label: str, record: dict[str, Any], summary: str) -> str:
             f"- repo: {record['repo']}",
             f"- branch: {record['branch']}",
             f"- last commit: {record.get('last_commit') or '(none)'}",
-            f"- uncommitted files: {len(record.get('dirty_files', []))}",
+            f"- uncommitted files: {record.get('dirty_count', len(record.get('dirty_files', [])))}",
         ]
     else:
         lines.append(f"- not a git repo ({record.get('path')})")
