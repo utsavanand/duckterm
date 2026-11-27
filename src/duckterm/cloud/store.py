@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import os
 import secrets
 import sqlite3
 import time
@@ -51,12 +52,20 @@ CREATE TABLE IF NOT EXISTS sign_ins (
 """
 
 
+class TooManyDevices(ValueError):
+    pass
+
+
 def digest(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
 
 class Store:
     def __init__(self, path: Path) -> None:
+        # The file holds every Mac's ticket secret. SQLite gives the -wal and -shm
+        # files the database's own mode, so creating it 0600 covers all three.
+        os.close(os.open(path, os.O_CREAT | os.O_WRONLY, 0o600))
+        os.chmod(path, 0o600)
         self.db = sqlite3.connect(path, isolation_level=None, check_same_thread=False)
         self.db.row_factory = sqlite3.Row
         self.db.execute("PRAGMA foreign_keys = ON")
@@ -91,7 +100,7 @@ class Store:
             "SELECT COUNT(*) FROM devices WHERE account_id = ?", (account_id,)
         ).fetchone()[0]
         if count >= MAX_DEVICES:
-            raise ValueError("Too many devices on this account; remove one first")
+            raise TooManyDevices()
         identifier, token = secrets.token_hex(16), secrets.token_urlsafe(32)
         self.db.execute(
             "INSERT INTO devices (id, account_id, kind, name, token_hash, created_at, last_seen_at)"

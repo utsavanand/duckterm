@@ -103,7 +103,10 @@ class GitHub:
             raise GitHubError("GitHub is unavailable or refused the request") from exc
         if not raw:
             return {}
-        answer = json.loads(raw)
+        try:
+            answer = json.loads(raw)
+        except ValueError as exc:
+            raise GitHubError("Unexpected GitHub answer") from exc
         if not isinstance(answer, dict):
             raise GitHubError("Unexpected GitHub answer")
         return answer

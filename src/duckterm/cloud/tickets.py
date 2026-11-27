@@ -11,11 +11,26 @@ import base64
 import hashlib
 import hmac
 import json
+import re
+import secrets
 import time
 from typing import Any
 
 TICKET_SECONDS = 300
-FIELDS = {"version", "account_id", "login", "phone_id", "phone_name", "host_id", "expires_at"}
+AUDIENCE = "ducky-pair"
+FIELDS = {
+    "version",
+    "aud",
+    "nonce",
+    "account_id",
+    "login",
+    "phone_id",
+    "phone_name",
+    "host_id",
+    "expires_at",
+}
+UNPADDED = re.compile(r"[A-Za-z0-9_-]+")
+NONCE = re.compile(r"[0-9a-f]{32}")
 
 
 def _encode(data: bytes) -> str:
@@ -23,14 +38,29 @@ def _encode(data: bytes) -> str:
 
 
 def _decode(text: str) -> bytes:
-    return base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
+    """Unpadded base64url with exactly one spelling per value: no padding, no
+    characters outside the alphabet, no stray low bits."""
+    if not UNPADDED.fullmatch(text) or len(text) % 4 == 1:
+        raise ValueError("Malformed account ticket")
+    data = base64.urlsafe_b64decode(text + "=" * (-len(text) % 4))
+    if _encode(data) != text:
+        raise ValueError("Malformed account ticket")
+    return data
 
 
 def mint(secret: bytes, claims: dict[str, Any], *, now: int | None = None) -> str:
     now = int(time.time()) if now is None else now
     body = _encode(
         json.dumps(
-            {**claims, "version": 1, "expires_at": now + TICKET_SECONDS}, sort_keys=True
+            {
+                **claims,
+                "version": 1,
+                "aud": AUDIENCE,
+                # Lets the Mac spend each ticket once.
+                "nonce": secrets.token_hex(16),
+                "expires_at": now + TICKET_SECONDS,
+            },
+            sort_keys=True,
         ).encode()
     )
     signature = hmac.new(secret, body.encode(), hashlib.sha256).digest()
@@ -44,17 +74,21 @@ def verify(secret: bytes, ticket: str, host_id: str, *, now: int | None = None) 
         raise ValueError("Malformed account ticket")
     body, signature = ticket.split(".")
     expected = hmac.new(secret, body.encode(), hashlib.sha256).digest()
-    try:
-        presented = _decode(signature)
-    except ValueError as exc:
-        raise ValueError("Malformed account ticket") from exc
+    presented = _decode(signature)
     if not hmac.compare_digest(expected, presented):
         raise ValueError("Account ticket signature mismatch")
     try:
         claims = json.loads(_decode(body))
     except (ValueError, UnicodeDecodeError) as exc:
         raise ValueError("Malformed account ticket") from exc
-    if not isinstance(claims, dict) or set(claims) != FIELDS or claims["version"] != 1:
+    if (
+        not isinstance(claims, dict)
+        or set(claims) != FIELDS
+        or claims["version"] != 1
+        or claims["aud"] != AUDIENCE
+        or not isinstance(claims["nonce"], str)
+        or not NONCE.fullmatch(claims["nonce"])
+    ):
         raise ValueError("Malformed account ticket")
     if claims["host_id"] != host_id:
         raise ValueError("Account ticket is for another Mac")
