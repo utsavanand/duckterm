@@ -516,7 +516,7 @@ function HomeGrid({ registry, source }: { registry: WidgetType[]; source: Widget
     <div ref={grid} className={`rd-home-grid${editing ? " editing" : ""}`} onPointerMove={move} onPointerUp={end} onPointerCancel={end}>
       {shown.map(item => {
         const type = registry.find(t => t.type === item.type)!, b = boxOf(item);
-        return <article key={item.id} aria-label={type.title} className={`rd-home-widget rd-home-${item.type}${dragging === item.id ? " dragging" : ""}`}
+        return <article key={item.id} aria-label={type.title} className={`rd-home-widget rd-home-w-${item.type}${dragging === item.id ? " dragging" : ""}`}
           style={{ gridColumn: `${b.x + 1} / span ${b.w}`, gridRow: `${b.y + 1} / span ${b.h}` }}>
           {(editing || !NAV.has(item.type)) && <header onPointerDown={event => start(event, item.id, "move")}>
             {!NAV.has(item.type) && <h3>{type.title}</h3>}
