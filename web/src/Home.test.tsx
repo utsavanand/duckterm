@@ -74,15 +74,56 @@ it("leaves out the chat and pull requests when the edition lacks Oracle and PR r
   expect(screen.getByRole("article", { name: "Teams" })).toBeVisible();
 });
 
-it("lists open pull requests once across top-level folders, needs-you first", async () => {
+it("lists pull requests once across top-level folders, grouped as Needs attention, Open and Merged", async () => {
+  const merged = (number: number, agoMs: number) => pr(number, { status: "merged", label: "Merged · v0.4.222", pr: { number, title: `PR ${number}`, url: `https://github.com/o/r/pull/${number}`, state: "merged", merged_at: new Date(NOW - agoMs).toISOString() } as PrRow["pr"] });
   vi.mocked(api.folderPrs).mockImplementation(async folder => ({ repos: [], rows: folder === "Duckterm"
-    ? [pr(1), pr(2, { needs_you: true, label: "Needs your approval" }), pr(3, { status: "merged", pr: { number: 3, title: "PR 3", url: "", state: "merged" } as PrRow["pr"] })]
-    : [pr(1), pr(4)] }));
+    ? [pr(1), pr(2, { status: "conflict", label: "Conflict with base" }), merged(3, 3600_000), merged(6, 2 * 86_400_000),
+      pr(7, { status: "closed", pr: { number: 7, title: "PR 7", url: "", state: "closed" } as PrRow["pr"] })]
+    : [pr(1), pr(4, { unpushed_commits: 2 })] }));
   await show();
   expect(vi.mocked(api.folderPrs).mock.calls.map(call => call[0])).toEqual(["Duckterm", "Nourish"]);
-  const rows = within(screen.getByRole("article", { name: "Pull requests" })).getAllByRole("listitem");
-  expect(rows.map(row => row.querySelector(".rd-home-pr-title")?.textContent)).toEqual(["PR 2", "PR 4", "PR 1"]);
-  expect(rows[0]).toHaveTextContent("Needs your approval");
+  const widget = within(screen.getByRole("article", { name: "Pull requests" }));
+  const titles = (group: string) => within(widget.getByRole("region", { name: group })).getAllByRole("listitem").map(row => row.querySelector(".rd-home-pr-title")?.textContent);
+  expect(widget.getAllByRole("region").map(r => r.querySelector("h3")?.textContent)).toEqual(["Needs attention 2", "Open 1", "Merged 1"]);
+  expect(titles("Needs attention")).toEqual(["PR 4", "PR 2"]);
+  expect(within(widget.getByRole("region", { name: "Needs attention" })).getAllByRole("listitem")[0]).toHaveTextContent("#4 · 2 commits not pushed");
+  expect(titles("Open")).toEqual(["PR 1"]);
+  expect(titles("Merged")).toEqual(["PR 3"]);
+  // A merged PR says which release has it, and offers nothing to act on.
+  const landed = within(widget.getByRole("region", { name: "Merged" })).getByRole("listitem");
+  expect(landed).toHaveTextContent("#3 · Merged · v0.4.222");
+  expect(within(landed).queryByRole("button")).toBeNull();
+  expect(api.reviewDiff).not.toHaveBeenCalledWith(expect.anything(), "3", expect.anything());
+});
+
+it("leaves out pull request groups with nothing in them", async () => {
+  vi.mocked(api.folderPrs).mockResolvedValue({ repos: [], rows: [pr(1)] });
+  await show();
+  expect(within(screen.getByRole("article", { name: "Pull requests" })).getAllByRole("region").map(r => r.querySelector("h3")?.textContent)).toEqual(["Open 1"]);
+});
+
+it("sums up the fleet in the header, with the need-you count in amber only when someone waits", async () => {
+  await show();
+  const line = screen.getByText(/sessions in/);
+  expect(line).toHaveTextContent("3 sessions in 2 folders · 1 need you · 1 working");
+  expect(within(line).getByText("1 need you")).toHaveClass("wait");
+  cleanup();
+  await show(undefined, { agents: [agent({ key: "solo" })] });
+  const solo = screen.getByText(/session in/);
+  expect(solo).toHaveTextContent("1 session in 1 folder · 0 need you · 0 working");
+  expect(within(solo).getByText("0 need you")).not.toHaveClass("wait");
+});
+
+it("focuses Ask DuckTerm on /, but not while the owner types elsewhere", async () => {
+  await show();
+  const box = screen.getByRole("textbox", { name: "Ask DuckTerm" });
+  const other = document.body.appendChild(document.createElement("textarea"));
+  other.focus();
+  fireEvent.keyDown(other, { key: "/" });
+  expect(other).toHaveFocus();
+  other.remove();
+  fireEvent.keyDown(document.body, { key: "/" });
+  expect(box).toHaveFocus();
 });
 
 it("says why there are no pull requests when GitHub is not connected", async () => {
