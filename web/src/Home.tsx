@@ -527,7 +527,6 @@ function HomeGrid({ registry, source }: { registry: WidgetType[]; source: Widget
   const missing = registry.filter(type => !layout.instances.some(item => item.type === type.type));
   return <section className="rd-home-wrap" aria-label="Home">
     <header className="rd-home-bar">
-      <h1>Home</h1>
       <Summary />
       {editing && <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={loading} onClick={() => commit(defaults)}>Reset layout</button>}
       <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled title="Coming soon: ask DuckTerm to build a view, widget or shortcut">Create <span className="rd-home-soon">Soon</span></button>
