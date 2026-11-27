@@ -727,6 +727,7 @@ export const api = {
     ),
   controlTower: () => get<TowerInsights>("/control-tower"),
   fleetPulse: () => get<{ events: PulseEvent[] }>("/fleet/pulse"),
+  homePulse: () => get<{ events: PulseEvent[] }>("/home/pulse"),
   relay: (signal?: AbortSignal) => get<RelayState>("/relay", undefined, { signal }),
   voiceStatus: () => get<LocalVoiceStatus>("/voice/status"),
   voiceInstall: async (): Promise<LocalVoiceStatus> => {

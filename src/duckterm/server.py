@@ -381,6 +381,8 @@ _ROUTES: list[Route] = [
     Route("DELETE", "/support/chat", lambda s, r, w, h, b, seg: s._support_chat(w, clear=True)),
     Route("GET", "/control-tower", lambda s, r, w, h, b, seg: s._control_tower(w)),
     Route("GET", "/fleet/pulse", lambda s, r, w, h, b, seg: s._fleet_pulse(w)),
+    # Home's Pulse widget: the same feed, gated on `home` rather than `fleet_monitor`.
+    Route("GET", "/home/pulse", lambda s, r, w, h, b, seg: s._fleet_pulse(w)),
     Route("GET", "/relay", lambda s, r, w, h, b, seg: s._relay_list(w)),
     # ── Oracle voice: the optional local neural voice ──
     Route("GET", "/voice/status", lambda s, r, w, h, b, seg: s._voice_status(w)),

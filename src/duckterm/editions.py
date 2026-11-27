@@ -241,6 +241,7 @@ def _path_feature(method: str, path: str, body: bytes) -> str | None:
             return capability
     exact = {
         "/control-tower": "overview",
+        "/home/pulse": "home",
         "/checkpoint-settings": "checkpoints",
         "/agents-md/suggest": "rule_suggestions",
         "/session-inbox-counts": "inbox",

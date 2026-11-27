@@ -1,7 +1,7 @@
 import { createContext, PointerEvent as ReactPointerEvent, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnalyticsTab, fillDays, groupTokens, loadAnalytics, sumValues, TokenAnalytics, windowStart } from "./analyticsData";
-import { api, DiffFile, PrRow, RelayNote, ReviewDiff } from "./api";
+import { api, DiffFile, PrRow, PulseEvent, RelayNote, ReviewDiff } from "./api";
 import { AutopilotSummary } from "./autopilotApi";
 import { useEdition } from "./edition";
 import { adjust, appended, Box, boxOf, COLUMNS, homeDefaults, inReadingOrder, MIN_ROW, ROWS } from "./homeGrid";
@@ -31,6 +31,7 @@ const CATALOG: Record<string, { group: string; description: string }> = {
   prs: { group: "Pulse", description: "Open pull requests with a risk level, GitHub and DuckTerm review links, and Merge for safe ones." },
   spend: { group: "Pulse", description: "Today, the last 7 days, and the split between Teams and Autopilot." },
   "needs-you": { group: "Pulse", description: "Approvals and questions waiting on you." },
+  pulse: { group: "Pulse", description: "What your teams merged, released and made in the last 7 days." },
   usage: { group: "Pulse", description: "Tokens over the last 7 days, by harness." },
   agents: { group: "Teams", description: "Every session by state, across teams." },
   mail: { group: "Teams", description: "Messages agents sent each other in the last day." },
@@ -86,6 +87,7 @@ function homeWidgets({ oracle, remote, prs, onAnalytics }: { oracle: boolean; re
     ...(oracle ? [
       { type: "chat", title: "Ask DuckTerm", slots: ["home" as const], streams: [], render: ChatWidget },
       { type: "needs-you", title: "Needs you", slots: ["home" as const], streams: [], render: NeedsYouList },
+      { type: "pulse", title: "Pulse · 7 days", slots: ["home" as const], streams: [], render: PulseWidget },
     ] : []),
     ...(prs ? [{ type: "prs", title: "Pull requests", slots: ["home" as const], streams: [], render: PrsWidget }] : []),
     { type: "spend", title: "Spend", slots: ["home"], streams: [], render: SpendWidget },
@@ -342,9 +344,6 @@ export function prRisk(row: PrRow, counts: Counts | undefined): Risk | null {
   return { level: "safe", why: "CI passing · only docs, images or version bumps" };
 }
 const RISK_LABEL = { safe: "Safe", medium: "Medium", high: "High" };
-// Merged pull requests stay listed for a day, so the owner sees what landed
-// and, once a release contains it, which one.
-const MERGED_SHOWN_MS = 24 * 3600_000;
 
 // Needs attention is what the author must fix before anyone reviews: the
 // server's needs_you is true for every open PR, so it can't tell these apart.
@@ -353,18 +352,16 @@ const BLOCKED = ["conflict", "ci_failing", "changes_requested"];
 const unpushed = (r: PrRow) => !BLOCKED.includes(r.status) && r.unpushed_commits > 0
   ? `${r.unpushed_commits} ${r.unpushed_commits === 1 ? "commit" : "commits"} not pushed` : null;
 
-export function prGroups(rows: PrRow[], now: number): [string, PrRow[]][] {
+export function prGroups(rows: PrRow[]): [string, PrRow[]][] {
   const attention = (r: PrRow) => BLOCKED.includes(r.status) || r.unpushed_commits > 0;
   const open = rows.filter(r => r.pr?.state === "open");
-  const merged = rows.filter(r => r.pr?.state === "merged" && now - Date.parse(r.pr.merged_at ?? "") < MERGED_SHOWN_MS)
-    .sort((a, b) => Date.parse(b.pr?.merged_at ?? "") - Date.parse(a.pr?.merged_at ?? ""));
-  const groups: [string, PrRow[]][] = [["Needs attention", open.filter(attention)], ["Open", open.filter(r => !attention(r))], ["Merged", merged]];
+  const groups: [string, PrRow[]][] = [["Needs attention", open.filter(attention)], ["Open", open.filter(r => !attention(r))]];
   return groups.filter(([, list]) => list.length > 0);
 }
 
 // Pull requests across every top-level folder, in prGroups' groups.
 function PrsWidget() {
-  const { agents, now, onReview } = useContext(HomeActions);
+  const { agents, onReview } = useContext(HomeActions);
   const folders = useMemo(() => [...new Set(agents.map(a => a.group?.split("/")[0]).filter((f): f is string => !!f))].sort(), [agents]);
   const key = folders.join("\n");
   const [rows, setRows] = useState<PrRow[] | null>(null), [error, setError] = useState(""), [notice, setNotice] = useState("");
@@ -387,10 +384,10 @@ function PrsWidget() {
       setNotice(problems[0] ?? "");
       const failed = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
       setError(failed && !merged.length ? (failed.reason as Error).message : "");
-      const listed = merged.filter(r => r.pr && r.pr.state !== "closed").sort((a, b) => (b.updated_at ?? 0) - (a.updated_at ?? 0));
-      setRows(listed);
+      const open = merged.filter(r => r.pr?.state === "open").sort((a, b) => (b.updated_at ?? 0) - (a.updated_at ?? 0));
+      setRows(open);
       // One diff at a time: each runs git on the owner's machine.
-      for (const row of listed.filter(r => r.pr?.state === "open")) {
+      for (const row of open) {
         if (stopped || !row.pr || riskCache.has(riskKey(row))) continue;
         try {
           const diff = await api.reviewDiff(row.repo, String(row.pr.number), { whitespace: false });
@@ -407,19 +404,12 @@ function PrsWidget() {
   if (error) return <div className="rd-widget-unavailable"><strong>Unavailable</strong><p>{error}</p></div>;
   if (!folders.length) return <p className="rd-home-empty">No sessions in folders yet.</p>;
   if (!rows) return <div className="rd-widget-unavailable" role="status">Loading…</div>;
-  const groups = prGroups(rows, now);
+  const groups = prGroups(rows);
   if (!groups.length) return <p className="rd-home-empty">{notice || "No open pull requests."}</p>;
   return <>
     {groups.map(([name, list]) => <section key={name} className="rd-home-pr-group" aria-label={name}>
     <h3>{name} <span>{list.length}</span></h3>
     <ul className="rd-home-rows rd-home-prs">{list.map(row => {
-      if (row.pr?.state === "merged") return <li key={`${row.repo}\n${row.branch}`}>
-        <span className="rd-home-pr">
-          <span className="rd-home-pr-top"><span className="rd-home-pr-title" title={row.pr.title}>{row.pr.title}</span></span>
-          <small>{[`#${row.pr.number}`, row.label, row.repo_name].join(" · ")}</small>
-          <span className="rd-home-pr-acts"><a href={row.pr.url} target="_blank" rel="noreferrer">GitHub</a></span>
-        </span>
-      </li>;
       const risk = row.pr ? prRisk(row, riskCache.get(riskKey(row))) : null;
       return <li key={`${row.repo}\n${row.branch}`}>
         <span className="rd-home-pr">
@@ -444,6 +434,39 @@ function PrsWidget() {
       ratedHead={riskCache.get(riskKey(approving))?.head}
       onClose={() => setApproving(null)} onApproved={() => setReload(n => n + 1)} />}
   </>;
+}
+
+const PULSE_POLL_MS = 30_000;
+const PULSE_KIND = { pr: "Merged", release: "Release", artifact: "Made", needs: "" };
+
+// The Fleet monitor's Pulse feed (served to Home as /home/pulse), minus its
+// needs-you items: Home has its own Needs you widget. Merges show here, not
+// in Pull requests.
+function PulseWidget() {
+  const { now, onOpenTerminal } = useContext(HomeActions);
+  const [events, setEvents] = useState<PulseEvent[] | null>(null), [error, setError] = useState("");
+  useEffect(() => {
+    let live = true;
+    const load = () => api.homePulse().then(r => r.events.filter(e => e.kind !== "needs"))
+      .then(shown => { if (live) { setEvents(shown); setError(""); } }, (e: Error) => { if (live) setError(e.message); });
+    void load();
+    const timer = setInterval(load, PULSE_POLL_MS);
+    return () => { live = false; clearInterval(timer); };
+  }, []);
+  if (error && !events) return <div className="rd-widget-unavailable"><strong>Unavailable</strong><p>{error}</p></div>;
+  if (!events) return <div className="rd-widget-unavailable" role="status">Loading…</div>;
+  if (!events.length) return <p className="rd-home-empty">Nothing merged, released or made in the last 7 days.</p>;
+  return <ol className="rd-home-rows rd-home-pulse">{events.map((e, i) => {
+    const who = e.session_key ? <button className="rd-home-row-link" title={`Open ${e.name}'s terminal`} onClick={() => onOpenTerminal(e.session_key!)}>{e.name}</button> : <span>{e.name ?? e.repo}</span>;
+    return <li key={`${e.kind}-${e.at}-${i}`} className={e.kind}>
+      <span className="rd-home-pulse-kind">{PULSE_KIND[e.kind]}</span>
+      <span className="rd-home-pulse-what">
+        <span className="rd-home-pulse-title" title={e.title}>{e.kind === "release" ? `${e.repo} ${e.title}` : e.kind === "artifact" && (e.count ?? 1) > 1 ? `${e.count} artifacts` : e.title}</span>
+        <small>{e.kind === "release" ? e.detail || "Tagged" : <>{who}{e.kind === "pr" && e.repo && e.name ? ` · ${e.repo}` : null}</>}</small>
+      </span>
+      <span className="rd-home-pulse-age">{ago(now - e.at)}</span>
+    </li>;
+  })}</ol>;
 }
 
 // origin is the layout when the drag began, so passing over a widget and back leaves it in place.

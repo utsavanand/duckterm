@@ -213,3 +213,14 @@ def test_route_needs_the_flag_and_returns_artifacts(world) -> None:  # noqa: F81
     assert [(e["kind"], e["title"], e["name"]) for e in body["events"]] == [
         ("artifact", "Spec draft: Fleet monitor", "product-manager")
     ]
+
+
+def test_home_reads_the_same_pulse_under_its_own_flag(world) -> None:  # noqa: F811
+    # The owner runs Home without the Fleet monitor: /home/pulse follows `home`,
+    # /fleet/pulse still follows `fleet_monitor`.
+    server, owner, _, _ = world
+    assert dispatch(server, "GET", "/home/pulse", owner)[0] == 403
+    server.edition = EditionConfig(server.edition.name, server.edition.features | {"home"})
+    status, body = dispatch(server, "GET", "/home/pulse", owner)
+    assert status == 200 and body == {"events": []}
+    assert dispatch(server, "GET", "/fleet/pulse", owner)[0] == 403
