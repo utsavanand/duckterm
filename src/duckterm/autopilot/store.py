@@ -83,6 +83,12 @@ def delete(autopilot_id: str) -> None:
         _save(kept)
 
 
+def issue_repo(entry: dict[str, Any]) -> str:
+    """Where the autopilot watches issues; records saved before issue_repo
+    existed watch their code repository."""
+    return str(entry.get("issue_repo") or entry["repo"])
+
+
 def _validated(body: dict[str, Any], base: dict[str, Any]) -> dict[str, Any]:
     """The saved shape, from an untrusted request body. Raises ValueError with
     a message the app can show."""
@@ -91,6 +97,9 @@ def _validated(body: dict[str, Any], base: dict[str, Any]) -> dict[str, Any]:
     except KeyError:
         raise ValueError("Choose a flow") from None
     repo = repository_name(str(body.get("repo") or ""))
+    # Issues may live apart from the code, as Kaho's reports do in their own
+    # repository; the run still clones, pushes and opens its PR on `repo`.
+    issue_repo = repository_name(str(body.get("issue_repo") or repo))
     raw = body.get("triggers")
     if not isinstance(raw, dict) or not raw:
         raise ValueError("Turn on at least one trigger")
@@ -119,6 +128,7 @@ def _validated(body: dict[str, Any], base: dict[str, Any]) -> dict[str, Any]:
         "name": name,
         "workspace": workspace,
         "repo": repo,
+        "issue_repo": issue_repo,
         "triggers": triggers,
         "approvals": {
             "spec_on_visible": bool(approvals.get("spec_on_visible")),
