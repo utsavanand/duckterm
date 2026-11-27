@@ -1,3 +1,11 @@
+## 2026-11-27 — A diff against HEAD is empty once something commits the work
+
+The runner built workspace.diff against HEAD. Autopilot's executor commits
+after every step, so on the first real run the review step got an empty diff
+and passed only because the reviewer looked at HEAD on its own. A diff that
+stands for "what this run changed" needs the run's starting commit, recorded
+at start, not whatever HEAD is when the diff is taken.
+
 ## 2026-11-26 — Automatic checkpoints failed on busy agents, and one fallback checkpointed old work
 
 The first night of automatic checkpoints: 86 succeeded, 8 failed, every
