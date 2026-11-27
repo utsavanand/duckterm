@@ -27,7 +27,7 @@ export function FileReader({ session, savedKey, selection, back: backToList, sav
   const [commentsLoading, setCommentsLoading] = useState(true);
   const [commentRevision, setCommentRevision] = useState(0);
   const [source, setSource] = useState(false);
-  const [locate, setLocate] = useState<{ quote: string; request: number }>();
+  const [locate, setLocate] = useState<{ quote: string; request: number; page?: number }>();
   const [locateStatus, setLocateStatus] = useState("");
   const [metadataBusy, setMetadataBusy] = useState(false);
   const [metadataError, setMetadataError] = useState("");
@@ -112,7 +112,7 @@ export function FileReader({ session, savedKey, selection, back: backToList, sav
       </div>
     </header>
     <div className="rd-file-source">
-      {rich ? <div role="group" aria-label="Reader mode"><button aria-pressed={!source} onClick={() => { setSource(false); setLocateStatus(""); }}>{content?.media_type === "text/markdown" ? "Rendered" : "Browser"}</button><button aria-pressed={source} onClick={() => { setSource(true); setLocateStatus(""); }}>Source</button></div> : <span>Source</span>}
+      {rich ? <div role="group" aria-label="Reader mode"><button aria-pressed={!source} onClick={() => { setSource(false); setLocateStatus(""); }}>{content?.media_type === "text/markdown" ? "Rendered" : "Browser"}</button><button aria-pressed={source} onClick={() => { setSource(true); setLocateStatus(""); }}>Source</button></div> : <span>{content?.media_type === "application/pdf" ? "PDF document" : "Source"}</span>}
       {artifact && <><select aria-label="Change artifact label" value={artifact.kind ?? "other"} disabled={metadataBusy} onChange={e => void changeLabel(e.target.value as ArtifactKind)}>{Object.entries(ARTIFACT_KINDS).map(([kind, label]) => <option key={kind} value={kind}>{label}</option>)}</select>
         {!stored && <button className="rd-file-saved-link" onClick={() => saved({ ...initialArtifact!, ...artifact })}>View saved version</button>}
         {onOpenArtifact && <button className="rd-file-saved-link" onClick={() => onOpenArtifact(artifact.id)}>Open in Artifacts</button>}</>}
@@ -124,7 +124,7 @@ export function FileReader({ session, savedKey, selection, back: backToList, sav
     {locateStatus && <p className="rd-files-note" role="status">{locateStatus}</p>}
     <div className={`rd-file-reading-area${commentsOpen ? " with-comments" : ""}`}>
       <div className="rd-file-document">{error ? <div className="rd-files-note" role="alert"><p>{error}</p><button className="rd-btn rd-btn-sm" onClick={() => setRetry(n => n + 1)}>Retry preview</button></div> : content ? <ArtifactPreview key={`${content.sha256}:${source}`} artifact={{ ...content, title }} source={source} interactive locate={locate} onLocate={setLocateStatus} onSelect={select} onEscape={() => { if (feedback) window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })); else if (expanded) close(); }} /> : <p className="rd-files-note" role="status">Loading preview…</p>}</div>
-      {commentsOpen && <FileCommentHistory comments={history} error={commentsError} loading={commentsLoading} onClose={() => setCommentsOpen(false)} retry={() => setCommentRevision(n => n + 1)} onLocate={quote => { setLocate({ quote, request: Date.now() }); setLocateStatus(""); }} />}
+      {commentsOpen && <FileCommentHistory comments={history} error={commentsError} loading={commentsLoading} onClose={() => setCommentsOpen(false)} retry={() => setCommentRevision(n => n + 1)} onLocate={(quote, page) => { setCommentsOpen(false); setLocate({ quote, page, request: Date.now() }); setLocateStatus(""); }} />}
     </div>
     {feedback && <ArtifactFeedback sessionKey={savedKey} sessionName={session.label} target={feedback} onClose={closeFeedback} onSent={() => { setFeedback(null); setFeedbackStatus("Sent to the agent"); setCommentRevision(n => n + 1); setCommentsOpen(true); feedbackButton.current?.focus(); }} />}
   </section>;

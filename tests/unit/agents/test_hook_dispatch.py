@@ -1,6 +1,7 @@
 """Shared hooks survive app removal without crossing independent profiles."""
 
 import concurrent.futures
+import hashlib
 import http.server
 import json
 import os
@@ -21,6 +22,21 @@ SOURCE = hooks_install.hook_script_path()
 APP_SCRIPT = (
     "Contents/Resources/python/lib/python3.13/site-packages/duckterm/hooks/duckterm-hook.sh"
 )
+
+
+# Revision 2 shipped two different scripts (v0.4.197, v0.4.216) and every Mac
+# that installed the first one refused the second: "Shared hook revision changed
+# without a revision increment". Pin the script to its revision.
+REVISION_SCRIPT_SHA256 = {
+    3: "1e3997f0faa924a8bfc07df819bb3d9c571cd24d10d4b1a0e2b10b2a3a15b8b5",
+}
+
+
+def test_hook_script_change_requires_revision_increment() -> None:
+    digest = hashlib.sha256(SOURCE.read_bytes()).hexdigest()
+    assert (
+        REVISION_SCRIPT_SHA256.get(hook_dispatch.REVISION) == digest
+    ), "duckterm-hook.sh changed: increment hook_dispatch.REVISION and pin the new digest"
 
 
 @pytest.fixture
@@ -182,6 +198,17 @@ def test_newer_dispatch_revision_is_never_downgraded(home, monkeypatch):
         script.with_name("jq").read_bytes(),
         receipt.read_bytes(),
     ) == before
+
+
+def test_identical_script_under_older_receipt_moves_receipt_to_current_revision(home):
+    source = app(home, "DuckTerm")
+    script = hook_dispatch.ensure_shared_script(source)
+    receipt = script.with_name("assets.json")
+    record = json.loads(receipt.read_text())
+    record["revision"] = hook_dispatch.REVISION - 1
+    receipt.write_text(json.dumps(record))
+    assert hook_dispatch.ensure_shared_script(source) == script
+    assert json.loads(receipt.read_text())["revision"] == hook_dispatch.REVISION
 
 
 def test_shared_handler_upgrade_requires_a_higher_revision(home, monkeypatch):

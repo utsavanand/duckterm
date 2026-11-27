@@ -77,6 +77,7 @@ DEVELOPMENT = frozenset(
         "autopilot",
         "oracle_messages",
         "fleet_monitor",
+        "support",
     }
 )
 
@@ -230,6 +231,7 @@ def _path_feature(method: str, path: str, body: bytes) -> str | None:
         ("/connectors", "connectors"),
         ("/transfers", "remote_workspaces"),
         ("/oracle", "oracle"),
+        ("/support", "support"),
         ("/relay", "oracle"),
         ("/voice", "oracle"),
         ("/snapshots", "checkpoints"),
@@ -239,6 +241,7 @@ def _path_feature(method: str, path: str, body: bytes) -> str | None:
             return capability
     exact = {
         "/control-tower": "overview",
+        "/home/pulse": "home",
         "/checkpoint-settings": "checkpoints",
         "/agents-md/suggest": "rule_suggestions",
         "/session-inbox-counts": "inbox",
@@ -253,6 +256,8 @@ def _path_feature(method: str, path: str, body: bytes) -> str | None:
         return "home"
     if path.startswith("/file"):
         return "explorer" if method == "GET" else "file_editing"
+    if path in ("/fleet/pulse", "/fleet/mail"):
+        return "fleet_monitor"
     if path == "/fleet/ask":
         try:
             payload = json.loads(body or b"{}")

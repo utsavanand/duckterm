@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
@@ -177,6 +178,22 @@ async def _checked(check: Callable[[], Awaitable[None] | None]) -> None:
         await pending
 
 
+def checkpoint_line(checkpoints: list[dict[str, Any]]) -> str:
+    """The newest checkpoint's summary, with its state and date. A checkpoint
+    label such as "Automatic" in a summary slot would read as a summary."""
+    if not checkpoints:
+        return "checkpoint summary: none yet"
+    latest = checkpoints[0]
+    stamp = latest.get("summary_source_at") or latest.get("created_at")
+    when = time.strftime("%Y-%m-%d %H:%M", time.localtime(stamp / 1000)) if stamp else "unknown"
+    summary = str(latest.get("summary") or "").strip()
+    if not summary:
+        return f"checkpoint summary: none yet (last checkpoint {latest.get('label')!r} at {when})"
+    state = latest.get("summary_state") or "unknown"
+    label = "ready" if state == "ready" else f"{state}, not verified"
+    return f"checkpoint summary ({label}, as of {when}): {summary}"
+
+
 async def digest(
     server: Server,
     row: dict[str, Any],
@@ -201,11 +218,7 @@ async def digest(
     lines = [f"### {name} ({key})", " | ".join(meta)]
     if row.get("intention"):
         lines.append(f"goal: {row['intention']}")
-    checkpoints = server.history.checkpoints(key)
-    if checkpoints:
-        lines.append(
-            f"last checkpoint: {checkpoints[0].get('summary') or checkpoints[0].get('label')}"
-        )
+    lines.append(checkpoint_line(server.history.checkpoints(key)))
     supervisor = server.orchestrator.get(key)
     if supervisor is not None:
         await _checked(check)
@@ -251,10 +264,13 @@ def prompt(
     ]
     value = (
         "You oversee a fleet of coding-agent sessions. Below is a digest of "
-        "each currently running session (state, goal, recent terminal "
-        "output). Answer the user's question about them, concise and "
-        "concrete — name sessions by their name. If the digests don't hold "
+        "each currently running session (state, goal, latest checkpoint summary, "
+        "recent terminal output). Answer the user's question about them, concise "
+        "and concrete — name sessions by their name. If the digests don't hold "
         "the answer, say what to open instead of guessing.\n\n"
+        "Use the checkpoint summary for what a session has done and is working "
+        "toward, and the terminal output for what happened after the summary's "
+        "date. A summary marked not verified may be wrong or out of date.\n\n"
         "The answer renders as Markdown in a narrow chat panel. Open with a "
         "one-sentence direct answer. Then use a bulleted list with one "
         "session per bullet, the session name in bold followed by its folder, "

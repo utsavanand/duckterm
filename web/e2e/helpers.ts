@@ -1,4 +1,5 @@
 import { expect, test, type Page } from "@playwright/test";
+import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { readOwnedState } from "./run-state";
 import { join } from "node:path";
@@ -69,10 +70,17 @@ export async function findSession(
 
 // Events from supervised fixture processes must carry the current launch identity.
 export async function fixtureHookIdentity(key: string): Promise<{ session_id?: string; launch_generation?: string }> {
-  const listing = await (await api("/sessions")).json();
-  const row = listing.sessions.find((session: SessionRow) => session.session_key === key);
-  if (!row) throw new Error(`Missing fixture session: ${key}`);
-  const control = JSON.parse(row.restart_json || "{}");
+  // This is fixture setup, not dashboard data. Read only this run's owned
+  // database and flagged test session; /sessions omits private restart context.
+  const control = JSON.parse(execFileSync("python3", ["-c", `
+import sqlite3, sys
+from pathlib import Path
+with sqlite3.connect(Path(sys.argv[1]).resolve().as_uri() + "?mode=ro", uri=True) as conn:
+    row = conn.execute("SELECT restart_json FROM sessions WHERE session_key=? AND test=1", (sys.argv[2],)).fetchone()
+    if row is None:
+        raise RuntimeError("Missing flagged fixture session")
+    print(row[0] or "{}")
+`, join(state().home, "db.sqlite"), key], { encoding: "utf8" }));
   return { session_id: control.native_binding?.native_id,
     launch_generation: control.native_binding?.generation ?? control.hook_connection?.generation };
 }

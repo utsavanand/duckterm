@@ -55,6 +55,25 @@ def test_branches_lists_repo_branches_head_first(git_repo: Path, tmp_path: Path)
     assert {"develop", "release"} <= set(names)
 
 
+def test_branches_fetch_runs_no_hook_from_the_repo(git_repo: Path, tmp_path: Path) -> None:
+    import subprocess
+
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "clone", "-q", str(git_repo), str(clone)], check=True)
+    subprocess.run(["git", "-C", str(git_repo), "branch", "pushed"], check=True)
+    marker = tmp_path / "ran"
+    hook = clone / ".git/hooks/reference-transaction"
+    hook.write_text(f"#!/bin/sh\ntouch {marker}\n")
+    hook.chmod(0o755)
+    subprocess.run(["git", "-C", str(clone), "fetch", "-q", "--all"], check=True)
+    assert marker.exists()  # plain git fetch really runs it
+    marker.unlink()
+    subprocess.run(["git", "-C", str(git_repo), "branch", "pushed-later"], check=True)
+    names = WorktreeManager(root=tmp_path / "wt").branches(clone)
+    assert "origin/pushed-later" in names  # still fetches
+    assert not marker.exists()
+
+
 def test_add_rejects_non_git_directory(tmp_path: Path) -> None:
     mgr = WorktreeManager(root=tmp_path / "wt")
     plain = tmp_path / "not-a-repo"

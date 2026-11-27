@@ -176,7 +176,7 @@ def test_plan_reports_each_harness_honestly(tmp_path):
         "claude-code": adapters.INSTALLED,
         "codex": adapters.NEEDS_TRUST,
         "copilot": adapters.INSTALLED,
-        "opencode": adapters.NOT_SUPPORTED,
+        "opencode": adapters.NOT_VERIFIED,
     }
     scoped = _statuses(p, "sample-kit/knowledge/api-conventions")
     assert scoped["codex"] == adapters.NOT_SUPPORTED and scoped["claude-code"] == adapters.INSTALLED
@@ -189,6 +189,7 @@ def test_plan_reports_each_harness_honestly(tmp_path):
     paths = {f.path for f in p.files()}
     assert ".codex/rules/sample-kit.rules" in paths
     assert ".github/hooks/sample-kit.json" in paths
+    assert ".opencode/plugins/duckterm-sample-kit.js" in paths
     assert not any(path.endswith("feature-squad.toml") for path in paths)
 
 
@@ -231,6 +232,100 @@ def test_a_fallback_names_the_harness_that_forced_always_on(tmp_path):
     )
     scoped = plan.build(kit, tmp_path / "proj2", ["claude-code", "copilot"])
     assert ".claude/rules/k-rule.md" in {f.path for f in scoped.files()}
+
+
+_DRIVE_PLUGIN = """\
+import plugin from "./plugin-under-test.mjs"
+const hooks = {}
+const ctx = {
+  location: { directory: process.cwd() },
+  tool: { hook: async (name, cb) => { hooks["tool:" + name] = cb } },
+  session: { hook: async (name, cb) => { hooks["session:" + name] = cb } },
+  event: { subscribe: async function* () {} },
+}
+const cleanup = await plugin.setup(ctx)
+cleanup()
+const results = []
+for (const event of JSON.parse(process.argv[2])) {
+  try { hooks["tool:execute.before"](event); results.push("allow") }
+  catch (e) { results.push("block: " + e.message) }
+}
+results.push(Object.keys(hooks).sort().join(","))
+console.log(JSON.stringify(results))
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node to run the plugin")
+def test_opencode_hooks_install_as_one_generated_plugin_that_blocks_through_the_shim(tmp_path):
+    """OpenCode has no command hooks; its hook surface is a plugin. The
+    installer writes one per MetaHarness that runs the shim, so the same
+    script blocks there as under Claude Code. Driven with a stub Plugin.define,
+    since OpenCode itself is not installed in CI."""
+    project = tmp_path / "proj"
+    project.mkdir()
+    report = install.apply(plan.build(_kit(), project, ["opencode"]))
+    plugin_rel = ".opencode/plugins/duckterm-sample-kit.js"
+    assert plugin_rel in report.written
+    assert (project / ".opencode/hooks/sample-kit" / adapters.SHIM_NAME).is_file()
+    assert (project / ".opencode/hooks/sample-kit/block-destructive.sh").is_file()
+    assert (project / ".opencode/hooks/sample-kit/remind-tests.sh").is_file()
+    source = (project / plugin_rel).read_text()
+    assert 'import { Plugin } from "@opencode/plugin"' in source
+    assert '"hook": "tool:execute.before"' in source and '"hook": "event:session.idle"' in source
+    record = json.loads((project / ".duckterm/installed.json").read_text())
+    assert any(e["path"] == plugin_rel for e in record["kits"]["sample-kit"]["entries"])
+
+    stub = source.replace(
+        'import { Plugin } from "@opencode/plugin"', "const Plugin = { define: (d) => d }"
+    )
+    (project / "plugin-under-test.mjs").write_text(stub)
+    (project / "drive.mjs").write_text(_DRIVE_PLUGIN)
+    events = [
+        {"tool": "bash", "input": {"command": "git push --force"}, "sessionID": "s1"},
+        {"tool": "bash", "input": {"command": "git status"}, "sessionID": "s1"},
+        {"tool": "read", "input": {"filePath": "git push --force"}, "sessionID": "s1"},
+    ]
+    proc = subprocess.run(
+        ["node", "drive.mjs", json.dumps(events)],
+        capture_output=True,
+        text=True,
+        cwd=project,
+        timeout=60,
+    )
+    assert proc.returncode == 0, proc.stderr
+    assert json.loads(proc.stdout.strip()) == [
+        "block: sample-kit: destructive command refused: git push --force",
+        "allow",
+        "allow",  # a read is outside the hook's `match = "shell"`
+        "tool:execute.before",  # the stop hook subscribes to events, not a hook
+    ]
+
+
+def test_opencode_refuses_blocking_on_events_only_execute_before_can_block(tmp_path):
+    kit = _tiny_kit(
+        tmp_path,
+        """
+manifest_version = 1
+name = "k"
+version = "1.0.0"
+description = "d"
+[[components]]
+kind = "hook"
+event = "stop"
+command = "hooks/h.sh"
+blocking = true
+[[components]]
+kind = "hook"
+event = "session_start"
+command = "hooks/h.sh"
+""",
+        {"hooks/h.sh": "#!/bin/sh\nexit 0\n"},
+    )
+    (kit.root / "hooks" / "h.sh").chmod(0o755)
+    p = plan.build(kit, tmp_path / "proj", ["opencode"])
+    assert _statuses(p, "k/hook/stop-h") == {"opencode": adapters.NOT_SUPPORTED}
+    assert _statuses(p, "k/hook/session_start-h") == {"opencode": adapters.NOT_SUPPORTED}
+    assert not any(f.path.endswith(".js") for f in p.files())
 
 
 def test_copilot_refuses_a_blocking_hook_on_an_event_exit_2_cannot_block(tmp_path):
@@ -453,6 +548,9 @@ def test_shim_maps_block_decisions_to_what_each_harness_can_honour():
     assert (code, json.loads(out)) == (0, {"decision": "block", "reason": "wait"})
     code, out, err = shim.map_result("copilot", "notification", 2, "", "no")
     assert code == 0 and out == "" and "cannot block" in err
+    assert shim.map_result("opencode", "before_tool", 2, "", "no") == (2, "", "no")
+    code, out, err = shim.map_result("opencode", "stop", 2, "", "no")
+    assert code == 0 and out == "" and "cannot block in opencode" in err
     code, out, _ = shim.map_result(
         "claude-code", "stop", 0, '{"decision": "allow", "context": "run tests"}', ""
     )

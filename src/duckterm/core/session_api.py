@@ -759,9 +759,10 @@ class SessionAPI:
         if cancel_pending:
             self.conn.execute(
                 "UPDATE session_questions SET status = 'cancelled', answered_at = ? "
-                "WHERE (sender = ? OR recipient = ?) AND (status IN ('queued', 'accepted') "
-                "OR (kind = 'broadcast' AND priority = 1 AND status = 'read'))",
-                (int(time.time() * 1000), key, key),
+                "WHERE (status IN ('queued', 'accepted') "
+                "AND (recipient = ? OR (sender = ? AND sender != 'owner'))) "
+                "OR (recipient = ? AND kind = 'broadcast' AND priority = 1 AND status = 'read')",
+                (int(time.time() * 1000), key, key, key),
             )
 
     def enroll(self, key: str, req: dict[str, Any]) -> dict[str, Any]:
@@ -995,6 +996,20 @@ class SessionAPI:
             params,
         ).fetchone()
         return {"all": row["all_count"], "pending": row["pending"], "answered": row["answered"]}
+
+    def peer_mail(self, since_ms: int, limit: int = 50) -> list[dict[str, Any]]:
+        """Agent-to-agent mail since since_ms, newest first: who wrote to
+        whom and when, never the text. Owner sends and test sessions are left
+        out. The Fleet monitor draws these as arrows between ducks."""
+        rows = self.conn.execute(
+            "SELECT q.id, q.sender, q.recipient, q.kind, q.created_at "
+            "FROM session_questions q WHERE q.created_at >= ? AND q.sender != 'owner' "
+            "AND NOT EXISTS (SELECT 1 FROM sessions s WHERE s.test=1 "
+            "AND s.session_key IN (q.sender, q.recipient)) "
+            "ORDER BY q.created_at DESC LIMIT ?",
+            (since_ms, limit),
+        ).fetchall()
+        return [dict(r) for r in rows]
 
     def folder_inbox(
         self,

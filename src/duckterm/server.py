@@ -64,11 +64,20 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TextIO
 
-from duckterm import bug_reports, connectors, editions, release_features, suites, zsh_themes
+from duckterm import (
+    __version__,
+    bug_reports,
+    connectors,
+    doctor,
+    editions,
+    release_features,
+    suites,
+    zsh_themes,
+)
 from duckterm.agents import tmux
 from duckterm.agents.terminal import available_terminals, open_in_terminal
 from duckterm.autopilot import api as ap_api
-from duckterm.core import events, fleet_questions, oracle, oracle_intent
+from duckterm.core import events, fleet_pulse, fleet_questions, oracle, oracle_intent, support
 from duckterm.core.approvals import Approval, ApprovalRegistry
 from duckterm.core.backup_jobs import BackupJobs
 from duckterm.core.eventbus import EventBus
@@ -93,7 +102,7 @@ from duckterm.core.tokens import TokenLedger
 from duckterm.git import gitdetect
 from duckterm.git.spotlight import spotlight_to_main
 from duckterm.git.worktrees import GitError
-from duckterm.harnesses import infer_runtime, runtime_for
+from duckterm.harnesses import infer_runtime, installable_agents, runtime_for
 from duckterm.helpers import (
     browse,
     instance,
@@ -367,7 +376,14 @@ _ROUTES: list[Route] = [
     Route("POST", "/sessions/compare", lambda s, r, w, h, b, seg: s._compare(w, b)),
     Route("POST", "/fleet/ask", lambda s, r, w, h, b, seg: s._fleet_ask(w, b)),
     Route("GET", "/oracle/chat", lambda s, r, w, h, b, seg: s._oracle_chat(w)),
+    Route("POST", "/support/ask", lambda s, r, w, h, b, seg: s._support_ask(w, b)),
+    Route("GET", "/support/chat", lambda s, r, w, h, b, seg: s._support_chat(w)),
+    Route("DELETE", "/support/chat", lambda s, r, w, h, b, seg: s._support_chat(w, clear=True)),
     Route("GET", "/control-tower", lambda s, r, w, h, b, seg: s._control_tower(w)),
+    Route("GET", "/fleet/pulse", lambda s, r, w, h, b, seg: s._fleet_pulse(w)),
+    # Home's Pulse widget: the same feed, gated on `home` rather than `fleet_monitor`.
+    Route("GET", "/home/pulse", lambda s, r, w, h, b, seg: s._fleet_pulse(w)),
+    Route("GET", "/fleet/mail", lambda s, r, w, h, b, seg: s._fleet_mail(w)),
     Route("GET", "/relay", lambda s, r, w, h, b, seg: s._relay_list(w)),
     # ── Oracle voice: the optional local neural voice ──
     Route("GET", "/voice/status", lambda s, r, w, h, b, seg: s._voice_status(w)),
@@ -2553,6 +2569,8 @@ class Server:
         self, writer: asyncio.StreamWriter, session_key: str, req: dict[str, Any]
     ) -> None:
         """Deliver explicit owner feedback on exactly the saved artifact revision."""
+        from duckterm.feedback_context import pdf_page_context
+
         quote, note = req.get("quote", ""), req.get("note")
         if not isinstance(quote, str) or not isinstance(note, str) or not note.strip():
             await _write_json(
@@ -2566,7 +2584,8 @@ class Server:
             if not isinstance(artifact_id, str):
                 raise ValueError("artifact_id must be text")
             artifact = self.history.artifacts.get(session_key, artifact_id)
-        except ArtifactError as exc:
+            page_context = pdf_page_context(req, artifact["media_type"])
+        except (ArtifactError, APIError) as exc:
             await _write_json(writer, exc.status, {"error": str(exc)})
             return
         except ValueError as exc:
@@ -2595,6 +2614,7 @@ class Server:
         # JSON escapes newlines and terminal control bytes in every field. A
         # quoted artifact must never become extra keystrokes or extra submits.
         context = {
+            **page_context,
             "artifact": artifact["title"],
             "path": artifact["source_path"],
             "artifact_id": artifact["id"],
@@ -2686,6 +2706,10 @@ class Server:
                 str(s["session_key"])
             ):
                 s["state"] = "waiting"
+            # Restart context is server-only and can be many megabytes. Keep it
+            # through enrichment/binding checks, but never serialize it into
+            # the dashboard's recurring session-list response.
+            s.pop("restart_json", None)
         await _write_json(
             writer,
             200,
@@ -4615,20 +4639,6 @@ class Server:
         if et == events.STOP and row and row["state"] not in AT_REST_STATES:
             final = event.get("last_assistant_message")
             final = final if isinstance(final, str) else None
-            direct = permission_question(final or "")
-            if direct and not self._owner_question_pending(key):
-                self.relay.add(
-                    {
-                        **self._relay_session_fields(key),
-                        "kind": "question",
-                        "urgency": "blocked",
-                        "created_at": now,
-                        "question": direct,
-                        "options": [],
-                        "excerpt": (final or "")[-1200:],
-                        "detected_without_model": True,
-                    }
-                )
             try:
                 loop = asyncio.get_running_loop()
             except RuntimeError:
@@ -4882,31 +4892,68 @@ class Server:
                 and self.history.last_event_ts(key, events.USER_PROMPT_SUBMIT) <= at
             )
 
-        await asyncio.sleep(self._RELAY_SETTLE_S)
-        if not still_current():
-            return
-        if self._owner_question_pending(key):
-            # A direct permission ask was already surfaced synchronously. Keep
-            # the existing owner-authored answer-rule path for that same note.
-            direct = next(
-                (
-                    n
-                    for n in self.relay.open_notes()
-                    if n["session_key"] == key
-                    and n["kind"] == "question"
-                    and n.get("created_at") == at
-                    and n.get("detected_without_model")
-                ),
-                None,
+        def latest_assistant_text(messages: list[dict[str, object]]) -> str:
+            last = next(
+                (m for m in reversed(messages) if m.get("role") in {"user", "assistant"}), None
             )
-            if direct is not None and final_message is not None:
-                await self._relay_question_rule(direct, final_message)
+            return self._message_text(last) if last and last.get("role") == "assistant" else ""
+
+        def verified(text: str) -> bool:
+            if final_message is None:
+                return True
+            hint = final_message.strip()
+            # The hook sends at most 12,000 characters, before trimming. The
+            # transcript reader trims whitespace, so compare a bounded suffix
+            # only when the hook actually reached that cap.
+            return bool(
+                text
+                and hint
+                and (hint == text or (len(final_message) == 12000 and text.endswith(hint)))
+            )
+
+        # Hook text is a hint, not evidence: only the session's recorded transcript
+        # may create an owner question or feed an answer rule. Direct permission
+        # asks avoid the classifier delay, but still read that transcript first.
+        direct_hint = permission_question(final_message or "")
+        if not direct_hint:
+            await asyncio.sleep(self._RELAY_SETTLE_S)
+        if not still_current() or self._owner_question_pending(key):
             return
         messages = await asyncio.to_thread(self._read_messages, self._message_source(key))
-        if not still_current():
+        if not still_current() or self._owner_question_pending(key):
             return
-        last = next((m for m in reversed(messages) if m.get("role") == "assistant"), None)
-        final = final_message if final_message is not None else self._message_text(last)
+        final = latest_assistant_text(messages)
+        if not verified(final):
+            if not direct_hint:
+                return
+            # The hook can arrive before the CLI flushes its last message. Allow
+            # the existing settle interval once; never fall back to hook text.
+            await asyncio.sleep(self._RELAY_SETTLE_S)
+            if not still_current() or self._owner_question_pending(key):
+                return
+            messages = await asyncio.to_thread(self._read_messages, self._message_source(key))
+            if not still_current() or self._owner_question_pending(key):
+                return
+            final = latest_assistant_text(messages)
+            if not verified(final):
+                return
+        direct = permission_question(final)
+        if direct:
+            note = self.relay.add(
+                {
+                    **self._relay_session_fields(key),
+                    "kind": "question",
+                    "urgency": "blocked",
+                    "created_at": at,
+                    "question": direct,
+                    "options": [],
+                    "excerpt": final[-1200:],
+                    "detected_without_model": True,
+                }
+            )
+            self._mark_question_waiting(key)
+            await self._relay_question_rule(note, final)
+            return
         if not final or not ASK_CUES.search(final[-900:]):
             return
         if any(
@@ -5243,6 +5290,37 @@ class Server:
         self.history.session_api._sweep()
         await _write_json(writer, 200, mail_analytics.snapshot(self.history._conn, days))
 
+    _PULSE_TTL_MS = 30_000
+
+    async def _fleet_pulse(self, writer: asyncio.StreamWriter) -> None:
+        """Artifacts, PR merges and releases for the Fleet monitor's Pulse.
+        Git reads are cached briefly: every open dashboard polls this. One
+        refresh runs at a time; polls that arrive during it wait for it."""
+        now = int(time.time() * 1000)
+        cached = getattr(self, "_pulse_cache", None)
+        if cached is None or now - cached[0] >= self._PULSE_TTL_MS:
+            refresh = getattr(self, "_pulse_refresh", None)
+            if refresh is None or refresh.done():
+                since = now - fleet_pulse.WINDOW_MS
+                refresh = self._pulse_refresh = asyncio.ensure_future(
+                    asyncio.to_thread(
+                        fleet_pulse.collect,
+                        self.history.sessions(),
+                        self.history.artifacts.recent(since, fleet_pulse.LIMIT),
+                        now,
+                    )
+                )
+            # A dropped poll must not cancel the refresh other polls share.
+            cached = self._pulse_cache = (now, await asyncio.shield(refresh))
+        await _write_json(writer, 200, {"events": cached[1]})
+
+    _FLEET_MAIL_MS = 10 * 60_000
+
+    async def _fleet_mail(self, writer: asyncio.StreamWriter) -> None:
+        since = int(time.time() * 1000) - self._FLEET_MAIL_MS
+        mail = self.history.session_api.peer_mail(since)
+        await _write_json(writer, 200, {"messages": mail})
+
     async def _control_tower(self, writer: asyncio.StreamWriter) -> None:
         """Fleet insights for the control tower page. Session states and
         folders come from the dashboard's own event stream, not from here."""
@@ -5298,6 +5376,16 @@ class Server:
             if not isinstance(priority, bool):
                 await _write_json(writer, 400, {"error": "priority must be true or false"})
                 return
+            raw_asked = req.get("oracle_chat")
+            asked = raw_asked.strip() if isinstance(raw_asked, str) else ""
+            chat = asked != "" and self.edition.includes("oracle_messages")
+            row = self.history.session(session_key) or {}
+            name = str(row.get("name") or session_key)
+            if chat and row.get("state") in _ENDED_STATES:
+                # Home's chat waits under the question for the answer, and an
+                # ended session never gives one.
+                await _write_json(writer, 409, {"error": f"{name} has ended. Nothing was sent."})
+                return
             try:
                 message_id = self.history.session_api.owner_message(
                     session_key,
@@ -5312,22 +5400,16 @@ class Server:
             if priority:
                 self._oracle_soon()  # an idle agent shouldn't wait for the next pass
             reply: dict[str, Any] = {"delivered": "inbox", "message_id": message_id}
-            asked = req.get("oracle_chat")
-            if (
-                isinstance(asked, str)
-                and asked.strip()
-                and self.edition.includes("oracle_messages")
-            ):
+            if chat:
                 # Sent from Ask Oracle: keep it in the chat history like a
                 # plain-language send, so it survives a reload.
-                row = self.history.session(session_key) or {}
                 reply["exchange"] = oracle.append_chat(
                     paths.home() / "oracle-chat.json",
-                    asked.strip()[:8000],
-                    _sent_line(str(row.get("name") or session_key), str(req.get("text"))),
+                    asked[:8000],
+                    _sent_line(name, str(req.get("text"))),
                     int(time.time() * 1000),
                     key=message_id,
-                    to=str(row.get("name") or session_key),
+                    to=name,
                 )
             await _write_json(writer, 200, reply)
             return
@@ -5452,6 +5534,50 @@ class Server:
             return dict(row) if row else None
 
         await _write_json(writer, 200, {"messages": oracle.refresh_replies(path, lookup)})
+
+    async def _support_ask(self, writer: asyncio.StreamWriter, body: bytes) -> None:
+        try:
+            req: Any = json.loads(body or b"{}")
+        except json.JSONDecodeError:
+            await _write_json(writer, 400, {"error": "invalid JSON"})
+            return
+        question = str(req.get("question") or "").strip() if isinstance(req, dict) else ""
+        if not question:
+            await _write_json(writer, 400, {"error": "question required"})
+            return
+        if len(question) > 8000:
+            await _write_json(writer, 400, {"error": "question exceeds 8000 characters"})
+            return
+        chat_path = paths.home() / "support-chat.json"
+        # This process is the server, so doctor's reachability probe is skipped.
+        checks = await asyncio.to_thread(doctor.check_install, installable_agents())
+        prompt = support.prompt(
+            question,
+            version=__version__,
+            edition=self.edition.name,
+            features=sorted(self.edition.features),
+            checks=checks,
+            prior=oracle.load_chat(chat_path),
+        )
+        result = await asyncio.to_thread(summarize, prompt, tier="deep")
+        if not result.text:
+            await _write_json(
+                writer,
+                502,
+                {
+                    "error": "no summarizer backend — install claude/codex/copilot "
+                    "or set DUCKTERM_SUMMARIZER_CMD"
+                },
+            )
+            return
+        exchange = oracle.append_chat(chat_path, question, result.text, int(time.time() * 1000))
+        await _write_json(writer, 200, {"exchange": exchange, "backend": result.backend})
+
+    async def _support_chat(self, writer: asyncio.StreamWriter, *, clear: bool = False) -> None:
+        path = paths.home() / "support-chat.json"
+        if clear:
+            oracle.clear_chat(path)
+        await _write_json(writer, 200, {"messages": oracle.load_chat(path)})
 
     async def _list_zsh_themes(self, writer: asyncio.StreamWriter) -> None:
         await _write_json(writer, 200, {"themes": zsh_themes.list_themes()})
@@ -6548,8 +6674,13 @@ class Server:
             update = await self.progress_coordinator.refresh_result(
                 session_key, captured, on_progress=on_progress
             )
-        except APIError:
-            update = SummaryUpdate.failed("source_unavailable")
+        except APIError as exc:
+            update = SummaryUpdate.failed(
+                "source_changed" if exc.status == 409 else "source_unavailable",
+                diagnostic=(
+                    "freeze:memory_conflict" if exc.status == 409 else "freeze:memory_unavailable"
+                ),
+            )
         except Exception as exc:
             # Retain history and a fixed failure code, never raw provider output.
             print(
@@ -7604,6 +7735,10 @@ class Server:
             return
         self._set_lifecycle(key, "archived")
         self.approvals.drop_session(key)
+
+
+# A session in one of these states will not read its inbox again.
+_ENDED_STATES = {"terminated", "stopped", "interrupted", "archived", "merged"}
 
 
 def _sent_line(name: str, text: str) -> str:

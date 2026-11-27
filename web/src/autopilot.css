@@ -167,12 +167,20 @@
 .rd-autopilot-badge { flex: none; display: inline-grid; place-items: center; min-width: 18px; height: 18px; border-radius: 9px; background: var(--wait); color: var(--accent-fg); font-size: 10px; font-weight: 600; padding: 0 5px; }
 
 .rd-sidebar-tops, .rd-sidebar-tops-single { display: flex; flex-direction: column; flex: none; }
+/* Short laptop windows: the three stacked rows took about 180px above the
+   agent list. One line each gives most of that back to the tree. */
+@media (max-height: 820px) {
+  .rd-sidebar-tops > button, .rd-sidebar-tops-single > button { gap: 10px; padding: 7px 18px; }
+  /* "> button" outranks the Oracle and Support row rules, which load later. */
+  .rd-sidebar-tops > button :is(svg, img), .rd-sidebar-tops-single > button img { width: 20px; height: 20px; }
+  .rd-sidebar-tops > button small, .rd-sidebar-tops-single > button small { display: none; }
+}
 @media (max-width: 1100px) {
   .rd-sidebar-tops { flex-direction: row; border-bottom: 1px solid var(--border); }
   .rd-sidebar-tops > button { flex: 1 1 0; min-width: 0; padding: 8px 14px; border-bottom: 0; }
   .rd-sidebar-tops > button + button { border-left: 1px solid var(--border); }
-  .rd-sidebar-tops svg, .rd-sidebar-tops img { width: 20px; height: 20px; }
-  .rd-sidebar-tops small { display: none; }
+  .rd-sidebar-tops > button :is(svg, img) { width: 20px; height: 20px; }
+  .rd-sidebar-tops > button small { display: none; }
 }
 
 @media (max-width: 720px) {

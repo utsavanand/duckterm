@@ -7,6 +7,193 @@ first real run had a pull request but no way to see why. Build the detail view
 from the files the run already writes before adding new ones, and record what
 a later view needs (the base commit) at the moment it is known.
 
+## 2026-11-27 — Session-list refreshes carried megabytes of unused restart context
+
+A live Python stack caught HistoryStore.sessions sorting full SQLite rows on
+the event loop. A bounded size-only query found 24.8 MB of restart_json across
+74 sessions, including a 13 MB entry. The dashboard never reads that field,
+but every session-list response serialized and transferred it. Sort row
+references after retrieval so SQLite does not spill the large payloads into a
+temporary sort, and remove restart_json only after internal identity/context
+checks have finished. Restart storage and internal readers keep the full data.
+
+Check bytes per row as well as row count on frequently polled endpoints. Moving
+work to a thread would not remove redundant serialization or browser parsing.
+This fixes a measured allocation/work amplifier, not every reported stall.
+
+Browser fixtures also consumed restart_json to post correctly bound fake-agent
+events. Keep that setup on their isolated database (read-only, test=1), rather
+than retaining a large production response solely for a test helper.
+
+## 2026-11-27 — The fleet chat had summaries all along; it just didn't say what they were
+
+A spec said the fleet chat ignored checkpoint summaries because it read the
+empty `checkpoints.summary` column. It didn't: `history.checkpoints()` runs every
+row through `resolve_checkpoint`, which swaps in the revision prose. A snapshot of
+the owner's database showed 65 of 66 agents already passing a ready summary. A
+grep of the ask path for `summary_revision` found nothing because the join
+happens in persistence, one call away.
+
+What was wrong was presentation. The digest printed `last checkpoint:` with no
+state or date, so stale or unverified prose read as current fact, and the prompt
+described digests as "state, goal, recent terminal output" without mentioning a
+summary. Each line now names the summary's state and date, or says there is none,
+and the prompt tells the model how to weigh summary against scrollback.
+
+Before building a fix for "X never reads Y", run the production read path on
+real data and look at what comes out. A grep only shows where Y is named.
+
+## 2026-11-27 — A hardened runner only protects the calls that use it
+
+#496 routed review's git calls through one runner that turns off every
+program a repository can name. QA testing the duplicate #520 found a plain
+`git fetch --all` in `git/worktrees.py`. That fetch lists branches for the new
+worktree picker, in a repository sessions work in, so its reference-transaction
+hook ran as the server. It now goes through review/git, fetches only origin,
+and has a timeout.
+
+When hardening a shared runner, search for every other caller of the same
+command, not only the runner's own callers.
+
+## 2026-11-26 — The top folder can be right while the git folder is someone else's
+
+#504's check that git's top folder is the session's folder missed a `.git`
+file that names another repository's git folder. Its top folder is still
+the session's folder, but the branch, the index and the tracked file names
+are the other repository's, so they went into the checkpoint. The git folder
+must now be the folder's own `.git`. For a `.git` file, it must be a linked
+worktree whose git folder points back at it, or a submodule whose
+`core.worktree` does.
+
+A repository has a worktree and a git folder, and either can be pointed
+elsewhere. Check both.
+
+## 2026-11-26 — A deadline checked between calls still waits for the slowest one
+
+Pulse's refresh stopped starting new git calls after 20 s. Each call still
+had its own 15 s timeout, so a refresh could run up to 15 s past its
+deadline. `git tag --list` also returned every v* tag before Python kept ten.
+Now each call's timeout is whatever remains of the deadline, at most 15 s,
+and `for-each-ref --count` cuts the tag list inside git.
+
+A time budget has to be passed into each call, not just checked between
+them.
+
+## 2026-11-26 — A specific allow beats a general deny, whoever sets it
+
+#496 blocked every transport except https, ssh and file by passing
+`protocol.allow=never`. git checks `protocol.<name>.allow` first, though,
+from any scope. A repository could set `protocol.ext.allow=always` with an
+`ext::<command>` origin, which runs the command as the transport. It could
+also set `remote.origin.vcs` and allow that name, which runs
+`git-remote-<name>` from PATH. Every call now pins ext and fd to `never`, and
+network calls refuse a repository whose own config sets any `protocol.*`
+or `remote.*.vcs`. The first run broke every fetch: `--show-scope` reports
+DuckTerm's own `-c` pins as scope `command`, and the check took them for the
+repository's. Those entries are now skipped.
+
+A deny by default is only as strong as the most specific allow anyone can
+add. Check how git ranks a key before trusting a general setting.
+
+## 2026-11-26 — Improve readability without replacing the app theme
+
+Page-local overrides of shared colors made AGENTS.md look like a different app.
+Use the existing background, control, font and secondary-text tokens instead;
+keep semantic color on small labels and status edges. Review both themes in
+context after preview approval, rather than judging an isolated palette alone.
+
+## 2026-11-27 — A diff against HEAD is empty once something commits the work
+
+The runner built workspace.diff against HEAD. Autopilot's executor commits
+after every step, so on the first real run the review step got an empty diff
+and passed only because the reviewer looked at HEAD on its own. A diff that
+stands for "what this run changed" needs the run's starting commit, recorded
+at start, not whatever HEAD is when the diff is taken.
+
+## 2026-11-26 — Automatic checkpoints failed on busy agents, and one fallback checkpointed old work
+
+The first night of automatic checkpoints: 86 succeeded, 8 failed, every
+failure on an agent that was mid-turn. The 50-message trigger fires while the
+agent is still writing, so copying the conversation kept hitting a changing
+file. One failure was a KeyError: when the live conversation can't be read,
+memory substitutes an older saved copy (meant for search), and the checkpoint
+read that copy's fingerprint, which old-format copies lack. With a new-format
+copy there was no error at all: the checkpoint summarized old work and called
+it current. Message-count checkpoints now wait for a turn end or a quiet
+minute, the fallback copy is refused, and the log says which step refused.
+Lesson: a fallback that is right for one reader (search) can be wrong for
+another (a checkpoint); mark it, and have each reader decide.
+
+## 2026-11-26 — A waiting reply needs a recipient that can still answer
+
+Home's @ offered every session, so a question to an ended one showed "Waiting"
+forever, and each saved answer was copied whole (up to 256 KB, 200 kept). When
+the UI waits on someone, list only who can answer, have the server refuse the
+rest, and bound what is copied into a history by bytes, not just by count.
+
+## 2026-11-26 — Verify hardening advice against the pinned dependency
+
+Serve static assets with nosniff alongside correct MIME types, including PDF
+workers and decoders. Verify suggested library switches before adding them:
+PDF.js 6.5 has removed isEvalSupported and its eval path. Treat optional
+dependency removal as a build change; Rollup needs its optional native package,
+so omitting every optional package breaks the release build.
+
+## 2026-11-26 — Test bundled document readers through the real server
+
+A PDF worker built successfully but failed in the app because the static server
+served .mjs as application/octet-stream. The modern PDF.js build also used Map
+methods missing in macOS WebKit; bundle the matching legacy renderer/worker and
+probe the actual native engine. Verify worker/resource URLs and MIME
+types through the packaged server, not just Vite. Page comments need both a
+content hash and a page number: identical text on different pages must not make
+feedback jump to the wrong occurrence. Scanned pages still need page comments.
+
+## 2026-11-26 — The narrow-strip rule never hid Oracle's subtitle
+
+Compacting the sidebar rows for short windows first saved only the Autopilot
+row: `.rd-sidebar-tops small` ties `.rd-oracle-row small` on specificity, and
+oracleNavigation.css loads later, so Oracle and Support kept their subtitles
+and 26px icons. The narrow-window strip had lost the same way since it was
+added: its Oracle cell kept a subtitle and stood 57px tall instead of 38. Unit tests can't see media queries; the
+screenshot's measured height was the only signal. Scope container overrides
+with `> button` and measure the rows, not just the first one.
+
+## 2026-11-25 — A pinned short window is a budget every sidebar row spends
+
+sidebar-order.spec.ts pins a 652px window to force a scrolling agent list,
+and drags a session onto a folder header about 320px away. Main's agent
+search box and #473's Support row each took height from the tree, leaving
+285px, and CI failed deterministically only after both met in one branch.
+When a spec pins a short viewport, say what the geometry needs next to it,
+and re-check it when anything is added above the tree.
+
+## 2026-11-25 — An icon tile on a theme token needs that token's foreground
+
+The Support sidebar icon filled its tile with --accent and drew the glyph in
+white. Dark mode makes --accent near-white, so the question mark measured
+1.09:1 and disappeared; browser tests and visibility checks still passed.
+Pair a theme-dependent background with its foreground token (--accent-fg)
+and check new icons in both themes. The same PR broke an e2e that counted
+feature-flag rows as a magic number; it now derives the count from
+/feature-flags.
+
+## 2026-11-26 — Hook text cannot authorize an owner question
+
+The permission-question fast path trusted Stop hook text before reading the
+session transcript. A forged hook could create Waiting and feed an owner answer
+rule. Verify the final text against the recorded conversation before either
+operation. Keep the no-model path for verified asks and allow one settle retry
+when the transcript has not flushed; a new turn invalidates that retry.
+
+## 2026-11-26 — Human and session sender identities must stay distinct
+
+Message cleanup used the same sender/recipient predicate for all unfinished
+mail. An event-created session named owner collided with the human sender and
+could cancel messages to other sessions. Reserve that identity in session
+validation and event storage, and limit read-broadcast cleanup to the recipient.
+Protect queued human mail too, including revocation from an older saved row.
+
 ## 2026-11-26 — CSP does not block frame self-navigation
 
 A sandboxed iframe can navigate itself even when connect-src is none. Keep
@@ -40,6 +227,196 @@ searched for their folder. Match the existing folder path as well, including
 ancestor names, and feed those results through the same filters and counts.
 The existing search test explicitly excluded folder matches; update that contract
 and cover nested paths, archived sessions, and moves while a query is active.
+
+## 2026-11-26 — A security check written for the root broke the subfolder
+
+The #504 follow-up rejected a repository whose worktree is somewhere else by
+requiring git's top folder to equal the session folder. Sessions often start
+in a subfolder, and every one of those then recorded no git state. Our tests
+covered the attack and the repository root, but no subfolder. main-qa-2 caught
+it. The check now finds the nearest folder up the physical path that holds a
+`.git`, the same folder git itself would find, and requires the top folder to
+be that one. A worktree pointed somewhere else is still refused.
+
+When a check tightens what counts as valid input, test the ordinary inputs
+around the case it was written for, not just the case itself.
+
+## 2026-11-26 — Sweep the option list, not just the reports
+
+Security's third pass on #496 found another program a repository can name:
+`core.alternateRefsCommand`. Fetch negotiation runs it to list the refs of
+an alternate object store that the repository's own
+`objects/info/alternates` points at. Each earlier round had fixed the
+reported key and the keys next to it. This time I went through every key in
+`git help config` that names a program and matched it against the commands
+DuckTerm runs. Editors, difftool, mergetool, sendemail and trailer commands
+are never invoked. `uploadpack.packObjectsHook` is read only from the owner's
+config. `gc.recentObjectsHook` needs a gc, and network calls set `gc.auto=0`.
+`diff.external` applies only to patch output, and every diff here is
+`--name-only`, `--shortstat` or `--no-ext-diff`. Only
+`core.alternateRefsCommand` was left, and it is now pinned to `true`.
+
+When a class of bug keeps coming back one key at a time, enumerate the whole
+key space once instead of fixing one report after another.
+
+## 2026-11-26 — Attributes attach programs to files, not just to commands
+
+#496 turned off every program a repository's config can name for a command:
+fsmonitor, hooks, signature verifiers, textconv, ssh and credential helpers.
+Security then found two more that every flag left running. Attributes attach
+these to files, and a repository controls its own attributes through
+`.git/info/attributes`. `diff-files` re-reads a racy index entry through the
+file's `filter.<driver>.clean` (or `.process`), and `merge-tree` hands a
+both-sides change to `merge.<driver>.driver`. Each call now reads the
+repository's filter and merge driver names with one `git config` call, which
+runs nothing, and blanks them. A blanked merge driver fails, so the review
+reports a conflict for that file instead of guessing. The owner's own
+filters, such as git-lfs in the global config, still run.
+
+To check that a git call runs no repository program, list the config it
+reads, and also every attribute that can name a driver for a path.
+
+## 2026-11-26 — Dropping the repo's helper doesn't stop the repo choosing the host
+
+#496 dropped repository credential helpers and kept the owner's, so private
+repositories still fetch. Security showed the owner's helpers could still hand
+the GitHub token to someone else. A repo can set `http.proxy`,
+`http.<url>.sslVerify=false`, an `sslCAInfo` for its own CA, `curloptResolve`
+or `remote.<name>.proxy`. Then the request goes to a host the repo picked,
+which answers 401, and git asks the owner's helper for a password. No override
+fixes it: a URL-specific `http.<url>.*` key outranks a general one wherever it
+is set. Network calls now refuse a repository whose own config sets `http.*`,
+`remote.*.proxy`, `url.*.insteadOf`, `core.gitProxy` or `core.askPass`. Push
+URLs stay allowed because fetch never reads them and a real clone set one.
+
+Our tests' proxy cases passed without the fix at first, because curl skips the
+proxy for a loopback origin. The test origin has to be a host that only the
+proxy can reach, as an attacker's would be.
+
+Keeping the owner's credentials means trusting every setting that decides
+where they go, not just the program that hands them out.
+
+## 2026-11-26 — A -c override loses to a key git reads first-wins
+
+#496 limited fetch to https and ssh and pinned `remote.origin.uploadpack` with
+a command-line override. Both were wrong. The PR-list browser test, and CI, use
+a clone whose origin is a local folder, so `ls-remote` failed and the page said
+the remote was unreachable. The unit tests had passed only because their
+conftest put `file` back. Allowing `file` again exposed the second fault. git
+keeps the first `remote.<name>.uploadpack` it reads, and repo config is read
+before command-line config, so the repo's own program still ran. The test for
+it passed only because https and ssh never run upload-pack locally. Now
+fetch and ls-remote pass `--upload-pack=git-upload-pack`, which overrides the
+remote's value, and `file` is allowed.
+
+Before trusting a `-c` override, check how git combines that key: last-wins,
+first-wins, or a list. And a test fixture that loosens what the product
+allows hides exactly the behaviour a real user hits.
+
+## 2026-11-25 — Preview the layout with the real fleet, not the fixture
+
+The pods looked fine with three fixture agents. With the owner's 33, the
+24-agent team was squeezed into half the width beside a team of three, and the
+arrows were drawn over the duck labels. A team with several pods now takes the
+full row and the arrows draw behind the ducks. Only the real-data preview found
+either problem.
+
+## 2026-11-26 — A deadline checked after the slow part bounds nothing
+
+The Pulse's 20 s deadline was checked per repository and per tag, but the
+first step, one `rev-parse` per folder a session reports, ran before it. That
+is up to 40 calls of 15 s each. A deadline has to be checked by every loop that
+calls out, and each call's timeout should be the time left.
+
+## 2026-11-25 — A ref's name is input, so pass git the commit
+
+The Pulse asked `rev-parse --abbrev-ref origin/HEAD` for the default branch and
+handed the name to `git log`. Refnames can't start with "-", but a branch can
+be called `refs/heads/--output=/path`, and its short name can. A session that
+pointed origin/HEAD at one made the server write the merge log, with commit
+subjects it controls, to any file the server can write. The Pulse now resolves
+origin/HEAD to a commit id and passes `--end-of-options` before every
+revision. The same review found the refresh unbounded: every folder a session
+names costs git calls, and overlapping 30 s polls each ran their own. Folders,
+tags and total time per refresh are now capped, and polls share one refresh.
+
+## 2026-11-25 — A path a session names is code the server may run
+
+The Pulse runs `git log` on every recent session's folder, and the folder
+comes from hook reports. Security found that a repository's own config with
+`log.showSignature=true` makes `git log` run its `gpg.program` to verify a
+signed commit, so any agent able to write a .git/config could have the server
+run its program every 30 s. review/git already turned off the fsmonitor for
+the same reason; signature verifiers are the same class. Every review git call
+now passes `log.showSignature=false` and points all three gpg programs at
+`false`. The first regression test passed without the fix because the signed
+commit wasn't a merge, which `--merges` never shows; it now signs the PR merge
+and checks the program really runs without the overrides.
+
+## 2026-11-25 — Hardening one call path leaves its neighbours open
+
+The first #496 closed the signature verifier and lazy fetch. Security's
+recheck found three more in the same helper, all already on main.
+- fetch and ls-remote, exempted as "the calls that must reach a remote", still
+  ran the repo's ssh command, credential helpers and reference-transaction hook.
+- A branch checked out as `--output=<path>` reached `git log` and `rev-list` as
+  an option, through the bare branch name in the PR list.
+- The review diff ran a textconv named by a committed `.gitattributes`.
+
+A fix that names the one key a reviewer found invites the next key. The useful
+question is every way this command can start a program, or read an argument as
+an option.
+
+Two traps while fixing it. A blanket `credential.helper=` would have broken the
+owner's own fetches. Their helpers live in the Xcode git install's config and
+in a global reset-then-`gh auth` pair. So fetch now clears every helper and
+re-adds only those from system, global and the git install, passed through
+GIT_CONFIG_* variables so a crafted key name can't be misparsed. Two
+regression tests passed against the old code at first. `git diff --shortstat`
+never runs textconv, and git reads attributes from the worktree, not the
+compared trees. And `rev-list --output=X...main` writes to `X...main`. Each test
+now proves plain git runs the program, or writes the file, before checking
+DuckTerm doesn't.
+
+## 2026-11-25 — A folder a session names is config the server obeys
+
+review/git turned off a repository's fsmonitor because sessions report the
+folders review reads and can write their .git/config. Two more programs
+in that config were still live. With `log.showSignature=true`, `git log` runs
+the configured gpg program to verify a signed commit. In a partial clone, a
+missing object makes git fetch it on demand through the repo's
+`core.sshCommand`. A plain `git tag --sort` was enough to trigger that. Every
+helper call now turns off signature display and points the gpg programs at
+`false`. It sets GIT_NO_LAZY_FETCH and passes `protocol.allow=never` except
+for the two calls meant to reach a remote (fetch, ls-remote).
+The treat-it-as-hostile list is any config key that names a program, not
+just the one a reviewer found first.
+
+The signature test first passed without the fix. This machine's git signs every
+commit with SSH, so the fixture's commit already carried a signature, and git
+checked that one with the ssh verifier instead of the planted gpg one. A
+security test must first show the plain command really runs the program.
+
+## 2026-11-26 — git status runs the repo's clean filter
+
+Checkpoints read each session's folder with a bare `git status`, `rev-parse`
+and `log`: no fsmonitor override and no timeout. The folder is session-reported
+and its .git/config session-writable. Beyond the fsmonitor, `git status`
+re-reads every file whose stat data changed through the repo's own
+`filter.<driver>.clean`, chosen by a committed `.gitattributes`, so a session
+could have the server run a program at its next checkpoint. Checkpoints now go
+through review/git with a 5 s timeout. Dirty files come from `diff-index
+--cached`, `diff-files` and `ls-files --others`. These compare stat data, so a
+file touched but unchanged is listed as dirty. `diff-files` still re-reads a
+racy entry through a filter. Security found that on the second pass, and
+review/git now blanks the repository's filters. Checkpoints also refuse a
+repository whose worktree is somewhere else (`core.worktree`, a gitdir file),
+and keep at most 200 dirty file names.
+
+The parity test found an older bug. The status output was `.strip()`ped before
+each line was cut at column 3. The first line's leading space went, so the first
+unstaged file lost its first letter (`README.md` became `EADME.md`). Stripping a
+fixed-column format corrupts it.
 
 ## 2026-11-26 — Copy approved as a phrase loses the test the button had
 
