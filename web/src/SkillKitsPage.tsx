@@ -766,7 +766,6 @@ function MatrixSection({ kind, rows, harnesses, fixes, trustAbove, busy, onFix }
           {fixes.map((f) => <span key={f.component} className="rd-kits-pills"><Pill tone="warn">{f.component.split("/")[2]}: no path scope on {f.harnesses.join(", ")}</Pill><button type="button" className="rd-kits-fix" disabled={busy} onClick={(e) => { e.preventDefault(); onFix(f); }}>{describeFix(f)}</button></span>)}
           {needsTrust.map((h) => <Pill key={h} tone="warn">{h}: needs trust{trustAbove ? " · fix above" : ""}</Pill>)}
           {unfixable.map((u) => <Pill key={u.harness} tone="bad">{u.harness}: {u.count} not supported</Pill>)}
-          {unfixable.some((u) => u.harness === "opencode" && kind === "hook") && <Pill tone="mute">no fix yet · plugin planned</Pill>}
           {fixes.length === 0 && unfixable.length === 0 && needsTrust.length === 0 && (kind === "settings" || kind === "team" || (notApplicable && only && only.length < harnesses.length)
             ? <Pill tone="mute">{kind === "team" ? "offered · New team instantiates it" : `${(only || []).join(", ")} only`}</Pill>
             : <Pill tone="ok">installed everywhere</Pill>)}
