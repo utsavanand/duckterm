@@ -186,7 +186,7 @@ def _signed_in_mac_and_phone(server, root, service, github):
     account.sign_in(
         root,
         "Studio Mac",
-        say=lambda _: None,
+        say=lambda *_: None,
         call=routed(service, github, user),
         sleep=lambda _: 0,
     )

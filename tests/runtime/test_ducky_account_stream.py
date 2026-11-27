@@ -30,7 +30,13 @@ def frames(monkeypatch):
 def claim(grants, name="Utsav's iPhone", phone_id="phone-1"):
     token = secrets.token_urlsafe(32)
     code = matching_code(token, "a" * 64)
-    claims = {"login": "octo", "phone_id": phone_id, "phone_name": name}
+    claims = {
+        "login": "octo",
+        "phone_id": phone_id,
+        "phone_name": name,
+        "nonce": secrets.token_urlsafe(16),
+        "expires_at": 4_000_000_000,
+    }
     return grants.claim_account(token, claims, code), token, code
 
 
