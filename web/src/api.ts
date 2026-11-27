@@ -716,6 +716,12 @@ export const api = {
     (question: string, folder: string, requestKey?: string): Promise<FleetAnswer | { plan: FolderMessagePlan }>;
   },
   oracleChat: () => get<{ messages: OracleExchange[] }>("/oracle/chat"),
+  supportAsk: (question: string) => post<{ exchange: OracleExchange }>("/support/ask", { question }),
+  supportChat: () => get<{ messages: OracleExchange[] }>("/support/chat"),
+  clearSupportChat: () =>
+    fetch("/support/chat", { method: "DELETE", headers: authHeaders() }).then(
+      (r) => r.json() as Promise<{ messages: OracleExchange[] }>,
+    ),
   controlTower: () => get<TowerInsights>("/control-tower"),
   relay: (signal?: AbortSignal) => get<RelayState>("/relay", undefined, { signal }),
   voiceStatus: () => get<LocalVoiceStatus>("/voice/status"),

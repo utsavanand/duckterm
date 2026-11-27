@@ -5,6 +5,51 @@ forever, and each saved answer was copied whole (up to 256 KB, 200 kept). When
 the UI waits on someone, list only who can answer, have the server refuse the
 rest, and bound what is copied into a history by bytes, not just by count.
 
+## 2026-11-26 — The narrow-strip rule never hid Oracle's subtitle
+
+Compacting the sidebar rows for short windows first saved only the Autopilot
+row: `.rd-sidebar-tops small` ties `.rd-oracle-row small` on specificity, and
+oracleNavigation.css loads later, so Oracle and Support kept their subtitles
+and 26px icons. The narrow-window strip had lost the same way since it was
+added: its Oracle cell kept a subtitle and stood 57px tall instead of 38. Unit tests can't see media queries; the
+screenshot's measured height was the only signal. Scope container overrides
+with `> button` and measure the rows, not just the first one.
+
+## 2026-11-25 — A pinned short window is a budget every sidebar row spends
+
+sidebar-order.spec.ts pins a 652px window to force a scrolling agent list,
+and drags a session onto a folder header about 320px away. Main's agent
+search box and #473's Support row each took height from the tree, leaving
+285px, and CI failed deterministically only after both met in one branch.
+When a spec pins a short viewport, say what the geometry needs next to it,
+and re-check it when anything is added above the tree.
+
+## 2026-11-25 — An icon tile on a theme token needs that token's foreground
+
+The Support sidebar icon filled its tile with --accent and drew the glyph in
+white. Dark mode makes --accent near-white, so the question mark measured
+1.09:1 and disappeared; browser tests and visibility checks still passed.
+Pair a theme-dependent background with its foreground token (--accent-fg)
+and check new icons in both themes. The same PR broke an e2e that counted
+feature-flag rows as a magic number; it now derives the count from
+/feature-flags.
+
+## 2026-11-26 — Hook text cannot authorize an owner question
+
+The permission-question fast path trusted Stop hook text before reading the
+session transcript. A forged hook could create Waiting and feed an owner answer
+rule. Verify the final text against the recorded conversation before either
+operation. Keep the no-model path for verified asks and allow one settle retry
+when the transcript has not flushed; a new turn invalidates that retry.
+
+## 2026-11-26 — Human and session sender identities must stay distinct
+
+Message cleanup used the same sender/recipient predicate for all unfinished
+mail. An event-created session named owner collided with the human sender and
+could cancel messages to other sessions. Reserve that identity in session
+validation and event storage, and limit read-broadcast cleanup to the recipient.
+Protect queued human mail too, including revocation from an older saved row.
+
 ## 2026-11-26 — CSP does not block frame self-navigation
 
 A sandboxed iframe can navigate itself even when connect-src is none. Keep

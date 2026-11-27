@@ -1,0 +1,34 @@
+name = "feature-team"
+description = "Architect specs and plans, dev builds and tests, qa reviews and verifies, release ships; nobody pushes but release"
+
+[roles.architect]
+card = { purpose = "Writes the spec and the plan; assigns build work" }
+skills = ["spec", "plan"]
+
+[roles.dev]
+card = { purpose = "Builds what the plan says, with tests, and hands it to qa" }
+skills = ["implement", "test"]
+
+[roles.qa]
+card = { purpose = "Reviews every diff and verifies the change before anything ships" }
+skills = ["review", "qa"]
+
+[roles.release]
+card = { purpose = "Commits, opens the pull request and releases; the only role that pushes" }
+skills = ["ship"]
+
+[[rules]]
+role = "dev"
+review_by = "qa"
+
+[[rules]]
+role = "dev"
+may_not = ["push"]
+
+[[rules]]
+role = "qa"
+may_not = ["push"]
+
+[[rules]]
+role = "architect"
+may_not = ["push"]
