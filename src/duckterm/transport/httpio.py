@@ -102,13 +102,15 @@ async def write_response(
     text: str,
     extra_headers: dict[str, str] | None = None,
     content_type: str = "text/plain",
+    *,
+    keep_alive: bool = False,
 ) -> None:
     body = text.encode()
     head = f"HTTP/1.1 {status} {_REASON.get(status, 'OK')}\r\n"
     head += f"Content-Length: {len(body)}\r\nContent-Type: {content_type}\r\n"
     for name, value in (extra_headers or {}).items():
         head += f"{name}: {value}\r\n"
-    head += "Connection: close\r\n\r\n"
+    head += f"Connection: {'keep-alive' if keep_alive else 'close'}\r\n\r\n"
     writer.write(head.encode() + body)
     await writer.drain()
 
