@@ -11,6 +11,7 @@ untrusted and must not be able to steer another agent through Oracle.
 """
 
 import json
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -162,10 +163,17 @@ def load_chat(path: Path) -> list[dict[str, Any]]:
 
 
 def append_chat(
-    path: Path, question: str, answer: str, at_ms: int, *, key: str | None = None
+    path: Path,
+    question: str,
+    answer: str,
+    at_ms: int,
+    *,
+    key: str | None = None,
+    to: str | None = None,
 ) -> dict[str, Any]:
     """Save one exchange. A keyed exchange is saved once: a retried send
-    returns the copy already in the history."""
+    returns the copy already in the history. `to` names the session a
+    keyed exchange was sent to."""
     chat = load_chat(path)
     if key is not None:
         saved = next((e for e in chat if e.get("key") == key), None)
@@ -174,8 +182,36 @@ def append_chat(
     exchange: dict[str, Any] = {"q": question, "a": answer, "at": at_ms}
     if key is not None:
         exchange["key"] = key
+    if to is not None:
+        exchange["to"] = to
     private_write(path, json.dumps((chat + [exchange])[-CHAT_LIMIT:]))
     return exchange
+
+
+# A reply in one of these states will not change again.
+SETTLED = {"answered", "declined", "expired", "cancelled"}
+
+
+def refresh_replies(
+    path: Path, lookup: Callable[[str], dict[str, Any] | None]
+) -> list[dict[str, Any]]:
+    """Copy each sent message's status and answer into its exchange. Saved,
+    not just shown: the broker retires old mail, and the reply must outlive it.
+    `lookup` maps a message id to {status, answer, answered_at}, or None."""
+    chat = load_chat(path)
+    changed = False
+    for exchange in chat:
+        key = exchange.get("key")
+        reply = exchange.get("reply")
+        if not isinstance(key, str) or (isinstance(reply, dict) and reply.get("status") in SETTLED):
+            continue
+        row = lookup(key)
+        if row is not None and row != reply:
+            exchange["reply"] = row
+            changed = True
+    if changed:
+        private_write(path, json.dumps(chat))
+    return chat
 
 
 def clear_chat(path: Path) -> None:

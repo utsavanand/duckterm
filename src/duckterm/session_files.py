@@ -267,6 +267,7 @@ def content(recorded_root: str, relative: str) -> dict[str, Any]:
             media = "text/plain"
     return {
         "available": True,
+        "root": str(root),
         "path": relative,
         "name": target.name,
         "size": len(data),

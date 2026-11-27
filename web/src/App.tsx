@@ -43,7 +43,6 @@ import { FlowsView } from "./FlowsView";
 import { MemoryView } from "./MemoryView";
 import { TimelineView } from "./TimelineView";
 import { SessionFilesView } from "./SessionFilesView";
-import { ArtifactsView } from "./ArtifactsView";
 import { PrList } from "./review/PrList";
 import { ReviewWorkspace } from "./review/ReviewWorkspace";
 import type { PrRow } from "./api";
@@ -213,13 +212,14 @@ function Dashboard() {
   const [launchGroup, setLaunchGroup] = useState<string | undefined>(undefined);
   const [checkpointTarget, setCheckpointTarget] = useState<{ key: string; request: number } | null>(null);
   const [memoryTarget, setMemoryTarget] = useState<{ key: string; revision: string; checkpoint?: string } | null>(null);
-  const [chosenView, setView] = useState<"terminal" | "messages" | "history" | "inbox" | "artifacts" | "memory" | "prs" | "flows">(
+  const [chosenView, setView] = useState<"terminal" | "messages" | "history" | "inbox" | "code" | "artifacts" | "memory" | "prs" | "flows">(
     "terminal",
   );
-  // Coding editions combine files and saved artifacts; Lite shows saved outputs.
+  // Live code and saved outputs are separate destinations.
   const viewFeature = { history: has("checkpoints") || has("context"), memory: has("context"), inbox: has("inbox"),
-    artifacts: has("explorer") || has("artifacts"), prs: has("pr_review"), flows: has("skill_kits") } as Record<string, boolean>;
+    code: has("explorer"), artifacts: has("artifacts"), prs: has("pr_review"), flows: has("skill_kits") } as Record<string, boolean>;
   const view = viewFeature[chosenView] === false ? "terminal" : chosenView;
+  const [artifactTarget, setArtifactTarget] = useState<{ key: string; id: string } | null>(null);
   const [messageFolder, setMessageFolder] = useState<string | null>(null);
   // The PR open in the review workspace (PRs view); null shows the list.
   const [review, setReview] = useState<{ repo: string; ref: string; from?: string } | null>(null);
@@ -555,8 +555,9 @@ function Dashboard() {
               >
                 Inbox{selected && inboxCounts[selected.key] ? ` (${inboxCounts[selected.key]})` : ""}
               </button>}
-              {viewFeature.artifacts && <button className={view === "artifacts" ? "active" : ""} onClick={() => setView("artifacts")}>
-                {has("artifacts") ? "Artifacts" : "Explorer"}
+              {viewFeature.code && <button className={view === "code" ? "active" : ""} onClick={() => setView("code")}>Code explorer</button>}
+              {viewFeature.artifacts && <button className={view === "artifacts" ? "active" : ""} onClick={() => { setArtifactTarget(null); setView("artifacts"); }}>
+                Artifacts
               </button>}
               {viewFeature.prs && <button className={view === "prs" ? "active" : ""} onClick={() => setView("prs")}>
                 PRs
@@ -600,10 +601,12 @@ function Dashboard() {
                 )}
               </div>
             )}
-            {view === "artifacts" && (
+            {(view === "code" || view === "artifacts") && (
               <div className="rd-messages-wrap rd-files-wrap">
-                {selected ? has("explorer") ? <SessionFilesView session={selected} artifacts={has("artifacts")} /> : <ArtifactsView key={selected.key} sessionKey={selected.key} sessionName={selected.label} />
-                  : <p className="rd-panel-empty">Select a session to see its artifacts.</p>}
+                {selected ? <SessionFilesView key={`${selected.key}:${view}`} session={selected} mode={view} artifacts={has("artifacts")} browse={has("explorer")}
+                  artifactId={artifactTarget?.key === selected.key ? artifactTarget.id : undefined}
+                  onOpenArtifact={id => { setArtifactTarget({ key: selected.key, id }); setView("artifacts"); }} />
+                  : <p className="rd-panel-empty">Select a session to see its {view === "code" ? "code" : "artifacts"}.</p>}
               </div>
             )}
             {view === "flows" && (
