@@ -1,3 +1,14 @@
+## 2026-11-26 — A deadline checked between calls still waits for the slowest one
+
+Pulse's refresh stopped starting new git calls after 20 s. Each call still
+had its own 15 s timeout, so a refresh could run up to 15 s past its
+deadline. `git tag --list` also returned every v* tag before Python kept ten.
+Now each call's timeout is whatever remains of the deadline, at most 15 s,
+and `for-each-ref --count` cuts the tag list inside git.
+
+A time budget has to be passed into each call, not just checked between
+them.
+
 ## 2026-11-26 — A specific allow beats a general deny, whoever sets it
 
 #496 blocked every transport except https, ssh and file by passing
