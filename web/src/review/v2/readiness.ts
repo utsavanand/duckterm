@@ -24,6 +24,23 @@ function waiting(id: string, name: string, sub: string, card: string, cards: Rev
   return { id, name, sub, status: "wait", lines: [{ text }], card, ask: null };
 }
 
+// Test runs on this head. The header's checks are read fresh from GitHub, so
+// they win over the release card's copy. The gate log only appears on the card
+// when it is newer than the head commit, so a gate result is never stale.
+type RunResult = "fail" | "pending" | "pass" | "none";
+function ciResult(header: ReviewHeader, release: ReleaseData | null): { result: RunResult; text: string } {
+  const checks = header.row?.checks;
+  if (checks && checks.total > 0) {
+    if (checks.failed) return { result: "fail", text: `CI: ${checks.failed} of ${checks.total} checks failed on this head` };
+    if (checks.pending) return { result: "pending", text: `CI: ${checks.pending} of ${checks.total} checks still running` };
+    return { result: "pass", text: `CI: ${checks.passed}/${checks.total} passed on this head` };
+  }
+  const ci = check(release, "CI");
+  if (ci?.status === "fail") return { result: "fail", text: `CI: ${ci.note || "failed"}` };
+  if (ci?.status === "pass") return { result: "pass", text: `CI: ${ci.note || "passed"}` };
+  return { result: "none", text: "CI: no result for this head" };
+}
+
 function request(pr: string, lead: string, lines: ReadyLine[]): string {
   return `${pr}: ${lead}\n${lines.map(line => `- ${line.text}${line.where ? ` (${line.where})` : ""}`).join("\n")}`;
 }
@@ -52,14 +69,21 @@ export function readinessRows(header: ReviewHeader, cards: ReviewCard[]): ReadyR
       ...tests.gaps.map(text => ({ text })),
       ...tests.slop.map(item => ({ text: `Test with ${item.kind}`, where: `${item.path}:${item.line}` })),
     ];
-    const ci = check(release, "CI");
-    if (ci) lines.push({ text: `CI: ${ci.note || ci.status}`, where: "CI" });
-    if (tests.gate) lines.push({ text: `Last gate ${tests.gate.passed ? "passed" : "failed"}, ${tests.gate.age_minutes} min ago`, where: "gate" });
-    const status: ReadyStatus = uncovered.length || tests.slop.length ? "block" : partial.length || tests.gaps.length ? "part" : "ok";
+    const fix = [...lines];
+    const ci = ciResult(header, release);
+    const gate = tests.gate ? (tests.gate.passed ? "pass" : "fail") : "none";
+    const failed = ci.result === "fail" || gate === "fail";
+    // Ready needs a green run on this head: CI or a gate, nothing failed or running.
+    const ran = !failed && ci.result !== "pending" && (ci.result === "pass" || gate === "pass");
     if (!lines.length) lines.push({ text: "Every changed file has a test that reaches it" });
-    const fix = lines.filter(line => line.where !== "gate" && line.where !== "CI");
+    lines.push({ text: ci.text, where: "CI" });
+    lines.push({ text: tests.gate ? `Gate ${tests.gate.passed ? "passed" : "failed"} after this head was committed, ${tests.gate.age_minutes} min ago` : "Gate: no run since this head was committed", where: "gate" });
+    const status: ReadyStatus = uncovered.length || tests.slop.length || failed ? "block" : partial.length || tests.gaps.length || !ran ? "part" : "ok";
+    const lead = failed
+      ? `tests fail on this head (${[ci.result === "fail" ? ci.text : "", gate === "fail" ? "local gate failed" : ""].filter(Boolean).join("; ")}). Fix the failures, then rerun the gate and push.`
+      : fix.length ? "add the missing tests, then run the gate so this head has a result." : "no test run has passed on this head yet. Run the gate, or wait for CI, and post the result.";
     rows.push({ id: "tests", name: "Unit tests", sub: "changed code", status, lines, card: "tests",
-      ask: status === "ok" ? null : request(pr, "add the missing tests, then run the gate so this head has a result.", fix) });
+      ask: status === "ok" ? null : request(pr, lead, fix) });
   }
 
   if (!release) rows.push(waiting("security", "Security", "credentials and secrets", "release", cards));

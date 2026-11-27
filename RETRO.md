@@ -1,3 +1,11 @@
+## 2026-11-26 — Shown isn't counted
+
+The Release readiness tab listed a failed CI run and a failed gate as lines
+under Unit tests, but set the row's status from coverage alone, so the page
+said "Ready to release" over a red build (main-qa-2 on #503). Every piece of
+evidence a row displays must also feed its status: a failed run on this head
+now blocks, and a running or missing run can't count as ready.
+
 ## 2026-11-25 — A tooltip shouldn't take clicks
 
 The Oracle tower's hover and focus card is fixed-position and drawn above the
