@@ -137,3 +137,31 @@ def test_a_retried_send_is_delivered_and_saved_once(messaging) -> None:
     assert second["exchange"] == first["exchange"]
     chat = dispatch(server, "GET", "/oracle/chat", owner)[1]["messages"]
     assert [m["q"] for m in chat] == ["@product-manager rebase #446"]
+
+
+def test_the_recipients_answer_comes_back_into_the_chat_and_outlives_its_mail(messaging) -> None:
+    from tests.runtime.test_session_api import call, token_for
+
+    server, owner, history = messaging
+    body = {
+        "text": "status of #446?",
+        "mode": "inbox",
+        "oracle_chat": "@product-manager status of #446?",
+    }
+    sent = post(server, owner, "/sessions/pm/message", body)[1]
+    assert sent["exchange"]["to"] == "product-manager"
+    [waiting] = dispatch(server, "GET", "/oracle/chat", owner)[1]["messages"]
+    assert waiting["reply"]["status"] == "queued" and waiting["reply"]["answer"] is None
+
+    path = f"/questions/{sent['message_id']}"
+    answer = {"text": "Rebased, CI green."}
+    call(history, token_for(history, "pm"), "POST", path + "/answer", answer)
+    [answered] = dispatch(server, "GET", "/oracle/chat", owner)[1]["messages"]
+    assert answered["reply"]["status"] == "answered"
+    assert answered["reply"]["answer"] == "Rebased, CI green."
+
+    # The broker retires old mail; the saved reply stays.
+    with history._conn:
+        history._conn.execute("DELETE FROM session_questions")
+    [kept] = dispatch(server, "GET", "/oracle/chat", owner)[1]["messages"]
+    assert kept["reply"]["answer"] == "Rebased, CI green."

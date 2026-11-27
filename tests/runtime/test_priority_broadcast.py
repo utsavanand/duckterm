@@ -489,3 +489,123 @@ def test_inbox_counts_distinguish_unanswered_from_informational_notices(scenario
     counts = dispatch(server, "GET", "/session-inbox-counts", owner)[1]
     assert counts["unanswered_counts"] == {"peer": 3, "codex": 1}
     assert counts["counts"]["peer"] == 4
+
+
+@pytest.mark.parametrize(
+    "rest_state", ["terminated", "stopped", "interrupted", "archived", "merged"]
+)
+@pytest.mark.parametrize("via_event", [False, True], ids=["set-state", "lifecycle-event"])
+def test_read_priority_stops_counting_only_when_recipient_permanently_ends(
+    scenario, rest_state, via_event
+):
+    history, server, owner, creds = scenario
+    paused = rest_state in ("stopped", "interrupted")
+    send(server, owner, "Please acknowledge", "end-priority")
+    send(server, owner, "Informational notice", "end-info", priority=False)
+    messages = call(history, creds["claude"], "GET", "/inbox")[1]["messages"]
+    assert {m["status"] for m in messages} == {"read"}
+    counts = dispatch(server, "GET", "/session-inbox-counts", owner)[1]
+    assert counts["unanswered_counts"] == {"claude": 1, "peer": 1, "codex": 1}
+
+    now = int(time.time() * 1000)
+    if via_event:
+        history.record(
+            {
+                "_id": "priority-recipient-lifecycle",
+                "_ts": now,
+                "event_type": "Notification",
+                "session_key": "claude",
+                "lifecycle": rest_state,
+                "test": True,
+            }
+        )
+    else:
+        history.set_state("claude", rest_state)
+    # A late process exit must not turn a resumable interruption into a final end.
+    history.record(
+        {
+            "_id": "end-priority-recipient",
+            "_ts": now + 1,
+            "event_type": "SessionEnd",
+            "session_key": "claude",
+            "test": True,
+        }
+    )
+    assert history.session("claude")["state"] == rest_state
+    with pytest.raises(APIError) as exc:
+        call(history, creds["claude"], "GET", "/self")
+    assert exc.value.status == 401
+    counts = dispatch(server, "GET", "/session-inbox-counts", owner)[1]
+    expected = {"peer": 1, "codex": 1}
+    if paused:
+        expected["claude"] = 1
+    assert counts["unanswered_counts"] == expected
+    # Both messages remain readable in history; only the unfinished priority closes.
+    saved = {
+        row["id"]: dict(row)
+        for row in history._conn.execute(
+            "SELECT id, status, answered_at FROM session_questions WHERE recipient = 'claude'"
+        )
+    }
+    for message in messages:
+        row = saved[message["id"]]
+        cancelled = message["priority"] and not paused
+        assert row["status"] == ("cancelled" if cancelled else "read")
+        assert bool(row["answered_at"]) is bool(cancelled)
+    if paused:
+        history.record(
+            {
+                "_id": "priority-recipient-resume",
+                "_ts": now + 2,
+                "event_type": "SessionStart",
+                "session_key": "claude",
+                "runtime": "claude-code",
+                "test": True,
+            }
+        )
+        fresh = enroll(history, "claude")
+        with pytest.raises(APIError) as exc:
+            call(history, creds["claude"], "GET", "/self")
+        assert exc.value.status == 401
+        restored = call(history, fresh, "GET", "/inbox")[1]["messages"]
+        assert {m["id"] for m in restored} == {m["id"] for m in messages}
+        priority = next(m for m in restored if m["priority"])
+        assert priority["status"] == "read"
+        call(history, fresh, "POST", f"/questions/{priority['id']}/answer", {"text": "Recovered"})
+        counts = dispatch(server, "GET", "/session-inbox-counts", owner)[1]
+        assert counts["unanswered_counts"] == {"peer": 1, "codex": 1}
+
+
+def test_owner_session_events_and_legacy_revocation_preserve_other_recipients(scenario):
+    history, server, owner, creds = scenario
+    send(server, owner, "Read priority", "owner-key-read")
+    call(history, creds["claude"], "GET", "/inbox")
+    send(server, owner, "Queued priority", "owner-key-queued")
+    direct = history.session_api.owner_message("peer", "Owner question")
+    before = [
+        tuple(row)
+        for row in history._conn.execute(
+            "SELECT id, status, answered_at FROM session_questions ORDER BY id"
+        )
+    ]
+    for i, event_type in enumerate(("SessionStart", "SessionEnd")):
+        history.record(
+            {
+                "_id": f"reserved-owner-{i}",
+                "_ts": i + 10,
+                "event_type": event_type,
+                "session_key": "owner",
+                "test": True,
+            }
+        )
+    assert history.session("owner") is None
+    # Even an old saved row or internal caller cannot cancel human-sent mail.
+    history.session_api.revoke("owner")
+    after = [
+        tuple(row)
+        for row in history._conn.execute(
+            "SELECT id, status, answered_at FROM session_questions ORDER BY id"
+        )
+    ]
+    assert after == before
+    assert any(row[0] == direct for row in after)

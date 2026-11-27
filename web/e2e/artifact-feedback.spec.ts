@@ -17,7 +17,7 @@ test("artifact selections and whole-file feedback reach their agent, with isolat
       return (await response.json()).artifact;
     };
     await register("/tmp/feedback-report.md", "Report", "# Clearer heading\n\nPlease review this report.");
-    await register("/tmp/feedback-layout.html", "Layout", '<h1>Layout heading</h1><script>window.artifactAttack=true;fetch("/artifact-leak")</script><img src="/artifact-leak"><p>Mockup body</p>');
+    await register("/tmp/feedback-layout.html", "Layout", '<h1>Layout heading</h1><script>window.artifactAttack=true;fetch("/artifact-leak")</script><img src="/artifact-leak"><p>Mockup body</p><svg><a xlink:href="https://example.invalid/artifact-leak">Bad link</a></svg><script>location.href="https://example.invalid/artifact-leak";const m=document.createElement("meta");m.httpEquiv="refresh";m.content="0;url=https://example.invalid/artifact-leak";document.head.append(m)</script>');
     await register("/tmp/feedback-notes.txt", "Notes", "Text selection works here.");
     await register("/tmp/feedback-image.svg", "Diagram", '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="100"><text x="10" y="50">Diagram</text></svg>');
     await page.goto(base());
@@ -25,7 +25,6 @@ test("artifact selections and whole-file feedback reach their agent, with isolat
     await page.locator(".rd-row-name", { hasText: "artifact-feedback-agent" }).click();
     await expect(page.locator(".rd-terminal-slot:visible .xterm-rows")).toContainText("FEEDBACK_READY");
     await page.getByRole("button", { name: "Artifacts", exact: true }).click();
-    await page.getByRole("button", { name: "Saved copies", exact: true }).click();
     const leaks: string[] = [];
     await page.route("**/artifact-leak", route => { leaks.push(route.request().url()); return route.abort(); });
     for (const [type, title, quote] of [["Markdown", "Report", "Clearer heading"], ["HTML", "Layout", "Layout heading"], ["Text", "Notes", "Text selection works here."]]) {
@@ -35,8 +34,10 @@ test("artifact selections and whole-file feedback reach their agent, with isolat
       if (title === "Layout") {
         writeFileSync("/tmp/duckterm-feedback-native.json", JSON.stringify({ source: await page.locator(".rd-artifact-frame").getAttribute("srcdoc"), origin: base() }));
         const attack = await text.evaluate(node => (node.ownerDocument.defaultView as Window & { artifactAttack?: boolean }).artifactAttack);
+        // Browser previews never execute document scripts; native mode is checked separately.
         expect(attack).toBeUndefined();
         expect(leaks).toEqual([]);
+        expect(await text.evaluate(node => node.ownerDocument.querySelector("[href], [xlink\\:href], meta[http-equiv=refresh]") !== null)).toBe(false);
         const nonce = (await page.locator(".rd-artifact-frame").getAttribute("srcdoc"))!.match(/nonce="([a-f0-9]+)"/)![1];
         await page.evaluate(channel => window.postMessage({ type: "artifact-selection", channel, quote: "Spoofed", left: 0, bottom: 0 }, "*"), nonce);
         await expect(page.getByRole("dialog", { name: "Artifact feedback" })).toHaveCount(0);
@@ -55,16 +56,15 @@ test("artifact selections and whole-file feedback reach their agent, with isolat
       await page.getByRole("button", { name: "Terminal", exact: true }).click();
       await expect(page.locator(".rd-terminal-slot:visible .xterm-rows")).toContainText(`RECEIVED_Improve_${title}`);
       await page.getByRole("button", { name: "Artifacts", exact: true }).click();
-    await page.getByRole("button", { name: "Saved copies", exact: true }).click();
     }
     await page.getByRole("button", { name: /Image Diagram/ }).click();
-    await page.getByRole("button", { name: "Feedback", exact: true }).click();
+    await page.getByRole("button", { name: "Leave feedback", exact: true }).click();
     await expect(page.getByRole("dialog").locator("blockquote")).toHaveText("Feedback on the whole artifact");
     await page.getByRole("textbox", { name: "Feedback to agent" }).fill("Improve_diagram");
     await page.getByRole("button", { name: "Send ⌘↵", exact: true }).click();
     await expect(page.getByText("Sent to the agent", { exact: true })).toBeVisible();
     await page.getByRole("button", { name: /Markdown Report/ }).click();
-    await page.getByRole("button", { name: "Feedback", exact: true }).click();
+    await page.getByRole("button", { name: "Leave feedback", exact: true }).click();
     await page.getByRole("textbox", { name: "Feedback to agent" }).fill("Keep this comment");
     await register("/tmp/feedback-report.md", "Report", "# Changed revision");
     await page.getByRole("button", { name: "Send ⌘↵", exact: true }).click();
@@ -73,7 +73,7 @@ test("artifact selections and whole-file feedback reach their agent, with isolat
     await page.getByRole("button", { name: "Cancel", exact: true }).click();
     await expect(page.frameLocator('iframe[title="Preview of Report"]').getByRole("heading", { name: "Changed revision" })).toBeVisible({ timeout: 8000 });
     await apiPost(`/sessions/${key}/stop`);
-    await page.getByRole("button", { name: "Feedback", exact: true }).click();
+    await page.getByRole("button", { name: "Leave feedback", exact: true }).click();
     await page.getByRole("textbox", { name: "Feedback to agent" }).fill("Retry later");
     await page.getByRole("button", { name: "Send ⌘↵", exact: true }).click();
     await expect(page.getByRole("alert")).toContainText("no live terminal");

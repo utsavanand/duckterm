@@ -77,6 +77,7 @@ DEVELOPMENT = frozenset(
         "autopilot",
         "oracle_messages",
         "fleet_monitor",
+        "support",
     }
 )
 
@@ -230,6 +231,7 @@ def _path_feature(method: str, path: str, body: bytes) -> str | None:
         ("/connectors", "connectors"),
         ("/transfers", "remote_workspaces"),
         ("/oracle", "oracle"),
+        ("/support", "support"),
         ("/relay", "oracle"),
         ("/voice", "oracle"),
         ("/snapshots", "checkpoints"),
@@ -307,4 +309,6 @@ def _path_feature(method: str, path: str, body: bytes) -> str | None:
             payload = {}
         if isinstance(payload, dict) and "artifact_id" in payload:
             return "artifacts"
+        if isinstance(payload, dict) and "file_path" in payload:
+            return "explorer"
     return feature

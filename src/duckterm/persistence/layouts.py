@@ -25,6 +25,7 @@ TYPES = {
         "mail",
         "backup",
         "remote",
+        "shortcuts",
     ),
 }
 # Home places widgets on a 12-column grid: (type, x, y, w, h).
@@ -32,10 +33,10 @@ HOME_COLUMNS = 12
 HOME_DEFAULTS = (
     ("teams", 0, 0, 3, 2),
     ("autopilot", 0, 2, 3, 2),
-    ("needs-you", 0, 4, 3, 4),
-    ("chat", 3, 0, 6, 8),
-    ("prs", 9, 0, 3, 5),
-    ("spend", 9, 5, 3, 3),
+    ("spend", 0, 4, 3, 8),
+    ("prs", 3, 0, 5, 6),
+    ("needs-you", 3, 6, 5, 6),
+    ("chat", 8, 0, 4, 12),
 )
 _LOCK = threading.RLock()
 

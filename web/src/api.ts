@@ -143,6 +143,10 @@ export interface OracleExchange {
   q: string;
   a: string;
   at: number;
+  // A message sent to one session: its inbox id, its name, and its reply so far.
+  key?: string;
+  to?: string;
+  reply?: { status: InboxMessage["status"]; answer: string | null; answered_at: number | null };
   dispatch?: {
     assigned?: boolean;
     request_key: string;
@@ -601,6 +605,15 @@ export const api = {
     if (!res.ok) throw new Error(data.error ?? "Could not save pin");
     return data;
   },
+  annotations: (key: string) => get<{ annotations: { id: string; quote: string; note: string; created_at: number }[] }>(`/sessions/${encodeURIComponent(key)}/annotations`, undefined, { authed: true }),
+  fileFeedback: async (key: string, file: { path: string; root: string; sha256: string }, quote: string, note: string) => {
+    const response = await fetch(`/sessions/${encodeURIComponent(key)}/annotations`, {
+      method: "POST", headers: authHeaders({ "Content-Type": "application/json" }),
+      body: JSON.stringify({ file_path: file.path, file_root: file.root, file_sha256: file.sha256, quote, note }),
+    });
+    const data = await response.json();
+    if (!response.ok || !data.sent) throw new Error(data.error || "Feedback was not sent. Try again when the agent is live.");
+  },
   artifactFeedback: async (key: string, artifact: Artifact, quote: string, note: string) => {
     const response = await fetch(`/sessions/${encodeURIComponent(key)}/annotations`, {
       method: "POST", headers: authHeaders({ "Content-Type": "application/json" }),
@@ -706,6 +719,12 @@ export const api = {
     (question: string, folder: string, requestKey?: string): Promise<FleetAnswer | { plan: FolderMessagePlan }>;
   },
   oracleChat: () => get<{ messages: OracleExchange[] }>("/oracle/chat"),
+  supportAsk: (question: string) => post<{ exchange: OracleExchange }>("/support/ask", { question }),
+  supportChat: () => get<{ messages: OracleExchange[] }>("/support/chat"),
+  clearSupportChat: () =>
+    fetch("/support/chat", { method: "DELETE", headers: authHeaders() }).then(
+      (r) => r.json() as Promise<{ messages: OracleExchange[] }>,
+    ),
   controlTower: () => get<TowerInsights>("/control-tower"),
   fleetPulse: () => get<{ events: PulseEvent[] }>("/fleet/pulse"),
   relay: (signal?: AbortSignal) => get<RelayState>("/relay", undefined, { signal }),

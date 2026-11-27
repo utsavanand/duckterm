@@ -13,10 +13,6 @@ type Local =
   | { at: number; kind: "clarify"; question: string; text: string; candidates: OracleAgent[]; state: "open" | "done" };
 
 const requestKey = () => crypto.randomUUID().replace(/-/g, "");
-const sameWords = (text: string, question: string) => {
-  const norm = (t: string) => t.split(/\s+/).filter(Boolean).join(" ").toLowerCase();
-  return norm(text) !== "" && norm(question).includes(norm(text));
-};
 
 type Entry =
   | { at: number; type: "exchange"; exchange: OracleExchange }
@@ -150,11 +146,11 @@ export function OracleChat({
     }
   }
 
+  // Picking the agent isn't approving the text: the model chose the words, so
+  // they wait on a Send card like any other plan.
   function pick(index: number, local: Extract<Local, { kind: "clarify" }>, agent: OracleAgent) {
     setLocal(index, { state: "done" });
-    const key = requestKey();
-    const card = addLocal({ at: Date.now(), kind: "send", agent, text: local.text, question: local.question, key, state: "open" });
-    if (local.text && sameWords(local.text, local.question)) void deliver(card, agent, local.text, key, local.question);
+    addLocal({ at: Date.now(), kind: "send", agent, text: local.text, question: local.question, key: requestKey(), state: "open" });
   }
 
   const entries: Entry[] = [

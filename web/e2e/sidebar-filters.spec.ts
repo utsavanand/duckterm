@@ -1,4 +1,7 @@
 import { expect, test } from "@playwright/test";
+import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { readOwnedState } from "./run-state";
 import { apiDelete, apiPost, base, expandFolder, postEvent, seedSession } from "./helpers";
 
 test("filters across folders, persists choices, and restores expansion and selected session", async ({ page }) => {
@@ -89,9 +92,13 @@ test("filters across folders, persists choices, and restores expansion and selec
 
 test("background work stays Working and an owner question takes Waiting priority", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
-  const key = `background-filter-${Date.now()}`;
+  const key = `e2e-background-filter-${Date.now()}`;
+  const nativeId = `${key}-native`;
+  const directory = join(readOwnedState().home, "test-claude", "projects", "checkpoint-fixtures");
+  const transcript = join(directory, `${nativeId}.jsonl`);
+  const question = "Can I push it and open the PR for release-dev? It's a server-only change.";
   try {
-    await seedSession(key, { name: key, runtime: "claude-code" });
+    await seedSession(key, { name: key, runtime: "claude-code", session_id: nativeId });
     const background_tasks = [{ id: "test-shell", type: "shell", status: "running" }];
     await postEvent({ session_key: key, event_type: "Stop", background_tasks });
     await page.goto(base());
@@ -104,8 +111,13 @@ test("background work stays Working and an owner question takes Waiting priority
     await expect(row).toBeVisible();
     await postEvent({ session_key: key, event_type: "Notification", notification_type: "idle_prompt" });
     await expect(row).toBeVisible();
+    // A hook hint alone is not evidence. Match it to a saved assistant reply
+    // in the disposable test home before expecting Waiting or an answer rule.
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(transcript, JSON.stringify({ type: "assistant",
+      message: { role: "assistant", content: [{ type: "text", text: question }] } }) + "\n");
     await postEvent({ session_key: key, event_type: "Stop", background_tasks,
-      last_assistant_message: "Can I push it and open the PR for release-dev? It's a server-only change." });
+      last_assistant_message: question });
     await expect(row).toHaveCount(0);
     await working.click();
     await waiting.click();
@@ -125,5 +137,6 @@ test("background work stays Working and an owner question takes Waiting priority
     await expect(row).toHaveCount(0);
   } finally {
     await apiDelete(`/sessions/${key}`);
+    rmSync(transcript, { force: true });
   }
 });

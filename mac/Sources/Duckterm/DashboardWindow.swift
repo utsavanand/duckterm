@@ -416,15 +416,26 @@ final class DashboardWindow: NSObject, NSWindowDelegate, WKNavigationDelegate, W
                                      inMainFrame: navigationAction.targetFrame?.isMainFrame ?? true) {
             decisionHandler(.allow)
         } else {
-            if ["https", "http"].contains(destination.scheme ?? "") { NSWorkspace.shared.open(destination) }
+            let origin = navigationAction.sourceFrame.securityOrigin
+            if ["https", "http"].contains(destination.scheme ?? ""),
+               webView === web,
+               dashboardAllowsExternalNavigation(sourceMainFrame: navigationAction.sourceFrame.isMainFrame,
+                   sourceScheme: origin.protocol, sourceHost: origin.host, sourcePort: origin.port, dashboard: url) {
+                NSWorkspace.shared.open(destination)
+            }
             decisionHandler(.cancel)
         }
     }
 
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration,
                  for navigationAction: WKNavigationAction, windowFeatures: WKWindowFeatures) -> WKWebView? {
+        let origin = navigationAction.sourceFrame.securityOrigin
         if let destination = navigationAction.request.url,
-           ["https", "http"].contains(destination.scheme ?? "") { NSWorkspace.shared.open(destination) }
+           ["https", "http"].contains(destination.scheme ?? ""), webView === web,
+           dashboardAllowsExternalNavigation(sourceMainFrame: navigationAction.sourceFrame.isMainFrame,
+               sourceScheme: origin.protocol, sourceHost: origin.host, sourcePort: origin.port, dashboard: url) {
+            NSWorkspace.shared.open(destination)
+        }
         return nil
     }
 
