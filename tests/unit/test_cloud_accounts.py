@@ -2,16 +2,23 @@
 
 import asyncio
 import base64
+import contextlib
+import io
 import json
 import secrets
+import ssl
+import stat
 from urllib.parse import parse_qs, urlsplit
 
 import pytest
 
+import duckterm.cloud.service as service_module
 from duckterm.cloud import tickets
-from duckterm.cloud.github import GitHubError, GitHubUser
-from duckterm.cloud.service import SIGN_INS_PER_MINUTE, AccountService
+from duckterm.cloud.__main__ import tls_context
+from duckterm.cloud.github import GitHub, GitHubError, GitHubUser
+from duckterm.cloud.service import SIGN_INS_PER_MINUTE, AccountService, serve
 from duckterm.cloud.store import Store, challenge_for
+from duckterm.mobile.cli import configure
 
 HOST = "a" * 32
 PIN = "b" * 64
@@ -240,3 +247,177 @@ def test_tickets_reject_forgery_expiry_and_another_mac():
     tampered = base64.urlsafe_b64encode(json.dumps(forged).encode()).rstrip(b"=").decode()
     with pytest.raises(ValueError):
         tickets.verify(secret, tampered + "." + signature, HOST, now=1000)
+
+
+def test_tickets_carry_a_nonce_and_audience_and_have_one_spelling():
+    secret = secrets.token_bytes(32)
+    claims = {
+        "account_id": "a",
+        "login": "octo",
+        "phone_id": "p",
+        "phone_name": "Phone",
+        "host_id": HOST,
+    }
+    first, second = (tickets.mint(secret, claims, now=1000) for _ in range(2))
+    verified = tickets.verify(secret, first, HOST, now=1000)
+    assert verified["aud"] == "ducky-pair"
+    assert verified["nonce"] != tickets.verify(secret, second, HOST, now=1000)["nonce"]
+    body, signature = first.split(".")
+    # Padding, foreign characters and flipped unused low bits all decoded to the
+    # same signature before; each is now a different, refused ticket.
+    alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_"
+    flipped = alphabet[alphabet.index(signature[-1]) ^ 1]
+    for variant in (first + "=", first + "!!", f"{body}.{signature[:-1]}{flipped}"):
+        with pytest.raises(ValueError, match="Malformed"):
+            tickets.verify(secret, variant, HOST, now=1000)
+    other = json.loads(base64.urlsafe_b64decode(body + "=="))
+    other["aud"] = "something-else"
+    resigned = tickets._encode(json.dumps(other).encode())
+    signed = tickets._encode(tickets.hmac.new(secret, resigned.encode(), "sha256").digest())
+    with pytest.raises(ValueError, match="Malformed"):
+        tickets.verify(secret, f"{resigned}.{signed}", HOST, now=1000)
+
+
+def test_redeem_needs_an_rfc_7636_verifier(cloud):
+    service, _ = cloud
+    for verifier in ("x", "a" * 42, "a" * 129, "a" * 42 + "!"):
+        request = {"code": "c", "verifier": verifier, "name": "Phone"}
+        assert call(service, "POST", "/v1/session/redeem", request) == (
+            400,
+            {"error": "invalid_verifier"},
+            {},
+        )
+
+
+def test_account_database_and_its_journal_are_private(tmp_path):
+    path = tmp_path / "cloud.sqlite"
+    store = Store(path)
+    try:
+        store.account(7, "octo")
+        for name in ("cloud.sqlite", "cloud.sqlite-wal", "cloud.sqlite-shm"):
+            assert stat.S_IMODE((tmp_path / name).stat().st_mode) == 0o600, name
+    finally:
+        store.close()
+
+
+def test_service_refuses_to_start_without_tls_unless_told(tmp_path):
+    with pytest.raises(SystemExit, match="DUCKY_CLOUD_CERT"):
+        tls_context({})
+    with pytest.raises(SystemExit):
+        tls_context({"DUCKY_CLOUD_CERT": str(tmp_path / "cert.pem")})
+    assert tls_context({"DUCKY_CLOUD_PLAINTEXT": "1"}) is None
+    configure(tmp_path, "127.0.0.1", 4430)
+    context = tls_context(
+        {
+            "DUCKY_CLOUD_CERT": str(tmp_path / "ducky-cert.pem"),
+            "DUCKY_CLOUD_KEY": str(tmp_path / "ducky-key.pem"),
+        }
+    )
+    assert context.minimum_version == ssl.TLSVersion.TLSv1_2
+
+
+def test_mac_registration_limits_the_tls_name(cloud):
+    service, github = cloud
+    mac = mac_session(service, github)
+    request = {
+        "host_id": HOST,
+        "certificate_sha256": PIN,
+        "tls_name": "a" * 254,
+        "url": "https://studio.local:8765",
+        "name": "Studio Mac",
+    }
+    assert call(service, "PUT", "/v1/mac", request, mac["session_token"])[0] == 400
+    request["tls_name"] = "a" * 253
+    assert call(service, "PUT", "/v1/mac", request, mac["session_token"])[0] == 200
+
+
+def test_errors_reach_the_client_as_fixed_codes(cloud, monkeypatch):
+    service, github = cloud
+    monkeypatch.setattr("duckterm.cloud.store.MAX_DEVICES", 1)
+    mac_session(service, github)
+    token = secrets.token_hex(8)
+    github.users[token] = GitHubUser(7, "octo")
+    request = {"github_token": token, "name": "Second Mac"}
+    assert call(service, "POST", "/v1/session/github", request) == (
+        409,
+        {"error": "too_many_devices"},
+        {},
+    )
+    request = {
+        "host_id": HOST,
+        "certificate_sha256": PIN,
+        "tls_name": None,
+        "url": "https://[broken:8765",
+        "name": "Studio Mac",
+    }
+    first = service.store.db.execute("SELECT id FROM devices").fetchone()["id"]
+    service.store.db.execute("DELETE FROM devices WHERE id = ?", (first,))
+    mac = mac_session(service, github)
+    assert call(service, "PUT", "/v1/mac", request, mac["session_token"]) == (
+        400,
+        {"error": "invalid_request"},
+        {},
+    )
+
+
+def test_a_non_json_github_answer_is_a_github_error(monkeypatch):
+    class Answer(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    monkeypatch.setattr(
+        "duckterm.cloud.github.urllib.request.urlopen", lambda *a, **k: Answer(b"<html>")
+    )
+    with pytest.raises(GitHubError):
+        GitHub("client", "secret").exchange("code", "https://cloud.example/cb")
+
+
+def test_connections_are_capped_and_counted_before_their_headers(cloud, monkeypatch):
+    service, _ = cloud
+    monkeypatch.setattr(service_module, "HEADER_SECONDS", 0.3)
+    monkeypatch.setattr(service_module, "CONNECTIONS_PER_PEER", 2)
+    monkeypatch.setattr(service_module, "REQUESTS_PER_MINUTE", 4)
+
+    async def closed(reader):
+        # Closing with unread input resets the socket, which is also a close.
+        try:
+            return await asyncio.wait_for(reader.read(), 2) == b""
+        except ConnectionError:
+            return True
+
+    async def run():
+        listener = await serve(service, "127.0.0.1", 0)
+        port = listener.sockets[0].getsockname()[1]
+        try:
+            # Headers that never finish lose the connection after HEADER_SECONDS.
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            writer.write(b"GET /v1/me HTTP/1.1\r\n")
+            for index in range(5):
+                with contextlib.suppress(ConnectionError):
+                    writer.write(f"X-Slow-{index}: 1\r\n".encode())
+                await asyncio.sleep(0.1)
+            assert await closed(reader)
+            writer.close()
+            # Two silent connections fill this address's share; a third is refused.
+            held = [await asyncio.open_connection("127.0.0.1", port) for _ in range(2)]
+            await asyncio.sleep(0.05)
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            assert await closed(reader)
+            writer.close()
+            for _, held_writer in held:
+                held_writer.close()
+            await asyncio.sleep(0.4)
+            # Four connections arrived, none with complete headers, and the
+            # minute's budget is spent anyway.
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            writer.write(b"GET /v1/me HTTP/1.1\r\nHost: x\r\n\r\n")
+            assert await closed(reader)
+            writer.close()
+        finally:
+            listener.close()
+            await listener.wait_closed()
+
+    asyncio.run(run())

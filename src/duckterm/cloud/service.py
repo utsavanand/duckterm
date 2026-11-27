@@ -15,13 +15,13 @@ import re
 import secrets
 import ssl
 import time
-from collections import defaultdict, deque
+from collections import Counter, defaultdict, deque
 from typing import Any
 from urllib.parse import parse_qs, urlencode, urlsplit
 
 from duckterm.cloud import tickets
 from duckterm.cloud.github import GitHub, GitHubError
-from duckterm.cloud.store import Store
+from duckterm.cloud.store import Store, TooManyDevices
 from duckterm.transport.httpio import parse_request_line, read_body, read_headers, write_response
 
 APP_REDIRECT = "ducky://signed-in"
@@ -30,6 +30,13 @@ SIGN_INS_PER_MINUTE = 10
 HEX32 = re.compile(r"[0-9a-f]{32}")
 HEX64 = re.compile(r"[0-9a-f]{64}")
 BASE64URL = re.compile(r"[A-Za-z0-9_-]{43,128}")
+VERIFIER = re.compile(r"[A-Za-z0-9._~-]{43,128}")  # RFC 7636 section 4.1
+# The VM terminates TLS itself, so the socket's peer address is the client.
+CONNECTIONS = 512
+CONNECTIONS_PER_PEER = 16
+# Request line, headers and body; the GitHub calls in dispatch get the rest.
+HEADER_SECONDS = 5
+REQUEST_SECONDS = 40
 
 Reply = tuple[int, dict[str, Any], dict[str, str]]
 
@@ -68,6 +75,7 @@ class AccountService:
         self.github = github
         self.public_url = public_url.rstrip("/")
         self.recent: defaultdict[tuple[str, str], deque[float]] = defaultdict(deque)
+        self.open: Counter[str] = Counter()
 
     def limited(self, peer: str, bucket: str, limit: int) -> bool:
         now = time.monotonic()
@@ -90,8 +98,6 @@ class AccountService:
         query = {key: values[0] for key, values in parse_qs(parsed.query).items()}
         path = parsed.path
         try:
-            if self.limited(peer, "all", REQUESTS_PER_MINUTE):
-                raise Refused(429, "rate_limited")
             if path.startswith(("/v1/auth/", "/v1/session/")) and self.limited(
                 peer, "sign-in", SIGN_INS_PER_MINUTE
             ):
@@ -102,6 +108,8 @@ class AccountService:
                 return await self.callback(query)
             if (method, path) == ("POST", "/v1/session/redeem"):
                 request = _json(body, {"code", "verifier", "name"})
+                if not VERIFIER.fullmatch(str(request["verifier"])):
+                    raise Refused(400, "invalid_verifier")
                 account = self.store.redeem_sign_in(str(request["code"]), str(request["verifier"]))
                 if account is None:
                     raise Refused(403, "sign_in_expired")
@@ -122,8 +130,11 @@ class AccountService:
             return exc.status, {"error": exc.reason}, {}
         except GitHubError:
             return 502, {"error": "github_unavailable"}, {}
-        except ValueError as exc:
-            return 409, {"error": str(exc)}, {}
+        except TooManyDevices:
+            return 409, {"error": "too_many_devices"}, {}
+        except ValueError:
+            # Fixed text: exception messages never reach the client.
+            return 400, {"error": "invalid_request"}, {}
 
     def start(self, query: dict[str, str]) -> Reply:
         challenge = query.get("challenge", "")
@@ -191,7 +202,10 @@ class AccountService:
             if (
                 not HEX32.fullmatch(str(request["host_id"]))
                 or not HEX64.fullmatch(str(request["certificate_sha256"]))
-                or not (request["tls_name"] is None or isinstance(request["tls_name"], str))
+                or not (
+                    request["tls_name"] is None
+                    or (isinstance(request["tls_name"], str) and len(request["tls_name"]) <= 253)
+                )
                 or url.scheme != "https"
                 or not url.hostname
                 or len(str(request["url"])) > 256
@@ -236,13 +250,24 @@ class AccountService:
     async def handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
         peer = writer.get_extra_info("peername")
         address = peer[0] if peer else "-"
+        # Counted when accepted, so connections that never finish their headers
+        # still spend the address's budget.
+        if (
+            self.limited(address, "all", REQUESTS_PER_MINUTE)
+            or sum(self.open.values()) >= CONNECTIONS
+            or self.open[address] >= CONNECTIONS_PER_PEER
+        ):
+            writer.close()
+            return
+        self.open[address] += 1
         try:
-            async with asyncio.timeout(15):
+            async with asyncio.timeout(HEADER_SECONDS):
                 method, target = parse_request_line(await reader.readline())
                 if not target.startswith("/") or len(target) > 4096:
                     raise ValueError("Invalid target")
                 headers = await read_headers(reader)
                 body = await read_body(reader, headers, max_bytes=8192)
+            async with asyncio.timeout(REQUEST_SECONDS):
                 status, payload, extra = await self.dispatch(method, target, headers, body, address)
                 await write_response(
                     writer,
@@ -254,6 +279,9 @@ class AccountService:
         except (TimeoutError, ValueError, asyncio.IncompleteReadError, ConnectionError, OSError):
             pass
         finally:
+            self.open[address] -= 1
+            if not self.open[address]:
+                del self.open[address]
             writer.close()
             with contextlib.suppress(ConnectionError, OSError):
                 await writer.wait_closed()
