@@ -381,6 +381,7 @@ _ROUTES: list[Route] = [
     Route("DELETE", "/support/chat", lambda s, r, w, h, b, seg: s._support_chat(w, clear=True)),
     Route("GET", "/control-tower", lambda s, r, w, h, b, seg: s._control_tower(w)),
     Route("GET", "/fleet/pulse", lambda s, r, w, h, b, seg: s._fleet_pulse(w)),
+    Route("GET", "/fleet/mail", lambda s, r, w, h, b, seg: s._fleet_mail(w)),
     Route("GET", "/relay", lambda s, r, w, h, b, seg: s._relay_list(w)),
     # ── Oracle voice: the optional local neural voice ──
     Route("GET", "/voice/status", lambda s, r, w, h, b, seg: s._voice_status(w)),
@@ -5306,6 +5307,13 @@ class Server:
             # A dropped poll must not cancel the refresh other polls share.
             cached = self._pulse_cache = (now, await asyncio.shield(refresh))
         await _write_json(writer, 200, {"events": cached[1]})
+
+    _FLEET_MAIL_MS = 10 * 60_000
+
+    async def _fleet_mail(self, writer: asyncio.StreamWriter) -> None:
+        since = int(time.time() * 1000) - self._FLEET_MAIL_MS
+        mail = self.history.session_api.peer_mail(since)
+        await _write_json(writer, 200, {"messages": mail})
 
     async def _control_tower(self, writer: asyncio.StreamWriter) -> None:
         """Fleet insights for the control tower page. Session states and

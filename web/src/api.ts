@@ -165,6 +165,15 @@ export interface FolderMessagePlan {
   recipients: { session_id: string; name: string }[];
 }
 
+// Agent-to-agent mail: who wrote to whom, never the text.
+export interface PeerMail {
+  id: string;
+  sender: string;
+  recipient: string;
+  kind: string;
+  created_at: number;
+}
+
 // One Fleet monitor Pulse item from GET /fleet/pulse (needs-you items come from relay notes).
 export interface PulseEvent { kind: "needs" | "pr" | "release" | "artifact"; at: number; title: string; name?: string; session_key?: string; repo?: string; detail?: string; count?: number }
 
@@ -727,6 +736,7 @@ export const api = {
     ),
   controlTower: () => get<TowerInsights>("/control-tower"),
   fleetPulse: () => get<{ events: PulseEvent[] }>("/fleet/pulse"),
+  fleetMail: () => get<{ messages: PeerMail[] }>("/fleet/mail"),
   relay: (signal?: AbortSignal) => get<RelayState>("/relay", undefined, { signal }),
   voiceStatus: () => get<LocalVoiceStatus>("/voice/status"),
   voiceInstall: async (): Promise<LocalVoiceStatus> => {
