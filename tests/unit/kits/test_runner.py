@@ -718,6 +718,7 @@ def test_a_run_outside_git_records_no_base(tmp_path):
         project, "flowkit/feature", harness="claude-code", inputs={"topic": "x"}, executor=fake
     )
     assert run.state["base"] is None
+    assert run.state["state"] == "waiting_gate"
 
 
 def test_run_paths_stay_inside_the_project(tmp_path):
