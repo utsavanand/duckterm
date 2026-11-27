@@ -434,7 +434,9 @@ function AgentCard({
       className="rd-tower-card"
       role={pinned ? "dialog" : "tooltip"}
       aria-label={`${agent.label} details`}
-      style={pos ? { left: pos.left, top: pos.top } : { visibility: "hidden" }}
+      // Until pinned the card is only a tooltip: clicks pass through it to
+      // whatever it covers, such as the Needs you tile.
+      style={pos ? { left: pos.left, top: pos.top, pointerEvents: pinned ? undefined : "none" } : { visibility: "hidden" }}
     >
       <div className="rd-tower-card-head">
         <span className="rd-tower-card-name">{agent.label}</span>

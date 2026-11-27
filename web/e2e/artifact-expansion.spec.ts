@@ -27,7 +27,6 @@ test("full-window artifacts preserve the preview, selection feedback and return 
     await page.locator(".rd-terminal-slot:visible .xterm-helper-textarea").focus();
     await page.keyboard.type("PRESERVE_EXPANSION_DRAFT");
     await page.getByRole("button", { name: "Artifacts", exact: true }).click();
-    await page.getByRole("button", { name: "Saved copies", exact: true }).click();
     await page.getByRole("button", { name: /Markdown Release review/ }).click();
     const heading = page.frameLocator('.rd-artifact-frame').getByRole("heading");
     await heading.click();
@@ -69,10 +68,10 @@ test("full-window artifacts preserve the preview, selection feedback and return 
     await expect(page.getByRole("button", { name: "Expand Release review", exact: true })).toBeFocused();
     for (const [type, title] of [["HTML", "Website"], ["Text", "Notes"], ["Image", "Diagram"]]) {
       await page.getByRole("button", { name: new RegExp(`${type} ${title}`) }).click();
-      await expect(page.getByRole("button", { name: "Feedback", exact: true })).toBeEnabled();
+      await expect(page.getByRole("button", { name: "Leave feedback", exact: true })).toBeEnabled();
       await page.getByRole("button", { name: "Expand", exact: true }).click();
       await expect(page.getByRole("dialog", { name: title, exact: true })).toBeVisible();
-      await page.getByRole("button", { name: "Feedback", exact: true }).click();
+      await page.getByRole("button", { name: "Leave feedback", exact: true }).click();
       await feedback.getByRole("textbox").fill(`Expanded_${title}`);
       await feedback.getByRole("button", { name: "Send ⌘↵", exact: true }).click();
       await expect(page.getByText("Sent to the agent", { exact: true })).toBeVisible();

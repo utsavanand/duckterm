@@ -445,6 +445,34 @@ def test_status_says_agents_cannot_run_the_server_when_nothing_can_run_it(
     assert "github-mcp-server" in str(row["detail"])
 
 
+def test_revoke_url_points_at_the_page_that_holds_the_credential(
+    isolated_env: Path, tmp_path: Path
+) -> None:
+    """A CLI login and a pasted token are revoked on two different GitHub pages.
+
+    `gh auth login` creates an OAuth app authorization, listed under
+    /settings/applications. A pasted PAT is listed under /settings/tokens, and
+    neither page shows the other's entry. The panel offers one link and calls it
+    "Revoking happens on github.com", so sending the owner to the wrong page
+    means arriving at a list their credential is not in -- which reads as
+    already revoked.
+    """
+    _stub(isolated_env, "github-mcp-server", "sleep 0")
+    _stub(isolated_env, "duckterm", "exit 0")
+    _stub(isolated_env, "gh", "echo gho_clitoken")
+
+    connectors.enable("github", source="gh-cli", home=tmp_path)
+    assert connectors.status("github", home=tmp_path)["revoke_url"] == (
+        "https://github.com/settings/applications"
+    )
+
+    connectors.save_secret("github", "ghp_stored")
+    connectors.enable("github", source="stored", home=tmp_path)
+    assert connectors.status("github", home=tmp_path)["revoke_url"] == (
+        "https://github.com/settings/tokens"
+    )
+
+
 def test_only_github_remains() -> None:
     """Railway and Porkbun were MCP pass-throughs; nothing in Duckterm read them."""
     assert connectors.NAMES == ("github",)

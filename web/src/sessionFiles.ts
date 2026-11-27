@@ -13,7 +13,7 @@ export interface DirectoryPage {
   truncated: boolean; limit_reached: boolean; ignore_status: "applied"; artifacts: RegisteredFile[];
 }
 export interface FilesUnavailable { available: false; reason: string; artifacts?: RegisteredFile[]; size?: number; content_limit?: number; }
-export interface FileContent { available: true; path: string; name: string; size: number; modified_at: number; media_type: string; content_base64: string; content_limit: number; sha256: string; }
+export interface FileContent { available: true; root: string; path: string; name: string; size: number; modified_at: number; media_type: string; content_base64: string; content_limit: number; sha256: string; }
 export class FileRequestError extends Error { constructor(message: string, readonly status: number) { super(message); } }
 // Guard before ANY routing: a raw key paired with a remote host is remote too.
 export function localFileSession(session: FileSession) { return (!session.host || session.host === "local") && !session.key.startsWith("~remote~"); }

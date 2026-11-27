@@ -34,6 +34,20 @@ Settings lists the MetaHarnesses you have added by folder path and shows what ea
 contains; the session panel's "MetaHarness" row shows which MetaHarness a session's
 folder has installed.
 
+**The default MetaHarness.** DuckTerm ships one, `autopilot` ("Autopilot
+default"), at `src/duckterm/autopilot/kits/autopilot`: two knowledge files
+(working rules always on, danger zones on demand), seven skills (`spec`,
+`plan`, `implement`, `test`, `review`, `qa`, `ship`), the permission rules a
+coding session needs, four flows (`issue-to-merge` with its GitHub, Jira and
+Slack triggers, `pr-review`, `build`, `ship`) and the `feature-team`
+procedure (architect, dev, qa, release; only release pushes), and one optional
+tool, the GitHub CLI (`spec` reads issues and `review` reads pull requests with
+it; the plan shows it checked or missing and the install goes ahead either
+way). No hook, no model preset. Autopilot installs it into every sandbox run; it
+declares `conflicts_with` the uv-suite MetaHarnesses it grew out of. Skills
+write their files to `.autopilot/` when a person invokes them and to the path
+the runner names when a flow does; `ship` never stages `.autopilot/`.
+
 MetaHarnesses are behind the `skill_kits` development flag (the flag keeps its id): the Settings item,
 the `/harnesses` routes and the "MetaHarness" row exist only on an instance that
 has turned the flag on. See [feature-flags.md](feature-flags.md).
@@ -226,7 +240,14 @@ repository with their verify state and flows, and the procedures they ship
 (from the install record, which carries each team template's roles and
 rules); Add takes a MetaHarness folder, shows the inventory and options, then the
 review page is the plan: one row per component, one status per harness, the
-conflicts with keep or replace, the files. Install, verify and uninstall call
+conflicts with keep or replace, the files. A conflict is hard (`conflicts-with`,
+`name-clash`, `other-kit`, `escapes`: the install refuses), a file the owner
+placed by hand (`file-exists`: keep or replace), or an **overlap**: another
+MetaHarness installed in the same repository does the same job under another
+name, judged from its manifest at the recorded source: two skills that produce
+the same named output (`spec`, `plan`, `verdict`) or two flows started by the
+same trigger. Both install; the plan, the CLI and the review page say so and
+suggest enabling one of them there. Install, verify and uninstall call
 the engine; Run starts a flow in a server thread and the page watches the run
 file. **The page starts from MetaHarnesses, not repositories.** Add MetaHarness takes a
 folder or a manifest path, reads the manifest and adds the MetaHarness to

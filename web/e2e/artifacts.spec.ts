@@ -30,12 +30,11 @@ test("registered artifacts persist, preview safely, refresh, download, and prese
     await page.keyboard.type("ARTIFACT_DRAFT_NOT_SUBMITTED");
     await expect(page.locator(".rd-terminal-slot:visible .xterm-rows")).toContainText("ARTIFACT_DRAFT_NOT_SUBMITTED");
     await page.getByRole("button", { name: "Artifacts", exact: true }).click();
-    await expect(page.getByText("No visible files in this directory.")).toBeVisible();
+    await expect(page.getByText("No matching artifacts.")).toBeVisible();
     const tabs = await page.locator(".rd-view-toggle button").allTextContents();
-    expect(tabs.indexOf("Artifacts")).toBe(tabs.findIndex((text) => text.startsWith("Inbox")) + 1);
+    expect(tabs.indexOf("Artifacts")).toBe(tabs.findIndex((text) => text.startsWith("Inbox")) + 2);
     await register(join(cwd, "release-review.md"), "Release review", "# Ready for the next release\n\nSaved locally.\n\n- Verified restore\n- Preserved terminal drafts");
     await page.getByRole("button", { name: "Refresh", exact: true }).click();
-    await page.getByRole("button", { name: "Saved copies", exact: true }).click();
     await page.getByRole("button", { name: /Markdown Release review/ }).click();
     const frame = page.frameLocator('iframe[title="Preview of Release review"]');
     await expect(frame.getByRole("heading", { name: "Ready for the next release" })).toBeVisible({ timeout: 8000 });
@@ -45,7 +44,6 @@ test("registered artifacts persist, preview safely, refresh, download, and prese
     await page.route("**/artifact-leak", (route) => { leaked.push(route.request().url()); return route.abort(); });
     await register(join(cwd, "website.html"), "Website mockup", unsafeHTML);
     await page.getByRole("button", { name: "Refresh", exact: true }).click();
-    await page.getByRole("button", { name: "Saved copies", exact: true }).click();
     await page.getByRole("button", { name: /HTML Website mockup/ }).click({ timeout: 8000 });
     await expect(page.frameLocator('iframe[title="Preview of Website mockup"]').getByRole("heading", { name: "Website mockup" })).toBeVisible();
     await expect(page.locator('iframe[title="Preview of Website mockup"]')).toHaveAttribute("sandbox", "allow-scripts");
@@ -74,7 +72,6 @@ test("registered artifacts persist, preview safely, refresh, download, and prese
     expect(readFileSync(join(cwd, "download.html"), "utf8")).toBe(unsafeHTML);
     await register(join(cwd, "backup-flow.svg"), "Backup flow", `<svg xmlns="http://www.w3.org/2000/svg" width="600" height="260" onload="parent.document.body.dataset.artifactLeak='yes'"><rect width="600" height="260" rx="16" fill="#eaf0e7"/><text x="40" y="130" fill="#27352c" font-size="28">Session → Saved artifact → Backup</text></svg>`);
     await page.getByRole("button", { name: "Refresh", exact: true }).click();
-    await page.getByRole("button", { name: "Saved copies", exact: true }).click();
     await page.getByRole("button", { name: /Image Backup flow/ }).click({ timeout: 8000 });
     const image = page.getByRole("img", { name: "Backup flow", exact: true });
     await expect(image).toBeVisible();
@@ -84,7 +81,6 @@ test("registered artifacts persist, preview safely, refresh, download, and prese
     await expect(page.getByRole("button", { name: "Remove", exact: true })).toHaveCount(0);
     await register(join(cwd, "release-review.md"), "Release review", "# Revised report\n\nUpdated snapshot.");
     await page.getByRole("button", { name: "Refresh", exact: true }).click();
-    await page.getByRole("button", { name: "Saved copies", exact: true }).click();
     await page.getByRole("button", { name: /Markdown Release review/ }).click();
     await expect(frame.getByRole("heading", { name: "Revised report" })).toBeVisible({ timeout: 8000 });
     await page.getByRole("button", { name: "Terminal", exact: true }).click();
@@ -94,7 +90,6 @@ test("registered artifacts persist, preview safely, refresh, download, and prese
     await page.locator(".rd-row-name", { hasText: "artifact-test-agent" }).click();
     await page.getByRole("button", { name: "Artifacts", exact: true }).click();
     await page.getByRole("button", { name: "Refresh", exact: true }).click();
-    await page.getByRole("button", { name: "Saved copies", exact: true }).click();
     await page.getByRole("button", { name: /Markdown Release review/ }).click();
     await expect(frame.getByRole("heading", { name: "Revised report" })).toBeVisible();
     // Real files remain distinct from saved snapshots; unopened branches stay lazy.
@@ -108,7 +103,7 @@ test("registered artifacts persist, preview safely, refresh, download, and prese
     writeFileSync(join(cwd, "sample.bin"), binary);
     const reads: string[] = [];
     page.on("request", r => { if (r.url().includes("/files?")) reads.push(new URL(r.url()).searchParams.get("path") || ""); });
-    await page.getByRole("button", { name: "Refresh", exact: true }).click();
+    await page.getByRole("button", { name: "Code explorer", exact: true }).click();
     await expect(page.getByRole("button", { name: /release-review.md/ })).toBeVisible();
     expect(reads).toEqual(["."]);
     await expect(page.getByRole("button", { name: /ignored.txt/ })).toHaveCount(0);
@@ -140,7 +135,7 @@ test("registered artifacts persist, preview safely, refresh, download, and prese
     await expect(page.getByRole("alert")).toContainText("5 MiB");
     await expect(page.getByRole("link", { name: "Download" })).toHaveCount(0);
     await page.setViewportSize({ width: 390, height: 844 });
-    await page.getByRole("button", { name: "Back to files" }).click();
+    await page.getByRole("button", { name: "Back to list" }).click();
     await page.getByRole("button", { name: /release-review.md/ }).click();
     await expect(page.frameLocator('iframe[title="Preview of release-review.md"]').getByRole("heading", { name: "Current file on disk" })).toBeVisible();
     await page.screenshot({ path: "/tmp/duckterm-file-explorer-implemented-mobile.png" });

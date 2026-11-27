@@ -57,7 +57,7 @@ it("Lite exposes continuity, inbox, artifacts and folder overview without coding
   await mount(LITE, "lite");
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 3100)); });
   for (const name of ["Terminal", "Messages", "Timeline", "Inbox", "Artifacts", "Overview", "AGENTS.md"]) expect(tab(name)).toBeInTheDocument();
-  for (const name of ["Explorer", "PRs", "Oracle"]) expect(tab(name)).not.toBeInTheDocument();
+  for (const name of ["Code explorer", "PRs", "Oracle"]) expect(tab(name)).not.toBeInTheDocument();
   expect(screen.queryByRole("tab", { name: "Connectors" })).not.toBeInTheDocument();
   expect(probe.tree.onOpenInbox).toBeTypeOf("function");
   expect(probe.tree.onOpenFolder).toBeTypeOf("function");
@@ -66,7 +66,7 @@ it("Lite exposes continuity, inbox, artifacts and folder overview without coding
   expect(probe.requests).toContain("/session-inbox-counts");
   await act(async () => { fireEvent.click(tab("Artifacts")!); });
   expect(await screen.findByRole("region", { name: "Session artifacts" })).toBeVisible();
-  expect(screen.queryByRole("region", { name: "Session files" })).toBeNull();
+  expect(screen.queryByRole("region", { name: "Code explorer" })).toBeNull();
   expect(probe.requests).toContain("/sessions/one/artifacts");
   await act(async () => { (probe.tree.onOpenFolder as (folder: string) => void)("Team"); });
   expect(screen.getByRole("tab", { name: "Overview" })).toHaveAttribute("aria-selected", "true");
@@ -75,14 +75,17 @@ it("Lite exposes continuity, inbox, artifacts and folder overview without coding
   expect(probe.requests.filter(path => LITE_UNAVAILABLE.some(pattern => pattern.test(path)))).toEqual([]);
 }, 10_000);
 
-it("Code combines Explorer files and saved artifacts, with pull requests and no Oracle", async () => {
+it("Code separates explorer files and saved artifacts, with pull requests and no Oracle", async () => {
   await mount(CODE, "code");
-  for (const name of ["Terminal", "Messages", "Timeline", "Inbox", "Artifacts", "Overview", "PRs", "AGENTS.md"]) expect(tab(name)).toBeInTheDocument();
+  for (const name of ["Terminal", "Messages", "Timeline", "Inbox", "Code explorer", "Artifacts", "Overview", "PRs", "AGENTS.md"]) expect(tab(name)).toBeInTheDocument();
   expect(tab("Oracle")).not.toBeInTheDocument();
   expect(screen.getByRole("tab", { name: "Connectors" })).toBeInTheDocument();
   await act(async () => { fireEvent.click(tab("Artifacts")!); });
-  expect(await screen.findByRole("region", { name: "Session files" })).toBeVisible();
-  expect(screen.getByRole("group", { name: "Files filter" })).toBeVisible();
+  expect(await screen.findByRole("region", { name: "Session artifacts" })).toBeVisible();
+  expect(screen.getByLabelText("Artifact format")).toBeVisible();
+  await act(async () => { fireEvent.click(tab("Code explorer")!); });
+  expect(await screen.findByRole("region", { name: "Code explorer" })).toBeVisible();
+  expect(screen.getByRole("textbox", { name: "Filter loaded files" })).toBeVisible();
   expect(probe.requests.some(path => path.startsWith("/sessions/one/files?"))).toBe(true);
   expect(probe.requests.filter(path => /^\/relay|^\/oracle/.test(path))).toEqual([]);
 });
@@ -235,4 +238,21 @@ it("without the autopilot flag there is no Autopilot row and no autopilot reques
   await mount(FULL);
   expect(screen.queryByRole("button", { name: "Autopilot" })).toBeNull();
   expect(probe.requests.filter(path => path.startsWith("/api/autopilot"))).toEqual([]);
+});
+
+it("Support sits below Oracle and Autopilot only with its flag, and opens its chat", async () => {
+  await mount([...FULL, "autopilot", "support"]);
+  const rows = ["Autopilot", "Oracle main chat", "Support"].map(name => screen.getByRole("button", { name }));
+  expect(rows[0].compareDocumentPosition(rows[1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(rows[1].compareDocumentPosition(rows[2]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  await act(async () => { fireEvent.click(rows[2]); });
+  expect(rows[2]).toHaveAttribute("aria-pressed", "true");
+  expect(rows[1]).toHaveAttribute("aria-pressed", "false");
+  expect(await screen.findByRole("textbox", { name: "Message Support" })).toBeVisible();
+  expect(probe.requests).toContain("/support/chat");
+  cleanup();
+  probe.requests = [];
+  await mount(FULL);
+  expect(screen.queryByRole("button", { name: "Support" })).toBeNull();
+  expect(probe.requests.filter(path => path.startsWith("/support"))).toEqual([]);
 });
