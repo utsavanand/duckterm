@@ -22,6 +22,19 @@ it("shows the gated settings on an opted-in personal installation", () => {
   menu([...core, ...flags]);
   for (const name of [/Collaboration/, /MetaHarnesses/, /Agent setup/, /Back up to remote/]) expect(screen.getByRole("button", { name })).toBeVisible();
 });
+it("offers New team beside New session and New workspace only where MetaHarnesses are on", () => {
+  const onAction = vi.fn();
+  render(<StaticEdition features={core}><HeaderMenus density="standard" onDensity={() => {}} notifyOn={false} onNotify={() => {}} onAction={onAction} /></StaticEdition>);
+  fireEvent.click(screen.getByRole("button", { name: /^New/ }));
+  expect(screen.getByRole("button", { name: "New workspace" })).toBeVisible();
+  expect(screen.queryByRole("button", { name: "New team" })).toBeNull();
+  cleanup();
+  render(<StaticEdition features={[...core, "skill_kits"]}><HeaderMenus density="standard" onDensity={() => {}} notifyOn={false} onNotify={() => {}} onAction={onAction} /></StaticEdition>);
+  fireEvent.click(screen.getByRole("button", { name: /^New/ }));
+  expect(screen.getAllByRole("button", { name: /^New (session|workspace|team)$/ }).map((b) => b.textContent)).toEqual(["New session", "New workspace", "New team"]);
+  fireEvent.click(screen.getByRole("button", { name: "New team" }));
+  expect(onAction).toHaveBeenCalledWith("team");
+});
 it("shows the server's effective flags without editable switches", async () => {
   vi.mocked(api.featureFlags).mockResolvedValue({ restart_required: true, flags: [{id:"backup", name:"Backup", default:false, enabled:true, reason:"Local override"}] });
   render(<FeatureFlagsModal onClose={() => {}} />);

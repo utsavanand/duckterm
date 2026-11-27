@@ -188,7 +188,7 @@ between ends the run (`gate_shown_changed`), because a step's output was
 altered outside the runner. A step reading a file output (`{path, sha256}`)
 checks the hash again before it starts. The run file itself is in the
 repository too, so a commit can carry one already past its gate: this machine
-notes the hash of every run file it writes (`<home>/MetaHarnesses/runs/<project
+notes the hash of every run file it writes (`<home>/kits/runs/<project
 key>/<run id>`), a run with no note "was not started on this machine", one
 whose file no longer matches "changed outside the runner", and `runs` marks
 such runs `recorded: false` so the Flows tab lists them without a gate or
@@ -301,16 +301,20 @@ when the event's cwd lies inside it; the hook's own cwd is never a target,
 because a `claude` an agent starts in another folder inherits the session
 key and reports that folder. Create team works from an added MetaHarness: the new
 workspace is enabled for the MetaHarness (pinned to the tree the MetaHarness page showed),
-so its first session installs it. `kit-policy.json` is written atomically
+so its first session installs it. New ▾ › New team is the second door to it:
+the dialog lists the team templates of every added MetaHarness (name,
+description, roles), asks for the workspace name and sends the same request
+the MetaHarness card's Create team button does; with no team on offer it
+points at Settings › MetaHarnesses. `kit-policy.json` is written atomically
 and never through a symlink. A MetaHarness's name is unique in the registry;
 registering a second MetaHarness or suite of that name is refused.
 
-The server routes are `POST /MetaHarnesses/catalog | register | unregister | enable |
-disable | overview
+The server routes are `POST /kits/catalog | register | unregister | enable |
+disable | overview | review | fix
 | plan | install | uninstall | verify | run | runs | run-detail | gate | teams
-| team` (`duckterm.MetaHarnesses.api`); the ones that touch a repository take its
-path in the body. **Create team** (`POST /MetaHarnesses/team
-{project, MetaHarness, team, name?}`) makes a workspace carrying the MetaHarness's procedure:
+| team` (`duckterm.kits.api`; the identifiers keep `kit`); the ones that touch a
+repository take its path in the body. **Create team** (`POST /kits/team
+{project | kit_path, kit, team, name?}`) makes a workspace carrying the MetaHarness's procedure:
 the record (roles and rules copied from the installed MetaHarness's template, with
 MetaHarness and version) is `<home>/teams/<name>.json`, the workspace is registered
 like New workspace, and the workspace view shows one card per role.

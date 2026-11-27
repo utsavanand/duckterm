@@ -54,6 +54,7 @@ import { LaunchModal } from "./LaunchModal";
 import { Messages } from "./Messages";
 import { MessagePinStrip, PinTarget, useMessagePins } from "./MessagePins";
 import { NewFolderModal } from "./NewFolderModal";
+import { NewTeamModal } from "./NewTeamModal";
 import { Terminal } from "./Terminal";
 import { SessionShell } from "./SessionShell";
 import { useTerminalCache } from "./terminalCache";
@@ -118,7 +119,7 @@ function Dashboard() {
   const { density, setDensity } = useSidebarDensity();
 
   const [modal, setModal] = useState<
-    "launch" | "agentsmd" | "folder" | "harnesses" | "backup" | "bugreport" | "collaboration" | "checkpointing" | "aimodels" | "appearance" | "agentsetup" | "featureflags" | null
+    "launch" | "agentsmd" | "folder" | "team" | "harnesses" | "backup" | "bugreport" | "collaboration" | "checkpointing" | "aimodels" | "appearance" | "agentsetup" | "featureflags" | null
   >(desktop()?.draft ? "launch" : null);
   const setupState = useRef<Promise<RuntimeSetupState> | null>(null);
   useEffect(() => {
@@ -742,6 +743,15 @@ function Dashboard() {
       {moveSession && <MoveRemoteModal session={moveSession} onClose={() => setMoveKey(null)} />}
       {forkSession && (
         <ForkModal session={forkSession} onClose={() => setForkKey(null)} />
+      )}
+      {modal === "team" && has("skill_kits") && (
+        <NewTeamModal
+          sessionKey={selected?.key}
+          existing={folders}
+          onClose={() => setModal(null)}
+          onOpenKits={() => setModal("harnesses")}
+          onCreated={(folder) => { refreshFolders(); setModal(null); setSelectedFolder(folder); }}
+        />
       )}
       {modal === "folder" && (
         <NewFolderModal
