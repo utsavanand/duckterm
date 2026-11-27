@@ -4,6 +4,7 @@ import Foundation
 /// The three protocol routes the session model needs; DuckyClient is the real one.
 public protocol DuckyTransport: AnyObject {
     func claim(_ invitation: Invitation, name: String) async throws -> PairStatus
+    func claimAccount(ticket: String) async throws -> PairStatus
     func pairingStatus() async throws -> PairStatus
     func snapshot(cursor: String?) async throws -> HostSnapshot
     func conversation(sessionID: String) async throws -> ConversationSnapshot
@@ -15,6 +16,7 @@ public protocol DuckyTransport: AnyObject {
     func close()
 }
 public extension DuckyTransport {
+    func claimAccount(ticket: String) async throws -> PairStatus { throw DuckyError.unavailable(404) }
     func analysisContext(scope: AnalysisScope) async throws -> AnalysisContext { throw DuckyError.unavailable(404) }
     func askAnalysis(_ submission: AnalysisSubmission, scope: AnalysisScope) async throws -> AnalysisReceipt { throw DuckyError.unavailable(404) }
     func analysisReceipt(requestID: String, scope: AnalysisScope) async throws -> AnalysisReceipt { throw DuckyError.unavailable(404) }
@@ -171,6 +173,27 @@ public final class SessionModel: ObservableObject {
         }
     }
 
+    /// Asks a Mac on the signed-in account to list this iPhone. Like an invitation claim, the
+    /// credential is saved only once the Mac accepts; failures are the caller's to explain.
+    public func pair(account paired: PairedHost, ticket: String) async throws {
+        let candidate = try makeTransport(paired)
+        pairingAttempt += 1
+        let mine = pairingAttempt
+        do {
+            let status = try await candidate.claimAccount(ticket: ticket)
+            guard mine == pairingAttempt else { candidate.close(); return }
+            try credentials.save(paired)
+            reset(to: .awaitingApproval)
+            transport = candidate
+            host = paired
+            deviceID = status.id
+            if status.status == "active" { await refresh() }
+        } catch {
+            candidate.close()
+            throw error
+        }
+    }
+
     /// One read: pairing status while awaiting approval or before the ID is known,
     /// then the snapshot. A refresh during another waits for that one instead.
     public func refresh() async {
@@ -271,7 +294,8 @@ public final class SessionModel: ObservableObject {
                 self.reconnecting = (1...Self.quickRetries).contains(misses)
                 do {
                     if self.reconnecting { try await self.retryPause() }
-                    else if self.statusFollowsReplies { try await self.conversationPause() }
+                    // The owner is at the Mac comparing codes; notice the approval within seconds.
+                    else if self.statusFollowsReplies || self.phase == .awaitingApproval { try await self.conversationPause() }
                     else { try await self.pause() }
                 } catch { return }
             }

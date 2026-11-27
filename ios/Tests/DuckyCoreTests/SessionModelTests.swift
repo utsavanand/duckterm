@@ -44,6 +44,12 @@ final class FakeTransport: DuckyTransport {
         if let claimError { throw claimError }
         return try pairStatus("pending")
     }
+    var tickets: [String] = []
+    func claimAccount(ticket: String) async throws -> PairStatus {
+        tickets.append(ticket)
+        if let claimError { throw claimError }
+        return try pairStatus("pending")
+    }
     func pairingStatus() async throws -> PairStatus {
         statusReads += 1
         return try pairStatus(status)
