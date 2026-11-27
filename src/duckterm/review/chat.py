@@ -9,6 +9,7 @@ import re
 import time
 from typing import Any
 
+from duckterm.core import chat_progress
 from duckterm.core.session_api import APIError
 from duckterm.llm import backend
 from duckterm.review import cards, git, store
@@ -126,6 +127,7 @@ async def ask(
     value: dict[str, Any] | None = None
     for _round in range(2):
         prompt = _prompt(target, ctx, ready, digest, history, question, hunk, files)
+        chat_progress.mark("answer")
         reply = (await backend.complete(prompt, tier="deep", schema=SCHEMA)).text
         value = cards._parse_reply(reply)
         if value is None or "answer" not in value:
@@ -135,6 +137,7 @@ async def ask(
         ]
         if not wanted or files:
             break
+        chat_progress.mark("files")
         for path in wanted[:MAX_FILES]:
             text = _file_text(target, path)
             if text is not None:
@@ -161,6 +164,7 @@ async def ask(
         "files": sorted(files),
         "at": int(time.time()),
     }
+    chat_progress.attach(entry)
     _append(target, entry)
     return entry
 

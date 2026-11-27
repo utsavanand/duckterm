@@ -77,7 +77,7 @@ from duckterm import (
 from duckterm.agents import tmux
 from duckterm.agents.terminal import available_terminals, open_in_terminal
 from duckterm.autopilot import api as ap_api
-from duckterm.core import events, fleet_questions, oracle, oracle_intent, support
+from duckterm.core import chat_progress, events, fleet_questions, oracle, oracle_intent, support
 from duckterm.core.approvals import Approval, ApprovalRegistry
 from duckterm.core.backup_jobs import BackupJobs
 from duckterm.core.eventbus import EventBus
@@ -594,6 +594,7 @@ class Server:
 
         self.checkpoint_requests = CheckpointRequests(self)
         self.progress_coordinator = ProgressCoordinator(self)
+        self.chat_progress = chat_progress.Store()
         from duckterm.core.auto_checkpoints import AutoCheckpoints
 
         self.auto_checkpoints = AutoCheckpoints(self)
@@ -830,6 +831,27 @@ class Server:
                     },
                 )
                 return
+
+        progress_match = re.fullmatch(r"/chat-progress/([a-f0-9]{32})", path)
+        if method == "GET" and progress_match:
+            receipt = self.chat_progress.read(progress_match[1])
+            await _write_json(
+                writer, 200 if receipt else 404, receipt or {"error": "Progress unavailable"}
+            )
+            return
+        progress_id = headers.get("x-duckterm-chat-progress")
+        if method == "POST" and progress_id and chat_progress.supported(route_path):
+            forwarded = {k: v for k, v in headers.items() if k != "x-duckterm-chat-progress"}
+            try:
+                with self.chat_progress.track(progress_id):
+                    if route_path.endswith(("/message", "/dispatch")):
+                        chat_progress.mark("sending")
+                    elif route_path == "/relay/rules/propose":
+                        chat_progress.mark("rule")
+                    await self._dispatch(method, path, reader, writer, forwarded, body)
+            except chat_progress.InvalidProgress as exc:
+                await _write_json(writer, 400, {"error": str(exc)})
+            return
 
         if method == "GET" and urllib.parse.urlsplit(path).path == "/feature-flags":
             await _write_json(writer, 200, self.feature_flags)
@@ -1973,6 +1995,7 @@ class Server:
         if part == "chat":
             return {"messages": chat.transcript(target), "suggestions": chat.SUGGESTIONS}
         if part == "ask":
+            chat_progress.mark("diff")
             question = payload.get("question")
             if not isinstance(question, str) or not question.strip() or len(question) > 8000:
                 raise workspace.ReviewError(400, "question must be 1 to 8000 characters")
@@ -4306,6 +4329,7 @@ class Server:
         owner confirms the exact text and recipients through the reviewed
         folder dispatch route, which re-validates scope at send time.
         """
+        chat_progress.mark("routing")
         service = FolderMessages(self.history)
         snapshot = service.recipients(folder)
         identity, messages = self.history.folder_chats.snapshot(folder)
@@ -4431,6 +4455,7 @@ class Server:
                 await _write_json(writer, 400, {"error": "Invalid request_key"})
                 return
             try:
+                chat_progress.mark("routing")
                 routed = await self._oracle_message(question)
             except APIError as exc:
                 await _write_json(writer, exc.status, {"error": str(exc)})
@@ -4468,6 +4493,7 @@ class Server:
                     },
                 )
                 return
+        chat_progress.mark("agents")
         running = [
             r
             for r in self.history.sessions()
@@ -4501,6 +4527,7 @@ class Server:
             )
             await _write_json(writer, 200, {"answer": answer, "exchange": exchange, "sessions": []})
             return
+        chat_progress.mark("memories")
         texts = await fleet_questions.collect_digests(
             running, lambda row: self._fleet_digest(row, question)
         )
@@ -4520,6 +4547,7 @@ class Server:
         prepared = fleet_questions.Prepared(
             prompt, tuple(str(row.get("session_key")) for row in running)
         )
+        chat_progress.mark("answer")
         result = await asyncio.to_thread(fleet_questions.generate, prepared, summarize)
         if not result.text:
             await _write_json(
@@ -5511,7 +5539,9 @@ class Server:
             return
         chat_path = paths.home() / "support-chat.json"
         # This process is the server, so doctor's reachability probe is skipped.
+        chat_progress.mark("installation")
         checks = await asyncio.to_thread(doctor.check_install, installable_agents())
+        chat_progress.mark("guide")
         prompt = support.prompt(
             question,
             version=__version__,
@@ -5520,6 +5550,7 @@ class Server:
             checks=checks,
             prior=oracle.load_chat(chat_path),
         )
+        chat_progress.mark("answer")
         result = await asyncio.to_thread(summarize, prompt, tier="deep")
         if not result.text:
             await _write_json(

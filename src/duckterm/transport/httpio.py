@@ -10,6 +10,7 @@ import json
 from pathlib import Path
 from typing import Any
 
+from duckterm.core import chat_progress
 from duckterm.core.eventbus import Event
 
 SELF_PROBE_HEADER = "X-Duckterm"
@@ -114,7 +115,9 @@ async def write_response(
 
 
 async def write_json(writer: asyncio.StreamWriter, status: int, payload: Any) -> None:
-    await write_json_bytes(writer, status, json.dumps(payload).encode())
+    await write_json_bytes(
+        writer, status, json.dumps(chat_progress.response(status, payload)).encode()
+    )
 
 
 async def write_json_bytes(writer: asyncio.StreamWriter, status: int, body: bytes) -> None:

@@ -1,3 +1,4 @@
+import type { ChatTiming } from "./ChatProgress";
 import { desktop, destinationRequest } from "./desktop";
 import type { CheckpointClock } from "./CheckpointAge";
 import type { AgentMergeService, AgentMergePreview, AgentMergeRecord, MergeTarget } from "./AgentMergeDialog";
@@ -140,6 +141,7 @@ export interface RestartOptions {
 }
 
 export interface OracleExchange {
+  progress?: ChatTiming;
   q: string;
   a: string;
   at: number;
@@ -242,11 +244,11 @@ export interface TowerInsights {
   remote: { available: boolean; count: number };
 }
 
-async function post<T>(path: string, body?: unknown, context?: string): Promise<T> {
+async function post<T>(path: string, body?: unknown, context?: string, progressId?: string): Promise<T> {
   const request = context === undefined ? fetch : (path: string, init?: RequestInit) => sessionFetch(context, path, init);
   const res = await request(path, {
     method: "POST",
-    headers: authHeaders({ "Content-Type": "application/json" }),
+    headers: authHeaders({ "Content-Type": "application/json", ...(progressId ? { "X-Duckterm-Chat-Progress": progressId } : {}) }),
     body: JSON.stringify(body ?? {}),
   });
   const data = await res.json().catch(() => ({}));
@@ -485,7 +487,7 @@ export interface Release { tag: string; at: number; sha: string; subject: string
 export interface ArchModule { id: string; name: string; lane: "Clients" | "Server" | "Runtime"; files: string[]; what: string }
 export interface ArchMap { tag: string; status: "ready" | "pending" | "omitted"; reason?: string; modules?: ArchModule[]; edges?: string[][]; at?: number }
 export interface ReleaseCompare { older: string; newer: string; marks: Record<string, "added" | "changed" | "removed" | "unchanged">; removed_modules: ArchModule[]; edges_added: string[][]; edges_removed: string[][]; files_changed: number }
-export interface ChatMessage { q: string; a: string; citations: Citation[]; hunk: string | null; files: string[]; at: number }
+export interface ChatMessage { progress?: ChatTiming; q: string; a: string; citations: Citation[]; hunk: string | null; files: string[]; at: number }
 
 async function artifactRequest<T>(path: string, method = "GET"): Promise<T> {
   const response = await fetch(path, { method, cache: "no-store", headers: authHeaders() });
@@ -574,7 +576,7 @@ export const api = {
   reviewCards: (repo: string, ref: string) => get<ReviewCards>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/cards`, undefined, { authed: true }),
   regenerateCards: (repo: string, ref: string, cards?: string[]) => post<ReviewCards & { started: boolean }>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/cards/regenerate`, cards ? { cards } : {}),
   reviewChat: (repo: string, ref: string) => get<{ messages: ChatMessage[]; suggestions: string[] }>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/chat`, undefined, { authed: true }),
-  reviewAsk: (repo: string, ref: string, body: { question: string; hunk?: string | null }) => post<ChatMessage>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/ask`, body),
+  reviewAsk: (repo: string, ref: string, body: { question: string; hunk?: string | null }, progressId?: string) => post<ChatMessage>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/ask`, body, undefined, progressId),
   reviewSend: (repo: string, ref: string, body: { card: string; items: string[]; session: string }) => post<{ delivered: string; message_id: string; session: string }>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/send`, body),
   reviewDraft: (repo: string, ref: string) => post<{ body: string }>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/draft-review`),
   approvalState: (repo: string, ref: string) => get<ApprovalState>(`/review/${encodeURIComponent(repo)}/${encodeURIComponent(ref)}/approval`, undefined, { authed: true }),
@@ -702,21 +704,22 @@ export const api = {
     post<ConnectorCheck>(`/connectors/${name}/verify`, {}, context),
   folderArtifacts: (folder: string) => artifactRequest<{ artifacts: FolderArtifact[]; truncated?: boolean }>(`/folders/${encodeURIComponent(folder)}/artifacts`),
   folderRecipients: (folder: string) => artifactRequest<FolderRecipients>(`/folders/${encodeURIComponent(folder)}/recipients`),
-  folderDispatch: (folder: string, request: { assign?: boolean; identity: string; target: { kind: "session" | "folder"; id: string }; text: string; request_key: string; recipients: string[] }) =>
-    post<{ exchange: OracleExchange }>(`/folders/${encodeURIComponent(folder)}/dispatch`, request),
+  folderDispatch: (folder: string, request: { assign?: boolean; identity: string; target: { kind: "session" | "folder"; id: string }; text: string; request_key: string; recipients: string[] }, progressId?: string) =>
+    post<{ exchange: OracleExchange }>(`/folders/${encodeURIComponent(folder)}/dispatch`, request, undefined, progressId),
   folderChat: (folder: string) => artifactRequest<{ messages: OracleExchange[] }>(`/folders/${encodeURIComponent(folder)}/chat`),
   // Only a request with a request key can come back as a message plan.
-  fleetAsk: ((question: string, folder?: string, requestKey?: string) =>
+  fleetAsk: ((question: string, folder?: string, requestKey?: string, progressId?: string) =>
     post<FleetAnswer | { plan: FolderMessagePlan }>(
       "/fleet/ask",
-      { question, ...(folder !== undefined ? { folder } : {}), ...(requestKey !== undefined ? { request_key: requestKey } : {}) },
+      { question, ...(folder !== undefined ? { folder } : {}), ...(requestKey !== undefined ? { request_key: requestKey } : {}) }, undefined, progressId,
     )) as {
-    (question: string): Promise<FleetAnswer>;
-    (question: string, folder: undefined, requestKey: string): Promise<OracleRouted>;
-    (question: string, folder: string, requestKey?: string): Promise<FleetAnswer | { plan: FolderMessagePlan }>;
+    (question: string, folder?: undefined, requestKey?: undefined, progressId?: string): Promise<FleetAnswer>;
+    (question: string, folder: undefined, requestKey: string, progressId?: string): Promise<OracleRouted>;
+    (question: string, folder: string, requestKey?: string, progressId?: string): Promise<FleetAnswer | { plan: FolderMessagePlan }>;
   },
   oracleChat: () => get<{ messages: OracleExchange[] }>("/oracle/chat"),
-  supportAsk: (question: string) => post<{ exchange: OracleExchange }>("/support/ask", { question }),
+  supportAsk: (question: string, progressId?: string) => post<{ exchange: OracleExchange }>("/support/ask", { question }, undefined, progressId),
+  chatProgress: (id: string, signal?: AbortSignal) => get<ChatTiming>(`/chat-progress/${id}`, undefined, { authed: true, signal }),
   supportChat: () => get<{ messages: OracleExchange[] }>("/support/chat"),
   clearSupportChat: () =>
     fetch("/support/chat", { method: "DELETE", headers: authHeaders() }).then(
@@ -749,7 +752,7 @@ export const api = {
   relayCount: (signal?: AbortSignal) => get<{ open: number }>("/relay/count", undefined, { signal }),
   relayAnswer: (id: string, answer: string | number) =>
     post<{ note: RelayNote }>(`/relay/${encodeURIComponent(id)}/answer`, { answer }),
-  proposeRule: (text: string) => post<{ rule: RelayRule }>("/relay/rules/propose", { text }),
+  proposeRule: (text: string, progressId?: string) => post<{ rule: RelayRule }>("/relay/rules/propose", { text }, undefined, progressId),
   createRule: (rule: RelayRule) => post<{ rule: RelayRule }>("/relay/rules", { rule }),
   deleteRule: async (id: string) => {
     const res = await fetch(`/relay/rules/${encodeURIComponent(id)}`, { method: "DELETE", headers: authHeaders() });
@@ -759,10 +762,10 @@ export const api = {
   // The owner has looked at this session: lower its raised hand.
   sessionAttended: (key: string) => post<{ attended: boolean }>(`/sessions/${encodeURIComponent(key)}/attended`),
   // oracleChat: the Ask Oracle line that led to this send, saved with it in the chat history.
-  messageSession: (key: string, text: string, mode: "inbox" | "prompt", requestKey?: string, oracleChat?: string) =>
+  messageSession: (key: string, text: string, mode: "inbox" | "prompt", requestKey?: string, oracleChat?: string, progressId?: string) =>
     post<{ delivered: "inbox" | "prompt" | null; exchange?: OracleExchange }>(
       `/sessions/${encodeURIComponent(key)}/message`,
-      { text, mode, ...(requestKey !== undefined ? { request_key: requestKey } : {}), ...(oracleChat !== undefined ? { oracle_chat: oracleChat } : {}) },
+      { text, mode, ...(requestKey !== undefined ? { request_key: requestKey } : {}), ...(oracleChat !== undefined ? { oracle_chat: oracleChat } : {}) }, undefined, progressId,
     ),
   clearOracleChat: () =>
     fetch("/oracle/chat", { method: "DELETE", headers: authHeaders() }).then(

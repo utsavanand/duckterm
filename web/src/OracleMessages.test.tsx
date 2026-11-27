@@ -94,6 +94,6 @@ it("Cancel leaves a reworded message unsent", async () => {
 it("without the flag there is no @ and questions go out without a request key", async () => {
   vi.mocked(api.fleetAsk).mockResolvedValue({ answer: "ok", exchange: { q: "tell x", a: "ok", at: 1 }, sessions: [] });
   type(chat([...FULL]), "tell release-dev to hold");
-  await waitFor(() => expect(api.fleetAsk).toHaveBeenCalledWith("tell release-dev to hold"));
+  await waitFor(() => expect(api.fleetAsk).toHaveBeenCalledWith("tell release-dev to hold", undefined, undefined, expect.stringMatching(/^[a-f0-9]{32}$/)));
   expect(screen.queryByRole("button", { name: "Message one agent" })).toBeNull();
 });

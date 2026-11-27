@@ -8,6 +8,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
+from duckterm.core import chat_progress
 from duckterm.core.oracle import CHAT_LIMIT
 from duckterm.helpers.private_files import private_read, private_write
 
@@ -150,6 +151,7 @@ class FolderChats:
                             raise ValueError("request_key already used for different content")
                         return dict(old)
             exchange: dict[str, Any] = {"q": question, "a": answer, "at": at}
+            chat_progress.attach(exchange)
             if dispatch is not None:
                 exchange["dispatch"] = dispatch
             entry["messages"] = (entry["messages"] + [exchange])[-CHAT_LIMIT:]

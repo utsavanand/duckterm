@@ -1,3 +1,4 @@
+import { ChatProgress, useChatProgress } from "../ChatProgress";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type ChatMessage, type ReviewHeader } from "../api";
 import { html } from "../render";
@@ -10,6 +11,7 @@ export function ChatPanel({ header, quote, onClearQuote, onOpenFile, onDraft, on
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [question, setQuestion] = useState("");
+  const progress = useChatProgress();
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState("");
   const [drafting, setDrafting] = useState(false);
@@ -28,7 +30,7 @@ export function ChatPanel({ header, quote, onClearQuote, onOpenFile, onDraft, on
     if (/draft (a )?request-changes/i.test(value)) { await draft(); return; }
     setPending(value); setError(""); setQuestion("");
     try {
-      const entry = await api.reviewAsk(repo, ref, { question: value, hunk: quote || null });
+      const entry = await progress.run(id => api.reviewAsk(repo, ref, { question: value, hunk: quote || null }, id));
       if (alive.current) { setMessages(previous => [...previous, entry]); onClearQuote(); }
     } catch (cause) {
       if (alive.current) { setError((cause as Error).message); setQuestion(value); }
@@ -49,11 +51,12 @@ export function ChatPanel({ header, quote, onClearQuote, onOpenFile, onDraft, on
       {messages.length === 0 && pending === null && <p className="rd-prs-empty">Ask about this change. Answers cite path:line from the diff; click a citation to open it.</p>}
       {messages.map((message, index) => <div key={`${message.at}-${index}`} className="rd-chat-exchange">
         <div className="rd-chat-q"><small>You{message.hunk ? ` · about ${message.hunk}` : ""}</small><p>{message.q}</p></div>
-        <div className="rd-chat-a"><div dangerouslySetInnerHTML={{ __html: html(message.a) }} />
+        <div className="rd-chat-a"><div dangerouslySetInnerHTML={{ __html: html(message.a) }} /><ChatProgress value={message.progress} />
           {message.citations.length > 0 && <p className="rd-chat-cites">{message.citations.map(cite => <button key={`${cite.path}:${cite.line}`} onClick={() => onOpenFile(cite.path, cite.line)}>{cite.path}:{cite.line}</button>)}</p>}
         </div>
       </div>)}
-      {pending !== null && <div className="rd-chat-exchange"><div className="rd-chat-q"><small>You</small><p>{pending}</p></div><p role="status" className="rd-card-meta">Reading the diff…</p></div>}
+      {pending !== null && <div className="rd-chat-exchange"><div className="rd-chat-q"><small>You</small><p>{pending}</p></div><ChatProgress value={progress.value} startedAt={progress.startedAt} /></div>}
+      {!pending && progress.value?.state === "failed" && <ChatProgress value={progress.value} />}
       {error && <p className="rd-prs-note" role="alert">{error}</p>}
     </div>
     {quote && <blockquote className="rd-review-quote"><code>{quote}</code><button aria-label="Remove quote" onClick={onClearQuote}>×</button></blockquote>}

@@ -171,9 +171,9 @@ it("asks one session with @: the picker fills its name, Oracle sends it, and the
   expect(box).toHaveValue("@b ");
   fireEvent.change(box, { target: { value: "@b ship it?" } });
   await act(async () => { fireEvent.click(chat.getByRole("button", { name: "Ask" })); });
-  expect(api.messageSession).toHaveBeenCalledWith("b", "ship it?", "inbox", expect.any(String), "@b ship it?");
+  expect(api.messageSession).toHaveBeenCalledWith("b", "ship it?", "inbox", expect.any(String), "@b ship it?", expect.stringMatching(/^[a-f0-9]{32}$/));
   expect(api.fleetAsk).not.toHaveBeenCalled();
-  expect(chat.getByText("Waiting for b to answer…")).toBeVisible();
+  expect(chat.getByText("Waiting for b to reply…")).toBeVisible();
   // The chat checks again until the session answers.
   vi.mocked(api.oracleChat).mockResolvedValue({ messages: [{ ...sent, reply: { status: "answered", answer: "Yes, CI is green.", answered_at: 3 } }] } as never);
   await act(async () => { vi.advanceTimersByTime(15_000); });
@@ -196,7 +196,7 @@ it("sends nothing to an @ name that is no session, and treats @ as text without 
   expect(chat.queryByRole("listbox")).toBeNull();
   fireEvent.change(chat.getByRole("textbox", { name: "Ask DuckTerm" }), { target: { value: "@b hi" } });
   await act(async () => { fireEvent.click(chat.getByRole("button", { name: "Ask" })); });
-  expect(api.fleetAsk).toHaveBeenCalledWith("@b hi");
+  expect(api.fleetAsk).toHaveBeenCalledWith("@b hi", undefined, undefined, expect.stringMatching(/^[a-f0-9]{32}$/));
   expect(api.messageSession).not.toHaveBeenCalled();
 });
 
@@ -217,7 +217,7 @@ it("answers in the Home chat from the shared fleet conversation, without the age
   expect(within(chat).queryByText(/Deploy now/)).toBeNull();
   fireEvent.change(within(chat).getByRole("textbox", { name: "Ask DuckTerm" }), { target: { value: "Who is stuck?" } });
   await act(async () => { fireEvent.click(within(chat).getByRole("button", { name: "Ask" })); });
-  expect(api.fleetAsk).toHaveBeenCalledWith("Who is stuck?");
+  expect(api.fleetAsk).toHaveBeenCalledWith("Who is stuck?", undefined, undefined, expect.stringMatching(/^[a-f0-9]{32}$/));
   expect(within(chat).getByText("Nobody is stuck.")).toBeVisible();
   const needs = screen.getByRole("article", { name: "Needs you" });
   expect(within(needs).getByText("Nourish · 1 h ago")).toBeVisible();

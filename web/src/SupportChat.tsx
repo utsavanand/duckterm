@@ -1,3 +1,4 @@
+import { ChatProgress, useChatProgress } from "./ChatProgress";
 import { useEffect, useRef, useState } from "react";
 import { api, OracleExchange } from "./api";
 import { html } from "./render";
@@ -16,6 +17,7 @@ export function SupportChat() {
   const [log, setLog] = useState<OracleExchange[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [q, setQ] = useState("");
+  const progress = useChatProgress();
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState("");
   const logRef = useRef<HTMLDivElement>(null);
@@ -50,7 +52,7 @@ export function SupportChat() {
     setQ("");
     setError("");
     try {
-      const r = await api.supportAsk(question);
+      const r = await progress.run(id => api.supportAsk(question, id));
       setLog((l) => [...l, r.exchange]);
     } catch (e) {
       setError(`Support could not answer: ${(e as Error).message}`);
@@ -100,18 +102,17 @@ export function SupportChat() {
           {log.map((x) => (
             <div key={`x-${x.at}`} className="rd-oracle-exchange">
               <div className="rd-oracle-q">{x.q}</div>
-              <div className="rd-oracle-a rd-msg-text" dangerouslySetInnerHTML={{ __html: html(x.a) }} />
+              <div className="rd-oracle-a rd-msg-text" dangerouslySetInnerHTML={{ __html: html(x.a) }} /><ChatProgress value={x.progress} />
             </div>
           ))}
           {pending !== null && (
             <div className="rd-oracle-exchange">
               <div className="rd-oracle-q">{pending}</div>
-              <div className="rd-oracle-thinking" role="status">
-                <span className="rd-spinner" /> Checking the guide and your install…
-              </div>
+              <ChatProgress value={progress.value} startedAt={progress.startedAt} />
             </div>
           )}
-          {error && <p className="rd-oracle-error" role="alert">{error}</p>}
+          {!pending && progress.value?.state === "failed" && <ChatProgress value={progress.value} />}
+      {error && <p className="rd-oracle-error" role="alert">{error}</p>}
         </div>
         <div className="rd-oracle-compose">
           <textarea

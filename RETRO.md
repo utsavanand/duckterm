@@ -1,3 +1,13 @@
+## 2026-11-27 — Chat progress must describe work, not guessed delays
+
+A single static “checking agents” line concealed both elapsed time and the step
+holding up an answer. Record stages where the work actually starts, carry a
+bounded receipt in the existing saved answer, and keep progress reads separate
+from submission so a missed poll cannot resend a question. Inbox delivery is
+not an answer: keep its clock running until a recorded reply or terminal status.
+Test concurrent requests, failed polling, stopped clocks and reloads, not just
+the spinner appearance.
+
 ## 2026-11-26 — Improve readability without replacing the app theme
 
 Page-local overrides of shared colors made AGENTS.md look like a different app.

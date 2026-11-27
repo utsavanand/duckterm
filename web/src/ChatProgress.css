@@ -1,0 +1,9 @@
+.rd-chat-progress { margin: 10px 0 14px; font-size: 13px; color: var(--muted, #939ca9); line-height: 1.5; }
+.rd-chat-progress-line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 13px; color: var(--muted, #939ca9); }
+.rd-chat-progress-clock { border-left: 1px solid var(--border, #353b46); padding-left: 10px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.rd-chat-progress details { margin: 8px 0 0 24px; }
+.rd-chat-progress summary { cursor: pointer; }
+.rd-chat-progress ol { list-style: none; padding: 0; margin: 8px 0; max-width: 410px; }
+.rd-chat-progress li { display: flex; justify-content: space-between; gap: 18px; padding: 3px 0; }
+.rd-chat-progress li > span:last-child { font-variant-numeric: tabular-nums; white-space: nowrap; }
+@media (prefers-reduced-motion: reduce) { .rd-chat-progress .rd-spinner { animation: none; } }

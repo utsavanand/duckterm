@@ -55,7 +55,7 @@ it("sends only the selected folder and keeps the answer when switching tabs", as
   await act(async () => {});
   fireEvent.change(screen.getByRole("textbox"), { target: { value: "Status?" } });
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Ask" })); });
-  expect(api.fleetAsk).toHaveBeenCalledExactlyOnceWith("Status?", "Website/Research", expect.any(String));
+  expect(api.fleetAsk).toHaveBeenCalledExactlyOnceWith("Status?", "Website/Research", expect.any(String), expect.stringMatching(/^[a-f0-9]{32}$/));
   expect(screen.getByText("Ready")).toBeVisible();
   expect(screen.queryByRole("heading", { name: "Sessions" })).not.toBeInTheDocument();
   fireEvent.click(screen.getByRole("tab", { name: "Artifacts" }));
@@ -111,7 +111,7 @@ it("selects a scoped recipient with the keyboard and sends an owner request", as
   fireEvent.change(screen.getByRole("textbox"), { target: { value: "Review this" } });
   fireEvent.click(screen.getByRole("button", { name: "Send to ui-dev" }));
   await screen.findByText("ui-dev · Queued in inbox");
-  expect(api.folderDispatch).toHaveBeenCalledWith("Website", expect.objectContaining({ identity: "folder-id", text: "Review this", target: { kind: "session", id: "ui-1" }, recipients: ["ui-1"] }));
+  expect(api.folderDispatch).toHaveBeenCalledWith("Website", expect.objectContaining({ identity: "folder-id", text: "Review this", target: { kind: "session", id: "ui-1" }, recipients: ["ui-1"] }), expect.stringMatching(/^[a-f0-9]{32}$/));
   expect(api.fleetAsk).not.toHaveBeenCalled();
 });
 it("reviews subfolder recipients before sending and preserves cancelled drafts", async () => {
@@ -144,7 +144,7 @@ it("removing a mention restores natural-language routing", async () => {
   vi.mocked(api.fleetAsk).mockResolvedValue({ answer: "Ready", exchange: { q: "Status", a: "Ready", at: 1 }, sessions: [] });
   fireEvent.change(screen.getByRole("textbox"), { target: { value: "Status" } });
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Ask" })); });
-  expect(api.fleetAsk).toHaveBeenCalledWith("Status", "Website", expect.any(String));
+  expect(api.fleetAsk).toHaveBeenCalledWith("Status", "Website", expect.any(String), expect.stringMatching(/^[a-f0-9]{32}$/));
   expect(api.folderDispatch).not.toHaveBeenCalled();
 });
 
@@ -161,7 +161,8 @@ it("sends a natural-language message only after the owner confirms its plan", as
   const plan = { identity: "id-1", target: { kind: "session" as const, id: "ui-1" }, label: "ui-dev", text: "Please report your progress.", recipients: [{ session_id: "ui-1", name: "ui-dev" }] };
   vi.mocked(api.fleetAsk).mockResolvedValue({ plan });
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Ask" })); });
-  expect(vi.mocked(api.fleetAsk).mock.calls[1]).toEqual(first);
+  expect(vi.mocked(api.fleetAsk).mock.calls[1].slice(0, 3)).toEqual(first.slice(0, 3));
+  expect(vi.mocked(api.fleetAsk).mock.calls[1][3]).not.toEqual(first[3]);
   const dialog = screen.getByRole("dialog", { name: "Confirm message" });
   expect(dialog).toHaveTextContent("Nothing has been sent yet");
   expect(dialog).toHaveTextContent("Please report your progress.");
@@ -177,7 +178,7 @@ it("sends a natural-language message only after the owner confirms its plan", as
   vi.mocked(api.folderDispatch).mockResolvedValue({ exchange: { q: plan.text, a: "", at: 2, dispatch: { request_key: "k", target: plan.target, label: "ui-dev", recipients: [{ session_id: "ui-1", name: "ui-dev", message_id: "q-test", status: "queued", answer: null }] } } });
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Send to ui-dev" })); });
   const [sent, retried] = vi.mocked(api.folderDispatch).mock.calls;
-  expect(sent).toEqual(["Website", { identity: "id-1", target: plan.target, text: plan.text, request_key: expect.any(String), recipients: ["ui-1"] }]);
+  expect(sent).toEqual(["Website", { identity: "id-1", target: plan.target, text: plan.text, request_key: expect.any(String), recipients: ["ui-1"] }, expect.stringMatching(/^[a-f0-9]{32}$/)]);
   expect(retried[1].request_key).toBe(sent[1].request_key);
   expect(screen.queryByRole("dialog", { name: "Confirm message" })).toBeNull();
   expect(screen.getByText("ui-dev · Queued in inbox")).toBeVisible();
@@ -211,6 +212,6 @@ it("keeps suggestion buttons read-only even when a recipient is selected", async
   fireEvent.click(screen.getByRole("option", { name: /ui-dev/ }));
   vi.mocked(api.fleetAsk).mockResolvedValue({ answer: "Ready", exchange: { q: "Status", a: "Ready", at: 1 }, sessions: [] });
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "What needs my attention?" })); });
-  expect(api.fleetAsk).toHaveBeenCalledWith("What needs my attention?", "Website", undefined);
+  expect(api.fleetAsk).toHaveBeenCalledWith("What needs my attention?", "Website", undefined, expect.stringMatching(/^[a-f0-9]{32}$/));
   expect(api.folderDispatch).not.toHaveBeenCalled();
 });

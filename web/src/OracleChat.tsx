@@ -1,3 +1,4 @@
+import { ChatProgress, useChatProgress, AgentReplyProgress, SendingProgress } from "./ChatProgress";
 import { useEffect, useRef, useState } from "react";
 import { api, OracleAgent, OracleExchange, RelayNote, RelayRule, RelayState } from "./api";
 import { useEdition } from "./edition";
@@ -56,6 +57,7 @@ export function OracleChat({
   const [log, setLog] = useState<OracleExchange[]>([]);
   const [loaded, setLoaded] = useState(false);
   const [q, setQ] = useState("");
+  const progress = useChatProgress();
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState("");
   const logRef = useRef<HTMLDivElement>(null);
@@ -86,6 +88,22 @@ export function OracleChat({
     if (log) log.scrollTop = log.scrollHeight;
   }, [log, pending, error, locals.length, relay.notes.length]);
 
+  const waitingForReply = log.some(e => e.key && ["queued", "accepted", "read"].includes(e.reply?.status ?? "queued"));
+  useEffect(() => {
+    if (!waitingForReply || pending !== null) return;
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    async function refresh() {
+      try {
+        const r = await api.oracleChat();
+        if (!stopped) setLog(current => current.map(entry => r.messages.find(next => next.at === entry.at && next.key === entry.key) ?? entry));
+      } catch { /* Keep the last known reply when a status refresh fails. */ }
+      finally { if (!stopped) timer = setTimeout(() => void refresh(), 3000); }
+    }
+    timer = setTimeout(() => void refresh(), 3000);
+    return () => { stopped = true; clearTimeout(timer); };
+  }, [waitingForReply, pending]);
+
   const localCount = useRef(0);
   const addLocal = (l: Local) => {
     setLocals((ls) => [...ls, l]);
@@ -96,7 +114,7 @@ export function OracleChat({
     setPending(text);
     setError("");
     try {
-      const { rule } = await api.proposeRule(text);
+      const { rule } = await progress.run(id => api.proposeRule(text, id), "rule");
       addLocal({ at: Date.now(), kind: "proposal", rule, state: "open" });
     } catch (e) {
       addLocal({ at: Date.now(), kind: "info", text: (e as Error).message });
@@ -171,11 +189,11 @@ export function OracleChat({
     setError("");
     try {
       if (!messaging) {
-        const r = await api.fleetAsk(question);
+        const r = await progress.run(id => api.fleetAsk(question, undefined, undefined, id));
         setLog((l) => [...l, r.exchange]);
         return;
       }
-      const r = await api.fleetAsk(question, undefined, requestKey());
+      const r = await progress.run(id => api.fleetAsk(question, undefined, requestKey(), id));
       if ("plan" in r) {
         const { text, ...agent } = r.plan;
         addLocal({ at: Date.now(), kind: "send", agent, text, question, key: requestKey(), state: "open" });
@@ -246,6 +264,7 @@ export function OracleChat({
                 className="rd-oracle-a rd-msg-text"
                 dangerouslySetInnerHTML={{ __html: html(e.exchange.a) }}
               />
+              {e.exchange.key ? <><AgentReplyProgress at={e.exchange.at} status={e.exchange.reply?.status ?? "queued"} answeredAt={e.exchange.reply?.answered_at} name={e.exchange.to} />{e.exchange.reply?.answer && <div className="rd-oracle-a rd-msg-text" dangerouslySetInnerHTML={{ __html: html(e.exchange.reply.answer) }} />}</> : <ChatProgress value={e.exchange.progress} />}
             </div>
           ) : e.type === "note" ? (
             <NoteCard key={e.note.id} note={e.note} rules={relay.rules} onChange={onRelayChange} onPropose={(t) => void propose(t)} onOpenTerminal={onOpenTerminal} />
@@ -299,12 +318,12 @@ export function OracleChat({
         {pending !== null && (
           <div className="rd-oracle-exchange">
             <div className="rd-oracle-q">{pending}</div>
-            <div className="rd-oracle-thinking" role="status">
-              <span className="rd-spinner" /> Reading your sessions…
-            </div>
+            <ChatProgress value={progress.value} startedAt={progress.startedAt} />
           </div>
         )}
-        {error && <p className="rd-oracle-error" role="alert">{error}</p>}
+        {!pending && progress.value?.state === "finished" && !progress.saved && <ChatProgress value={progress.value} complete="Ready" />}
+      {!pending && progress.value?.state === "failed" && <ChatProgress value={progress.value} />}
+      {error && <p className="rd-oracle-error" role="alert">{error}</p>}
       </div>
       {picking && (
         <div className="rd-oracle-picker" role="listbox" aria-label="Choose an agent">
@@ -360,6 +379,7 @@ function SendCard({ local, onSend, onCancel }: { local: Extract<Local, { kind: "
     <div className={`rd-relay-note rd-oracle-send${state === "open" ? " open" : ""}`} role="group" aria-label={`Message to ${agent.name}`}>
       <span className="rd-relay-meta">{state === "cancelled" ? "Not sent to" : "Send to"} <b>{agent.name}</b>{agent.folder ? ` · ${agent.folder}` : ""}</span>
       <blockquote className="rd-relay-quote">{text}</blockquote>
+      {state === "sending" && <SendingProgress />}
       {(state === "open" || state === "sending") && (
         <div className="rd-relay-actions">
           <button className="rd-btn rd-btn-primary rd-btn-sm" disabled={state === "sending"} onClick={() => onSend(local)}>Send</button>

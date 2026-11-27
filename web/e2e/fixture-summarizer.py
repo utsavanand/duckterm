@@ -4,6 +4,11 @@ import json
 import sys
 
 prompt = sys.stdin.read()
+# Only the progress browser check asks for a measurable local inference wait.
+if "CHAT_PROGRESS_TIMING_PROBE" in prompt:
+    import time
+
+    time.sleep(2)
 if prompt.startswith("Classify the latest owner request in a DuckTerm folder chat."):
     data = json.loads(prompt.rsplit("\n", 1)[-1])
     if data["owner_request"] == "Ask ui-dev to report progress.":

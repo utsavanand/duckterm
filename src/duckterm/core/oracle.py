@@ -16,6 +16,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from duckterm.core import chat_progress
 from duckterm.helpers.private_files import private_read, private_write
 
 # Both were 10 minutes until 2026-09-26. Agents answered about 3 minutes after
@@ -180,6 +181,7 @@ def append_chat(
         if saved is not None:
             return saved
     exchange: dict[str, Any] = {"q": question, "a": answer, "at": at_ms}
+    chat_progress.attach(exchange)
     if key is not None:
         exchange["key"] = key
     if to is not None:

@@ -23,7 +23,7 @@ it("asks with the quoted hunk, renders the answer with clickable citations, and 
   await screen.findByRole("button", { name: "What is the riskiest hunk and why?" });
   fireEvent.change(screen.getByRole("textbox", { name: "Ask about this pull request" }), { target: { value: "Why?" } });
   fireEvent.keyDown(screen.getByRole("textbox", { name: "Ask about this pull request" }), { key: "Enter" });
-  expect(api.reviewAsk).toHaveBeenCalledWith("/r", "307", { question: "Why?", hunk: "src/db.py @@ def a" });
+  expect(api.reviewAsk).toHaveBeenCalledWith("/r", "307", { question: "Why?", hunk: "src/db.py @@ def a" }, expect.stringMatching(/^[a-f0-9]{32}$/));
   expect(await screen.findByText("x")).toHaveProperty("tagName", "CODE");
   fireEvent.click(screen.getByRole("button", { name: "src/db.py:12" }));
   expect(props.onOpenFile).toHaveBeenCalledWith("src/db.py", 12);

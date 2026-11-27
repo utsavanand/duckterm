@@ -1,3 +1,4 @@
+import { ChatProgress, useChatProgress, AgentReplyProgress } from "./ChatProgress";
 import { useEffect, useRef, useState } from "react";
 import { api, OracleExchange } from "./api";
 import { useEdition } from "./edition";
@@ -31,6 +32,7 @@ const requestKey = () => crypto.randomUUID().replace(/-/g, "");
 export function HomeChat({ sessions, onOpenTerminal }: { sessions: ChatSession[]; onOpenTerminal: (key: string) => void }) {
   const messaging = useEdition().has("oracle_messages");
   const [log, setLog] = useState<OracleExchange[]>([]);
+  const progress = useChatProgress();
   const [q, setQ] = useState(""), [pending, setPending] = useState<string | null>(null), [error, setError] = useState("");
   const logRef = useRef<HTMLDivElement>(null), input = useRef<HTMLTextAreaElement>(null);
   // The session the owner picked from the @ list. Names repeat across folders
@@ -90,10 +92,10 @@ export function HomeChat({ sessions, onOpenTerminal }: { sessions: ChatSession[]
     setPending(question); setQ(""); setError(""); setPicked(null);
     try {
       if (to) {
-        const { exchange } = await api.messageSession(to.key, body, "inbox", requestKey(), question);
+        const { exchange } = await progress.run(id => api.messageSession(to.key, body, "inbox", requestKey(), question, id), "sending");
         if (exchange) setLog(l => [...l, exchange]);
       } else {
-        const r = await api.fleetAsk(question);
+        const r = await progress.run(id => api.fleetAsk(question, undefined, undefined, id));
         setLog(l => [...l, r.exchange]);
       }
     } catch (e) { setError(`${to ? `Could not send to ${to.name}` : "DuckTerm could not answer"}: ${(e as Error).message}`); setQ(question); }
@@ -113,9 +115,10 @@ export function HomeChat({ sessions, onOpenTerminal }: { sessions: ChatSession[]
       {log.map(exchange => <div key={exchange.at} className="rd-home-exchange">
         <div className="rd-home-q">{exchange.q}</div>
         <div className="rd-home-a rd-msg-text" dangerouslySetInnerHTML={{ __html: withSessionChips(html(exchange.a), sessions) }} />
-        {exchange.key && exchange.to && <Reply exchange={exchange} />}
+        {exchange.key && exchange.to ? <><AgentReplyProgress at={exchange.at} status={exchange.reply?.status ?? "queued"} answeredAt={exchange.reply?.answered_at} name={exchange.to} /><Reply exchange={exchange} /></> : <ChatProgress value={exchange.progress} />}
       </div>)}
-      {pending !== null && <div className="rd-home-exchange"><div className="rd-home-q">{pending}</div><div className="rd-home-thinking" role="status"><span className="rd-spinner" /> {pending.startsWith("@") && messaging ? "Sending…" : "Reading your sessions…"}</div></div>}
+      {pending !== null && <div className="rd-home-exchange"><div className="rd-home-q">{pending}</div><ChatProgress value={progress.value} startedAt={progress.startedAt} /></div>}
+      {!pending && progress.value?.state === "failed" && <ChatProgress value={progress.value} />}
       {error && <p className="rd-oracle-error" role="alert">{error}</p>}
     </div>
     <div className="rd-home-suggest">{SUGGESTIONS.map(s => <button key={s} disabled={pending !== null} onClick={() => void ask(s)}>{s}</button>)}
@@ -149,5 +152,5 @@ function Reply({ exchange }: { exchange: OracleExchange }) {
   const { to, reply } = exchange;
   if (reply?.status === "answered") return <div className="rd-home-reply"><small><b>{to}</b> answered</small><p>{reply.answer}</p></div>;
   if (reply && SETTLED.has(reply.status)) return <p className="rd-home-reply-wait">{to}'s message was {reply.status}; it will not answer.</p>;
-  return <p className="rd-home-reply-wait" role="status">Waiting for {to} to answer{reply?.status === "accepted" ? " (it has started)" : ""}…</p>;
+  return null;
 }

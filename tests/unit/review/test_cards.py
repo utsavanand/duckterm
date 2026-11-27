@@ -6,6 +6,7 @@ from typing import Any
 
 import pytest
 
+from duckterm.core import chat_progress
 from duckterm.core.session_api import APIError
 from duckterm.llm import backend
 from duckterm.review import cards, chat, lists, store, workspace
@@ -325,15 +326,23 @@ def test_chat_cites_paths_from_the_diff_and_fetches_requested_files_once(
         )
 
     serve(monkeypatch, generate)
-    entry = asyncio.run(
-        chat.ask(
-            target,
-            payload_for(target),
-            "What changed?",
-            hunk="src/duckterm/server.py @@ def route",
-            digest="Working on routes",
+    with chat_progress.Store().track("c" * 32):
+        entry = asyncio.run(
+            chat.ask(
+                target,
+                payload_for(target),
+                "What changed?",
+                hunk="src/duckterm/server.py @@ def route",
+                digest="Working on routes",
+            )
         )
-    )
+    assert [stage["stage"] for stage in entry["progress"]["stages"]] == [
+        "starting",
+        "answer",
+        "files",
+        "answer",
+    ]
+    assert chat.transcript(target)[-1]["progress"] == entry["progress"]
     assert len(prompts) == 2
     assert "# Files you asked for" in prompts[1] and "def route():" in prompts[1]
     assert "The authoring session's latest digest" in prompts[1]

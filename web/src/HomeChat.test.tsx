@@ -36,7 +36,7 @@ it("sends to the session that was picked, even when another has the same name", 
   pick("dev Beta · busy");
   type("@dev ship it?");
   await send();
-  expect(api.messageSession).toHaveBeenCalledWith("k-dev-b", "ship it?", "inbox", expect.any(String), "@dev ship it?");
+  expect(api.messageSession).toHaveBeenCalledWith("k-dev-b", "ship it?", "inbox", expect.any(String), "@dev ship it?", expect.stringMatching(/^[a-f0-9]{32}$/));
 });
 
 it("refuses a typed name that more than one session has", async () => {
@@ -53,7 +53,7 @@ it("sends to a picked session whose name has a space, with the whole question", 
   pick("qa lead Alpha · idle");
   type("@qa lead is #490 done?");
   await send();
-  expect(api.messageSession).toHaveBeenCalledWith("k-qa", "is #490 done?", "inbox", expect.any(String), "@qa lead is #490 done?");
+  expect(api.messageSession).toHaveBeenCalledWith("k-qa", "is #490 done?", "inbox", expect.any(String), "@qa lead is #490 done?", expect.stringMatching(/^[a-f0-9]{32}$/));
 });
 
 it("sends nothing when the picked session has gone", async () => {
@@ -79,5 +79,5 @@ it("still sends a typed name that only one session has", async () => {
   const one = await chat([SESSIONS[0], SESSIONS[2]]);
   one.type("@DEV ship it?");
   await one.send();
-  expect(api.messageSession).toHaveBeenCalledWith("k-dev-a", "ship it?", "inbox", expect.any(String), "@DEV ship it?");
+  expect(api.messageSession).toHaveBeenCalledWith("k-dev-a", "ship it?", "inbox", expect.any(String), "@DEV ship it?", expect.stringMatching(/^[a-f0-9]{32}$/));
 });
