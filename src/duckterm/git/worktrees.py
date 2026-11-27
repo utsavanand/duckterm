@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from duckterm.helpers import paths
+from duckterm.review import git as review_git
 
 
 @dataclass(frozen=True)
@@ -111,9 +112,20 @@ class WorktreeManager:
             raise GitError(f"{repo} is not a git repository")
         if fetch:
             # Network call; never let a fetch failure (offline, no remote) block
-            # the list — we still have the local branches.
-            with contextlib.suppress(GitError):
-                _git(repo, "fetch", "--quiet", "--all")
+            # the list — we still have the local branches. Sessions work in
+            # this repository and can write its config, so the fetch goes
+            # through review/git, which runs none of the repository's programs.
+            with contextlib.suppress(review_git.ReviewGitError):
+                review_git.run(
+                    repo,
+                    "fetch",
+                    "--quiet",
+                    "--no-recurse-submodules",
+                    "--upload-pack=git-upload-pack",
+                    "origin",
+                    timeout=25,
+                    network=True,
+                )
         out = _git(
             repo,
             "for-each-ref",
