@@ -97,6 +97,7 @@ def _execute(autopilot: dict[str, Any], meta: dict[str, Any], item: dict[str, An
         flow = catalog.find(autopilot["flow"])
         dirs = prepare_github(autopilot["repo"], "", meta["branch"], root)
         base_sha = _git_out(dirs.project, "rev-parse", "HEAD")
+        _update(root, base_sha=base_sha)
         kit = kit_manifest.load(flow.kit_path)
         install.apply(plan.build(kit, dirs.project, [HARNESS]))
         executor.hide_install(dirs)
@@ -180,13 +181,8 @@ def pr_body(
 ) -> str:
     """The spec the run wrote, a closing reference to the issue, and where it
     came from. Draft until a person reviews it."""
-    parts = []
-    for attempt in state.get("attempts") or []:
-        spec = (attempt.get("outputs") or {}).get("spec")
-        if isinstance(spec, dict) and spec.get("path"):
-            path = project / str(spec["path"])
-            if path.is_file() and not path.is_symlink():
-                parts = [path.read_text(errors="replace")[:20000].strip()]
+    spec = spec_text(project, state)
+    parts = [spec[:20000].strip()] if spec else []
     if item.get("number"):
         parts.append(f"Closes #{item['number']}.")
     parts.append(
@@ -194,6 +190,50 @@ def pr_body(
         "Review it before merging."
     )
     return "\n\n".join(parts)
+
+
+def spec_text(project: Path, state: dict[str, Any]) -> str | None:
+    """The newest spec the run wrote. The path comes from the run's receipt,
+    which the sandbox could write, so a link or a path outside the clone is
+    not read."""
+    found = None
+    for attempt in state.get("attempts") or []:
+        spec = (attempt.get("outputs") or {}).get("spec")
+        if isinstance(spec, dict) and spec.get("path"):
+            found = str(spec["path"])
+    if not found:
+        return None
+    path = project / found
+    if path.is_symlink() or not path.resolve().is_relative_to(project.resolve()):
+        return None
+    return path.read_text(errors="replace") if path.is_file() else None
+
+
+DIFF_CAP = 400_000
+
+
+def changes(project: Path, base: str) -> dict[str, Any] | None:
+    """The run's change against the commit it started from: each file's line
+    counts and the patch, cut at DIFF_CAP characters."""
+    try:
+        files = []
+        for line in _git_out(
+            project, "diff", "--numstat", "--no-renames", base, "HEAD"
+        ).splitlines():
+            added, removed, path = line.split("\t", 2)
+            binary = added == "-"
+            files.append(
+                {
+                    "path": path,
+                    "added": 0 if binary else int(added),
+                    "removed": 0 if binary else int(removed),
+                    "binary": binary,
+                }
+            )
+        patch = _git_out(project, "diff", "--no-renames", "--no-color", base, "HEAD")
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    return {"files": files, "patch": patch[:DIFF_CAP], "cut": len(patch) > DIFF_CAP}
 
 
 def _git_out(project: Path, *args: str) -> str:
@@ -241,6 +281,53 @@ def get(run_id: str) -> dict[str, Any]:
         if meta["id"] == run_id:
             return meta
     raise KeyError(run_id)
+
+
+def detail(run_id: str) -> dict[str, Any]:
+    """One run for its detail view: every attempt with its timing and the
+    line it ended on, the issue it started from, the spec it wrote and the
+    change on its branch."""
+    meta = get(run_id)
+    root = runs_root() / run_id
+    receipt = _receipt(root) or {}
+    project = root / "repo"
+    meta["attempts"] = [
+        {
+            key: a.get(key)
+            for key in (
+                "step",
+                "attempt",
+                "kind",
+                "status",
+                "exit",
+                "choice",
+                "reason",
+                "started_at",
+                "finished_at",
+            )
+        }
+        for a in receipt.get("attempts") or []
+    ]
+    meta["gates"] = receipt.get("gates") or []
+    meta["loops"] = receipt.get("loops") or {}
+    try:
+        issue = json.loads(next(iter((receipt.get("inputs") or {}).values()), "") or "{}")
+    except (TypeError, ValueError):
+        issue = {}
+    meta["issue_body"] = str(issue.get("body") or "") if isinstance(issue, dict) else ""
+    meta["spec"] = spec_text(project, receipt) if receipt else None
+    base = meta.get("base_sha") or _merge_base(project)
+    meta["changes"] = changes(project, base) if base else None
+    return meta
+
+
+def _merge_base(project: Path) -> str | None:
+    """Runs from before base_sha was recorded: the branch point from the
+    default branch."""
+    try:
+        return _git_out(project, "merge-base", "HEAD", "origin/HEAD") or None
+    except (OSError, subprocess.SubprocessError):
+        return None
 
 
 def active(autopilot_id: str) -> int:
