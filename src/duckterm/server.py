@@ -64,11 +64,20 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import Any, TextIO
 
-from duckterm import bug_reports, connectors, editions, release_features, suites, zsh_themes
+from duckterm import (
+    __version__,
+    bug_reports,
+    connectors,
+    doctor,
+    editions,
+    release_features,
+    suites,
+    zsh_themes,
+)
 from duckterm.agents import tmux
 from duckterm.agents.terminal import available_terminals, open_in_terminal
 from duckterm.autopilot import api as ap_api
-from duckterm.core import events, fleet_questions, oracle
+from duckterm.core import events, fleet_questions, oracle, oracle_intent, support
 from duckterm.core.approvals import Approval, ApprovalRegistry
 from duckterm.core.backup_jobs import BackupJobs
 from duckterm.core.eventbus import EventBus
@@ -93,7 +102,7 @@ from duckterm.core.tokens import TokenLedger
 from duckterm.git import gitdetect
 from duckterm.git.spotlight import spotlight_to_main
 from duckterm.git.worktrees import GitError
-from duckterm.harnesses import infer_runtime, runtime_for
+from duckterm.harnesses import infer_runtime, installable_agents, runtime_for
 from duckterm.helpers import (
     browse,
     instance,
@@ -367,6 +376,9 @@ _ROUTES: list[Route] = [
     Route("POST", "/sessions/compare", lambda s, r, w, h, b, seg: s._compare(w, b)),
     Route("POST", "/fleet/ask", lambda s, r, w, h, b, seg: s._fleet_ask(w, b)),
     Route("GET", "/oracle/chat", lambda s, r, w, h, b, seg: s._oracle_chat(w)),
+    Route("POST", "/support/ask", lambda s, r, w, h, b, seg: s._support_ask(w, b)),
+    Route("GET", "/support/chat", lambda s, r, w, h, b, seg: s._support_chat(w)),
+    Route("DELETE", "/support/chat", lambda s, r, w, h, b, seg: s._support_chat(w, clear=True)),
     Route("GET", "/control-tower", lambda s, r, w, h, b, seg: s._control_tower(w)),
     Route("GET", "/relay", lambda s, r, w, h, b, seg: s._relay_list(w)),
     # ── Oracle voice: the optional local neural voice ──
@@ -407,6 +419,8 @@ _ROUTES: list[Route] = [
     Route("POST", "/kits/enable", lambda s, r, w, h, b, seg: s._kits(w, "enable", b)),
     Route("POST", "/kits/disable", lambda s, r, w, h, b, seg: s._kits(w, "disable", b)),
     Route("POST", "/kits/plan", lambda s, r, w, h, b, seg: s._kits(w, "plan", b)),
+    Route("POST", "/kits/review", lambda s, r, w, h, b, seg: s._kits(w, "review", b)),
+    Route("POST", "/kits/fix", lambda s, r, w, h, b, seg: s._kits(w, "fix", b)),
     Route("POST", "/kits/install", lambda s, r, w, h, b, seg: s._kits(w, "install", b)),
     Route("POST", "/kits/uninstall", lambda s, r, w, h, b, seg: s._kits(w, "uninstall", b)),
     Route("POST", "/kits/verify", lambda s, r, w, h, b, seg: s._kits(w, "verify", b)),
@@ -575,6 +589,7 @@ class Server:
         self.digests = DigestStore(conn=self.history._conn)
         self._review_tasks: dict[str, asyncio.Task[Any]] = {}
         self._branch_owners_cache: tuple[float, dict[tuple[str, str], str]] = (0.0, {})
+        self._branch_owners_refresh: asyncio.Task[dict[tuple[str, str], str]] | None = None
         from duckterm.checkpoint_requests import CheckpointRequests
 
         self.checkpoint_requests = CheckpointRequests(self)
@@ -1184,6 +1199,7 @@ class Server:
             return
         # Only the supervisor may assign identity; hooks can report observations.
         raw.pop("_assigned_native_id", None)
+        raw.pop("hook_setup", None)  # only the supervisor can record configuration
         # agent_pid comes from an external hook ($PPID) and is later fed to
         # os.kill in the liveness sweep — coerce to a positive int or drop it.
         if "agent_pid" in raw:
@@ -1651,9 +1667,8 @@ class Server:
         keys = {row["session_key"] for row in rows}
         now = time.time()
         async with self._tokens_lock:
-            usage = await asyncio.to_thread(
-                self._tokens.analytics, 7, now, self._token_identities()
-            )
+            identities = await asyncio.to_thread(self._token_identities)
+            usage = await asyncio.to_thread(self._tokens.analytics, 7, now, identities)
         # Membership can change while transcript accounting runs in its worker.
         current = {
             row["session_key"]
@@ -2268,15 +2283,41 @@ class Server:
         from duckterm.review import lists as review_lists
 
         at, owners = self._branch_owners_cache
-        if refresh or time.time() - at >= review_lists.CACHE_SECONDS:
+        if not refresh and time.time() - at < review_lists.CACHE_SECONDS:
+            return owners
+        previous = self._branch_owners_refresh
+        if refresh and previous is not None:
+            # An explicit refresh must include pushes made after an older scan
+            # began. Wait for that scan, then start (or join) a newer one.
+            with contextlib.suppress(Exception):
+                await asyncio.shield(previous)
+            if self._branch_owners_refresh is previous:
+                self._branch_owners_refresh = None
+        task = self._branch_owners_refresh
+        if task is None:
             since = int((time.time() - review_lists.PUSH_DAYS * 86400) * 1000)
 
             def read() -> dict[tuple[str, str], str]:
                 return review_lists.branch_owners(self.history.push_commands(since))
 
-            owners = await asyncio.to_thread(read)
-            self._branch_owners_cache = (time.time(), owners)
-        return owners
+            async def rebuild() -> dict[tuple[str, str], str]:
+                result = await asyncio.to_thread(read)
+                self._branch_owners_cache = (time.time(), result)
+                return result
+
+            task = asyncio.create_task(rebuild())
+            self._branch_owners_refresh = task
+
+            def finished(done: asyncio.Task[dict[tuple[str, str], str]]) -> None:
+                if self._branch_owners_refresh is done:
+                    self._branch_owners_refresh = None
+                # A disconnected caller must neither cancel the shared scan nor
+                # leave an unobserved exception if all callers have gone away.
+                if not done.cancelled():
+                    done.exception()
+
+            task.add_done_callback(finished)
+        return await asyncio.shield(task)
 
     async def _prs(
         self,
@@ -2845,7 +2886,7 @@ class Server:
         tracker = _FlowStepTracker(self, asyncio.get_running_loop())
         # The history store is bound to this thread, so everything it answers
         # is gathered here; only the kit engine's file work runs in a thread.
-        needs_registry = action in ("catalog", "enable")
+        needs_registry = action in ("catalog", "enable", "review")
         registry = [dict(r) for r in self.history.harnesses()] if needs_registry else []
         workspaces = self._kit_workspaces() if needs_registry else []
         if action == "unregister":
@@ -2871,6 +2912,8 @@ class Server:
                 payload.get("project"), str(payload.get("run_id") or "")
             ),
             "plan": lambda: kits_api.plan_for(payload),
+            "review": lambda: kits_api.review(payload, registry, workspaces),
+            "fix": lambda: kits_api.fix(payload),
             "install": lambda: kits_api.install_kit(payload),
             "uninstall": lambda: kits_api.uninstall_kit(payload),
             "verify": lambda: kits_api.verify_kits(payload),
@@ -2897,6 +2940,25 @@ class Server:
             await _write_json(writer, exc.status, {"error": str(exc)})
             return
         await _write_json(writer, 200, result)
+
+    def _kit_launch_flags(self, runtime: str, folder: str) -> list[str]:
+        """Copilot takes a kit's permissions as flags, not a file: a session
+        launched in a repository whose home-side install record holds a kit
+        gets the flags recorded at that install, while the kit still hashes
+        as reviewed. Other harnesses read files."""
+        if runtime != "copilot" or not self.edition.includes("skill_kits"):
+            return []
+        from duckterm.kits import api as kits_api
+
+        registry = [dict(r) for r in self.history.harnesses()]
+        flags, dropped = kits_api.copilot_flags(folder, registry)
+        for name in dropped:
+            print(
+                f"[duckterm] kit {name} in {folder}: Copilot flags dropped, the kit changed "
+                "since it was installed; enable it again to review",
+                file=sys.stderr,
+            )
+        return flags
 
     def _remember_launch(self, key: str, folder: object) -> None:
         """The launcher is the only writer of where a session lives (kits)."""
@@ -3114,6 +3176,7 @@ class Server:
             session_key=key,
             initial_prompt=self._collaboration_prompt(runtime.name, key, req.get("prompt", "")),
         )
+        argv[1:1] = self._kit_launch_flags(runtime.name, run_cwd)
 
         # Record a tracked row so the session shows up with its name/repo/branch.
         # The agent's hooks report under the same key (via DUCKTERM_SESSION_KEY)
@@ -3249,6 +3312,7 @@ class Server:
                 fork_runtime.name, child_key, req.get("prompt", "")
             ),
         )
+        argv[1:1] = self._kit_launch_flags(fork_runtime.name, str(worktree.path))
         # Record a tracked row so the fork shows its lineage. The agent's hooks
         # report under child_key (via DUCKTERM_SESSION_KEY), updating this row.
         self.bus.publish(
@@ -4300,6 +4364,40 @@ class Server:
             }
         }
 
+    async def _oracle_message(self, question: str) -> dict[str, Any] | None:
+        """An Ask Oracle message that tells one agent something. Nothing is
+        sent here: the model chose the recipient, so the owner confirms a plan
+        or picks from candidates (Contracts §7.4). None means it is a question
+        to answer."""
+        agents = [
+            {
+                "id": str(r["session_key"]),
+                "name": str(r.get("name") or r["session_key"]),
+                "folder": str(r.get("grp") or ""),
+            }
+            for r in self.history.sessions()
+            if r.get("state") not in AT_REST_STATES
+        ]
+        if not agents:
+            return None
+        result = await asyncio.to_thread(
+            summarize, oracle_intent.routing_prompt(question, agents), tier="fast"
+        )
+        if not result.text:
+            return None
+        by_id = {a["id"]: a for a in agents}
+        intent = oracle_intent.parse_intent(result.text, set(by_id))
+        if intent["action"] == "answer":
+            return None
+        if intent["action"] == "clarify":
+            return {
+                "clarify": {
+                    "text": intent["text"],
+                    "candidates": [by_id[c] for c in intent["candidates"]],
+                }
+            }
+        return {"plan": {**by_id[intent["session_id"]], "text": intent["text"]}}
+
     async def _fleet_ask(self, writer: asyncio.StreamWriter, body: bytes) -> None:
         """Route explicit folder messages; answer other questions from session digests."""
         try:
@@ -4327,6 +4425,19 @@ class Server:
         if not question:
             await _write_json(writer, 400, {"error": "question required"})
             return
+        if folder is None and "request_key" in req and self.edition.includes("oracle_messages"):
+            key = req["request_key"]
+            if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,59}", key):
+                await _write_json(writer, 400, {"error": "Invalid request_key"})
+                return
+            try:
+                routed = await self._oracle_message(question)
+            except APIError as exc:
+                await _write_json(writer, exc.status, {"error": str(exc)})
+                return
+            if routed is not None:
+                await _write_json(writer, 200, routed)
+                return
         if folder is not None and "request_key" in req:
             key = req["request_key"]
             if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,59}", key):
@@ -4520,20 +4631,6 @@ class Server:
         if et == events.STOP and row and row["state"] not in AT_REST_STATES:
             final = event.get("last_assistant_message")
             final = final if isinstance(final, str) else None
-            direct = permission_question(final or "")
-            if direct and not self._owner_question_pending(key):
-                self.relay.add(
-                    {
-                        **self._relay_session_fields(key),
-                        "kind": "question",
-                        "urgency": "blocked",
-                        "created_at": now,
-                        "question": direct,
-                        "options": [],
-                        "excerpt": (final or "")[-1200:],
-                        "detected_without_model": True,
-                    }
-                )
             try:
                 loop = asyncio.get_running_loop()
             except RuntimeError:
@@ -4787,31 +4884,68 @@ class Server:
                 and self.history.last_event_ts(key, events.USER_PROMPT_SUBMIT) <= at
             )
 
-        await asyncio.sleep(self._RELAY_SETTLE_S)
-        if not still_current():
-            return
-        if self._owner_question_pending(key):
-            # A direct permission ask was already surfaced synchronously. Keep
-            # the existing owner-authored answer-rule path for that same note.
-            direct = next(
-                (
-                    n
-                    for n in self.relay.open_notes()
-                    if n["session_key"] == key
-                    and n["kind"] == "question"
-                    and n.get("created_at") == at
-                    and n.get("detected_without_model")
-                ),
-                None,
+        def latest_assistant_text(messages: list[dict[str, object]]) -> str:
+            last = next(
+                (m for m in reversed(messages) if m.get("role") in {"user", "assistant"}), None
             )
-            if direct is not None and final_message is not None:
-                await self._relay_question_rule(direct, final_message)
+            return self._message_text(last) if last and last.get("role") == "assistant" else ""
+
+        def verified(text: str) -> bool:
+            if final_message is None:
+                return True
+            hint = final_message.strip()
+            # The hook sends at most 12,000 characters, before trimming. The
+            # transcript reader trims whitespace, so compare a bounded suffix
+            # only when the hook actually reached that cap.
+            return bool(
+                text
+                and hint
+                and (hint == text or (len(final_message) == 12000 and text.endswith(hint)))
+            )
+
+        # Hook text is a hint, not evidence: only the session's recorded transcript
+        # may create an owner question or feed an answer rule. Direct permission
+        # asks avoid the classifier delay, but still read that transcript first.
+        direct_hint = permission_question(final_message or "")
+        if not direct_hint:
+            await asyncio.sleep(self._RELAY_SETTLE_S)
+        if not still_current() or self._owner_question_pending(key):
             return
         messages = await asyncio.to_thread(self._read_messages, self._message_source(key))
-        if not still_current():
+        if not still_current() or self._owner_question_pending(key):
             return
-        last = next((m for m in reversed(messages) if m.get("role") == "assistant"), None)
-        final = final_message if final_message is not None else self._message_text(last)
+        final = latest_assistant_text(messages)
+        if not verified(final):
+            if not direct_hint:
+                return
+            # The hook can arrive before the CLI flushes its last message. Allow
+            # the existing settle interval once; never fall back to hook text.
+            await asyncio.sleep(self._RELAY_SETTLE_S)
+            if not still_current() or self._owner_question_pending(key):
+                return
+            messages = await asyncio.to_thread(self._read_messages, self._message_source(key))
+            if not still_current() or self._owner_question_pending(key):
+                return
+            final = latest_assistant_text(messages)
+            if not verified(final):
+                return
+        direct = permission_question(final)
+        if direct:
+            note = self.relay.add(
+                {
+                    **self._relay_session_fields(key),
+                    "kind": "question",
+                    "urgency": "blocked",
+                    "created_at": at,
+                    "question": direct,
+                    "options": [],
+                    "excerpt": final[-1200:],
+                    "detected_without_model": True,
+                }
+            )
+            self._mark_question_waiting(key)
+            await self._relay_question_rule(note, final)
+            return
         if not final or not ASK_CUES.search(final[-900:]):
             return
         if any(
@@ -5075,23 +5209,29 @@ class Server:
         await _write_json(writer, 200, {"deleted": rule_id})
 
     def _token_identities(self) -> list[dict[str, Any]]:
-        native_ids: dict[str, set[str]] = {}
-        for row in self.history._conn.execute(
-            "SELECT DISTINCT session_key, json_extract(payload_json, '$.session_id') AS sid "
-            "FROM events WHERE sid IS NOT NULL"
-        ):
-            native_ids.setdefault(row["session_key"], set()).add(str(row["sid"]))
-        return [
-            dict(
-                key=r["session_key"],
-                runtime=r["runtime"],
-                name=r["name"] or r["session_key"],
-                folder=r["grp"],
-                test=bool(r["test"]),
-                native_ids=list(native_ids.get(r["session_key"], set()) | {r["session_key"]}),
-            )
-            for r in self.history._conn.execute("SELECT * FROM sessions")
-        ]
+        """Read one identity snapshot in a worker, never on the loop connection."""
+        with contextlib.closing(
+            sqlite3.connect(self.history.path.resolve().as_uri() + "?mode=ro", uri=True, timeout=5)
+        ) as conn:
+            conn.row_factory = sqlite3.Row
+            conn.execute("BEGIN")
+            native_ids: dict[str, set[str]] = {}
+            for row in conn.execute(
+                "SELECT DISTINCT session_key, json_extract(payload_json, '$.session_id') AS sid "
+                "FROM events WHERE sid IS NOT NULL"
+            ):
+                native_ids.setdefault(row["session_key"], set()).add(str(row["sid"]))
+            return [
+                dict(
+                    key=r["session_key"],
+                    runtime=r["runtime"],
+                    name=r["name"] or r["session_key"],
+                    folder=r["grp"],
+                    test=bool(r["test"]),
+                    native_ids=list(native_ids.get(r["session_key"], set()) | {r["session_key"]}),
+                )
+                for r in conn.execute("SELECT * FROM sessions")
+            ]
 
     async def _token_analytics(
         self, writer: asyncio.StreamWriter, headers: dict[str, str], query: str
@@ -5110,8 +5250,8 @@ class Server:
         except ValueError:
             await _write_json(writer, 400, {"error": "days must be 1..36500 or all"})
             return
-        identities = self._token_identities()
         async with self._tokens_lock:
+            identities = await asyncio.to_thread(self._token_identities)
             result = await asyncio.to_thread(
                 self._tokens.analytics,
                 days,
@@ -5210,7 +5350,25 @@ class Server:
                 return
             if priority:
                 self._oracle_soon()  # an idle agent shouldn't wait for the next pass
-            await _write_json(writer, 200, {"delivered": "inbox", "message_id": message_id})
+            reply: dict[str, Any] = {"delivered": "inbox", "message_id": message_id}
+            asked = req.get("oracle_chat")
+            if (
+                isinstance(asked, str)
+                and asked.strip()
+                and self.edition.includes("oracle_messages")
+            ):
+                # Sent from Ask Oracle: keep it in the chat history like a
+                # plain-language send, so it survives a reload.
+                row = self.history.session(session_key) or {}
+                reply["exchange"] = oracle.append_chat(
+                    paths.home() / "oracle-chat.json",
+                    asked.strip()[:8000],
+                    _sent_line(str(row.get("name") or session_key), str(req.get("text"))),
+                    int(time.time() * 1000),
+                    key=message_id,
+                    to=str(row.get("name") or session_key),
+                )
+            await _write_json(writer, 200, reply)
             return
         text = req.get("text")
         if not isinstance(text, str) or not text.strip() or len(text.encode()) > 16384:
@@ -5319,6 +5477,61 @@ class Server:
 
     async def _oracle_chat(self, writer: asyncio.StreamWriter, *, clear: bool = False) -> None:
         path = paths.home() / "oracle-chat.json"
+        if clear:
+            oracle.clear_chat(path)
+            await _write_json(writer, 200, {"messages": oracle.load_chat(path)})
+            return
+        self.history.session_api._sweep()
+
+        def lookup(message_id: str) -> dict[str, Any] | None:
+            row = self.history._conn.execute(
+                "SELECT status, answer, answered_at FROM session_questions WHERE id = ?",
+                (message_id,),
+            ).fetchone()
+            return dict(row) if row else None
+
+        await _write_json(writer, 200, {"messages": oracle.refresh_replies(path, lookup)})
+
+    async def _support_ask(self, writer: asyncio.StreamWriter, body: bytes) -> None:
+        try:
+            req: Any = json.loads(body or b"{}")
+        except json.JSONDecodeError:
+            await _write_json(writer, 400, {"error": "invalid JSON"})
+            return
+        question = str(req.get("question") or "").strip() if isinstance(req, dict) else ""
+        if not question:
+            await _write_json(writer, 400, {"error": "question required"})
+            return
+        if len(question) > 8000:
+            await _write_json(writer, 400, {"error": "question exceeds 8000 characters"})
+            return
+        chat_path = paths.home() / "support-chat.json"
+        # This process is the server, so doctor's reachability probe is skipped.
+        checks = await asyncio.to_thread(doctor.check_install, installable_agents())
+        prompt = support.prompt(
+            question,
+            version=__version__,
+            edition=self.edition.name,
+            features=sorted(self.edition.features),
+            checks=checks,
+            prior=oracle.load_chat(chat_path),
+        )
+        result = await asyncio.to_thread(summarize, prompt, tier="deep")
+        if not result.text:
+            await _write_json(
+                writer,
+                502,
+                {
+                    "error": "no summarizer backend — install claude/codex/copilot "
+                    "or set DUCKTERM_SUMMARIZER_CMD"
+                },
+            )
+            return
+        exchange = oracle.append_chat(chat_path, question, result.text, int(time.time() * 1000))
+        await _write_json(writer, 200, {"exchange": exchange, "backend": result.backend})
+
+    async def _support_chat(self, writer: asyncio.StreamWriter, *, clear: bool = False) -> None:
+        path = paths.home() / "support-chat.json"
         if clear:
             oracle.clear_chat(path)
         await _write_json(writer, 200, {"messages": oracle.load_chat(path)})
@@ -7474,6 +7687,10 @@ class Server:
             return
         self._set_lifecycle(key, "archived")
         self.approvals.drop_session(key)
+
+
+def _sent_line(name: str, text: str) -> str:
+    return f"Sent to **{name}**: \u201c{text}\u201d. It's in its inbox."
 
 
 def _pid_alive(pid: int) -> bool:

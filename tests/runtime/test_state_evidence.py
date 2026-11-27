@@ -21,7 +21,8 @@ from duckterm.runtimes.generic import GenericRuntime
     [
         (CodexRuntime, "Working (2s • esc to interrupt)", []),
         (CopilotRuntime, "Thinking...", []),
-        (ClaudeCodeRuntime, "❯ 1. Yes", ["Notification"]),
+        (ClaudeCodeRuntime, "│ Do you want to proceed?\n│ ❯ 1. Yes", ["Notification"]),
+        (ClaudeCodeRuntime, "❯ ", []),
         (GenericRuntime, "[idle]", ["Stop"]),
         (GenericRuntime, "[waiting]", ["Notification"]),
     ],
@@ -57,7 +58,7 @@ def test_noise_does_not_replace_last_state(
         try:
             await asyncio.wait_for(sup._task, 5)  # type: ignore[arg-type]
             output = "".join(sup.output_tail())
-            assert marker in output
+            assert marker in output.replace("\r\n", "\n")
             assert "result: 42" in output
         finally:
             await orch.stop(key)

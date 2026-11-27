@@ -21,7 +21,7 @@ export function DirBrowser({
   createFolder?: (parent: string, name: string) => Promise<BrowseResult>;
   suggestedName?: string;
   emptyOnly?: boolean;
-  // Picking a skill kit: folders holding a skill-kit.toml are badged, the
+  // Picking a MetaHarness: folders holding a metaharness.toml (or the old skill-kit.toml) are badged, the
   // pick button waits for one, and a folder with several manifests offers
   // each kit by name (the pick then carries that manifest's path).
   kitsOnly?: boolean;
@@ -105,7 +105,7 @@ export function DirBrowser({
             <span>📁</span>
             <span style={{ flex: 1 }}>{e.name}</span>
             {e.is_kit && (
-              <span style={{ fontSize: "0.6875rem", color: "var(--brand-green)" }}>skill kit</span>
+              <span style={{ fontSize: "0.6875rem", color: "var(--brand-green)" }}>MetaHarness</span>
             )}
             {e.is_git && (
               <span style={{ fontSize: "0.6875rem", color: "var(--idle)" }}>git</span>
@@ -127,7 +127,7 @@ export function DirBrowser({
           ))}
         </div>
       )}
-      {kitsOnly && (data.kits ?? []).length === 0 && <p style={{ padding: "8px 12px 0", fontSize: "0.8125rem", color: "var(--muted)" }}>Not a skill kit: no skill-kit.toml here. Open the folder that holds one; kit folders are marked.</p>}
+      {kitsOnly && (data.kits ?? []).length === 0 && <p style={{ padding: "8px 12px 0", fontSize: "0.8125rem", color: "var(--muted)" }}>Not a MetaHarness: no metaharness.toml here. Open the folder that holds one; MetaHarness folders are marked.</p>}
       {emptyOnly && data.empty !== true && <p style={{ padding: "0 12px", fontSize: "0.8125rem" }}>Choose an empty folder, or create a new one here. Existing files will not be overwritten.</p>}
       {createFolder && <div style={{ padding: "0 12px 12px" }}>
         {newFolder ? <>

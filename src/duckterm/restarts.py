@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
 import re
 import shutil
 import time
@@ -598,6 +599,14 @@ class Restarts:
                     )
             else:
                 await cli_version(binary)  # verify before stopping
+            from duckterm.agents.hooks_install import prepare_for_launch
+
+            await asyncio.to_thread(
+                prepare_for_launch,
+                str(harness or row.get("runtime")),
+                Path(row.get("worktree_path") or row["cwd"]),
+                dict(os.environ),
+            )
             if (await self.live_plan(key, harness))[1] is not sup:
                 raise APIError(409, "The terminal changed while restart was pending.")
             prepared = None

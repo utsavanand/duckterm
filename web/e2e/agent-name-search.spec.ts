@@ -20,11 +20,14 @@ test("agent-name search combines filters, highlights matches, and restores works
     const rows = page.locator('.rd-agents .rd-row');
     await expect(toggle).toHaveAttribute('aria-expanded', 'false');
     await search.fill(' DEV ');
-    await expect(rows).toHaveCount(1);
+    await expect(rows).toHaveCount(2);
     await expect(rows.locator('mark')).toHaveText('dev');
-    await expect(rows).toContainText('UI-dev');
+    await expect.poll(async () => (await rows.locator('.rd-row-name').allTextContents()).sort()).toEqual(['Docs', 'UI-dev']);
+    await search.fill('search review');
+    await expect.poll(async () => (await rows.locator('.rd-row-name').allTextContents()).sort()).toEqual(['Main-QA', 'UI-dev']);
+    await search.fill(' DEV ');
     await toggle.click();
-    await expect(page.getByRole('button', { name: 'Working 1', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Working 2', exact: true })).toBeVisible();
     await page.getByRole('button', { name: 'Waiting 0', exact: true }).click();
     await expect(rows).toHaveCount(0);
     await expect(page.getByText('No agents match “DEV” with these filters.')).toBeVisible();

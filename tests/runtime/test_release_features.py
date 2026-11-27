@@ -115,8 +115,10 @@ def test_inventory_and_local_override_survive_restart(isolated):
         try:
             server = Server(history=history, edition=editions.FULL)
             code, inventory = request(server, "GET", "/feature-flags")
-            assert code == 200 and len(inventory["flags"]) == 9
-            assert "autopilot" in {f["id"] for f in inventory["flags"]}
+            assert code == 200 and len(inventory["flags"]) == 12
+            assert {"autopilot", "oracle_messages", "fleet_monitor", "support"} <= {
+                f["id"] for f in inventory["flags"]
+            }
             assert all(
                 f["enabled"] == (f["id"] in release_features.FLAGS) and not f["default"]
                 for f in inventory["flags"]
@@ -217,7 +219,7 @@ def test_optional_cli_gate_uses_release_flags_over_legacy(isolated, monkeypatch,
     monkeypatch.setenv("DUCKTERM_EDITION", "full")
     (isolated / "flags.json").write_text(json.dumps({"enabled": [] if enabled else ["skill_kits"]}))
     configure(isolated, skill_kits=enabled)
-    sample = Path(__file__).resolve().parents[2] / "examples/skill-kits/sample-kit"
+    sample = Path(__file__).resolve().parents[2] / "examples/metaharnesses/sample-kit"
     assert cli.main(["kit", "validate", str(sample)]) == (0 if enabled else 1)
     out = capsys.readouterr()
     if enabled:

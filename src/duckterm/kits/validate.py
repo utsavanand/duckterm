@@ -62,6 +62,8 @@ def validate(kit: m.Kit) -> list[Finding]:
     if kit.legacy:
         warn("manifest", f"{m.LEGACY_MANIFEST} is the retired name; rename to {m.MANIFEST}")
         return out
+    if kit.old_manifest:
+        warn("manifest", f"{m.OLD_MANIFEST} is the old name; rename it to {m.MANIFEST}")
     if not m.NAME_RE.match(kit.name):
         err("manifest", f"name {kit.name!r} must match [a-z0-9-], 1-64 chars")
     if not m.SEMVER_RE.match(kit.version):
@@ -335,6 +337,9 @@ def _check_permission(c: m.Component, cid: str, err: Report, warn: Report) -> No
         match = str(rule.get("match", ""))
         if not match:
             err(cid, f"rules[{i}] needs `match`")
+            continue
+        if any(ch in match for ch in ")\n,"):
+            err(cid, f"rules[{i}].match may not contain ')' ',' or a newline (Copilot reads them)")
             continue
         one_word_prefix = match.count(" ") == 0 and match.endswith("*")
         if rule.get("decision") == "allow" and (match.strip("* ") == "" or one_word_prefix):

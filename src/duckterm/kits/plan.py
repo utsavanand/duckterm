@@ -55,14 +55,14 @@ def inside(project: Path, rel: str) -> Path:
     if not rel or Path(rel).is_absolute() or ".." in parts:
         raise PathEscape(f"{rel!r} must be a relative path inside the project")
     if ".git" in parts or parts[0] not in written_roots():
-        raise PathEscape(f"{rel!r} is not a path skill kits write")
+        raise PathEscape(f"{rel!r} is not a path a MetaHarness writes")
     target = project
     for part in parts:
         target = target / part
         if target.is_symlink():
             where = target.relative_to(project).as_posix()
             raise PathEscape(
-                f"{rel!r} goes through a symlink at {where!r}; skill kits write real files"
+                f"{rel!r} goes through a symlink at {where!r}; a MetaHarness writes real files"
             )
     if not target.resolve().is_relative_to(project.resolve()):
         raise PathEscape(f"{rel!r} resolves outside the project")
@@ -72,7 +72,7 @@ def inside(project: Path, rel: str) -> Path:
 @dataclass
 class Conflict:
     path: str
-    kind: str  # file-exists | other-kit | conflicts-with | name-clash | escapes
+    kind: str  # file-exists | other-kit | conflicts-with | name-clash | escapes | overlap
     detail: str
     choices: tuple[str, ...]
     component: str = ""
@@ -166,9 +166,31 @@ def detect_harnesses() -> list[str]:
     return [a.id for a in adapters.ADAPTERS.values() if a.installed_here()]
 
 
+def kit_digest(root: Path) -> str:
+    """One hash over every regular file under the kit folder: path, size and
+    content, `.git` left out, symlinks left out (validate refuses them). Enable
+    pins the digest of the tree the owner reviewed; a folder that no longer
+    hashes the same (a `git pull`, an edit under ~/Downloads) installs nowhere
+    until the owner enables it again."""
+    h = hashlib.sha256()
+    for path in sorted(root.rglob("*")):
+        if ".git" in path.relative_to(root).parts or path.is_symlink() or not path.is_file():
+            continue
+        data = path.read_bytes()
+        h.update(f"{path.relative_to(root).as_posix()}\0{len(data)}\0".encode())
+        h.update(hashlib.sha256(data).digest())
+    return h.hexdigest()
+
+
 def build(
-    kit: m.Kit, project: Path, harnesses: list[str], options: dict[str, str] | None = None
+    kit: m.Kit,
+    project: Path,
+    harnesses: list[str],
+    options: dict[str, str] | None = None,
+    fallbacks: list[str] | None = None,
 ) -> Plan:
+    """`fallbacks`: component ids the owner chose to load always where a
+    harness cannot scope by path (the review's Fix); kept with the policy."""
     project = Path(project)
     unknown = [h for h in harnesses if h not in adapters.ADAPTERS]
     if unknown:
@@ -212,7 +234,9 @@ def build(
             )
             continue
         if c.kind == "knowledge":
-            placements += adapters.place_knowledge(kit, c, active, roots)
+            placements += adapters.place_knowledge(
+                kit, c, active, roots, force_fallback=kit.component_id(c) in (fallbacks or [])
+            )
         elif c.kind == "skill":
             placements += adapters.place_skill(kit, c, active, roots)
         elif c.kind == "agent":
@@ -345,6 +369,74 @@ def _conflicts(
                 )
                 if c not in out:
                     out.append(c)
+    out.extend(_overlaps(kit, installed))
+    return out
+
+
+def _flow_triggers(path: Path) -> list[str]:
+    try:
+        data = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return []
+    triggers = data.get("triggers") if isinstance(data, dict) else None
+    return [str(t.get("type")) for t in triggers or [] if isinstance(t, dict) and t.get("type")]
+
+
+def _overlaps(kit: m.Kit, installed: dict[str, Any]) -> list[Conflict]:
+    """Soft: another kit installed here does the same job under another name.
+    Two skills that produce the same named output (spec, plan, verdict) or two
+    flows started by the same trigger are one job twice; the install goes
+    ahead, the plan and the review say so. Judged from the other kit's manifest
+    at its recorded source; a kit whose source is gone is not judged."""
+    outputs: dict[str, str] = {}  # output name → my skill
+    triggers: dict[str, str] = {}  # trigger type → my flow
+    for c in kit.components:
+        if c.kind == "skill" and isinstance(c.fields.get("outputs"), dict):
+            for oname in c.fields["outputs"]:
+                outputs.setdefault(str(oname), c.name)
+        elif c.kind == "flow" and c.path:
+            for trigger in _flow_triggers(kit.root / str(c.path)):
+                triggers.setdefault(trigger, c.name)
+    if not outputs and not triggers:
+        return []
+    out: list[Conflict] = []
+    for other_name, entry in installed.items():
+        source = entry.get("source") if isinstance(entry, dict) else None
+        if other_name == kit.name or not isinstance(source, str) or not Path(source).is_dir():
+            continue
+        try:
+            other = m.load(Path(source))
+        except (m.ManifestError, OSError, ValueError):
+            continue
+        for c in other.components:
+            if c.kind == "skill" and isinstance(c.fields.get("outputs"), dict):
+                for oname in c.fields["outputs"]:
+                    mine = outputs.get(str(oname))
+                    if mine:
+                        out.append(
+                            Conflict(
+                                "",
+                                "overlap",
+                                f"skill {mine!r} and {other_name}'s {c.name!r} "
+                                f"both produce {oname!r}",
+                                ("keep both", "enable one"),
+                                f"{kit.name}/skill/{mine}",
+                            )
+                        )
+            elif c.kind == "flow" and c.path:
+                for trigger in _flow_triggers(other.root / str(c.path)):
+                    mine = triggers.get(trigger)
+                    if mine:
+                        out.append(
+                            Conflict(
+                                "",
+                                "overlap",
+                                f"flow {mine!r} and {other_name}'s {c.name!r} "
+                                f"both start on {trigger}",
+                                ("keep both", "enable one"),
+                                f"{kit.name}/flow/{mine}",
+                            )
+                        )
     return out
 
 

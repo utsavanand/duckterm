@@ -208,14 +208,14 @@ it.each([["lite", LITE], ["code", CODE], ["full", FULL.filter(feature => feature
 });
 
 
-it("Skill kits appears in Settings only when the instance has the development flag", async () => {
+it("MetaHarnesses appears in Settings only when the instance has the development flag", async () => {
   await mount(FULL);
   fireEvent.click(screen.getByRole("button", { name: /^Settings/ }));
-  expect(screen.queryByRole("button", { name: /^Skill kits/ })).toBeNull();
+  expect(screen.queryByRole("button", { name: /^MetaHarnesses/ })).toBeNull();
   cleanup();
   await mount([...FULL, ...DEVELOPMENT]);
   fireEvent.click(screen.getByRole("button", { name: /^Settings/ }));
-  expect(screen.getAllByRole("button", { name: /^Skill kits/ })).toHaveLength(1);
+  expect(screen.getAllByRole("button", { name: /^MetaHarnesses/ })).toHaveLength(1);
 });
 
 it("Autopilot sits above Oracle in the sidebar only with its flag, and opens its page", async () => {
@@ -238,4 +238,21 @@ it("without the autopilot flag there is no Autopilot row and no autopilot reques
   await mount(FULL);
   expect(screen.queryByRole("button", { name: "Autopilot" })).toBeNull();
   expect(probe.requests.filter(path => path.startsWith("/api/autopilot"))).toEqual([]);
+});
+
+it("Support sits below Oracle and Autopilot only with its flag, and opens its chat", async () => {
+  await mount([...FULL, "autopilot", "support"]);
+  const rows = ["Autopilot", "Oracle main chat", "Support"].map(name => screen.getByRole("button", { name }));
+  expect(rows[0].compareDocumentPosition(rows[1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(rows[1].compareDocumentPosition(rows[2]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  await act(async () => { fireEvent.click(rows[2]); });
+  expect(rows[2]).toHaveAttribute("aria-pressed", "true");
+  expect(rows[1]).toHaveAttribute("aria-pressed", "false");
+  expect(await screen.findByRole("textbox", { name: "Message Support" })).toBeVisible();
+  expect(probe.requests).toContain("/support/chat");
+  cleanup();
+  probe.requests = [];
+  await mount(FULL);
+  expect(screen.queryByRole("button", { name: "Support" })).toBeNull();
+  expect(probe.requests.filter(path => path.startsWith("/support"))).toEqual([]);
 });
