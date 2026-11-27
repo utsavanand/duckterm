@@ -1,3 +1,21 @@
+## 2026-11-27 — Session-list refreshes carried megabytes of unused restart context
+
+A live Python stack caught HistoryStore.sessions sorting full SQLite rows on
+the event loop. A bounded size-only query found 24.8 MB of restart_json across
+74 sessions, including a 13 MB entry. The dashboard never reads that field,
+but every session-list response serialized and transferred it. Sort row
+references after retrieval so SQLite does not spill the large payloads into a
+temporary sort, and remove restart_json only after internal identity/context
+checks have finished. Restart storage and internal readers keep the full data.
+
+Check bytes per row as well as row count on frequently polled endpoints. Moving
+work to a thread would not remove redundant serialization or browser parsing.
+This fixes a measured allocation/work amplifier, not every reported stall.
+
+Browser fixtures also consumed restart_json to post correctly bound fake-agent
+events. Keep that setup on their isolated database (read-only, test=1), rather
+than retaining a large production response solely for a test helper.
+
 ## 2026-11-27 — The fleet chat had summaries all along; it just didn't say what they were
 
 A spec said the fleet chat ignored checkpoint summaries because it read the
