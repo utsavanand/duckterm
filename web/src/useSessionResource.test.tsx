@@ -84,3 +84,71 @@ it("retains unavailable metadata on remount and detects status-only changes and 
   await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
   expect(reopened.result.current.items).toEqual(["recovered"]);
 });
+
+// QA reproduced both header and body stalls surviving a tab remount forever.
+for (const phase of ["headers", "body"] as const) it(`expires stalled ${phase}, exposes retry state and recovers after remount`, async () => {
+  const key = nextKey();
+  const never = new Promise<never>(() => {});
+  vi.mocked(routedFetch).mockResolvedValueOnce(response(["cached"]));
+  const first = renderHook(() => useSessionResource<string>(key, "messages", true)); await flush();
+  vi.mocked(routedFetch).mockImplementationOnce(() => phase === "headers" ? never : Promise.resolve(Object.assign(new Response(), { json: () => never }))).mockResolvedValue(response(["recovered"]));
+  await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+  const signal = vi.mocked(routedFetch).mock.calls[1][1]?.signal;
+  await act(async () => { await vi.advanceTimersByTimeAsync(30000); });
+  expect(signal?.aborted).toBe(true);
+  expect(first.result.current).toMatchObject({ items: ["cached"], error: true });
+  first.unmount();
+  const reopened = renderHook(() => useSessionResource<string>(key, "messages", true)); await flush();
+  expect(reopened.result.current).toMatchObject({ items: ["recovered"], error: false });
+  expect(routedFetch).toHaveBeenCalledTimes(3);
+});
+
+it("automatically retries an initial hung read without requiring a remount", async () => {
+  vi.mocked(routedFetch).mockImplementationOnce(() => new Promise(() => {})).mockResolvedValue(response(["recovered"]));
+  const key = nextKey();
+  const view = renderHook(() => useSessionResource<string>(key, "messages", true));
+  await act(async () => { await vi.advanceTimersByTimeAsync(30000); });
+  expect(view.result.current).toMatchObject({ items: undefined, error: true });
+  await act(async () => { await vi.advanceTimersByTimeAsync(3000); });
+  expect(view.result.current).toMatchObject({ items: ["recovered"], error: false });
+  expect(routedFetch).toHaveBeenCalledTimes(2);
+});
+
+for (const late of ["headers", "body", "denied"] as const) it(`ignores expired remote ${late} completion after newer data arrives`, async () => {
+  const key = sessionRef("remote", nextKey());
+  let finish!: (value: Response) => void;
+  let finishBody!: (value: unknown) => void;
+  const stalled = new Promise<Response>(resolve => { finish = resolve; });
+  const body = new Promise(resolve => { finishBody = resolve; });
+  vi.mocked(routedFetch).mockImplementationOnce(() => late === "body" ? Promise.resolve(Object.assign(new Response(), { json: () => body })) : stalled).mockResolvedValue(response(["new"]));
+  const view = renderHook(() => useSessionResource<string>(key, "messages", true));
+  await act(async () => { await vi.advanceTimersByTimeAsync(33000); });
+  expect(view.result.current.items).toEqual(["new"]);
+  await act(async () => {
+    if (late === "body") finishBody({ messages: ["expired"] });
+    else finish(late === "denied" ? { ok: false, status: 403 } as Response : response(["expired"]));
+  });
+  view.unmount();
+  vi.mocked(routedFetch).mockRejectedValue(new Error("offline"));
+  const reopened = renderHook(() => useSessionResource<string>(key, "messages", true)); await flush();
+  expect(reopened.result.current).toMatchObject({ items: ["new"], error: true });
+});
+
+for (const pause of ["inactive", "hidden"] as const) it(`does not retry expired reads while ${pause}`, async () => {
+  const key = nextKey();
+  vi.mocked(routedFetch).mockImplementationOnce(() => new Promise(() => {})).mockResolvedValue(response(["returned"]));
+  const view = renderHook(({ active }) => useSessionResource<string>(key, "messages", active), { initialProps: { active: true } });
+  if (pause === "inactive") view.rerender({ active: false });
+  else {
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
+  }
+  await act(async () => { await vi.advanceTimersByTimeAsync(60000); });
+  expect(routedFetch).toHaveBeenCalledTimes(1);
+  if (pause === "inactive") view.rerender({ active: true });
+  else {
+    vi.spyOn(document, "visibilityState", "get").mockReturnValue("visible");
+    act(() => document.dispatchEvent(new Event("visibilitychange")));
+  }
+  await flush(); expect(view.result.current.items).toEqual(["returned"]);
+});

@@ -8,6 +8,8 @@ interface Snapshot { data: unknown[]; transcript?: TranscriptStatus; signature: 
 const snapshots = new Map<string, Snapshot>();
 const pending = new Map<string, Promise<Snapshot>>();
 class UnavailableResource extends Error {}
+// Bound headers AND body decoding; remote bridges may ignore AbortSignal.
+const READ_TIMEOUT_MS = 30_000;
 const MAX_BYTES = 32 * 1024 * 1024;
 let retainedBytes = 0;
 function forget(path: string) {
@@ -23,10 +25,18 @@ function remember(path: string, snapshot: Snapshot) {
 function read(path: string, field: string): Promise<Snapshot> {
   const existing = pending.get(path);
   if (existing) return existing;
-  const request = (async () => {
-    const response = await routedFetch(path, { cache: "no-store" });
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout>;
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error("Session content request timed out"));
+      controller.abort();
+    }, READ_TIMEOUT_MS);
+  });
+  const load = (async () => {
+    const response = await routedFetch(path, { cache: "no-store", signal: controller.signal });
     if (response.ok === false) {
-      if (response.status === 404 || response.status === 401 || response.status === 403) { forget(path); throw new UnavailableResource(); }
+      if (response.status === 404 || response.status === 401 || response.status === 403) { throw new UnavailableResource(); }
       throw new Error("Could not load session content");
     }
     const body = await response.json();
@@ -43,9 +53,17 @@ function read(path: string, field: string): Promise<Snapshot> {
     const signature = JSON.stringify({ data, transcript });
     const previous = snapshots.get(path);
     const snapshot = previous?.signature === signature ? previous : { data, transcript, signature, bytes: signature.length * 4 };
-    remember(path, snapshot);
     return snapshot;
   })();
+  // Only the winning, still-owned read may mutate the shared cache. Late bridge
+  // replies (including access errors) must not overwrite or evict newer data.
+  const request = Promise.race([load, timeout]).then(snapshot => {
+    remember(path, snapshot);
+    return snapshot;
+  }).catch((cause: unknown) => {
+    if (cause instanceof UnavailableResource) forget(path);
+    throw cause;
+  }).finally(() => clearTimeout(timer));
   pending.set(path, request);
   void request.finally(() => { if (pending.get(path) === request) pending.delete(path); }).catch(() => undefined);
   return request;
