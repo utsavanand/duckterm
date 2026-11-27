@@ -13,6 +13,7 @@ import { ApproveDialog } from "./review/ApproveDialog";
 import { ReviewWorkspace } from "./review/ReviewWorkspace";
 import { useRelay } from "./relay";
 import { ago, compact, TowerAgent, teams } from "./tower";
+import { SessionState } from "./types";
 import { Layout, requestLayout, WidgetContent, WidgetInstance, WidgetType } from "./Widgets";
 import { WidgetStreams } from "./widgetStreams";
 import "./oracleWidgets.css";
@@ -133,9 +134,14 @@ function AutopilotTile() {
   </button>;
 }
 
+const LIVE = new Set<SessionState>(["idle", "busy", "waiting", "unknown"]);
+
 function ChatWidget() {
   const { agents, onOpenTerminal } = useContext(HomeActions);
-  const sessions = useMemo(() => agents.map(a => ({ key: a.key, name: a.label, folder: a.group, state: a.shownState })), [agents]);
+  // Only sessions that can still answer: a message to an ended session would
+  // wait under the question forever.
+  const sessions = useMemo(() => agents.filter(a => LIVE.has(a.shownState))
+    .map(a => ({ key: a.key, name: a.label, folder: a.group, state: a.shownState })), [agents]);
   return <HomeChat sessions={sessions} onOpenTerminal={onOpenTerminal} />;
 }
 

@@ -1,3 +1,10 @@
+## 2026-11-26 — A waiting reply needs a recipient that can still answer
+
+Home's @ offered every session, so a question to an ended one showed "Waiting"
+forever, and each saved answer was copied whole (up to 256 KB, 200 kept). When
+the UI waits on someone, list only who can answer, have the server refuse the
+rest, and bound what is copied into a history by bytes, not just by count.
+
 ## 2026-11-26 — Verify hardening advice against the pinned dependency
 
 Serve static assets with nosniff alongside correct MIME types, including PDF
