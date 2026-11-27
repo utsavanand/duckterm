@@ -12,6 +12,7 @@ import select
 import ssl
 import subprocess
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -42,8 +43,11 @@ def isolated_runtime(monkeypatch):
     monkeypatch.setattr(network, "active_candidates", lambda: list(candidates))
     monkeypatch.setattr(network, "local_hostname", lambda: "test-mac.local")
     monkeypatch.setattr(pairing.instance, "port", lambda: 43210)
-    monkeypatch.setattr(pairing.time, "time", clock.time)
-    monkeypatch.setattr(pairing.time, "sleep", clock.sleep)
+    # Replace the modules' reference, not the shared time module: any other thread
+    # in the worker that sleeps would otherwise advance this fake clock.
+    fake_time = SimpleNamespace(time=clock.time, sleep=clock.sleep, monotonic=time.monotonic)
+    monkeypatch.setattr(pairing, "time", fake_time)
+    monkeypatch.setattr(grants_module, "time", fake_time)
 
     def no_real_network(*args, **kwargs):
         raise AssertionError("Pairing tests must not inspect or connect to the owner network")

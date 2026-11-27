@@ -326,7 +326,7 @@ final class DuckyPairingTests: XCTestCase {
         printf '%s' "$$" > "$2"
         printf '%s\n' '{"version":1,"state":"invitation","link":"ducky://pair?invite=PREVIEW_ONLY","expires_at":1100}'
         IFS= read -r command
-        printf '%s' "$command" > "$1"
+        printf '%s' "$command" > "$1.partial" && mv "$1.partial" "$1"
         printf '%s\n' '{"version":1,"state":"cancelled"}'
         """#
         let transport = DuckyPairingProcess(command: {
@@ -338,6 +338,8 @@ final class DuckyPairingTests: XCTestCase {
         try await transport.start()
         await settle { events == [.invitation(self.invite)] }
         transport.cancel()
+        // The fixture renames the marker into place: a plain `>` creates it empty
+        // first, and the existence check could read it before the command lands.
         await settle { FileManager.default.fileExists(atPath: marker.path) }
         let data = try Data(contentsOf: marker)
         let command = try JSONSerialization.jsonObject(with: data) as? [String: String]
