@@ -315,3 +315,67 @@ test("AGENTS.md suggests rules from observed corrections", async ({ page }) => {
   await apiPost(`/sessions/${key}/delete`);
   rmSync(dir, { recursive: true, force: true });
 });
+
+// New ▾ › New team: the team templates of every added MetaHarness, and the
+// workspace one becomes, through the same request as the card's Create team.
+test("New team lists an added MetaHarness's team and creates the workspace with its role cards", async ({
+  page,
+}, testInfo) => {
+  const kit = mkdtempSync(join(tmpdir(), "rd-e2e-team-kit-"));
+  const stamp = Date.now();
+  mkdirSync(join(kit, "skills", "raise-pr"), { recursive: true });
+  mkdirSync(join(kit, "teams"), { recursive: true });
+  writeFileSync(
+    join(kit, "skills", "raise-pr", "SKILL.md"),
+    "---\nname: raise-pr\ndescription: Opens the pull request.\n---\n",
+  );
+  writeFileSync(
+    join(kit, "teams", "squad.toml"),
+    [
+      'name = "squad"',
+      'description = "A builder and a reviewer"',
+      "",
+      "[roles.builder]",
+      'card = { purpose = "Builds what was asked" }',
+      'skills = ["raise-pr"]',
+      "",
+      "[roles.reviewer]",
+      'card = { purpose = "Reviews every diff" }',
+      "skills = []",
+      "",
+    ].join("\n"),
+  );
+  writeFileSync(
+    join(kit, "metaharness.toml"),
+    [
+      "manifest_version = 1",
+      `name = "teamkit-${stamp}"`,
+      'description = "a team for the e2e test"',
+      'version = "0.1.0"',
+      'teams = ["teams/squad.toml"]',
+      "",
+      "[[components]]",
+      'kind = "skill"',
+      'path = "skills/raise-pr"',
+      "",
+    ].join("\n"),
+  );
+  const registered = await apiPost("/kits/register", { kit });
+  expect(registered.status).toBe(200);
+
+  await page.goto("/");
+  await page.getByRole("button", { name: "New", exact: true }).click();
+  await page.getByRole("button", { name: "New team", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "New team" })).toBeVisible();
+  await page.getByLabel(`squad from teamkit-${stamp}`).check();
+  await expect(page.getByText("builder · reviewer")).toBeVisible();
+  const name = `Squad ${stamp}`;
+  await page.getByLabel("Workspace name").fill(name);
+  await page.screenshot({ path: testInfo.outputPath("new-team-dialog.png") });
+  await page.getByRole("button", { name: "Create team", exact: true }).click();
+
+  await expect(page.getByRole("region", { name: "Team roles" })).toContainText("builder");
+  await expect(page.getByRole("region", { name: "Team roles" })).toContainText("Reviews every diff");
+  await expect(page.getByRole("heading", { name })).toBeVisible();
+  await page.screenshot({ path: testInfo.outputPath("team-workspace.png") });
+});
