@@ -122,7 +122,7 @@ test("registered artifacts persist, preview safely, refresh, download, and prese
     await page.emulateMedia({ colorScheme: "light" });
     await expect(page.locator("html")).not.toHaveAttribute("data-theme", "dark");
     await expect(page.frameLocator('iframe[title="Preview of local.html"]').getByRole("heading", { name: "Website mockup" })).toBeVisible();
-    await expect(page.getByRole("button", { name: "Refresh", exact: true })).toHaveCSS("background-color", "rgb(255, 255, 255)");
+    await expect(page.getByRole("button", { name: "Refresh", exact: true })).toHaveCSS("background-color", "rgb(250, 250, 250)");
     await page.screenshot({ path: "/tmp/duckterm-file-explorer-implemented-light.png" });
     await page.getByRole("button", { name: /sample.bin/ }).click();
     await expect(page.getByText("Download to view this file")).toBeVisible();

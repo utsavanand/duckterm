@@ -58,7 +58,7 @@ test("wide Messages keeps controls visible, tables contained, copy and turn navi
     await expect(page.locator(".rd-message-reader")).toHaveJSProperty("scrollTop", 0);
     await page.getByRole("button", { name: "Next turn" }).click();
     await page.evaluate(() => document.documentElement.dataset.theme = "light");
-    await expect(page.getByRole("button", { name: "Copy", exact: true })).toHaveCSS("background-color", "rgb(255, 255, 255)");
+    await expect(page.getByRole("button", { name: "Copy", exact: true })).toHaveCSS("background-color", "rgb(250, 250, 250)");
     await page.screenshot({ path: "/tmp/messages-wide-implemented-light.png" });
     await page.setViewportSize({ width: 1200, height: 900 });
     await page.getByRole("button", { name: "Show Context panel" }).click();

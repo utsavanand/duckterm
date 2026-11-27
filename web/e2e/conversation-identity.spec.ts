@@ -108,10 +108,13 @@ test("owner reviews a real project transcript, stale choices fail, attachment ne
     await expect((await sessionMenu(page)).getByRole("menuitem", { name: "Resume", exact: true })).toBeEnabled();
     const unchanged = readFileSync(join(root, "alpha.jsonl"), "utf8");
     await expect(card.getByRole("button", { name: "Undo attachment", exact: true })).toBeVisible();
-    await expect.poll(() => card.getByRole("button", { name: "Undo attachment" }).evaluate(node => getComputedStyle(node).backgroundColor)).toBe("rgb(255, 255, 255)");
+    // Ghost controls use the panel surface; the foreground must follow its theme.
+    await expect(card.getByRole("button", { name: "Undo attachment" })).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    await expect(card.getByRole("button", { name: "Undo attachment" })).toHaveCSS("color", "rgb(23, 23, 23)");
     await page.screenshot({ path: "/tmp/conversation-undo-implemented-light.png" });
     await page.evaluate(() => document.documentElement.dataset.theme = "dark");
-    await expect.poll(() => card.getByRole("button", { name: "Undo attachment" }).evaluate(node => getComputedStyle(node).backgroundColor)).toBe("rgb(21, 24, 31)");
+    await expect(card.getByRole("button", { name: "Undo attachment" })).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+    await expect(card.getByRole("button", { name: "Undo attachment" })).toHaveCSS("color", "rgb(236, 238, 237)");
     await page.screenshot({ path: "/tmp/conversation-undo-implemented-dark.png" });
     const sidebarResume = (await sessionMenu(page)).getByRole("menuitem", { name: "Resume", exact: true });
     await sessionMenu(page); await expect(sidebarResume).toBeEnabled();
