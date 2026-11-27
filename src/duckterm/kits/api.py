@@ -241,7 +241,16 @@ def details(kit: m.Kit) -> dict[str, list[dict[str, Any]]]:
                     for st in steps
                     if isinstance(st, dict) and st.get("id")
                 ],
-                trigger=None,
+                trigger=(
+                    ", ".join(
+                        str(tr.get("type"))
+                        for tr in (flow.get("triggers") or [])
+                        if isinstance(tr, dict) and tr.get("type")
+                    )
+                    or None
+                    if isinstance(flow, dict)
+                    else None
+                ),
             )
         elif c.kind == "settings":
             try:

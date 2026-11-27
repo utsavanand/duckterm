@@ -165,3 +165,37 @@ def test_the_recipients_answer_comes_back_into_the_chat_and_outlives_its_mail(me
         history._conn.execute("DELETE FROM session_questions")
     [kept] = dispatch(server, "GET", "/oracle/chat", owner)[1]["messages"]
     assert kept["reply"]["answer"] == "Rebased, CI green."
+
+
+def test_a_long_answer_is_saved_cut_short(messaging) -> None:
+    # #501 security review: 200 saved answers of up to 256 KB each.
+    from tests.runtime.test_session_api import call, token_for
+
+    from duckterm.core import oracle
+
+    server, owner, history = messaging
+    body = {"text": "full log?", "mode": "inbox", "oracle_chat": "@product-manager full log?"}
+    sent = post(server, owner, "/sessions/pm/message", body)[1]
+    long = "x" * 100_000
+    path = f"/questions/{sent['message_id']}/answer"
+    call(history, token_for(history, "pm"), "POST", path, {"text": long})
+    [saved] = dispatch(server, "GET", "/oracle/chat", owner)[1]["messages"]
+    assert saved["reply"]["answer"] == long[: oracle.REPLY_LIMIT] + oracle.REPLY_CUT
+    # Cut once: the next read finds it settled and leaves it alone.
+    [again] = dispatch(server, "GET", "/oracle/chat", owner)[1]["messages"]
+    assert again["reply"] == saved["reply"]
+
+
+@pytest.mark.parametrize("state", ["terminated", "stopped", "interrupted", "archived", "merged"])
+def test_home_chat_refuses_a_session_that_has_ended(messaging, state) -> None:
+    server, owner, history = messaging
+    with history._conn:
+        history._conn.execute("UPDATE sessions SET state = ? WHERE session_key = 'pm'", (state,))
+    body = {"text": "status?", "mode": "inbox", "oracle_chat": "@product-manager status?"}
+    status, reply = post(server, owner, "/sessions/pm/message", body)
+    assert (status, reply) == (409, {"error": "product-manager has ended. Nothing was sent."})
+    assert mail(history) == []
+    assert dispatch(server, "GET", "/oracle/chat", owner)[1]["messages"] == []
+    # A plain inbox message, not from Home's chat, is unchanged.
+    status, sent = post(server, owner, "/sessions/pm/message", {"text": "fyi", "mode": "inbox"})
+    assert status == 200 and sent["delivered"] == "inbox"

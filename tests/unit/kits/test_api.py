@@ -9,7 +9,7 @@ from pathlib import Path
 import pytest
 from test_skill_kits import SAMPLE
 
-from duckterm.kits import api, runner
+from duckterm.kits import api, manifest, runner
 
 
 def _project(tmp_path):
@@ -740,3 +740,20 @@ def test_create_team_from_an_added_kit_needs_no_install(tmp_path, monkeypatch):
     with pytest.raises(api.KitApiError) as refused:
         api.create_team({"kit": "sample-kit", "team": "feature-squad", "name": "other"})
     assert refused.value.status == 400
+
+
+def test_inventory_names_the_triggers_a_flow_declares():
+    """The MetaHarness page's Trigger column read a field that was always None;
+    it now carries the flow's declared trigger types, and None for a flow a
+    person starts."""
+    kit = (
+        Path(__file__).resolve().parents[3]
+        / "src"
+        / "duckterm"
+        / "autopilot"
+        / "kits"
+        / "autopilot"
+    )
+    flows = {f["name"]: f for f in api.details(manifest.load(kit))["flow"]}
+    assert flows["issue-to-merge"]["trigger"] == "github-issue, jira-issue, slack-message"
+    assert flows["pr-review"]["trigger"] is None

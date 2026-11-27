@@ -2565,6 +2565,8 @@ class Server:
         self, writer: asyncio.StreamWriter, session_key: str, req: dict[str, Any]
     ) -> None:
         """Deliver explicit owner feedback on exactly the saved artifact revision."""
+        from duckterm.feedback_context import pdf_page_context
+
         quote, note = req.get("quote", ""), req.get("note")
         if not isinstance(quote, str) or not isinstance(note, str) or not note.strip():
             await _write_json(
@@ -2578,7 +2580,8 @@ class Server:
             if not isinstance(artifact_id, str):
                 raise ValueError("artifact_id must be text")
             artifact = self.history.artifacts.get(session_key, artifact_id)
-        except ArtifactError as exc:
+            page_context = pdf_page_context(req, artifact["media_type"])
+        except (ArtifactError, APIError) as exc:
             await _write_json(writer, exc.status, {"error": str(exc)})
             return
         except ValueError as exc:
@@ -2607,6 +2610,7 @@ class Server:
         # JSON escapes newlines and terminal control bytes in every field. A
         # quoted artifact must never become extra keystrokes or extra submits.
         context = {
+            **page_context,
             "artifact": artifact["title"],
             "path": artifact["source_path"],
             "artifact_id": artifact["id"],
@@ -5333,6 +5337,16 @@ class Server:
             if not isinstance(priority, bool):
                 await _write_json(writer, 400, {"error": "priority must be true or false"})
                 return
+            raw_asked = req.get("oracle_chat")
+            asked = raw_asked.strip() if isinstance(raw_asked, str) else ""
+            chat = asked != "" and self.edition.includes("oracle_messages")
+            row = self.history.session(session_key) or {}
+            name = str(row.get("name") or session_key)
+            if chat and row.get("state") in _ENDED_STATES:
+                # Home's chat waits under the question for the answer, and an
+                # ended session never gives one.
+                await _write_json(writer, 409, {"error": f"{name} has ended. Nothing was sent."})
+                return
             try:
                 message_id = self.history.session_api.owner_message(
                     session_key,
@@ -5347,22 +5361,16 @@ class Server:
             if priority:
                 self._oracle_soon()  # an idle agent shouldn't wait for the next pass
             reply: dict[str, Any] = {"delivered": "inbox", "message_id": message_id}
-            asked = req.get("oracle_chat")
-            if (
-                isinstance(asked, str)
-                and asked.strip()
-                and self.edition.includes("oracle_messages")
-            ):
+            if chat:
                 # Sent from Ask Oracle: keep it in the chat history like a
                 # plain-language send, so it survives a reload.
-                row = self.history.session(session_key) or {}
                 reply["exchange"] = oracle.append_chat(
                     paths.home() / "oracle-chat.json",
-                    asked.strip()[:8000],
-                    _sent_line(str(row.get("name") or session_key), str(req.get("text"))),
+                    asked[:8000],
+                    _sent_line(name, str(req.get("text"))),
                     int(time.time() * 1000),
                     key=message_id,
-                    to=str(row.get("name") or session_key),
+                    to=name,
                 )
             await _write_json(writer, 200, reply)
             return
@@ -6627,8 +6635,13 @@ class Server:
             update = await self.progress_coordinator.refresh_result(
                 session_key, captured, on_progress=on_progress
             )
-        except APIError:
-            update = SummaryUpdate.failed("source_unavailable")
+        except APIError as exc:
+            update = SummaryUpdate.failed(
+                "source_changed" if exc.status == 409 else "source_unavailable",
+                diagnostic=(
+                    "freeze:memory_conflict" if exc.status == 409 else "freeze:memory_unavailable"
+                ),
+            )
         except Exception as exc:
             # Retain history and a fixed failure code, never raw provider output.
             print(
@@ -7683,6 +7696,10 @@ class Server:
             return
         self._set_lifecycle(key, "archived")
         self.approvals.drop_session(key)
+
+
+# A session in one of these states will not read its inbox again.
+_ENDED_STATES = {"terminated", "stopped", "interrupted", "archived", "merged"}
 
 
 def _sent_line(name: str, text: str) -> str:

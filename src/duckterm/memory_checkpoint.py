@@ -96,6 +96,11 @@ async def freeze(
         return captured
     sources = []
     for source in captured["memory_sources"]:
+        if source.get("retained_fallback"):
+            # The live conversation could not be read, so memory substituted an
+            # older saved copy. That is fine for search, but a checkpoint of it
+            # would present old work as current.
+            raise APIError(409, "Conversation changed while capturing checkpoint")
         if source["kind"] == "conversation":
             saved = await asyncio.to_thread(memory_sources.read_native, key, source, retain=True)
             if saved["version"] != source["version"]:

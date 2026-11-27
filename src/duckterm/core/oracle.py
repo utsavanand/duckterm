@@ -190,6 +190,10 @@ def append_chat(
 
 # A reply in one of these states will not change again.
 SETTLED = {"answered", "declined", "expired", "cancelled"}
+# An answer can be 256 KB and the history keeps CHAT_LIMIT exchanges, so a
+# saved answer is cut here; the whole answer stays in the session's inbox.
+REPLY_LIMIT = 16_000
+REPLY_CUT = "\n\n[Cut short. The whole answer is in the session's inbox.]"
 
 
 def refresh_replies(
@@ -206,6 +210,9 @@ def refresh_replies(
         if not isinstance(key, str) or (isinstance(reply, dict) and reply.get("status") in SETTLED):
             continue
         row = lookup(key)
+        answer = row.get("answer") if row is not None else None
+        if row is not None and isinstance(answer, str) and len(answer) > REPLY_LIMIT:
+            row = {**row, "answer": answer[:REPLY_LIMIT] + REPLY_CUT}
         if row is not None and row != reply:
             exchange["reply"] = row
             changed = True

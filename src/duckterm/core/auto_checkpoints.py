@@ -1,7 +1,9 @@
 """Automatic checkpoints (owner, 2026-11-15).
 
 An agent is due after 50 new messages, or after 15 quiet minutes with at least
-one new message, counted since its last checkpoint. At most two run at once,
+one new message, counted since its last checkpoint. The 50-message trigger waits
+for a pause (a turn end, or a quiet minute): mid-turn, the conversation file
+changes while it is copied and the checkpoint fails. At most two run at once,
 the agent with the most new messages first. There is no daily cap. Agents idle
 for over 7 days are not caught up until they become active again. A failed
 checkpoint is still a checkpoint row, so it is retried only after new messages.
@@ -17,9 +19,11 @@ import time
 from typing import Any
 
 from duckterm import checkpoint_settings, memory_checkpoint
+from duckterm.core.session_api import APIError
 
 NEW_MESSAGES = 50
 QUIET_MS = 15 * 60 * 1000
+SETTLED_MS = 60 * 1000
 ACTIVE_MS = 7 * 24 * 60 * 60 * 1000
 MAX_RUNNING = 2
 TICK_SECONDS = 30
@@ -44,8 +48,15 @@ def due(conn: Any, now: int, busy: set[str]) -> list[str]:
             f"AND event_type IN ({','.join('?' * len(MESSAGE_EVENTS))})",
             (key, last or started or 0, *MESSAGE_EVENTS),
         ).fetchone()
-        if count >= NEW_MESSAGES or (count and now - latest >= QUIET_MS):
+        if count and now - latest >= QUIET_MS:
             ready.append((count, key))
+        elif count >= NEW_MESSAGES:
+            last_type, last_ts = conn.execute(
+                "SELECT event_type, ts FROM events WHERE session_key=? ORDER BY ts DESC LIMIT 1",
+                (key,),
+            ).fetchone()
+            if last_type == "Stop" or now - last_ts >= SETTLED_MS:
+                ready.append((count, key))
     return [key for _, key in sorted(ready, key=lambda pair: -pair[0])]
 
 
@@ -82,6 +93,9 @@ class AutoCheckpoints:
             return
         try:
             await self.server._create_checkpoint(key, row, memory_checkpoint.AUTOMATIC_LABEL)
+        except APIError as exc:
+            # Our own fixed messages; they say which step refused.
+            print(f"[duckterm] automatic checkpoint failed: {exc}", file=sys.stderr)
         except Exception as exc:  # noqa: BLE001 — background boundary; the next trigger retries
             print(f"[duckterm] automatic checkpoint failed: {type(exc).__name__}", file=sys.stderr)
 
