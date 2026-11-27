@@ -77,7 +77,10 @@ def _extract(events: list[Event]) -> dict[str, Any]:
 
 
 def _git_state(cwd: Path) -> dict[str, Any]:
-    if not (cwd / ".git").exists():
+    # A session can start in a subfolder; its repository is the nearest
+    # folder up the physical path that holds a .git.
+    root = next((p for p in [cwd.resolve(), *cwd.resolve().parents] if (p / ".git").exists()), None)
+    if root is None:
         return {"git": False, "path": str(cwd)}
 
     # A session reports cwd and can write its .git/config, so git runs through
@@ -87,14 +90,14 @@ def _git_state(cwd: Path) -> dict[str, Any]:
     # touched but unchanged is listed as dirty.
     def git(*args: str) -> str:
         try:
-            return review_git.run(cwd, *args, timeout=5).strip()
+            return review_git.run(root, *args, timeout=5).strip()
         except review_git.ReviewGitError:
             return ""
 
     # core.worktree or a gitdir file can point the repository at another
     # folder, such as $HOME, whose file names would land in the record.
     top = git("rev-parse", "--show-toplevel")
-    if not top or Path(top).resolve() != cwd.resolve():
+    if not top or Path(top).resolve() != root:
         return {"git": False, "path": str(cwd)}
     dirty = list(
         dict.fromkeys(
@@ -107,7 +110,7 @@ def _git_state(cwd: Path) -> dict[str, Any]:
     )
     return {
         "git": True,
-        "repo": cwd.name,
+        "repo": root.name,
         "branch": git("rev-parse", "--abbrev-ref", "HEAD"),
         "dirty_files": dirty[:MAX_DIRTY_FILES],
         "dirty_count": len(dirty),

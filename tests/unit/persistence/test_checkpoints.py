@@ -189,6 +189,37 @@ def test_a_repo_pointed_at_another_folder_records_none_of_its_files(
     assert "secret.txt" not in str(state)
 
 
+@pytest.mark.parametrize("linked", [False, True], ids=["checkout", "linked_worktree"])
+def test_a_session_in_a_subfolder_records_its_repository(
+    git_repo: Path, tmp_path: Path, linked: bool
+) -> None:
+    # From main-qa-2's #504 handoff: sessions often start below the root.
+    repo = git_repo
+    if linked:
+        repo = tmp_path / "linked"
+        _git(git_repo, "worktree", "add", "-q", "-b", "linked", str(repo))
+    nested = repo / "src/nested"
+    nested.mkdir(parents=True)
+    (nested / "tracked.txt").write_text("base\n")
+    _git(repo, "add", "src/nested/tracked.txt")
+    _git(repo, "commit", "-q", "-m", "nested")
+    (nested / "tracked.txt").write_text("changed\n")
+    (repo / "README.md").write_text("outside nested\n")
+    (nested / "staged.txt").write_text("staged\n")
+    _git(repo, "add", "src/nested/staged.txt")
+    (repo / "untracked.txt").write_text("u\n")
+    state = _git_state(nested)
+    assert state["git"] is True
+    assert state["repo"] == repo.name
+    assert state["branch"] == ("linked" if linked else "main")
+    assert sorted(state["dirty_files"]) == [
+        "README.md",
+        "src/nested/staged.txt",
+        "src/nested/tracked.txt",
+        "untracked.txt",
+    ]
+
+
 def test_dirty_files_are_capped_and_counted(git_repo: Path) -> None:
     for i in range(MAX_DIRTY_FILES + 5):
         (git_repo / f"new{i}.txt").write_text("n\n")

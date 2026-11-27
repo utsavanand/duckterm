@@ -1,3 +1,16 @@
+## 2026-11-26 — A security check written for the root broke the subfolder
+
+The #504 follow-up rejected a repository whose worktree is somewhere else by
+requiring git's top folder to equal the session folder. Sessions often start
+in a subfolder, and every one of those then recorded no git state. Our tests
+covered the attack and the repository root, but no subfolder. main-qa-2 caught
+it. The check now finds the nearest folder up the physical path that holds a
+`.git`, the same folder git itself would find, and requires the top folder to
+be that one. A worktree pointed somewhere else is still refused.
+
+When a check tightens what counts as valid input, test the ordinary inputs
+around the case it was written for, not just the case itself.
+
 ## 2026-11-26 — Sweep the option list, not just the reports
 
 Security's third pass on #496 found another program a repository can name:
