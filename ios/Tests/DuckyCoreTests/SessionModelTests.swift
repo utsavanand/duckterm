@@ -50,8 +50,10 @@ final class FakeTransport: DuckyTransport {
         if let claimError { throw claimError }
         return try pairStatus("pending")
     }
+    var statusError: Error?
     func pairingStatus() async throws -> PairStatus {
         statusReads += 1
+        if let statusError { throw statusError }
         return try pairStatus(status)
     }
     func snapshot(cursor: String?) async throws -> HostSnapshot {

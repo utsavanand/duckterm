@@ -204,4 +204,23 @@ final class AccountTests: XCTestCase {
         XCTAssertEqual(cloud.ticketsFor.count, 1)
         XCTAssertEqual(account.macs, [studio])
     }
+
+    func testADeniedPhoneAsksTheSameMacAgainWithANewCredential() async throws {
+        let (account, devices) = models()
+        try await signIn(account)
+        let refused = try XCTUnwrap(devices.host)
+        transports[0].statusError = DuckyError.unavailable(403)
+        await devices.refresh()
+        XCTAssertEqual(devices.phase, .denied)
+
+        await account.askAgain(name: "Utsav's iPhone")
+        XCTAssertEqual(cloud.ticketsFor, [studio.hostID, studio.hostID])
+        XCTAssertEqual(transports.count, 2)
+        XCTAssertEqual(devices.phase, .awaitingApproval)
+        let asked = try XCTUnwrap(devices.host)
+        XCTAssertEqual(asked.hostID, refused.hostID)
+        // The Mac revoked the old token, so reusing it could never be allowed.
+        XCTAssertNotEqual(asked.token, refused.token)
+        XCTAssertEqual(credentials.saved, asked)
+    }
 }

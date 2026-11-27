@@ -279,6 +279,17 @@ public final class AccountModel: ObservableObject {
         } catch { fail(error) }
     }
 
+    /// The Mac denied or removed this iPhone: drop the refused credential and ask the same
+    /// Mac again with a new one, so the owner sees a fresh request rather than the old device.
+    public func askAgain(name: String) async {
+        guard let refused = devices.host, refused.accountLogin != nil else { return }
+        devices.forget()
+        guard devices.host == nil else { return }
+        if macs == nil { await loadMacs(name: name) }
+        guard let mac = macs?.first(where: { $0.hostID == refused.hostID }) else { return }
+        await ask(mac, name: name)
+    }
+
     /// Signs this iPhone out of the account. A Mac it already pairs with keeps working until removed there.
     public func signOut() async {
         guard let session else { return }

@@ -143,6 +143,37 @@ struct AccountWaitingView: View {
     }
 }
 
+/// The Mac denied or removed this iPhone. Asking again sends a new request with a new code;
+/// an invitation link is only for phones not signed in.
+struct AccountDeniedView: View {
+    @ObservedObject var model: SessionModel
+    @ObservedObject var account: AccountModel
+    let host: PairedHost
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 20) {
+            Text(host.macName ?? "Your Mac").font(.caption.bold()).tracking(1).foregroundStyle(Palette.muted)
+            Text("Not allowed on this Mac").font(.title2.bold())
+            Text("Your Mac denied this iPhone, or removed it. Ask again to send a new request, then click Allow on your Mac.")
+                .foregroundStyle(Palette.muted)
+            Button { Task { await account.askAgain(name: UIDevice.current.name) } } label: {
+                HStack {
+                    Text(account.askingHostID == nil ? "Ask again" : "Asking…").bold()
+                    Spacer()
+                    if account.askingHostID != nil { ProgressView().tint(Palette.background) }
+                }.padding(14).background(Palette.green).foregroundStyle(Palette.background)
+            }.buttonStyle(.plain).disabled(account.askingHostID != nil)
+                .accessibilityIdentifier("account-ask-again")
+            if let error = account.error { Text(error).font(.footnote).foregroundStyle(Palette.amber) }
+            Button { model.forget() } label: {
+                Text("Choose another Mac").frame(maxWidth: .infinity).padding(12)
+                    .overlay(Rectangle().stroke(Palette.border, lineWidth: 1))
+            }.buttonStyle(.plain).foregroundStyle(Palette.muted)
+                .accessibilityIdentifier("account-choose-mac")
+        }.padding(.top, 24)
+    }
+}
+
 /// Settings: who this iPhone is signed in as, and signing out.
 struct AccountSettingsSection: View {
     @ObservedObject var account: AccountModel

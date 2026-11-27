@@ -173,6 +173,8 @@ struct ContentView: View {
             }
         } else if model.phase == .awaitingApproval, let host = model.host, host.accountLogin != nil {
             AccountWaitingView(model: model, host: host)
+        } else if model.phase == .denied, let host = model.host, host.accountLogin != nil {
+            AccountDeniedView(model: model, account: account, host: host)
         } else if model.phase == .awaitingApproval {
             pairingView
         } else if model.phase == .denied {
