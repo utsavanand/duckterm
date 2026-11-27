@@ -66,10 +66,20 @@ public struct PairedHost: Codable, Equatable {
     public let certificateSHA256: String
     public let token: String
     public let tlsName: String?
+    /// Set when the Mac was found through a signed-in account rather than an invitation.
+    public let macName: String?
+    public let accountLogin: String?
     public init(invitation: Invitation, token: String) {
         url = invitation.url; hostID = invitation.hostID
         certificateSHA256 = invitation.certificateSHA256; self.token = token; tlsName = invitation.tlsName
+        macName = nil; accountLogin = nil
     }
+    public init(mac: AccountMac, token: String, login: String) {
+        url = mac.url; hostID = mac.hostID; certificateSHA256 = mac.certificateSHA256
+        self.token = token; tlsName = mac.tlsName; macName = mac.name; accountLogin = login
+    }
+    /// The four digits the owner compares with the Mac's approval window.
+    public var matchingCode: String { AccountPairing.matchingCode(token: token, certificateSHA256: certificateSHA256) }
 }
 public struct PairStatus: Decodable {
     public let id: String

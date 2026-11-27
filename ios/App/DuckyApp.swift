@@ -6,34 +6,48 @@ import UIKit
 @MainActor
 struct DuckyApp: App {
     @StateObject private var model: SessionModel
+    @StateObject private var account: AccountModel
     @Environment(\.scenePhase) private var scene
 
     init() {
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--ducky-status-ui-fixture") {
-            _model = StateObject(wrappedValue: StatusUIFixture.model())
+            let fixture = StatusUIFixture.model()
+            _model = StateObject(wrappedValue: fixture)
+            _account = StateObject(wrappedValue: AccountModel(cloudURL: nil, devices: fixture))
             return
         }
         if ProcessInfo.processInfo.arguments.contains("--ducky-map-ui-fixture") || ProcessInfo.processInfo.arguments.contains("--ducky-analysis-ui-fixture") {
-            _model = StateObject(wrappedValue: MapUIFixture.model())
+            let fixture = MapUIFixture.model()
+            _model = StateObject(wrappedValue: fixture)
+            _account = StateObject(wrappedValue: AccountModel(cloudURL: nil, devices: fixture))
             return
         }
         if ProcessInfo.processInfo.arguments.contains("--ducky-chat-ui-fixture") {
-            _model = StateObject(wrappedValue: ChatUIFixture.model())
+            let fixture = ChatUIFixture.model()
+            _model = StateObject(wrappedValue: fixture)
+            _account = StateObject(wrappedValue: AccountModel(cloudURL: nil, devices: fixture))
             return
         }
         #endif
-        _model = StateObject(wrappedValue: SessionModel())
+        let devices = SessionModel()
+        _model = StateObject(wrappedValue: devices)
+        // Empty unless the build sets DUCKY_CLOUD_URL; without it Ducky offers invitations only.
+        _account = StateObject(wrappedValue: AccountModel(
+            cloudURL: AccountPairing.cloudURL(Bundle.main.object(forInfoDictionaryKey: "DuckyCloudURL")), devices: devices))
     }
 
     var body: some Scene {
         WindowGroup {
-            ContentView(model: model)
+            ContentView(model: model, account: account)
                 .preferredColorScheme(.dark)
                 .task {
+                    account.restore()
                     await model.restore()
                 }
                 .onOpenURL { url in
+                    // Sign-in callbacks belong to the web sheet that started them, never to pairing.
+                    guard url.host != "signed-in" else { return }
                     Task {
                         await model.pair(link: url.absoluteString, name: UIDevice.current.name)
                     }
