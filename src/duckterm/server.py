@@ -2702,6 +2702,10 @@ class Server:
                 str(s["session_key"])
             ):
                 s["state"] = "waiting"
+            # Restart context is server-only and can be many megabytes. Keep it
+            # through enrichment/binding checks, but never serialize it into
+            # the dashboard's recurring session-list response.
+            s.pop("restart_json", None)
         await _write_json(
             writer,
             200,
