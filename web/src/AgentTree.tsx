@@ -85,7 +85,7 @@ export function AgentTree({
   const [archivesOpen, setArchivesOpen] = expansion?.archives ?? localArchives;
   const search = query.trim();
   const searching = search.length > 0;
-  const namedSessions = visibleSessions.filter(s => matchesAgentName(s.label, search));
+  const namedSessions = visibleSessions.filter(s => matchesAgentName(s.label, search) || matchesAgentName(s.group || "Ungrouped", search));
   const matchingSessions = namedSessions.filter(s => matchesFilters(s, filters, now));
   const filtering = hasFilters(filters) || searching;
   const localFolders = useState<Set<string>>(() => new Set());

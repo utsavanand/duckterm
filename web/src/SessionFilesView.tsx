@@ -1,26 +1,25 @@
-import { useEffect, useMemo, useRef, useState } from "react";
-import { api, type ArtifactContent } from "./api";
-import { ArtifactPreview } from "./ArtifactsView";
-import { ArtifactFeedback, type FeedbackTarget } from "./ArtifactFeedback";
-import { useArtifactExpansion } from "./useArtifactExpansion";
+import { useEffect, useRef, useState } from "react";
+import { api, type ArtifactKind } from "./api";
+import { FileReader } from "./FileReader";
+import { ARTIFACT_KINDS } from "./artifactKinds";
+import { artifactFormat, filterArtifacts, type ArtifactFormat, type ArtifactSort } from "./artifactFilters";
 import { sessionRef, splitSessionRef } from "./hostTransport";
-import { FileRequestError, fileReason, fileSize, localFileSession, sessionFiles, sourceLabel, type DirectoryPage, type FileContent, type FileEntry, type RegisteredFile } from "./sessionFiles";
+import { FileRequestError, fileReason, fileSize, localFileSession, sessionFiles, sourceLabel, type DirectoryPage, type FileEntry, type RegisteredFile } from "./sessionFiles";
 import type { SessionView } from "./types";
 import "./sessionFiles.css";
 
 type Directory = { page?: DirectoryPage; loading?: boolean; error?: string; stale?: boolean };
-type Selection = { kind: "file"; file: FileEntry } | { kind: "saved"; file: RegisteredFile };
-type Filter = "all" | "registered" | "copies";
+export type FileSelection = { kind: "file"; file: FileEntry } | { kind: "saved"; file: RegisteredFile };
+type Selection = FileSelection;
+type FilesProps = { session: SessionView; artifacts?: boolean; mode?: "code" | "artifacts"; browse?: boolean; artifactId?: string; onOpenArtifact?: (id: string) => void };
 const order = (a: FileEntry, b: FileEntry) => Number(b.type === "directory") - Number(a.type === "directory") || a.name.localeCompare(b.name, undefined, { sensitivity: "base" });
 const shortDate = (ts: number) => new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-const mediaLabel = (type: string) => type === "text/markdown" ? "Markdown" : type === "text/html" ? "HTML" : type.startsWith("image/") ? "Image" : type.startsWith("text/") ? "Text" : "File";
-// Without artifacts this is the plain Explorer: no registry, saved copies or feedback.
-export function SessionFilesView({ session, artifacts = true }: { session: SessionView; artifacts?: boolean }) {
+
+export function SessionFilesView({ session, artifacts = true, mode = "code", browse = true, artifactId, onOpenArtifact }: FilesProps) {
   const [revision, setRevision] = useState(0);
-  // Host/root changes invalidate every cache, request, selection and object URL.
-  return <Files key={JSON.stringify([session.key, session.host, session.cwd, session.worktreePath, revision, artifacts])} session={session} artifacts={artifacts} refresh={() => setRevision(n => n + 1)} />;
+  return <Files key={JSON.stringify([session.key, session.host, session.cwd, session.worktreePath, revision, artifacts, mode, browse])} session={session} artifacts={artifacts} mode={mode} browse={browse} artifactId={artifactId} onOpenArtifact={onOpenArtifact} refresh={() => setRevision(n => n + 1)} />;
 }
-function Files({ session, artifacts, refresh }: { session: SessionView; artifacts: boolean; refresh: () => void }) {
+function Files({ session, artifacts, mode, browse, artifactId, onOpenArtifact, refresh }: Required<Pick<FilesProps, "session" | "artifacts" | "mode" | "browse">> & Pick<FilesProps, "artifactId" | "onOpenArtifact"> & { refresh: () => void }) {
   const container = useRef<HTMLElement>(null);
   const [narrow, setNarrow] = useState(false);
   useEffect(() => {
@@ -28,7 +27,7 @@ function Files({ session, artifacts, refresh }: { session: SessionView; artifact
     const observer = new ResizeObserver(entries => setNarrow(entries[0].contentRect.width <= 650));
     observer.observe(container.current); return () => observer.disconnect();
   }, []);
-  const local = localFileSession(session);
+  const local = browse && localFileSession(session);
   const savedKey = splitSessionRef(session.key).host !== "local" ? session.key : sessionRef(session.host || "local", session.key);
   const [directories, setDirectories] = useState<Record<string, Directory>>({});
   const dirs = useRef(directories); dirs.current = directories;
@@ -38,11 +37,20 @@ function Files({ session, artifacts, refresh }: { session: SessionView; artifact
   const [registry, setRegistry] = useState<RegisteredFile[] | null>(null);
   const [registryError, setRegistryError] = useState("");
   const [expanded, setExpanded] = useState(new Set<string>());
-  const [filter, setFilter] = useState<Filter>("all");
+  const [format, setFormat] = useState<ArtifactFormat>("all");
+  const [label, setLabel] = useState<ArtifactKind | "all">("all");
+  const [sort, setSort] = useState<ArtifactSort>("recent");
   const [query, setQuery] = useState("");
   const [savedLimit, setSavedLimit] = useState(40);
   const [selection, setSelection] = useState<Selection | null>(null);
   const [reading, setReading] = useState(false);
+  const openedTarget = useRef<string | undefined>();
+  useEffect(() => {
+    if (mode !== "artifacts" || !artifactId || openedTarget.current === artifactId) return;
+    const target = registry?.find(a => a.id === artifactId);
+    if (target) { openedTarget.current = artifactId; setSelection({ kind: "saved", file: target }); setReading(true); }
+  }, [artifactId, registry, mode]);
+
   const alive = useRef(true);
   const requests = useRef(new Set<AbortController>());
   const pendingDirs = useRef(new Set<string>());
@@ -121,95 +129,34 @@ function Files({ session, artifacts, refresh }: { session: SessionView; artifact
   }
   const loaded = Object.values(directories).flatMap(d => d.page?.entries ?? []);
   const matches = (value: string) => value.toLocaleLowerCase().includes(query.toLocaleLowerCase());
-  const registered = (registry ?? []).filter(a => a.source_state === "present" && a.path && matches(`${a.path} ${a.title}`));
-  const copies = (registry ?? []).filter(a => a.source_state !== "present" && matches(`${a.title} ${a.source_path}`));
+  const visible = filterArtifacts(registry ?? [], { query, format, label, sort });
   const canBrowse = local && !unavailable;
-  function registryRow(a: RegisteredFile, currentFile: boolean) {
-    return <button key={a.id} className="rd-file-row rd-file-snapshot" aria-pressed={selection?.kind === "saved" && selection.file.id === a.id} title={`${a.title} · ${a.kind ?? "other"}`}
-      aria-label={`${mediaLabel(a.media_type)} ${a.title}`} onClick={() => {
-        if (currentFile && a.path) choose({ kind: "file", file: { path: a.path, name: a.path.split("/").pop()!, type: "file", size: null, modified_at: 0, browsable: true, content_limit: 5242880, artifact: a } });
+  function registryRow(a: RegisteredFile) {
+    const selected = selection?.kind === "saved" ? selection.file.id === a.id : selection?.file.artifact?.id === a.id;
+    return <button key={a.id} className="rd-file-row rd-file-snapshot" aria-pressed={selected} title={a.source_path}
+      aria-label={`${artifactFormat(a)} ${a.title}`} onClick={() => {
+        if (a.source_state === "present" && a.path) choose({ kind: "file", file: { path: a.path, name: a.path.split("/").pop()!, type: "file", size: null, modified_at: 0, browsable: true, content_limit: 5242880, artifact: a } });
         else choose({ kind: "saved", file: a });
-      }}><span><strong>{currentFile ? a.path : a.title}</strong><small>{currentFile ? `${a.title} · registered ${a.kind ?? "artifact"}` : `${sourceLabel(a.source_state)} · ${a.kind ?? "artifact"}`}</small></span><span className="rd-file-size">{fileSize(a.size)}<small>saved</small></span></button>;
+      }}><span><strong>{a.title}</strong><small>{a.source_path}</small><small>{artifactFormat(a)} · {ARTIFACT_KINDS[a.kind ?? "other"] ?? "Other"} · {shortDate(a.updated_at)}</small><small>{sourceLabel(a.source_state)}</small></span><span className="rd-file-size">{fileSize(a.size)}<small>saved</small></span></button>;
   }
-  return <section ref={container} className={`rd-session-files${narrow ? " narrow" : ""}`} aria-label="Session files">
-    <header className="rd-files-heading"><div><h2>Files <span>Read-only</span></h2><p>{rootPath || (local ? session.worktreePath || session.cwd || "No working directory recorded" : "Remote workspace")}</p></div><button className="rd-btn rd-btn-sm" onClick={refresh}>Refresh</button></header>
-    <div className="rd-files-toolbar">{artifacts && <div role="group" aria-label="Files filter">{([['all', 'All files'], ['registered', 'Registered'], ['copies', 'Saved copies']] as const).map(([id, title]) => <button key={id} aria-pressed={filter === id} disabled={id !== 'copies' && !canBrowse} onClick={() => { setFilter(id); setQuery(""); setSavedLimit(40); }}>{title}</button>)}</div>}<input aria-label={filter === "all" ? "Filter loaded files" : "Filter registered artifacts"} placeholder={filter === "all" ? "Filter loaded files…" : "Filter registered artifacts…"} value={query} onChange={e => setQuery(e.target.value)} /></div>
-    {!canBrowse && filter !== "copies" ? <div className="rd-files-unavailable"><h3>{unavailable}</h3><p>{!local ? "These files live on another machine. No local files are shown in their place." : artifacts ? "No directory is shown. Saved artifact copies are separate from files on disk." : "No directory is shown."}</p>{artifacts && <button className="rd-btn" onClick={() => setFilter("copies")}>View saved copies</button>}</div> : <div className={`rd-files-layout${reading ? " reading" : ""}`}>
-      <nav className="rd-files-tree" aria-label="Files and saved copies"><div className="rd-files-columns"><span>Name</span><span>Size</span><span>Modified</span></div><div className="rd-files-scroll">
-        {filter === "all" ? query ? <>{loaded.filter(e => matches(e.path)).map(e => row(e, 0, true))}{!loaded.some(e => matches(e.path)) && <p className="rd-files-note">No matching loaded files. Unexpanded folders have not been searched.</p>}</> : directory(".") : <>
+  return <section ref={container} className={`rd-session-files${narrow ? " narrow" : ""}`} aria-label={mode === "code" ? "Code explorer" : "Session artifacts"}>
+    <header className="rd-files-heading"><div><h2>{mode === "code" ? "Code explorer" : "Artifacts"} {mode === "code" && <span>Read-only</span>}</h2><p>{mode === "code" ? rootPath || session.worktreePath || session.cwd || "No working directory recorded" : `Saved outputs from ${session.label}`}</p></div><button className="rd-btn rd-btn-sm" onClick={refresh}>Refresh</button></header>
+    <div className="rd-files-toolbar"><input aria-label={mode === "code" ? "Filter loaded files" : "Search artifacts"} placeholder={mode === "code" ? "Filter loaded files…" : "Search title, path or label…"} value={query} onChange={e => { setQuery(e.target.value); setSavedLimit(40); }} />
+      {mode === "artifacts" && <><select aria-label="Artifact format" value={format} onChange={e => { setFormat(e.target.value as ArtifactFormat); setSavedLimit(40); }}><option value="all">All formats</option><option value="markdown">Markdown</option><option value="html">HTML</option><option value="react">React apps</option><option value="other">Other files</option></select>
+        <select aria-label="Artifact label" value={label} onChange={e => { setLabel(e.target.value as ArtifactKind | "all"); setSavedLimit(40); }}><option value="all">All labels</option>{Object.entries(ARTIFACT_KINDS).map(([kind, title]) => <option key={kind} value={kind}>{title}</option>)}</select>
+        <select aria-label="Sort artifacts" value={sort} onChange={e => setSort(e.target.value as ArtifactSort)}><option value="recent">Most recent</option><option value="oldest">Oldest first</option><option value="name">Name A–Z</option></select></>}
+    </div>
+    {mode === "code" && !canBrowse ? <div className="rd-files-unavailable"><h3>{unavailable}</h3><p>{!local ? "These files live on another machine. No local files are shown in their place." : "No directory is shown."}</p>{artifacts && <p>Saved outputs remain available in the Artifacts tab.</p>}</div> : <div className={`rd-files-layout${reading ? " reading" : ""}`}>
+      <nav className="rd-files-tree" aria-label={mode === "code" ? "Working directory" : "Artifact list"}><div className="rd-files-columns">{mode === "code" ? <><span>Name</span><span>Size</span><span>Modified</span></> : <span>{visible.length} artifacts</span>}</div><div className="rd-files-scroll">
+        {mode === "code" ? query ? <>{loaded.filter(e => matches(e.path)).map(e => row(e, 0, true))}{!loaded.some(e => matches(e.path)) && <p className="rd-files-note">No matching loaded files. Unexpanded folders have not been searched.</p>}</> : directory(".") : <>
           {registryError && <p className="rd-files-note" role="alert">Saved artifact metadata unavailable: {registryError}</p>}
           {registry === null && !registryError && <p className="rd-files-note" role="status">Loading saved artifacts…</p>}
-          {(filter === "registered" ? registered : copies).slice(0, savedLimit).map(a => registryRow(a, filter === "registered"))}
-          {registry && !(filter === "registered" ? registered : copies).length && <p className="rd-files-note">No matching {filter === "registered" ? "registered files in this worktree" : "saved copies"}.</p>}
-          {(filter === "registered" ? registered : copies).length > savedLimit && <button className="rd-files-more" onClick={() => setSavedLimit(n => n + 40)}>Show more saved artifacts</button>}
+          {visible.slice(0, savedLimit).map(registryRow)}
+          {registry && !visible.length && <p className="rd-files-note">No matching artifacts.</p>}
+          {visible.length > savedLimit && <button className="rd-files-more" onClick={() => setSavedLimit(n => n + 40)}>Show more artifacts</button>}
         </>}
-      </div><p className="rd-files-footnote">{filter === "all" ? "Ignore rules applied · expand folders to load them · filter searches loaded paths only" : filter === "registered" ? "Selected session’s registrations · saved sizes may differ from current files" : "Saved snapshots · outside-root paths are not checked for existence"}</p></nav>
-      {selection ? <FileReader key={selection.kind + ":" + (selection.kind === "file" ? selection.file.path : selection.file.id)} session={session} savedKey={savedKey} selection={selection} back={() => setReading(false)} saved={a => choose({ kind: "saved", file: a })} /> : <section className="rd-file-reader"><p className="rd-files-note">{artifacts ? "Choose a file or saved artifact to read it." : "Choose a file to read it."}</p></section>}
+      </div><p className="rd-files-footnote">{mode === "code" ? "Ignore rules applied · expand folders to load them · filter searches loaded paths only" : "Registered files and saved copies · sizes refer to the saved version"}</p></nav>
+      {selection ? <FileReader key={selection.kind + ":" + (selection.kind === "file" ? selection.file.path : selection.file.id)} session={session} savedKey={savedKey} selection={selection} back={() => setReading(false)} saved={a => choose({ kind: "saved", file: a })} onOpenArtifact={mode === "code" ? onOpenArtifact : undefined} onMetadata={a => setRegistry(rows => rows?.map(row => row.id === a.id ? { ...row, ...a } : row) ?? null)} /> : <section className="rd-file-reader"><p className="rd-files-note">{mode === "code" ? "Choose a file to read it." : "Choose an artifact to read it."}</p></section>}
     </div>}
-  </section>;
-}
-function FileReader({ session, savedKey, selection, back: backToList, saved }: { session: SessionView; savedKey: string; selection: Selection; back: () => void; saved: (a: RegisteredFile) => void }) {
-  const fileSession = useMemo(() => ({ key: session.key, host: session.host, cwd: session.cwd, worktreePath: session.worktreePath }), [session.key, session.host, session.cwd, session.worktreePath]);
-  const [content, setContent] = useState<FileContent | ArtifactContent | null>(null);
-  const [error, setError] = useState("");
-  const [url, setUrl] = useState("");
-  const [retry, setRetry] = useState(0);
-  const [feedback, setFeedback] = useState<FeedbackTarget | null>(null);
-  const [feedbackStatus, setFeedbackStatus] = useState("");
-  const feedbackButton = useRef<HTMLButtonElement>(null);
-  const readerLive = useRef(true);
-  useEffect(() => { readerLive.current = true; return () => { readerLive.current = false; }; }, []);
-  function closeFeedback() {
-    setFeedback(null); feedbackButton.current?.focus();
-    if (selection.kind === "saved") void api.artifact(savedKey, selection.file.id).then(result => {
-      if (readerLive.current) setContent(previous => previous?.sha256 === result.artifact.sha256 ? previous : result.artifact);
-    }).catch(() => { /* Keep the last readable snapshot if refresh is unavailable. */ });
-  }
-  const stored = selection.kind === "saved";
-  const file = selection.file;
-  const name = stored ? selection.file.source_path.split("/").pop() || selection.file.title : selection.file.name;
-  const title = stored ? selection.file.title : name;
-  const { expanded, viewer, back, expand, close } = useArtifactExpansion(`${savedKey}:${selection.kind}:${stored ? selection.file.id : selection.file.path}`);
-  useEffect(() => {
-    let live = true; const controller = new AbortController(); setContent(null); setError("");
-    async function read() {
-      try {
-        if (selection.kind === "saved") {
-          const result = await api.artifact(savedKey, selection.file.id);
-          if (live) setContent(result.artifact);
-        } else {
-          if (selection.file.type !== "file") { setError(selection.file.type === "symlink" ? "Symbolic link — not followed. DuckTerm does not browse or download its target." : "Only regular files can be previewed or downloaded."); return; }
-          if (!selection.file.browsable) { setError("This file exceeds the 5 MiB preview and download limit."); return; }
-          const result = await sessionFiles.content(fileSession, selection.file.path, controller.signal);
-          if (live) { if (result.available) setContent(result); else setError(fileReason(result.reason)); }
-        }
-      } catch (cause) { if (live && !controller.signal.aborted) setError((cause as Error).message); }
-    }
-    void read(); return () => { live = false; controller.abort(); };
-  }, [selection, fileSession, savedKey, retry]);
-  useEffect(() => {
-    if (!content) { setUrl(""); return; }
-    const bytes = Uint8Array.from(atob(content.content_base64), c => c.charCodeAt(0));
-    const next = URL.createObjectURL(new Blob([bytes], { type: "application/octet-stream" }));
-    setUrl(next); return () => URL.revokeObjectURL(next);
-  }, [content]);
-  useEffect(() => {
-    if (!expanded) return;
-    const escape = (e: KeyboardEvent) => { if (e.key === "Escape" && !feedback && !e.defaultPrevented) { e.preventDefault(); close(); } };
-    window.addEventListener("keydown", escape); return () => window.removeEventListener("keydown", escape);
-  }, [expanded, feedback, close]);
-  const savedContent = stored && content && "id" in content ? content : null;
-  const artifact = selection.kind === "saved" ? selection.file : selection.file.artifact;
-  return <section ref={viewer} className={`rd-file-reader rd-artifact-viewer${expanded ? " rd-artifact-expanded" : ""}`} role={expanded ? "dialog" : undefined} aria-modal={expanded || undefined} aria-label={expanded ? title : "File preview"}>
-    <header className="rd-file-reader-head rd-artifact-detail">
-      {expanded ? <button ref={back} className="rd-btn rd-btn-sm" onClick={close}>← Back to sessions</button> : <button className="rd-files-back" onClick={backToList}>← Back to files</button>}
-      <div className="rd-artifact-title"><h3><button className="rd-artifact-title-button" aria-label={`Expand ${title}`} disabled={expanded} onClick={e => expand(e.currentTarget)}>{title}</button></h3><p className="rd-file-path">{stored ? selection.file.source_path : selection.file.path}</p><small>{content ? fileSize(content.size) : fileSize(file.size)} · {stored ? "Saved" : "Modified"} {content && "modified_at" in content ? shortDate(content.modified_at) : stored ? shortDate(content && "updated_at" in content ? content.updated_at : selection.file.updated_at) : selection.file.modified_at ? shortDate(selection.file.modified_at) : "—"}</small></div>
-      <div className="rd-artifact-actions"><button className="rd-btn rd-btn-sm" hidden={expanded} onClick={e => expand(e.currentTarget)}>Expand</button>{stored && <button ref={feedbackButton} className="rd-btn rd-btn-sm" disabled={!savedContent} onClick={e => { if (savedContent) { const rect = e.currentTarget.getBoundingClientRect(); setFeedback({ artifact: savedContent, quote: "", left: rect.left, bottom: rect.bottom }); setFeedbackStatus(""); } }}>Feedback</button>}{url && content && <a className="rd-btn rd-btn-sm" href={url} download={name}>Download</a>}</div>
-    </header>
-    <div className="rd-file-source"><span>{stored ? "Saved artifact snapshot" : "Current file"}</span>{artifact && <><span>{artifact.kind ?? "artifact"}</span>{!stored && <button className="rd-file-saved-link" onClick={() => saved(artifact)}>View saved version</button>}</>}</div>
-    {stored && <p className="rd-file-source-note">{selection.file.source_state === "missing" ? "Content-only: the original file is missing. This is the stored artifact snapshot." : selection.file.source_state === "outside_root" ? "The original path is outside this worktree; its presence is not checked here." : selection.file.source_state === "unavailable" ? "Original file availability is unknown. You are reading the stored artifact snapshot." : "Saved artifact snapshot. The current file may have changed since registration."}</p>}
-    {feedbackStatus && <p className="rd-files-note" role="status">{feedbackStatus}</p>}
-    {error ? <div className="rd-files-note" role="alert"><p>{error}</p><button className="rd-btn rd-btn-sm" onClick={() => setRetry(n => n + 1)}>Retry preview</button></div> : content ? <ArtifactPreview key={content.sha256} artifact={{ ...content, title }} onSelect={quote => { if (savedContent && !feedback) { setFeedback({ artifact: savedContent, ...quote }); setFeedbackStatus(""); } }} onEscape={() => { if (feedback) window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" })); else if (expanded) close(); }} /> : <p className="rd-files-note" role="status">Loading preview…</p>}
-    {feedback && <ArtifactFeedback sessionKey={savedKey} sessionName={session.label} target={feedback} onClose={closeFeedback} onSent={() => { setFeedback(null); setFeedbackStatus("Sent to the agent"); feedbackButton.current?.focus(); }} />}
   </section>;
 }

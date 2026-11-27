@@ -140,9 +140,13 @@ def _check_hook_installed(agent: str) -> Result:
 
 
 def run(url: str, agents: list[str]) -> list[Result]:
-    results = _check_system_deps()
-    results.append(_check_server(url))
-    results.append(_check_token())
-    for agent in agents:
-        results.append(_check_hook_installed(agent))
-    return results
+    return [_check_server(url), *check_install(agents)]
+
+
+def check_install(agents: list[str]) -> list[Result]:
+    """Every check except server reachability, which the server itself skips."""
+    return [
+        *_check_system_deps(),
+        _check_token(),
+        *(_check_hook_installed(agent) for agent in agents),
+    ]

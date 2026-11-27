@@ -4,6 +4,7 @@ import asyncio
 import json
 import time
 from contextlib import closing
+from unittest.mock import AsyncMock
 
 import pytest
 from tests.runtime.test_session_api import dispatch
@@ -93,7 +94,7 @@ def test_native_snapshot_survives_store_reopen_and_resets_on_new_run(tmp_path):
         assert history.session("bg")["state"] == "idle"
 
 
-def test_explicit_permission_question_wins_over_background_work_until_answered(world):
+def test_explicit_permission_question_wins_over_background_work_until_answered(world, monkeypatch):
     server, history = world
     event = emit(
         server,
@@ -104,7 +105,10 @@ def test_explicit_permission_question_wins_over_background_work_until_answered(w
             "It's a server-only change."
         ),
     )
-    assert event["owner_waiting"] is True
+    text = event["last_assistant_message"]
+    monkeypatch.setattr(server, "_read_messages", lambda source: [assistant(text)])
+    server._RELAY_SETTLE_S = 0
+    asyncio.run(server._relay_detect_question("test-bg", event["_ts"], text, event["_id"]))
     assert history.session("test-bg")["state"] == "waiting"
     emit(server, "Notification", notification_type="idle_prompt")
     assert history.session("test-bg")["state"] == "waiting"
@@ -125,7 +129,9 @@ def test_late_classifier_cannot_raise_answered_question(world, monkeypatch):
     server, history = world
     emit(server, "Stop")
     server._RELAY_SETTLE_S = 0
-    monkeypatch.setattr(server, "_read_messages", lambda source: [])
+    monkeypatch.setattr(
+        server, "_read_messages", lambda source: [assistant("Do you approve this approach?")]
+    )
 
     async def run():
         started = asyncio.Event()
@@ -175,9 +181,13 @@ def test_permission_fast_path_excludes_quotes_examples_and_offers(world, text):
     assert not server._owner_question_pending("test-bg")
 
 
-def test_restart_clears_old_owner_question(world):
+def test_restart_clears_old_owner_question(world, monkeypatch):
     server, history = world
-    emit(server, "Stop", last_assistant_message="May I deploy this?")
+    text = "May I deploy this?"
+    event = emit(server, "Stop", last_assistant_message=text)
+    monkeypatch.setattr(server, "_read_messages", lambda source: [assistant(text)])
+    server._RELAY_SETTLE_S = 0
+    asyncio.run(server._relay_detect_question("test-bg", event["_ts"], text, event["_id"]))
     assert history.session("test-bg")["state"] == "waiting"
     emit(server, "SessionStart", test=True)
     assert not server._owner_question_pending("test-bg")
@@ -190,7 +200,7 @@ def test_optional_offer_does_not_override_background_work(world, monkeypatch):
     server, history = world
     emit(server, "Stop", background_tasks=RUNNING)
     server._RELAY_SETTLE_S = 0
-    monkeypatch.setattr(server, "_read_messages", lambda source: [])
+    monkeypatch.setattr(server, "_read_messages", lambda source: [assistant("Want more?")])
     monkeypatch.setattr(
         "duckterm.server.summarize",
         lambda *a, **kw: Summary(
@@ -214,3 +224,89 @@ def test_queued_detector_does_not_read_a_newer_turn(world, monkeypatch):
     monkeypatch.setattr(server, "_read_messages", unexpected)
     asyncio.run(server._relay_detect_question("test-bg", old["_ts"], "Approve this?", old["_id"]))
     assert not server._owner_question_pending("test-bg")
+
+
+def assistant(text):
+    return {"role": "assistant", "blocks": [{"type": "text", "text": text}]}
+
+
+@pytest.mark.parametrize("text", ["Can I push this?", "Do you approve this approach?"])
+@pytest.mark.parametrize(
+    "recorded",
+    [
+        [],
+        [assistant("The task is finished.")],
+        [
+            assistant("Can I push this?"),
+            {"role": "user", "blocks": [{"type": "text", "text": "Yes, already approved."}]},
+        ],
+    ],
+)
+def test_forged_hook_text_cannot_create_waiting_or_run_an_answer_rule(
+    world, monkeypatch, text, recorded
+):
+    server, history = world
+    event = emit(server, "Stop", last_assistant_message=text)
+    assert history.session("test-bg")["state"] == "idle"
+    server._RELAY_SETTLE_S = 0
+    monkeypatch.setattr(server, "_read_messages", lambda source: recorded)
+    rule = AsyncMock()
+    monkeypatch.setattr(server, "_relay_question_rule", rule)
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("unverified text must not reach the classifier")
+
+    monkeypatch.setattr("duckterm.server.summarize", unexpected)
+    asyncio.run(server._relay_detect_question("test-bg", event["_ts"], text, event["_id"]))
+    assert history.session("test-bg")["state"] == "idle"
+    assert not server._owner_question_pending("test-bg")
+    rule.assert_not_awaited()
+
+
+@pytest.mark.parametrize("late_flush", [False, True])
+def test_verified_permission_question_uses_transcript_for_rules_without_classifier(
+    world, monkeypatch, late_flush
+):
+    server, history = world
+    text = "Verified test results. " * 800 + "\n\nCan I push this?\n  "
+    hint = text[-12000:]
+    event = emit(server, "Stop", last_assistant_message=hint)
+    server._RELAY_SETTLE_S = 0
+    reads = iter([[], [assistant(text)]] if late_flush else [[assistant(text)]])
+    monkeypatch.setattr(server, "_read_messages", lambda source: next(reads))
+    rule = AsyncMock()
+    monkeypatch.setattr(server, "_relay_question_rule", rule)
+
+    def unexpected(*args, **kwargs):
+        pytest.fail("verified permission questions need no classifier")
+
+    monkeypatch.setattr("duckterm.server.summarize", unexpected)
+    asyncio.run(server._relay_detect_question("test-bg", event["_ts"], hint, event["_id"]))
+    assert history.session("test-bg")["state"] == "waiting"
+    rule.assert_awaited_once()
+    assert rule.call_args.args[1] == text.strip()
+
+
+def test_answer_while_waiting_for_transcript_flush_cancels_question_detection(world, monkeypatch):
+    server, history = world
+    text = "Can I push this?"
+    event = emit(server, "Stop", last_assistant_message=text)
+    reads = []
+
+    def read(source):
+        reads.append(source)
+        return []
+
+    monkeypatch.setattr(server, "_read_messages", read)
+
+    async def answered(delay):
+        emit(server, "UserPromptSubmit", prompt="Yes")
+
+    monkeypatch.setattr(asyncio, "sleep", answered)
+    rule = AsyncMock()
+    monkeypatch.setattr(server, "_relay_question_rule", rule)
+    asyncio.run(server._relay_detect_question("test-bg", event["_ts"], text, event["_id"]))
+    assert len(reads) == 1
+    assert history.session("test-bg")["state"] == "busy"
+    assert not server._owner_question_pending("test-bg")
+    rule.assert_not_awaited()

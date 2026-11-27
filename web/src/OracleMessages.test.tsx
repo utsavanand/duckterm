@@ -64,15 +64,22 @@ it("waits for Send before delivering text the model reworded", async () => {
   expect(api.messageSession).toHaveBeenCalledWith("rel", "Please hold PR #470.", "inbox", expect.any(String), "get release-dev to hold 470");
 });
 
-it("asks which agent when unsure, and sends the owner's own words once one is picked", async () => {
-  routed({ clarify: { text: "rebase on main", candidates: AGENTS.slice(1) } });
-  type(chat(), "tell main-dev to rebase on main");
+it.each([
+  ["tell main-dev to rebase on main", "rebase on main"],
+  // A fragment of the owner's words can flip the meaning (security review of #474).
+  ["tell main-dev not to merge yet", "merge"],
+])("asks which agent when unsure, then shows the text for Send after a pick (%j)", async (said, text) => {
+  routed({ clarify: { text, candidates: AGENTS.slice(1) } });
+  type(chat(), said);
   const ask = await screen.findByRole("group", { name: "Which agent did you mean?" });
   expect(ask).toHaveTextContent("Nothing was sent");
-  expect(api.messageSession).not.toHaveBeenCalled();
   fireEvent.click(within(ask).getByRole("button", { name: /main-dev-2/ }));
-  await waitFor(() => expect(api.messageSession).toHaveBeenCalledWith("md2", "rebase on main", "inbox", expect.any(String), "tell main-dev to rebase on main"));
   expect(within(ask).queryByRole("button")).toBeNull();
+  const card = await screen.findByRole("group", { name: "Message to main-dev-2" });
+  expect(card).toHaveTextContent(text);
+  expect(api.messageSession).not.toHaveBeenCalled();
+  fireEvent.click(within(card).getByRole("button", { name: "Send" }));
+  await waitFor(() => expect(api.messageSession).toHaveBeenCalledWith("md2", text, "inbox", expect.any(String), said));
 });
 
 it("Cancel leaves a reworded message unsent", async () => {
