@@ -207,11 +207,17 @@ def ref_exists(repo: str | Path, ref: str) -> bool:
         return False
 
 
-def resolve(repo: str | Path, ref: str) -> str | None:
+def resolve(repo: str | Path, ref: str, timeout: float = 15) -> str | None:
     try:
         return (
             run(
-                repo, "rev-parse", "--verify", "--quiet", "--end-of-options", f"{ref}^{{commit}}"
+                repo,
+                "rev-parse",
+                "--verify",
+                "--quiet",
+                "--end-of-options",
+                f"{ref}^{{commit}}",
+                timeout=timeout,
             ).strip()
             or None
         )
