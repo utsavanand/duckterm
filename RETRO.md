@@ -12,6 +12,10 @@ Check bytes per row as well as row count on frequently polled endpoints. Moving
 work to a thread would not remove redundant serialization or browser parsing.
 This fixes a measured allocation/work amplifier, not every reported stall.
 
+Browser fixtures also consumed restart_json to post correctly bound fake-agent
+events. Keep that setup on their isolated database (read-only, test=1), rather
+than retaining a large production response solely for a test helper.
+
 ## 2026-11-27 — A hardened runner only protects the calls that use it
 
 #496 routed review's git calls through one runner that turns off every
