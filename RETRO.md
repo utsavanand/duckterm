@@ -1,4 +1,9 @@
+## 2026-11-27 — Simplify rule navigation without hiding decisions
+
+Keep the AGENTS.md editor on shared theme tokens. Move repeated scope narration into an explicit disclosure, while keeping save state, drift consent, proposal evidence, and destructive-action labels visible. Icon actions need accessible names plus hover and keyboard-focus explanations. Verify existing edit/save flows after the styling pass.
+
 ## 2026-11-26 — Improve readability without replacing the app theme
+
 
 Page-local overrides of shared colors made AGENTS.md look like a different app.
 Use the existing background, control, font and secondary-text tokens instead;
