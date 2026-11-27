@@ -178,6 +178,19 @@ def _upload_pack(repo: Path, program: str) -> Case:
     return ["-C", str(clone), "ls-remote", "origin"], lambda: git.remote_heads(clone)
 
 
+def _alternate_refs(repo: Path, program: str) -> Case:
+    # Fetch negotiation lists the refs of every alternate object store by
+    # running the repository's core.alternateRefsCommand.
+    clone = repo.parent / "clone"
+    other = repo.parent / "other"
+    subprocess.run(["git", "clone", "-q", str(repo), str(clone)], check=True)
+    subprocess.run(["git", "clone", "-q", "--bare", str(repo), str(other)], check=True)
+    (clone / ".git/objects/info/alternates").write_text(f"{other / 'objects'}\n")
+    run(clone, "config", "core.alternateRefsCommand", program)
+    commit(repo, "n.txt", "n\n", "new")
+    return ["-C", str(clone), "fetch", "-q", "origin"], lambda: git.fetch(clone, ["main"])
+
+
 def _filter(kind: str) -> Callable[[Path, str], Case]:
     def arrange(repo: Path, program: str) -> Case:
         run(repo, "config", f"filter.x.{kind}", program)
@@ -212,6 +225,7 @@ def _merge_driver(repo: Path, program: str) -> Case:
         _ssh_command,
         _fetch_hook,
         _upload_pack,
+        _alternate_refs,
         _filter("clean"),
         _filter("process"),
         _merge_driver,
