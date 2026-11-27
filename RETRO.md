@@ -7,6 +7,17 @@ first real run had a pull request but no way to see why. Build the detail view
 from the files the run already writes before adding new ones, and record what
 a later view needs (the base commit) at the moment it is known.
 
+## 2026-11-27 — Shared in-flight reads need a deadline through body decoding
+
+A Messages request that never settled remained in the shared pending map, so
+polling stopped and reopening the tab reused the same hung promise. Bound both
+headers and body decoding, abort the local transport, and release pending
+ownership even when a remote bridge ignores cancellation. Publish cache changes
+only from the winning read: late successes and access errors must neither
+replace nor evict newer replies. Keep the last verified content during transient
+failures and pause retries when the tab is inactive. Regression tests cover each
+of these paths; source reproduction alone does not identify a live server stall.
+
 ## 2026-11-27 — Session-list refreshes carried megabytes of unused restart context
 
 A live Python stack caught HistoryStore.sessions sorting full SQLite rows on
