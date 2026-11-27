@@ -148,8 +148,11 @@ See [inbox delivery and safeguards](docs/inbox-delivery.md).
 ## Backups
 
 `duckterm backup` archives the database, checkpoints, and Claude/Codex transcripts.
-Use `--to PATH` for another local destination or `--to gs://BUCKET/prefix` for
-upload with your existing gcloud login. See [backup and restore](docs/backups.md).
+It is off by default: turn on the `backup` feature flag first
+([feature flags](docs/feature-flags.md)). Until then, quit DuckTerm and copy
+`~/.duckterm` instead. Use `--to PATH` for another local destination or
+`--to gs://BUCKET/prefix` for upload with your existing gcloud login (cloud
+upload also needs the `byoc` flag). See [backup and restore](docs/backups.md).
 
 ## Shared connectors
 
