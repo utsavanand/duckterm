@@ -11,7 +11,7 @@ import secrets
 import ssl
 import stat
 import time
-from collections import deque
+from collections import defaultdict, deque
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlsplit
@@ -37,6 +37,7 @@ if TYPE_CHECKING:
 
 
 LOG_LIMIT = 256 * 1024
+ACCOUNT_CLAIMS_PER_PEER = 10
 # Request lines are unauthenticated text: only these fixed labels reach the log,
 # anything else is "unknown" (path) or "?" (method).
 LOGGED_ROUTES = frozenset(
@@ -101,6 +102,17 @@ def record(directory: Path, line: str) -> None:
                 os.close(fd)
 
 
+def _spent(window: deque[float], limit: int) -> bool:
+    """Count one attempt in a one-minute window; True when the window was already full."""
+    now = time.monotonic()
+    while window and window[0] < now - 60:
+        window.popleft()
+    if len(window) >= limit:
+        return True
+    window.append(now)
+    return False
+
+
 class Bridge:
     def __init__(
         self,
@@ -119,10 +131,14 @@ class Bridge:
         self.listener: asyncio.Server | None = None
         self.connections: set[asyncio.StreamWriter] = set()
         self.claims: deque[float] = deque()
+        # Account claims spend their own budgets: every attempt counts per address,
+        # and only verified tickets count against the Mac-wide one.
+        self.account_claims: deque[float] = deque()
+        self.account_claims_by_peer: defaultdict[str, deque[float]] = defaultdict(deque)
         self.initial_cursor = secrets.token_hex(16)
 
     async def dispatch(
-        self, method: str, target: str, headers: dict[str, str], body: bytes
+        self, method: str, target: str, headers: dict[str, str], body: bytes, *, peer: str = "-"
     ) -> tuple[int, dict[str, Any]]:
         # Never accept browser-origin requests, owner tokens, session grants,
         # arbitrary forwarding paths, or unscoped desktop operations.
@@ -134,18 +150,14 @@ class Bridge:
         if not (self.directory / "ducky-bridge.json").is_file():
             return 503, {"error": "Ducky access is disabled"}
         try:
-            if method == "POST" and target in {"/v1/pair", "/v1/pair/account"}:
-                if target == "/v1/pair/account" and not self.server.edition.includes(
-                    "ducky_remote"
-                ):
-                    return 404, {"error": "Endpoint unavailable"}
-                now = time.monotonic()
-                while self.claims and self.claims[0] < now - 60:
-                    self.claims.popleft()
-                if len(self.claims) >= 20:
-                    return 429, {"error": "Too many pairing attempts; try again shortly"}
-                self.claims.append(now)
             if method == "POST" and target == "/v1/pair/account":
+                if not self.server.edition.includes("ducky_remote"):
+                    return 404, {"error": "Endpoint unavailable"}
+                if len(self.account_claims_by_peer) > 1000:
+                    for key in [k for k, v in self.account_claims_by_peer.items() if not v]:
+                        del self.account_claims_by_peer[key]
+                if _spent(self.account_claims_by_peer[peer], ACCOUNT_CLAIMS_PER_PEER):
+                    return 429, {"error": "Too many pairing attempts; try again shortly"}
                 request = json.loads(body)
                 if (
                     not isinstance(request, dict)
@@ -153,10 +165,13 @@ class Bridge:
                     or not all(isinstance(value, str) for value in request.values())
                 ):
                     raise ValueError("Expected account ticket and device credential")
-                return 202, await asyncio.to_thread(
-                    self.claim_account, request["ticket"], request["token"]
-                )
+                claims = await asyncio.to_thread(self.verify_ticket, request["ticket"])
+                if _spent(self.account_claims, 20):
+                    return 429, {"error": "Too many pairing attempts; try again shortly"}
+                return 202, await asyncio.to_thread(self.claim_account, claims, request["token"])
             if method == "POST" and target == "/v1/pair":
+                if _spent(self.claims, 20):
+                    return 429, {"error": "Too many pairing attempts; try again shortly"}
                 request = json.loads(body)
                 if (
                     not isinstance(request, dict)
@@ -298,13 +313,15 @@ class Bridge:
         except (ValueError, TypeError):
             return 400, {"error": "Invalid Ducky request"}
 
-    def claim_account(self, ticket: str, token: str) -> dict[str, Any]:
+    def verify_ticket(self, ticket: str) -> dict[str, Any]:
         with self.grants.locked() as state:
             host_id = state["host_id"]
         try:
-            claims = account.verify_ticket(self.directory, ticket, host_id)
+            return account.verify_ticket(self.directory, ticket, host_id)
         except ValueError as exc:
             raise Denied(str(exc)) from exc
+
+    def claim_account(self, claims: dict[str, Any], token: str) -> dict[str, Any]:
         certificate = ssl.PEM_cert_to_DER_cert((self.directory / "ducky-cert.pem").read_text())
         code = account.matching_code(token, hashlib.sha256(certificate).hexdigest())
         return self.grants.claim_account(token, claims, code)
@@ -333,18 +350,16 @@ class Bridge:
                 if not target.startswith("/") or len(target) > 2048:
                     raise ValueError("Invalid target")
                 headers = await read_headers(reader)
-                limit = (
-                    32768
-                    if method == "POST"
-                    and target
-                    in {
-                        "/v1/pair/account",
-                        "/v2/messages",
-                        "/v2/analysis/context",
-                        "/v2/analysis/questions",
-                    }
-                    else 2048
-                )
+                if method == "POST" and target == "/v1/pair/account":
+                    limit = 4096
+                elif method == "POST" and target in {
+                    "/v2/messages",
+                    "/v2/analysis/context",
+                    "/v2/analysis/questions",
+                }:
+                    limit = 32768
+                else:
+                    limit = 2048
                 if int(headers.get("content-length", "0")) > limit:
                     outcome = "413"
                     await write_response(
@@ -356,7 +371,10 @@ class Bridge:
                     )
                     return
                 body = await read_body(reader, headers, max_bytes=limit)
-                status, response = await self.dispatch(method, target, headers, body)
+                peer = writer.get_extra_info("peername")
+                status, response = await self.dispatch(
+                    method, target, headers, body, peer=peer[0] if peer else "-"
+                )
                 outcome = str(status)
                 await write_response(
                     writer,
