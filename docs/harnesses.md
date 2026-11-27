@@ -319,7 +319,10 @@ with no coding harness. The folder must be a git root, and never the home
 folder or one above it, the rule a SessionStart install follows, since the
 MetaHarness's hooks would otherwise run in every session on the machine; a
 template may name at most 12 roles (lowercase names, a card under 300
-characters). `kit-policy.json` is written atomically
+characters, each rule under 200), and its roles come from the added
+MetaHarness's manifest, never from the repository's copy of the install record.
+If the MetaHarness does not land in the folder, no session starts: the
+workspace stands and the answer says why. `kit-policy.json` is written atomically
 and never through a symlink. A MetaHarness's name is unique in the registry;
 registering a second MetaHarness or suite of that name is refused.
 

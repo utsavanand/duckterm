@@ -190,3 +190,60 @@ def test_create_team_installs_the_kit_and_starts_one_session_per_role_on_the_def
     assert launched[2]["runtime"] == "codex" and launched[2]["test"] is True
     assert quiet[0] == 200 and quiet[1].get("sessions") is None and len(launched) == 4
     assert set(quiet[1]["team"]["roles"]) == {"dev", "reviewer"}
+
+
+@pytest.mark.parametrize("failure", ["exception", "silent"])
+def test_no_session_starts_when_the_kit_did_not_land_in_the_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    """main-qa on #518: an install that raised, or returned without the kit,
+    still started every role. A role without its skills and rules is not the
+    team; the workspace stands, the failure is in the answer, nothing runs."""
+    monkeypatch.setattr(instance, "home", lambda: tmp_path / "dthome")
+    monkeypatch.setattr(harness_preferences, "present", lambda: ["claude-code"])
+    project = tmp_path / "repo"
+    project.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=project, check=True)
+    store = HistoryStore(tmp_path / "db.sqlite")
+    store.add_harness("sample-kit", str(SAMPLE), 1)
+    launched: list[dict[str, Any]] = []
+
+    async def fake_launch(self: Orchestrator, **kw: Any) -> str:
+        launched.append(kw)
+        return "key"
+
+    def broken(*args: Any) -> list[str]:
+        if failure == "exception":
+            raise OSError("disk full")
+        return []
+
+    monkeypatch.setattr(Orchestrator, "launch", fake_launch)
+    monkeypatch.setattr(api, "apply_policies", broken)
+    body = {
+        "kit": "sample-kit",
+        "team": "feature-squad",
+        "kit_path": str(SAMPLE),
+        "project": str(project),
+    }
+
+    async def scenario() -> tuple[int, dict]:
+        server = Server(history=store, edition=KITS_ON)
+        srv = await asyncio.start_server(server.handle, "127.0.0.1", 0)
+        async with srv:
+            return await _owner_post(
+                srv.sockets[0].getsockname()[1], server.token, "/kits/team", body
+            )
+
+    status, out = asyncio.run(scenario())
+    assert status == 200 and launched == []
+    assert out["sessions"] == [] and out["harness"] is None
+    assert out["failed"][0]["role"] == "*"
+    assert (
+        "not installed" in out["failed"][0]["error"]
+        and "no session was started" in out["failed"][0]["error"]
+    )
+    assert ("disk full" if failure == "exception" else "nothing was installed") in out["failed"][0][
+        "error"
+    ]
+    assert "feature-squad" in store.folders()
+    assert api.team_for_folder("feature-squad")["sessions"] == []

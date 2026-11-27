@@ -3051,11 +3051,29 @@ class Server:
         )
         project = result["team"].get("project")
         if project:
+            # No session starts without the kit (main-qa on #518): a role that
+            # opens without its skills and rules is not the team the owner made.
             registry = [dict(r) for r in self.history.harnesses()]
             try:
                 await asyncio.to_thread(kits_api.apply_policies, registry, folder, project)
+                record = await asyncio.to_thread(kits_api.planning.load_record, Path(project))
+                problem = "" if kit in record["kits"] else "nothing was installed"
             except (OSError, kits_api.KitApiError) as exc:
-                print(f"[duckterm] team {folder}: install into {project}: {exc}", file=sys.stderr)
+                problem = str(exc)
+            if problem:
+                return {
+                    **result,
+                    "sessions": [],
+                    "harness": None,
+                    "failed": [
+                        {
+                            "role": "*",
+                            "error": f"the MetaHarness is not installed in {project} ({problem}); "
+                            "no session was started. Enable it there on the MetaHarnesses page, "
+                            "then start the roles from their cards",
+                        }
+                    ],
+                }
         if project and payload.get("sessions", True):
             # Owner, 2026-11-27: a team starts with one session per role, on the
             # default coding harness; the role cards add a second one later.
