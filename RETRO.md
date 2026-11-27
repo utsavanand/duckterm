@@ -1,3 +1,28 @@
+## 2026-11-26 — A green gate cannot see a CSS class collision
+
+The connector panel rebuild introduced `.rd-card`. That class already existed,
+1300 lines further down the same stylesheet, as the session card. CSS later-wins,
+so the session card's rule overrode the connector card's own padding and radius:
+16px/18px and 12px instead of the intended 12px/0 and 10px. The 18px horizontal
+padding was the damaging one, because the card's footer is designed to run
+full-bleed to the card edge -- forced inset, its top rule stopped spanning the
+card and read as a seam.
+
+The full gate passed on this. 989 vitest tests and 189 playwright tests, green,
+with the defect shipped. Proved it afterwards by breaking the class name
+outright: vitest still reported 989 passed. No unit test asserts on the card
+container at all, so no unit test could have noticed the container was styled by
+someone else's rule. The e2e suite did catch it (5 failures) because it locates
+by `.rd-ccard`.
+
+Two lessons. First: before adding a CSS class, grep the whole stylesheet set for
+the name -- not just the file being edited, and not just the block being
+replaced. `rd-card-*` turned out to be an established namespace spanning
+inbox.css and review/review.css. Second: a passing gate is evidence about what
+the tests assert, not about what the user sees. The thing to verify after a
+visual change is the computed style, which is one `getComputedStyle` call and
+settles in seconds what reading the cascade cannot.
+
 ## 2026-11-26 — A derived boolean cannot drive a control that states intent
 
 The connector panel's "share with agents" button became a switch. Wiring its

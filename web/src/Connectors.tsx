@@ -163,16 +163,16 @@ export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
         : { cls: "warn", text: "Duckterm only" };
       // A card's footer only exists if something would sit in it.
       const hasFooter = connected && !c.managed && !editingThis;
-      return <div key={c.name} className={`rd-card${hasFooter ? " has-footer" : ""}`}>
-        <div className="rd-card-head">
-          <div className="rd-card-title">{c.title}</div>
-          <div className="rd-card-desc">
+      return <div key={c.name} className={`rd-ccard${hasFooter ? " has-footer" : ""}`}>
+        <div className="rd-ccard-head">
+          <div className="rd-ccard-title">{c.title}</div>
+          <div className="rd-ccard-desc">
             {connected
-              ? <>{c.identity && <span className="rd-card-identity">{c.identity}</span>}
+              ? <>{c.identity && <span className="rd-ccard-identity">{c.identity}</span>}
                   {c.identity && " · "}{sourceNames[c.credential!] ?? c.credential}</>
               : "Not connected"}
           </div>
-          <div className="rd-card-action">
+          <div className="rd-ccard-action">
             <span className={`rd-badge rd-badge-${badge.cls}`}>
               {badge.cls !== "off" && <span className="rd-badge-dot" aria-hidden="true" />}
               {badge.text}
@@ -180,7 +180,7 @@ export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
           </div>
         </div>
 
-        <div className="rd-card-body">
+        <div className="rd-ccard-body">
           {c.managed ? <div className="rd-connector-desc">Managed through the remote connector administrator.</div> : <>
             {!connected && !editingThis && <>
               {c.runner_ready === false && <div className="rd-alert">Before connecting: {c.detail}</div>}
@@ -297,10 +297,10 @@ export function Connectors({ sessionKey = "" }: { sessionKey?: string }) {
 
         {/* Card-level actions have one home. Sign out is pushed to the far
             end so a routine control is never adjacent to the destructive one. */}
-        {hasFooter && <div className="rd-card-foot">
+        {hasFooter && <div className="rd-ccard-foot">
           <button className="rd-btn rd-btn-sm" disabled={busy !== null} onClick={() => edit(c)}>Change credential</button>
           <a className="rd-linkbtn" href={c.revoke_url} target="_blank" rel="noreferrer">Revoke at github.com ↗</a>
-          <span className="rd-card-foot-spacer" />
+          <span className="rd-ccard-foot-spacer" />
           <button className="rd-btn rd-btn-danger rd-btn-sm" disabled={busy !== null} onClick={() => change(c, "forget")}>Sign out</button>
         </div>}
       </div>;

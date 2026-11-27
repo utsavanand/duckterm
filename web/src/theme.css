@@ -807,7 +807,7 @@ code,
    border so it does not add to the box; the footer is a tinted strip above a
    top rule. Each connector is one card, so the card edge does the grouping
    that five different alignments used to attempt. */
-.rd-card {
+.rd-ccard {
   --card-spacing: 12px;
   display: flex;
   flex-direction: column;
@@ -819,28 +819,28 @@ code,
   box-shadow: inset 0 0 0 1px var(--border);
   font-size: 0.75rem;
 }
-.rd-card + .rd-card {
+.rd-ccard + .rd-ccard {
   margin-top: 10px;
 }
 /* The footer brings its own padding, so the card must not add a second one. */
-.rd-card.has-footer {
+.rd-ccard.has-footer {
   padding-bottom: 0;
 }
 /* grid-cols-[1fr_auto] only when a card action is present -- here, always. */
-.rd-card-head {
+.rd-ccard-head {
   display: grid;
   grid-template-columns: 1fr auto;
   align-items: start;
   gap: 2px 8px;
   padding: 0 var(--card-spacing);
 }
-.rd-card-title {
+.rd-ccard-title {
   grid-column: 1;
   font-weight: 600;
   font-size: 0.8125rem;
   line-height: 1.2;
 }
-.rd-card-desc {
+.rd-ccard-desc {
   grid-column: 1;
   font-size: 0.6875rem;
   color: var(--text-soft);
@@ -850,25 +850,25 @@ code,
 }
 /* An identity is a value, so it keeps monospace; the credential name beside
    it is prose and must not inherit it. */
-.rd-card-identity {
+.rd-ccard-identity {
   font-family: ui-monospace, Menlo, monospace;
 }
-.rd-card-action {
+.rd-ccard-action {
   grid-column: 2;
   grid-row: 1 / span 2;
   align-self: start;
   justify-self: end;
 }
-.rd-card-body {
+.rd-ccard-body {
   padding: 0 var(--card-spacing);
   display: flex;
   flex-direction: column;
   gap: 8px;
 }
-.rd-card-body:empty {
+.rd-ccard-body:empty {
   display: none;
 }
-.rd-card-foot {
+.rd-ccard-foot {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -877,7 +877,7 @@ code,
   border-top: 1px solid var(--border);
   background: var(--bg-soft);
 }
-.rd-card-foot-spacer {
+.rd-ccard-foot-spacer {
   flex: 1 1 auto;
 }
 

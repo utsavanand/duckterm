@@ -54,7 +54,7 @@ test("a connector row proves what it serves and when it was last used", async ({
     }));
 
     const pane = await openPanel(page, "connector-proof-check");
-    const row = pane.locator(".rd-card", { hasText: "GitHub" });
+    const row = pane.locator(".rd-ccard", { hasText: "GitHub" });
     // Before checking, the panel must not imply it verified anything.
     await expect(row.getByText(/Not verified/)).toBeVisible();
     await expect(row.getByText(/Used 2h ago · 90 calls/)).toBeVisible();
@@ -76,7 +76,7 @@ test("a failing connector shows the server's own reason, not a generic error", a
     }));
 
     const pane = await openPanel(page, "connector-failure-check");
-    const row = pane.locator(".rd-card", { hasText: "GitHub" });
+    const row = pane.locator(".rd-ccard", { hasText: "GitHub" });
     // Silence in the event log is not evidence the connector went unused.
     await expect(row.getByText(/No recorded use/)).toBeVisible();
 
@@ -100,7 +100,7 @@ test("the two doors report independently when agents are turned off", async ({ p
     }));
 
     const pane = await openPanel(page, "connector-doors-check");
-    const row = pane.locator(".rd-card", { hasText: "GitHub" });
+    const row = pane.locator(".rd-ccard", { hasText: "GitHub" });
     // The agents door is the switch, off; Duckterm's is stated beside it.
     await expect(row.getByRole("switch", { name: /Share GitHub with agents/ }))
       .toHaveAttribute("aria-checked", "false");
@@ -124,7 +124,7 @@ test("a lost harness entry reads differently from the owner turning agents off",
     }));
 
     const pane = await openPanel(page, "connector-lost-entry-check");
-    const row = pane.locator(".rd-card", { hasText: "GitHub" });
+    const row = pane.locator(".rd-ccard", { hasText: "GitHub" });
     await expect(row.getByText(/Codex has no entry for it/)).toBeVisible();
     await expect(row.getByText(/Your login stays saved/)).toHaveCount(0);
   } finally {
@@ -146,7 +146,7 @@ test("the connect flow and its editor fit the sidebar", async ({ page }, testInf
       },
     }));
     const pane = await openPanel(page, "connector-layout-check");
-    const row = pane.locator(".rd-card", { hasText: "GitHub" });
+    const row = pane.locator(".rd-ccard", { hasText: "GitHub" });
 
     // The CLI login is the primary path and needs no editor at all.
     await expect(row.getByRole("button", { name: "Connect" })).toBeVisible();

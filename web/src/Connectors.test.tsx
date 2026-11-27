@@ -213,7 +213,7 @@ it("sends the revoke link to the page the server chose, in a new tab", async () 
   expect(link).toHaveAttribute("target", "_blank");
   expect(link).toHaveAttribute("rel", "noreferrer");
   // Placement: in the card footer, where card-level actions live.
-  expect(link.closest(".rd-card-foot")).not.toBeNull();
+  expect(link.closest(".rd-ccard-foot")).not.toBeNull();
 });
 
 it("does not offer a revoke link before there is anything to revoke", async () => {
