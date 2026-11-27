@@ -3,6 +3,7 @@ into a project with hand-written files, reinstall, drift, uninstall leaves the
 owner's bytes untouched. The shim is exercised as the harness would run it."""
 
 import json
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -740,3 +741,47 @@ def test_flow_shortcut_is_not_written_for_harnesses_without_commands(tmp_path):
     p = plan.build(kit, tmp_path / "proj", ["codex"])
     assert not [x for x in p.placements if x.path.startswith(".claude/commands/")]
     assert [x for x in p.placements if x.path.endswith("/ship.json")]
+
+
+def _overlap_kit(tmp_path: Path, name: str, skill: str, flow: str) -> manifest.Kit:
+    (tmp_path / name).mkdir()
+    return _tiny_kit(
+        tmp_path / name,
+        f'manifest_version = 1\nname = "{name}"\ndescription = "d"\nversion = "0.0.1"\n'
+        f'[[components]]\nkind = "skill"\npath = "skills/{skill}"\neffects = "workspace"\n'
+        'outputs = { spec = { file = "spec.md" } }\n'
+        f'[[components]]\nkind = "flow"\npath = "flows/{flow}.json"\n',
+        {
+            f"skills/{skill}/SKILL.md": (
+                f"---\nname: {skill}\ndescription: Writes the spec.\n---\nbody\n"
+            ),
+            f"flows/{flow}.json": json.dumps(
+                {
+                    "name": flow,
+                    "inputs": {"issue": "text"},
+                    "triggers": [{"type": "github-issue", "input": "issue"}],
+                    "steps": [{"id": "s", "run": skill, "with": {"issue": "inputs.issue"}}],
+                }
+            ),
+        },
+    )
+
+
+def test_two_kits_doing_the_same_job_under_other_names_overlap_but_both_install(tmp_path):
+    """Same output name or same flow trigger is one job twice: the plan says so
+    as a soft conflict, the owner is told, and the install still goes ahead."""
+    project = tmp_path / "proj"
+    project.mkdir()
+    first = _overlap_kit(tmp_path, "first", "write-spec", "from-issue")
+    second = _overlap_kit(tmp_path, "second", "spec", "issue-to-pr")
+    install.apply(plan.build(first, project, ["claude-code"]))
+    p = plan.build(second, project, ["claude-code"])
+    assert [(c.kind, c.detail) for c in p.conflicts] == [
+        ("overlap", "skill 'spec' and first's 'write-spec' both produce 'spec'"),
+        ("overlap", "flow 'issue-to-pr' and first's 'from-issue' both start on github-issue"),
+    ]
+    install.apply(p)
+    assert set(plan.load_record(project)["kits"]) == {"first", "second"}
+    # a kit whose source folder is gone is not judged; nothing else changes
+    shutil.rmtree(tmp_path / "first")
+    assert plan.build(second, project, ["claude-code"]).conflicts == []
