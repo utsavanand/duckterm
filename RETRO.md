@@ -1,3 +1,10 @@
+## 2026-11-26 — Improve readability without replacing the app theme
+
+Page-local overrides of shared colors made AGENTS.md look like a different app.
+Use the existing background, control, font and secondary-text tokens instead;
+keep semantic color on small labels and status edges. Review both themes in
+context after preview approval, rather than judging an isolated palette alone.
+
 ## 2026-11-26 — The narrow-strip rule never hid Oracle's subtitle
 
 Compacting the sidebar rows for short windows first saved only the Autopilot
