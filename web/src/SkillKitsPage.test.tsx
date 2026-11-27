@@ -4,7 +4,7 @@ import { api, KitCatalog, KitEntry, KitPlan, KitReview } from "./api";
 import { SkillKitsPage } from "./SkillKitsPage";
 
 vi.mock("./api", () => ({
-  api: { browse: vi.fn(), kitsCatalog: vi.fn(), kitsRegister: vi.fn(), kitsUnregister: vi.fn(), kitsPlan: vi.fn(), kitsReview: vi.fn(), kitsFix: vi.fn(), kitsEnable: vi.fn(), kitsDisable: vi.fn(), kitsUninstall: vi.fn(), kitsVerify: vi.fn(), kitsCreateTeam: vi.fn() },
+  api: { browse: vi.fn(), kitsCatalog: vi.fn(), kitsRegister: vi.fn(), kitsUnregister: vi.fn(), kitsPlan: vi.fn(), kitsReview: vi.fn(), kitsFix: vi.fn(), kitsEnable: vi.fn(), kitsDisable: vi.fn(), kitsUninstall: vi.fn(), kitsVerify: vi.fn(), kitsCreateTeam: vi.fn(), harnessPreferences: vi.fn() },
 }));
 afterEach(() => { cleanup(); vi.resetAllMocks(); });
 
@@ -204,17 +204,19 @@ it("a manifest error is shown once in the review and blocks Enable", async () =>
   expect(screen.getByRole("button", { name: "Enable" })).toBeDisabled();
 });
 
-it("creates a team as a new workspace from the kit's installed repository", async () => {
+it("creates a team as a new workspace from the kit's installed repository, with a session per role", async () => {
   vi.mocked(api.kitsCatalog).mockResolvedValue(catalog);
+  vi.mocked(api.harnessPreferences).mockResolvedValue({ default_harness: "codex", present: ["claude-code", "codex"], effective: "codex" });
   vi.mocked(api.kitsCreateTeam).mockResolvedValue({ team: { folder: "Payments squad", team: "uv-coding", description: "", kit: "uv-suite", kit_version: "0.34.0", project: "/ws/duckterm", roles: procedure.roles, rules: procedure.rules, created_at: 1 } });
   const created = vi.fn();
   render(<SkillKitsPage onClose={() => {}} fallback={null} onTeamCreated={created} />);
   fireEvent.click(await screen.findByRole("button", { name: "Create team" }));
-  const name = screen.getByLabelText("Workspace name");
+  const name = await screen.findByLabelText("Workspace name");
   expect(name).toHaveValue("uv-coding");
+  expect(screen.getByLabelText("Folder the team works in")).toHaveValue("/ws/duckterm");
   fireEvent.change(name, { target: { value: "Payments squad" } });
-  fireEvent.click(screen.getByRole("button", { name: "Create workspace" }));
-  await waitFor(() => expect(api.kitsCreateTeam).toHaveBeenCalledWith({ project: "/ws/duckterm", kit_path: "/Users/me/ws-uv-suite", kit: "uv-suite", team: "uv-coding", name: "Payments squad" }, ""));
+  fireEvent.click(await screen.findByRole("button", { name: "Create team · 2 sessions" }));
+  await waitFor(() => expect(api.kitsCreateTeam).toHaveBeenCalledWith({ project: "/ws/duckterm", kit_path: "/Users/me/ws-uv-suite", kit: "uv-suite", team: "uv-coding", name: "Payments squad", sessions: true }, ""));
   await waitFor(() => expect(created).toHaveBeenCalledWith("Payments squad"));
 });
 

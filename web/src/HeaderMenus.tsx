@@ -9,7 +9,7 @@ import { LocalVoiceStatus } from "./api";
 import { useEdition } from "./edition";
 
 type Menu = "settings" | "new";
-export function HeaderMenus({ theme, onTheme, density, onDensity, notifyOn, onNotify, notificationHelp, voiceLevel, onVoiceLevel, voice, onAction }: {
+export function HeaderMenus({ theme, onTheme, density, onDensity, notifyOn, onNotify, notificationHelp, voiceLevel, onVoiceLevel, voice, harness, onAction }: {
   theme?: Theme;
   onTheme?: (theme: Theme) => void;
   density: SidebarDensity;
@@ -30,6 +30,7 @@ export function HeaderMenus({ theme, onTheme, density, onDensity, notifyOn, onNo
     onInstall: () => void;
     onRemove: () => void;
   };
+  harness?: { present: string[]; value: string | null; effective: string | null; onChange: (value: string | null) => void };
   onAction: (action: "launch" | "folder" | "team" | "harnesses" | "backup" | "bugreport" | "collaboration" | "checkpointing" | "aimodels" | "appearance" | "agentsetup" | "featureflags") => void;
 }) {
   const [open, setOpen] = useState<Menu | null>(null);
@@ -78,6 +79,10 @@ export function HeaderMenus({ theme, onTheme, density, onDensity, notifyOn, onNo
         <label className="rd-header-menu-field">Sidebar density<select value={density} onChange={(event) => onDensity(event.target.value as SidebarDensity)}>
           <option value="compact">Compact</option><option value="standard">Standard</option><option value="relaxed">Relaxed</option>
         </select></label>
+        {has("skill_kits") && harness && <label className="rd-header-menu-field" title="The coding harness a new team's sessions start on when nothing names one">Default harness<select value={harness.value ?? ""} onChange={(event) => harness.onChange(event.target.value || null)}>
+          <option value="">Automatic{harness.effective ? ` (${harness.effective})` : ""}</option>
+          {harness.present.map((h) => <option key={h} value={h}>{h}</option>)}
+        </select></label>}
         <div className="rd-header-menu-divider" />
         <div className="rd-header-notifications">
           <label>Desktop notifications<input type="checkbox" checked={notifyOn} disabled={!notificationsAvailable} onChange={onNotify} aria-describedby="header-notification-help" /></label>

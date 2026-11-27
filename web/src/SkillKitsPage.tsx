@@ -2,7 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { api, KitCatalog, KitDetail, KitEnableResult, KitEntry, KitFix, KitPlanRow, KitProcedure, KitReview, KitWorkspace } from "./api";
 import { DirBrowser } from "./DirBrowser";
 import { Button, useToast } from "./ui";
-import { teamRequest } from "./teams";
+import { NewTeamModal } from "./NewTeamModal";
 import "./skillKits.css";
 
 // The MetaHarnesses page (Settings › MetaHarnesses): the MetaHarnesses added to DuckTerm,
@@ -77,6 +77,7 @@ export function SkillKitsPage({
   const [error, setError] = useState<string | null>(null);
   const [unavailable, setUnavailable] = useState(false);
   const [view, setView] = useState<View>({ name: "list" });
+  const [teamFor, setTeamFor] = useState<{ kit: string; team: string } | null>(null);
   // The page is a fixed layer under the top bar; at phone width the bar wraps
   // to two rows, so its height is measured rather than assumed.
   const pageRef = useRef<HTMLDivElement>(null);
@@ -226,18 +227,15 @@ export function SkillKitsPage({
     }
   }
 
-  async function createTeam(kit: KitEntry, team: string, name: string) {
-    setBusy(true);
-    try {
-      const out = await api.kitsCreateTeam(teamRequest(kit, team, name), sessionKey);
-      toast(`Team ${out.team.team}: workspace "${out.team.folder}" created with ${Object.keys(out.team.roles).length} roles`, "ok");
-      onTeamCreated?.(out.team.folder);
-    } catch (e) {
-      toast(`Create team refused: ${(e as Error).message}`, "err");
-    } finally {
-      setBusy(false);
-    }
+  // Create team opens the same dialog as New ▾ › New team, with this team
+  // chosen: the folder, the sessions per role and the request are one path.
+  function createTeam(kit: KitEntry, team: string) {
+    setTeamFor({ kit: kit.name, team });
   }
+  const teamDialog = teamFor && (
+    <NewTeamModal sessionKey={sessionKey} existing={[]} preselect={teamFor} onClose={() => setTeamFor(null)} onOpenKits={() => setTeamFor(null)}
+      onCreated={(folder) => { setTeamFor(null); onTeamCreated?.(folder); }} />
+  );
 
   const current = view.name !== "list" && view.name !== "add" ? entry(view.kit) : null;
   const crumb = (
@@ -253,6 +251,7 @@ export function SkillKitsPage({
 
   return (
     <div className="rd-kits-page" role="dialog" aria-label="MetaHarnesses" ref={pageRef}>
+      {teamDialog}
       <div className="rd-kits-main">
         {crumb}
         {view.name === "list" && (
@@ -327,7 +326,7 @@ function kitState(kit: KitEntry): { text: string; tone: string } {
 function ListView({ catalog, error, busy, onAdd, onOpen, onClose, onCreateTeam }: {
   catalog: KitCatalog | null; error: string | null; busy: boolean;
   onAdd: () => void; onOpen: (name: string) => void; onClose: () => void;
-  onCreateTeam: (kit: KitEntry, team: string, name: string) => void;
+  onCreateTeam: (kit: KitEntry, team: string) => void;
 }) {
   const kits = catalog?.kits ?? [];
   const teams = kits.flatMap((k) => (k.procedures ?? []).map((p) => ({ kit: k, procedure: p })));
@@ -374,7 +373,7 @@ function ListView({ catalog, error, busy, onAdd, onOpen, onClose, onCreateTeam }
         <div className="rd-kits-table">
           <div className="rd-kits-prow"><span>Team</span><span>Roles and rules</span><span /></div>
           {teams.map(({ kit, procedure }) => (
-            <ProcedureRow key={`${kit.name}/${procedure.name}`} procedure={procedure} kit={kit} busy={busy} onCreate={(name) => onCreateTeam(kit, procedure.name, name)} />
+            <ProcedureRow key={`${kit.name}/${procedure.name}`} procedure={procedure} kit={kit} busy={busy} onCreate={() => onCreateTeam(kit, procedure.name)} />
           ))}
           {catalog && teams.length === 0 && <div className="rd-kits-prow" style={{ gridTemplateColumns: "1fr" }}><span className="rd-kits-sub">None of the added kits offers a team.</span></div>}
         </div>
@@ -383,7 +382,7 @@ function ListView({ catalog, error, busy, onAdd, onOpen, onClose, onCreateTeam }
   );
 }
 
-function ProcedureRow({ procedure, kit, busy, onCreate }: { procedure: KitProcedure; kit: KitEntry; busy: boolean; onCreate: (name: string) => void }) {
+function ProcedureRow({ procedure, kit, busy, onCreate }: { procedure: KitProcedure; kit: KitEntry; busy: boolean; onCreate: () => void }) {
   return (
     <div className="rd-kits-prow">
       <div>
@@ -391,27 +390,10 @@ function ProcedureRow({ procedure, kit, busy, onCreate }: { procedure: KitProced
         <div className="rd-kits-sub">{Object.keys(procedure.roles).join(" · ")}</div>
       </div>
       <div style={{ fontSize: "0.75rem" }}>{procedure.rules.map(describeRule).join(" · ") || procedure.description}</div>
-      <CreateTeam name={procedure.name} busy={busy} onCreate={onCreate} />
-    </div>
-  );
-}
-
-function CreateTeam({ name, busy, onCreate }: { name: string; busy: boolean; onCreate: (name: string) => void }) {
-  const [asking, setAsking] = useState(false);
-  const [value, setValue] = useState(name);
-  if (!asking) {
-    return (
       <div className="rd-kits-pills" style={{ justifyContent: "flex-end" }}>
-        <Button size="sm" onClick={() => setAsking(true)} disabled={busy}>Create team</Button>
+        <Button size="sm" onClick={onCreate} disabled={busy}>Create team</Button>
       </div>
-    );
-  }
-  return (
-    <form className="rd-kits-actions" style={{ justifyContent: "flex-end", alignItems: "center" }} onSubmit={(e) => { e.preventDefault(); if (value.trim()) onCreate(value.trim()); setAsking(false); }}>
-      <input type="text" aria-label="Workspace name" value={value} onChange={(e) => setValue(e.target.value)} style={{ width: 200 }} autoFocus />
-      <Button size="sm" disabled={busy || !value.trim()} onClick={() => { if (value.trim()) { onCreate(value.trim()); setAsking(false); } }}>Create workspace</Button>
-      <Button type="button" size="sm" variant="ghost" onClick={() => setAsking(false)}>Cancel</Button>
-    </form>
+    </div>
   );
 }
 
@@ -458,7 +440,7 @@ function AddView({ busy, onCancel, onAdd }: { busy: boolean; onCancel: () => voi
 function KitView({ kit, busy, fromAdd, onEnable, onDisable, onRemove, onVerify, onUninstall, onCreateTeam, onDone }: {
   kit: KitEntry; busy: boolean; fromAdd: boolean; onEnable: () => void; onDisable: () => void; onRemove: () => void;
   onVerify: (project: string) => void; onUninstall: (project: string) => void;
-  onCreateTeam: (kit: KitEntry, team: string, name: string) => void; onDone: () => void;
+  onCreateTeam: (kit: KitEntry, team: string) => void; onDone: () => void;
 }) {
   const [confirmRemove, setConfirmRemove] = useState(false);
   const [confirmUninstall, setConfirmUninstall] = useState<string | null>(null);
@@ -497,7 +479,7 @@ function KitView({ kit, busy, fromAdd, onEnable, onDisable, onRemove, onVerify, 
       {errors.map((f) => <div key={f.component + f.message} className="rd-kits-error">{f.component}: {f.message}</div>)}
       {(kit.procedures ?? []).map((p) => (
         <div className="rd-kits-card" key={p.name} style={{ borderColor: "var(--brand-green)" }}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}><strong>Team: {p.name}</strong><CreateTeam name={p.name} busy={busy} onCreate={(name) => onCreateTeam(kit, p.name, name)} /></div>
+          <div style={{ display: "flex", justifyContent: "space-between", gap: 8, alignItems: "center" }}><strong>Team: {p.name}</strong><Button size="sm" onClick={() => onCreateTeam(kit, p.name)} disabled={busy}>Create team</Button></div>
           <div style={{ fontSize: "0.75rem" }}>{Object.keys(p.roles).join(" · ")} · {p.rules.map(describeRule).join(" · ")}</div>
           <div className="rd-kits-note">Creating the team makes a new workspace with these roles and enables this kit for it.</div>
         </div>

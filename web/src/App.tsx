@@ -16,7 +16,7 @@ import { sessionFetch, sessionRef } from "./hostTransport";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { AgentsMdModal } from "./AgentsMdModal";
 import { FolderView } from "./FolderView";
-import { api } from "./api";
+import { api, HarnessPreferences } from "./api";
 import { canSetUpAgents, clearLaunchDraft, desktop, openNativeBugReport, rememberRuntimeSetup, runtimeSetupRequest, type RuntimeSetupState } from "./desktop";
 import { Connectors } from "./Connectors";
 import { SessionPanelSection } from "./SessionPanelSection";
@@ -213,6 +213,13 @@ function Dashboard() {
   const [forkKey, setForkKey] = useState<string | null>(null);
   // Folder the next launched session should land in (folder + button).
   const [launchGroup, setLaunchGroup] = useState<string | undefined>(undefined);
+  // The default coding harness (Settings): what Create team starts a role's session on.
+  const [harnessPrefs, setHarnessPrefs] = useState<HarnessPreferences | null>(null);
+  useEffect(() => {
+    if (!has("skill_kits")) return;
+    // Shown only once the server answered in full; a stub or an older server leaves the select out.
+    api.harnessPreferences().then((p) => setHarnessPrefs(Array.isArray(p?.present) ? p : null), () => setHarnessPrefs(null));
+  }, [has]);
   const [checkpointTarget, setCheckpointTarget] = useState<{ key: string; request: number } | null>(null);
   const [memoryTarget, setMemoryTarget] = useState<{ key: string; revision: string; checkpoint?: string } | null>(null);
   const [chosenView, setView] = useState<"terminal" | "messages" | "history" | "inbox" | "code" | "artifacts" | "memory" | "prs" | "flows">(
@@ -430,7 +437,9 @@ function Dashboard() {
             <span className="rd-rules-badge">{ruleCandidates}</span>
           )}
         </button>
-        <DashboardMenus theme={theme} onTheme={setTheme} sessions={sessions} density={density} onDensity={setDensity} notifyOn={notifications.on} onNotify={() => void notifications.toggle()} notificationHelp={notifications.help} onAction={(action) => {
+        <DashboardMenus theme={theme} onTheme={setTheme} sessions={sessions} density={density} onDensity={setDensity} notifyOn={notifications.on} onNotify={() => void notifications.toggle()} notificationHelp={notifications.help}
+          harness={harnessPrefs ? { present: harnessPrefs.present, value: harnessPrefs.default_harness, effective: harnessPrefs.effective, onChange: (value) => api.setHarnessPreferences(value).then(setHarnessPrefs, (e) => toast(`Could not save the default harness: ${(e as Error).message}`, "err")) } : undefined}
+          onAction={(action) => {
           if (action === "bugreport") {
             try { if (openNativeBugReport()) return; }
             catch (e) { toast(`Could not open the bug reporter: ${(e as Error).message}`, "err"); return; }

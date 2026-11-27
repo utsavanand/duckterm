@@ -485,6 +485,50 @@ def _refs(value: Any) -> list[str]:
     return []
 
 
+# A template's roles become sessions, one each, on one click (security review of
+# #518): bounded in number, named plainly, with a card that fits a prompt.
+MAX_ROLES = 12
+ROLE_NAME = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
+MAX_PURPOSE = 300
+MAX_RULES = 48
+MAX_RULE_TEXT = 200
+MAX_SKILLS = 32
+
+
+def role_problems(roles: dict[str, Any], rules: list[Any] | None = None) -> list[str]:
+    """What is wrong with a template's roles (name → {purpose, skills}, as a
+    procedure summary carries them; a bare string counts as the purpose) and
+    rules for a team: the same limits at validate time and at Create team,
+    and on a repository's install record, which anyone working there can edit."""
+    out = []
+    if len(roles) > MAX_ROLES:
+        out.append(f"{len(roles)} roles; a team has at most {MAX_ROLES}")
+    for name, spec in roles.items():
+        if not ROLE_NAME.match(str(name)):
+            out.append(f"role {name!r}: a name is lowercase letters, digits and dashes, 32 at most")
+        if isinstance(spec, str):
+            spec = {"purpose": spec}
+        if not isinstance(spec, dict):
+            out.append(f"role {name!r}: not a table")
+            continue
+        purpose = spec.get("purpose", "")
+        if not isinstance(purpose, str) or len(purpose) > MAX_PURPOSE:
+            out.append(f"role {name!r}: purpose is text of at most {MAX_PURPOSE} characters")
+        skills = spec.get("skills", [])
+        if not isinstance(skills, list) or len(skills) > MAX_SKILLS:
+            out.append(f"role {name!r}: skills is a list of at most {MAX_SKILLS}")
+        elif any(not isinstance(sk, str) or not sk or len(sk) > 64 for sk in skills):
+            out.append(f"role {name!r}: a skill name is text, 64 characters at most")
+    rules = rules or []
+    if len(rules) > MAX_RULES:
+        out.append(f"{len(rules)} rules; at most {MAX_RULES}")
+    for i, rule in enumerate(rules):
+        text = json.dumps(rule, ensure_ascii=False) if isinstance(rule, dict) else str(rule)
+        if len(text) > MAX_RULE_TEXT:
+            out.append(f"rule {i + 1} is {len(text)} characters, {MAX_RULE_TEXT} at most")
+    return out
+
+
 def _check_team(kit: m.Kit, team: str, err: Report, skills: dict[str, m.Component]) -> None:
     path = kit.root / team
     cid = f"{kit.name}/team/{Path(team).stem}"
@@ -503,6 +547,24 @@ def _check_team(kit: m.Kit, team: str, err: Report, skills: dict[str, m.Componen
     if not isinstance(roles, dict) or not roles:
         err(cid, "template needs `roles`")
         return
+    summarised = {
+        str(role): (
+            {
+                "purpose": (
+                    (spec.get("card") or {}).get("purpose", "")
+                    if isinstance(spec.get("card"), dict)
+                    else ""
+                ),
+                "skills": spec.get("skills", []),
+            }
+            if isinstance(spec, dict)
+            else spec
+        )
+        for role, spec in roles.items()
+    }
+    rules = data.get("rules", [])
+    for problem in role_problems(summarised, rules if isinstance(rules, list) else []):
+        err(cid, problem)
     for role, spec in roles.items():
         names = spec.get("skills") or [] if isinstance(spec, dict) else []
         for skill in names:

@@ -5,13 +5,16 @@ so the next attempt succeeds."""
 
 import asyncio
 import json
+import subprocess
 from pathlib import Path
+from typing import Any
 
 import pytest
 from tests.runtime.test_agents_md import _request
 from tests.runtime.test_harness_suites import KITS_ON
 
-from duckterm import release_features
+from duckterm import harness_preferences, release_features
+from duckterm.core.orchestrator import Orchestrator
 from duckterm.helpers import instance
 from duckterm.kits import api
 from duckterm.persistence.history import HistoryStore
@@ -75,3 +78,172 @@ def test_create_team_registers_the_workspace_and_recovers_from_a_failed_registra
     assert api.policies()["sample-kit"]["digest"] == api.kit_digest(SAMPLE)
     # a third attempt on an existing team is the usual refusal
     assert third[0] == 409
+
+
+async def _owner_get(port: int, token: str, path: str) -> tuple[int, dict]:
+    head = f"GET {path} HTTP/1.1\r\nHost: localhost\r\nX-Duckterm-Token: {token}\r\n\r\n"
+    return await _request(port, head.encode(), timeout=15)
+
+
+def test_create_team_installs_the_kit_and_starts_one_session_per_role_on_the_default_harness(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Owner, 2026-11-27: a team starts with its sessions. Each role gets one,
+    in the team's folder, named for the role, opened with the role's card, on
+    the harness the cascade picks; the kit is in the folder before the first
+    one starts. `sessions: false` keeps the old create-only behaviour."""
+    monkeypatch.setattr(instance, "home", lambda: tmp_path / "dthome")
+    monkeypatch.setattr(harness_preferences, "present", lambda: ["claude-code", "codex"])
+    project = tmp_path / "payments"
+    project.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=project, check=True)
+    store = HistoryStore(tmp_path / "db.sqlite")
+    store.add_harness("sample-kit", str(SAMPLE), 1)
+    launched: list[dict[str, Any]] = []
+
+    async def fake_launch(self: Orchestrator, **kw: Any) -> str:
+        launched.append(
+            {
+                **kw,
+                "runtime": kw["runtime"].name,
+                "kit_present": (project / ".claude" / "skills" / "review-diff").is_dir(),
+            }
+        )
+        return f"key-{len(launched)}"
+
+    monkeypatch.setattr(Orchestrator, "launch", fake_launch)
+    body = {
+        "kit": "sample-kit",
+        "team": "feature-squad",
+        "kit_path": str(SAMPLE),
+        "project": str(project),
+    }
+
+    async def scenario() -> list[tuple[int, dict]]:
+        server = Server(history=store, edition=KITS_ON)
+        srv = await asyncio.start_server(server.handle, "127.0.0.1", 0)
+        port = srv.sockets[0].getsockname()[1]
+        out = []
+        async with srv:
+            out.append(await _owner_get(port, server.token, "/harness-preferences"))
+            out.append(await _owner_post(port, server.token, "/kits/team", body))
+            out.append(
+                await _owner_post(
+                    port, server.token, "/harness-preferences", {"default_harness": "codex"}
+                )
+            )
+            out.append(
+                await _owner_post(
+                    port,
+                    server.token,
+                    "/kits/team",
+                    {**body, "name": "Billing", "test": True},
+                )
+            )
+            out.append(
+                await _owner_post(
+                    port,
+                    server.token,
+                    "/kits/team",
+                    # the registered kit's path wins over the body's
+                    {**body, "name": "Quiet", "sessions": False, "kit_path": "/nowhere/kit"},
+                )
+            )
+            # a plain folder (or the home folder) is refused before anything is
+            # written, installed or started: the kit's hooks would run everywhere
+            plain = tmp_path / "plain"
+            plain.mkdir()
+            out.append(
+                await _owner_post(
+                    port,
+                    server.token,
+                    "/kits/team",
+                    {**body, "name": "Nowhere", "project": str(plain)},
+                )
+            )
+        return out
+
+    prefs, created, saved, second, quiet, nowhere = asyncio.run(scenario())
+    assert nowhere[0] == 400 and "git root" in nowhere[1]["error"]
+    assert api.team_for_folder("Nowhere") is None and "Nowhere" not in store.folders()
+    assert not (tmp_path / "plain" / ".claude").exists()
+    assert prefs == (
+        200,
+        {"default_harness": None, "present": ["claude-code", "codex"], "effective": "claude-code"},
+    )
+    assert created[0] == 200, created
+    assert created[1]["harness"] == "claude-code" and created[1]["failed"] == []
+    assert [s["role"] for s in created[1]["sessions"]] == ["dev", "reviewer"]
+    assert created[1]["team"]["sessions"] == created[1]["sessions"]
+    dev, reviewer = launched[:2]
+    assert dev["runtime"] == "claude-code" and dev["cwd"] == str(project) and dev["name"] == "dev"
+    assert dev["kit_present"] is True  # installed before the first session started
+    assert "Builds what was asked; raises the PR." in dev["prompt"]
+    assert "Your work is reviewed by the reviewer." in dev["prompt"]
+    assert reviewer["name"] == "reviewer" and "You may not push." in reviewer["prompt"]
+    assert dev["test"] is False
+    assert api.team_for_folder("feature-squad")["harness"] == "claude-code"
+    assert api.launch_folder("key-1") == str(project)
+    # the setting wins once set; `test` reaches the sessions
+    assert saved[1]["effective"] == "codex"
+    assert second[0] == 200 and second[1]["harness"] == "codex"
+    assert launched[2]["runtime"] == "codex" and launched[2]["test"] is True
+    assert quiet[0] == 200 and quiet[1].get("sessions") is None and len(launched) == 4
+    assert set(quiet[1]["team"]["roles"]) == {"dev", "reviewer"}
+
+
+@pytest.mark.parametrize("failure", ["exception", "silent"])
+def test_no_session_starts_when_the_kit_did_not_land_in_the_folder(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, failure: str
+) -> None:
+    """main-qa on #518: an install that raised, or returned without the kit,
+    still started every role. A role without its skills and rules is not the
+    team; the workspace stands, the failure is in the answer, nothing runs."""
+    monkeypatch.setattr(instance, "home", lambda: tmp_path / "dthome")
+    monkeypatch.setattr(harness_preferences, "present", lambda: ["claude-code"])
+    project = tmp_path / "repo"
+    project.mkdir()
+    subprocess.run(["git", "init", "-q"], cwd=project, check=True)
+    store = HistoryStore(tmp_path / "db.sqlite")
+    store.add_harness("sample-kit", str(SAMPLE), 1)
+    launched: list[dict[str, Any]] = []
+
+    async def fake_launch(self: Orchestrator, **kw: Any) -> str:
+        launched.append(kw)
+        return "key"
+
+    def broken(*args: Any) -> list[str]:
+        if failure == "exception":
+            raise OSError("disk full")
+        return []
+
+    monkeypatch.setattr(Orchestrator, "launch", fake_launch)
+    monkeypatch.setattr(api, "apply_policies", broken)
+    body = {
+        "kit": "sample-kit",
+        "team": "feature-squad",
+        "kit_path": str(SAMPLE),
+        "project": str(project),
+    }
+
+    async def scenario() -> tuple[int, dict]:
+        server = Server(history=store, edition=KITS_ON)
+        srv = await asyncio.start_server(server.handle, "127.0.0.1", 0)
+        async with srv:
+            return await _owner_post(
+                srv.sockets[0].getsockname()[1], server.token, "/kits/team", body
+            )
+
+    status, out = asyncio.run(scenario())
+    assert status == 200 and launched == []
+    assert out["sessions"] == [] and out["harness"] is None
+    assert out["failed"][0]["role"] == "*"
+    assert (
+        "not installed" in out["failed"][0]["error"]
+        and "no session was started" in out["failed"][0]["error"]
+    )
+    assert ("disk full" if failure == "exception" else "nothing was installed") in out["failed"][0][
+        "error"
+    ]
+    assert "feature-squad" in store.folders()
+    assert api.team_for_folder("feature-squad")["sessions"] == []

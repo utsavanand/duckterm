@@ -37,6 +37,33 @@ def _project(value: Any) -> Path:
     return path.resolve()
 
 
+def may_install_into(root: Path) -> bool:
+    """Where a kit may be installed unattended: a git root, not the home
+    folder and not a folder above it (the hooks would run in every session).
+    Identity, not spelling: on a case-insensitive or normalising file system
+    `~/HOME` and an NFD spelling are the home folder too."""
+    if not root.is_dir() or not (root / ".git").exists():
+        return False
+    try:
+        resolved = root.resolve()
+        home = Path.home().resolve()
+        return not any(os.path.samefile(resolved, p) for p in (home, *home.parents))
+    except OSError:
+        return False
+
+
+def team_folder(value: Any) -> Path:
+    """The folder a team works in: the same rule as a SessionStart install,
+    since Create team installs the kit there and starts sessions in it."""
+    project = _project(value)
+    if not may_install_into(project):
+        raise KitApiError(
+            400,
+            f"{project} is not a repository a team can work in: a git root, not the home folder",
+        )
+    return project
+
+
 def _kit(value: Any) -> m.Kit:
     text = str(value or "").strip()
     if not text:
@@ -810,29 +837,40 @@ def create_team(body: dict[str, Any]) -> dict[str, Any]:
         raise KitApiError(400, "kit and team are required")
     if not folder or "/" in folder or folder.startswith("."):
         raise KitApiError(400, "a workspace name is required, without slashes")
-    project: Path | None = None
-    if body.get("project"):
-        # The kit is installed somewhere: copy the procedure as installed.
-        project = _project(body.get("project"))
-        record = planning.load_record(project)
-        entry = record["kits"].get(kit_name)
-        if entry is None:
-            raise KitApiError(404, f"kit {kit_name!r} is not installed in {project}")
-        version = entry.get("version")
-        offered = entry.get("procedures", [])
-    elif body.get("kit_path"):
-        # Not installed yet: the procedure comes from the manifest, and the
-        # kit is enabled for the new workspace so its first session gets it.
+    # `project` is the folder the team's sessions run in. When the kit is
+    # installed there the procedure is copied as installed; otherwise it comes
+    # from the added kit's manifest, and the kit is enabled for the new
+    # workspace so it is installed before the first session starts.
+    project: Path | None = team_folder(body.get("project")) if body.get("project") else None
+    if body.get("kit_path"):
+        # The added kit's own manifest (the server passes the registered path):
+        # the repository's copy of the install record is writable by whoever
+        # works there and never chooses what a role's session opens with.
         kit = _kit(body.get("kit_path"))
         if kit.name != kit_name:
             raise KitApiError(400, f"{body.get('kit_path')} holds {kit.name!r}, not {kit_name!r}")
         version = kit.version
         offered = procedures(kit)
+    elif project:
+        entry = planning.load_record(project)["kits"].get(kit_name)
+        if entry is None:
+            raise KitApiError(404, f"kit {kit_name!r} is not installed in {project}")
+        version = entry.get("version")
+        offered = entry.get("procedures", [])
     else:
         raise KitApiError(400, "project (an install) or kit_path (an added kit) is required")
     template = next((p for p in offered if p.get("name") == team_name), None)
     if template is None:
         raise KitApiError(404, f"kit {kit_name!r} offers no team {team_name!r}")
+    # The template is checked whether it came from the manifest or from the
+    # repository's record, which anyone working there can edit.
+    roles = template.get("roles")
+    rules = template.get("rules")
+    if not isinstance(roles, dict) or not roles or not isinstance(rules, list):
+        raise KitApiError(400, f"team {team_name!r}: roles is a table of roles and rules a list")
+    problems = validate.role_problems(roles, rules)
+    if problems:
+        raise KitApiError(400, f"team {team_name!r}: " + "; ".join(problems))
     existing = team_for_folder(folder)
     if existing is not None:
         raise KitApiError(409, f"workspace {folder!r} is already a team ({existing.get('team')})")
@@ -848,6 +886,8 @@ def create_team(body: dict[str, Any]) -> dict[str, Any]:
         "roles": template.get("roles", {}),
         "rules": template.get("rules", []),
         "created_at": int(time.time()),
+        "harness": None,
+        "sessions": [],
     }
     # An exclusive create: two requests for the same name racing past the
     # check above cannot both write, so a failed creation's recovery removes
@@ -857,6 +897,54 @@ def create_team(body: dict[str, Any]) -> dict[str, Any]:
     except FileExistsError:
         raise KitApiError(409, f"workspace {folder!r} is already a team") from None
     return {"team": data}
+
+
+def role_prompt(team: dict[str, Any], role: str) -> str:
+    """What a role's session opens with: the card's purpose, its skills and
+    the rules that bind it, from the team record."""
+    spec = team.get("roles", {}).get(role) or {}
+    lines = [
+        f"You are the {role} of the {team.get('team')} team, workspace {team.get('folder')!r}."
+    ]
+    if spec.get("purpose"):
+        lines.append(str(spec["purpose"]).rstrip(".") + ".")
+    skills = [f"/{s}" for s in spec.get("skills", []) if isinstance(s, str)]
+    if skills:
+        lines.append("Your skills: " + ", ".join(skills) + ".")
+    for rule in team.get("rules", []):
+        if not isinstance(rule, dict) or rule.get("role") != role:
+            continue
+        if isinstance(rule.get("review_by"), str):
+            lines.append(f"Your work is reviewed by the {rule['review_by']}.")
+        if isinstance(rule.get("may_not"), list):
+            lines.append("You may not " + ", ".join(str(x) for x in rule["may_not"]) + ".")
+    others = [r for r in team.get("roles", {}) if r != role]
+    if others:
+        lines.append("The other roles are " + ", ".join(others) + "; each runs as its own session.")
+    return " ".join(lines)
+
+
+def note_team_sessions(
+    folder: str, harness: str | None, sessions: list[dict[str, str]]
+) -> dict[str, Any]:
+    """Record which sessions Create team started, and on what, in the team
+    file it has just written."""
+    path = _team_file(folder)
+    data: dict[str, Any] = json.loads(path.read_text())
+    data["harness"] = harness
+    data["sessions"] = sessions
+    fd, name = tempfile.mkstemp(prefix=f".{folder}-", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w") as stream:
+            stream.write(json.dumps(data, indent=2) + "\n")
+            stream.flush()
+            os.fsync(stream.fileno())
+        os.chmod(name, 0o644)
+        os.replace(name, path)
+    finally:
+        if os.path.exists(name):
+            os.unlink(name)
+    return data
 
 
 def remove_team(folder: str) -> None:
@@ -1093,12 +1181,9 @@ def policy_target(launch: str | None, event: dict[str, Any]) -> str | None:
     if not launch:
         return None
     root = Path(launch)
-    if not root.is_dir() or not (root / ".git").exists():
+    if not may_install_into(root):
         return None
     resolved = root.resolve()
-    home = Path.home().resolve()
-    if resolved == home or home.is_relative_to(resolved):
-        return None
     cwd = str(event.get("cwd") or "")
     if cwd and not Path(cwd).resolve().is_relative_to(resolved):
         return None

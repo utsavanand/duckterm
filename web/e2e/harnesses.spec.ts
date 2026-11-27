@@ -362,6 +362,8 @@ test("New team lists an added MetaHarness's team and creates the workspace with 
   );
   const registered = await apiPost("/kits/register", { kit });
   expect(registered.status).toBe(200);
+  const project = realpathSync(mkdtempSync(join(tmpdir(), "rd-e2e-team-project-")));
+  execFileSync("git", ["init", "-q"], { cwd: project });
 
   await page.goto("/");
   await page.getByRole("button", { name: "New", exact: true }).click();
@@ -371,6 +373,12 @@ test("New team lists an added MetaHarness's team and creates the workspace with 
   await expect(page.getByText("builder · reviewer")).toBeVisible();
   const name = `Squad ${stamp}`;
   await page.getByLabel("Workspace name").fill(name);
+  await page.getByLabel("Folder the team works in").fill(project);
+  // A real harness on this machine would start real agents here; the
+  // sessions are the route test's business (test_kit_team_route), not this one's.
+  const sessions = page.getByRole("checkbox");
+  await expect(sessions).toBeVisible();
+  if (await sessions.isEnabled()) await sessions.uncheck();
   await page.screenshot({ path: testInfo.outputPath("new-team-dialog.png") });
   await page.getByRole("button", { name: "Create team", exact: true }).click();
 
@@ -378,4 +386,6 @@ test("New team lists an added MetaHarness's team and creates the workspace with 
   await expect(page.getByRole("region", { name: "Team roles" })).toContainText("Reviews every diff");
   await expect(page.getByRole("heading", { name })).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("team-workspace.png") });
+  // the MetaHarness went into the team's folder at creation, before any session
+  expect(existsSync(join(project, ".claude", "skills", "raise-pr", "SKILL.md"))).toBe(true);
 });

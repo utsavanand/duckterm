@@ -308,11 +308,28 @@ when the event's cwd lies inside it; the hook's own cwd is never a target,
 because a `claude` an agent starts in another folder inherits the session
 key and reports that folder. Create team works from an added MetaHarness: the new
 workspace is enabled for the MetaHarness (pinned to the tree the MetaHarness page showed),
-so its first session installs it. New ▾ › New team is the second door to it:
-the dialog lists the team templates of every added MetaHarness (name,
-description, roles), asks for the workspace name and sends the same request
-the MetaHarness card's Create team button does; with no team on offer it
-points at Settings › MetaHarnesses. `kit-policy.json` is written atomically
+so its first session installs it. New ▾ › New team and the MetaHarness card's
+Create team open the same dialog: the team templates of every added
+MetaHarness (name, description, roles), the workspace name, and the folder the
+team works in (the MetaHarness's installed repository when there is one); with
+no team on offer it points at Settings › MetaHarnesses. Creating the team
+(owner, 2026-11-27) installs the MetaHarness into that folder and starts one
+session per role there, named for the role and opened with the role's card
+(purpose, skills, the rules that bind it), on the **default coding harness**.
+That is the Settings › Default harness choice when it names an installed
+harness; otherwise the only harness installed; otherwise Claude Code among
+several (`harness-preferences.json` under the home; `GET|POST
+/harness-preferences`). Autopilot runs keep their own harness choice. The role
+cards' "New session as …" buttons add a second session of a role; unticking
+"Start one session per role" creates the workspace alone, as does a machine
+with no coding harness. The folder must be a git root, and never the home
+folder or one above it, the rule a SessionStart install follows, since the
+MetaHarness's hooks would otherwise run in every session on the machine; a
+template may name at most 12 roles (lowercase names, a card under 300
+characters, each rule under 200), and its roles come from the added
+MetaHarness's manifest, never from the repository's copy of the install record.
+If the MetaHarness does not land in the folder, no session starts: the
+workspace stands and the answer says why. `kit-policy.json` is written atomically
 and never through a symlink. A MetaHarness's name is unique in the registry;
 registering a second MetaHarness or suite of that name is refused.
 
@@ -321,10 +338,12 @@ disable | overview | review | fix
 | plan | install | uninstall | verify | run | runs | run-detail | gate | teams
 | team` (`duckterm.kits.api`; the identifiers keep `kit`); the ones that touch a
 repository take its path in the body. **Create team** (`POST /kits/team
-{project | kit_path, kit, team, name?}`) makes a workspace carrying the MetaHarness's procedure:
+{project, kit_path?, kit, team, name?, sessions?, harness?}`) makes a workspace carrying the MetaHarness's procedure:
 the record (roles and rules copied from the installed MetaHarness's template, with
 MetaHarness and version) is `<home>/teams/<name>.json`, the workspace is registered
-like New workspace, and the workspace view shows one card per role.
+like New workspace, the MetaHarness is installed into `project`, one session
+per role is started there (`sessions`, `failed` and `harness` in the answer,
+and in the record), and the workspace view shows one card per role.
 
 **A run shows in the app while it runs.** The session's Flows tab lists the
 repository's runs, the session's own first, each with its steps and, at a
