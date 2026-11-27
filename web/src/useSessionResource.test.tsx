@@ -152,3 +152,32 @@ for (const pause of ["inactive", "hidden"] as const) it(`does not retry expired 
   }
   await flush(); expect(view.result.current.items).toEqual(["returned"]);
 });
+
+it("does not let an expired request release the newer pending read", async () => {
+  const key = nextKey();
+  let expired!: (value: Response) => void;
+  let current!: (value: Response) => void;
+  vi.mocked(routedFetch)
+    .mockImplementationOnce(() => new Promise(resolve => { expired = resolve; }))
+    .mockImplementationOnce(() => new Promise(resolve => { current = resolve; }));
+  const first = renderHook(() => useSessionResource<string>(key, "messages", true));
+  await act(async () => { await vi.advanceTimersByTimeAsync(33000); });
+  await act(async () => { expired(response(["stale"])); });
+  first.unmount();
+  const reopened = renderHook(() => useSessionResource<string>(key, "messages", true));
+  expect(reopened.result.current.items).toBeUndefined();
+  expect(routedFetch).toHaveBeenCalledTimes(2);
+  await act(async () => { current(response(["current"])); });
+  expect(reopened.result.current.items).toEqual(["current"]);
+});
+
+it("refreshes saved annotations after the older read expires", async () => {
+  const key = nextKey();
+  vi.mocked(routedFetch).mockImplementationOnce(() => new Promise(() => {}))
+    .mockResolvedValue({ ok: true, json: async () => ({ annotations: ["saved"] }) } as Response);
+  const view = renderHook(({ revision }) => useSessionResource<string>(key, "annotations", true, revision), { initialProps: { revision: 0 } });
+  view.rerender({ revision: 1 });
+  await act(async () => { await vi.advanceTimersByTimeAsync(30000); });
+  expect(view.result.current).toMatchObject({ items: ["saved"], error: false });
+  expect(routedFetch).toHaveBeenCalledTimes(2);
+});
