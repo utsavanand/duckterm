@@ -139,7 +139,10 @@ def ensure_shared_script(source: Path) -> Path:
         if raw is not None and record["revision"] == REVISION and old_jq is not None:
             jq = old_jq
             notices = old_notices
-        if old_script == script and old_jq == jq and old_notices == notices:
+        # An older receipt over identical content still moves up, or apps at the
+        # older revision would refuse the script they did not ship.
+        unchanged = old_script == script and old_jq == jq and old_notices == notices
+        if unchanged and (raw is None or record["revision"] == REVISION):
             return destination
         _executable(destination.name, script, directory)
         if jq is not None:
