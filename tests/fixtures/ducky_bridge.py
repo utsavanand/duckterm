@@ -60,11 +60,11 @@ async def run(root: Path, mode: str) -> None:
     transcript = None
     original_dispatch = bridge.dispatch
 
-    async def dispatch(*args):
+    async def dispatch(*args, **kwargs):
         counters["requests"] += 1
         if mode == "v1" and args[1].startswith("/v2/"):
             return 404, {"error": "Read-only endpoint unavailable"}
-        return await original_dispatch(*args)
+        return await original_dispatch(*args, **kwargs)
 
     bridge.dispatch = dispatch
 
