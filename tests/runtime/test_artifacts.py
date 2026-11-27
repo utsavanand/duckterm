@@ -320,9 +320,14 @@ def test_pdf_worker_and_decoder_assets_use_browser_mime_types(tmp_path):
 
     from duckterm.transport.httpio import write_file
 
-    for suffix, media in ((".mjs", "text/javascript"), (".wasm", "application/wasm")):
+    for suffix, media in (
+        (".mjs", "text/javascript"),
+        (".wasm", "application/wasm"),
+        (".unknown", "application/octet-stream"),
+    ):
         path = tmp_path / ("reader" + suffix)
         path.write_bytes(b"fixture")
         writer = Writer()
         asyncio.run(write_file(writer, path, immutable=True))
         assert ("Content-Type: " + media).encode() in writer.data
+        assert b"X-Content-Type-Options: nosniff\r\n" in writer.data
