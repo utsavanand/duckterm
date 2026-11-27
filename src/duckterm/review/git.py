@@ -18,8 +18,9 @@ class ReviewGitError(RuntimeError):
 
 
 # A repository's own config can name programs git will run: an fsmonitor,
-# hooks, a signature verifier under log.showSignature, a diff textconv, and an
-# ssh command, credential helper or remote helper when git reaches a remote.
+# hooks, a signature verifier under log.showSignature, a diff textconv, the
+# command fetch runs to list an alternate object store's refs, and an ssh
+# command, credential helper or remote helper when git reaches a remote.
 # Sessions report the folders read here and can write their .git/config, so
 # none of them may run as the server. Only fetch and remote_heads are meant to
 # reach a remote; see _config_pairs for what they keep.
@@ -36,6 +37,8 @@ _NO_REPO_PROGRAMS = (
     "gpg.ssh.program=false",
     "-c",
     "gpg.x509.program=false",
+    "-c",
+    "core.alternateRefsCommand=true",
 )
 _OFFLINE = ("-c", "protocol.allow=never")
 # file covers a clone whose origin is a local folder. It runs upload-pack on
