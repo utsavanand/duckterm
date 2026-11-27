@@ -1,3 +1,21 @@
+## 2026-11-26 — Sweep the option list, not just the reports
+
+Security's third pass on #496 found another program a repository can name:
+`core.alternateRefsCommand`. Fetch negotiation runs it to list the refs of
+an alternate object store that the repository's own
+`objects/info/alternates` points at. Each earlier round had fixed the
+reported key and the keys next to it. This time I went through every key in
+`git help config` that names a program and matched it against the commands
+DuckTerm runs. Editors, difftool, mergetool, sendemail and trailer commands
+are never invoked. `uploadpack.packObjectsHook` is read only from the owner's
+config. `gc.recentObjectsHook` needs a gc, and network calls set `gc.auto=0`.
+`diff.external` applies only to patch output, and every diff here is
+`--name-only`, `--shortstat` or `--no-ext-diff`. Only
+`core.alternateRefsCommand` was left, and it is now pinned to `true`.
+
+When a class of bug keeps coming back one key at a time, enumerate the whole
+key space once instead of fixing one report after another.
+
 ## 2026-11-26 — Attributes attach programs to files, not just to commands
 
 #496 turned off every program a repository's config can name for a command:
