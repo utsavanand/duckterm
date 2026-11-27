@@ -174,22 +174,37 @@ def add_parser(sub: Any) -> None:
     for name in ("enable", "disable", "invite", "devices"):
         commands.add_parser(name)
     # Account sign-in is in development behind the ducky_remote flag.
-    commands.add_parser("signin", help=argparse.SUPPRESS).add_argument("--name")
+    signin = commands.add_parser("signin", help=argparse.SUPPRESS)
+    signin.add_argument("--name")
+    signin.add_argument("--json", action="store_true", help=argparse.SUPPRESS)
     commands.add_parser("signout", help=argparse.SUPPRESS)
     commands.add_parser("account", help=argparse.SUPPRESS)
+    # The Mac app's account screens: phones waiting on this Mac, and one approval.
+    commands.add_parser("claims", help=argparse.SUPPRESS).add_argument(
+        "--json", action="store_true"
+    )
+    claim = commands.add_parser("claim", help=argparse.SUPPRESS)
+    claim.add_argument("device_id")
+    claim.add_argument("--json", action="store_true")
     for name in ("approve", "revoke"):
         commands.add_parser(name).add_argument("device_id")
 
 
 def account_command(directory: Path, args: argparse.Namespace) -> int:
     from duckterm import editions
-    from duckterm.mobile import account
+    from duckterm.mobile import account, account_stream
 
     if not editions.configured(prefer_saved=True).includes("ducky_remote"):
         print("duckterm: Ducky accounts are in development (flag ducky_remote)", file=sys.stderr)
         return 1
+    name = getattr(args, "name", None) or platform.node().removesuffix(".local") or "Mac"
+    if args.ducky_command == "claims":
+        return account_stream.claims_json(directory)
+    if args.ducky_command == "claim":
+        return account_stream.claim_json(directory, args.device_id)
+    if args.ducky_command == "signin" and args.json:
+        return account_stream.signin_json(directory, name)
     if args.ducky_command == "signin":
-        name = args.name or platform.node().removesuffix(".local") or "Mac"
         signed_in = account.sign_in(directory, name)
         print(f"Signed in as {signed_in['login']}. Phones on this account can now find this Mac.")
         print("Each new phone still needs your approval here.")
@@ -223,7 +238,7 @@ def run(args: argparse.Namespace) -> int:
             from duckterm.mobile.pairing import pair
 
             return pair(directory, selected_address=args.address, port=args.port)
-        if args.ducky_command in {"signin", "signout", "account"}:
+        if args.ducky_command in {"signin", "signout", "account", "claims", "claim"}:
             return account_command(directory, args)
         if args.ducky_command == "setup":
             configure(directory, args.address, args.port, replace=args.replace)

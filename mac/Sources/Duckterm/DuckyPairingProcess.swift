@@ -18,8 +18,9 @@ final class DuckyPairingProcess: DuckyPairingTransport {
     private var cancelled = false
     private var invitationReceived = false
 
-    init(command: @escaping () async throws -> Command = DuckyPairingProcess.bundledCommand) {
+    init(command: @escaping () async throws -> Command = DuckyPairingProcess.bundledCommand, unbounded: Bool = false) {
         self.command = command
+        if unbounded { frames.limit = .max }
     }
 
     static func environment(inheriting inherited: [String: String], home: URL, profile: AppProfile?) -> [String: String] {
@@ -35,6 +36,11 @@ final class DuckyPairingProcess: DuckyPairingTransport {
     }
 
     static func bundledCommand() async throws -> Command {
+        try await bundledCommand(["ducky", "pair", "--json"])
+    }
+
+    /// The same owner-only process for the account screens' `ducky` subcommands.
+    static func bundledCommand(_ arguments: [String]) async throws -> Command {
         guard let resources = Bundle.main.resourceURL else { throw DuckyPairingEvent.Failure.invalid }
         let bundle = Bundle.main.bundleURL
         let bundled = Bundle.main.object(forInfoDictionaryKey: "DucktermBundledRuntime") as? Bool == true
@@ -45,7 +51,7 @@ final class DuckyPairingProcess: DuckyPairingTransport {
         }.value
         let env = runtime.environment(inheriting: environment(inheriting: ProcessInfo.processInfo.environment, home: home, profile: profile))
         return Command(executable: runtime.python,
-                       arguments: ["-I", "-B", "-m", "duckterm.cli", "ducky", "pair", "--json"], environment: env)
+                       arguments: ["-I", "-B", "-m", "duckterm.cli"] + arguments, environment: env)
     }
 
     func start() async throws {
@@ -120,7 +126,7 @@ final class DuckyPairingProcess: DuckyPairingTransport {
                 guard !terminal else { failed(); return }
                 switch event {
                 case .invitation: invitationReceived = true
-                case .approved, .denied, .expired, .error, .cancelled: terminal = true
+                case .approved, .denied, .expired, .error, .cancelled, .signedIn: terminal = true
                 default: break
                 }
                 onEvent?(event)

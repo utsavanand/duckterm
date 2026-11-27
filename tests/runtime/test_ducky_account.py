@@ -83,9 +83,13 @@ def test_signed_in_mac_lets_its_accounts_phone_wait_for_approval_with_a_matching
     said = []
     user = GitHubUser(7, "octo")
     mac = account.sign_in(
-        root, "Studio Mac", say=said.append, call=routed(service, github, user), sleep=lambda _: 0
+        root,
+        "Studio Mac",
+        say=lambda code, uri: said.append((code, uri)),
+        call=routed(service, github, user),
+        sleep=lambda _: 0,
     )
-    assert said == ["Enter WDJB-MJHT at https://github.com/login/device to sign in with GitHub."]
+    assert said == [("WDJB-MJHT", "https://github.com/login/device")]
     assert mac["login"] == "octo" and "device-token" in github.revoked
     stored = (root / "ducky-account.json").read_text()
     assert "device-token" not in stored
@@ -161,7 +165,7 @@ def test_sign_out_forgets_the_account_even_when_the_service_is_unreachable(app, 
     account.sign_in(
         root,
         "Studio Mac",
-        say=lambda _: None,
+        say=lambda *_: None,
         call=routed(service, github, GitHubUser(7, "octo")),
         sleep=lambda _: 0,
     )

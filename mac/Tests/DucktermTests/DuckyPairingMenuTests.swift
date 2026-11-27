@@ -42,7 +42,7 @@ final class DuckyPairingMenuTests: XCTestCase {
         let app = AppDelegate(launchAdmission: admission, editionRequest: { _ in
             requests += 1
             throw URLError(.timedOut)
-        }, makePairing: { _, prepare in
+        }, makePairing: { _, _, prepare in
             creations += 1
             return MenuPairingPresenter(prepare: prepare)
         })
@@ -63,7 +63,7 @@ final class DuckyPairingMenuTests: XCTestCase {
         let app = AppDelegate(launchAdmission: admission, editionRequest: { _ in
             requests += 1
             throw URLError(.timedOut)
-        }, makePairing: { _, prepare in
+        }, makePairing: { _, _, prepare in
             let presenter = MenuPairingPresenter(prepare: prepare)
             presenters.append(presenter)
             return presenter
@@ -98,7 +98,7 @@ final class DuckyPairingMenuTests: XCTestCase {
         let app = AppDelegate(launchAdmission: admission, editionRequest: { _ in
             requests += 1
             throw URLError(.timedOut)
-        }, makePairing: { _, prepare in
+        }, makePairing: { _, _, prepare in
             creations += 1
             return MenuPairingPresenter(prepare: prepare)
         })
@@ -126,7 +126,7 @@ final class DuckyPairingMenuTests: XCTestCase {
         let app = AppDelegate(launchAdmission: admission, editionRequest: { _ in
             requests += 1
             throw URLError(.timedOut)
-        }, makePairing: { _, prepare in
+        }, makePairing: { _, _, prepare in
             let presenter = MenuPairingPresenter(prepare: prepare)
             presenters.append(presenter)
             return presenter
@@ -149,7 +149,7 @@ final class DuckyPairingMenuTests: XCTestCase {
         var app: AppDelegate? = AppDelegate(launchAdmission: admission, editionRequest: { _ in
             if shouldFail { throw URLError(.timedOut) }
             return response
-        }, makePairing: { edition, prepare in
+        }, makePairing: { edition, _, prepare in
             verifiedEdition = edition
             return MenuPairingPresenter(prepare: prepare)
         })
@@ -219,7 +219,7 @@ final class DuckyPairingMenuTests: XCTestCase {
             }, localServerReadiness: {
                 calls.append("server")
                 return ready
-            }, makePairing: { _, prepare in
+            }, makePairing: { _, _, prepare in
                 let result = MenuPairingPresenter(prepare: prepare)
                 presenter = result
                 return result

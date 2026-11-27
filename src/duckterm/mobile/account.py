@@ -32,7 +32,10 @@ Fetch = Callable[[str, str, dict[str, Any] | None, dict[str, str]], dict[str, An
 
 
 class AccountError(ValueError):
-    pass
+    def __init__(self, message: str, code: str = "service_unavailable") -> None:
+        super().__init__(message)
+        # A fixed code the Mac app shows; the message can carry the service's words.
+        self.code = code
 
 
 def matching_code(token: str, certificate_sha256: str) -> str:
@@ -77,16 +80,18 @@ def sign_in(
     directory: Path,
     name: str,
     *,
-    say: Callable[[str], None] = print,
+    say: Callable[[str, str], None] = lambda code, uri: print(
+        f"Enter {code} at {uri} to sign in with GitHub."
+    ),
     call: Fetch = fetch,
     sleep: Callable[[float], None] = time.sleep,
 ) -> dict[str, Any]:
     """GitHub's device flow, then a DuckTerm session for this Mac."""
     client_id = os.environ.get("DUCKY_GITHUB_CLIENT_ID", GITHUB_CLIENT_ID)
     if not client_id:
-        raise AccountError("Ducky sign-in isn't available in this build yet")
+        raise AccountError("Ducky sign-in isn't available in this build yet", "signin_unavailable")
     start = call("POST", "https://github.com/login/device/code", {"client_id": client_id}, {})
-    say(f"Enter {start['user_code']} at {start['verification_uri']} to sign in with GitHub.")
+    say(start["user_code"], start["verification_uri"])
     interval = max(5, int(start.get("interval", 5)))
     deadline = time.monotonic() + int(start.get("expires_in", 900))
     while time.monotonic() < deadline:
@@ -107,9 +112,9 @@ def sign_in(
         if error == "slow_down":
             interval += 5
         elif error != "authorization_pending":
-            raise AccountError("GitHub sign-in was cancelled or expired")
+            raise AccountError("GitHub sign-in was cancelled or expired", "signin_expired")
     else:
-        raise AccountError("GitHub sign-in expired; try again")
+        raise AccountError("GitHub sign-in expired; try again", "signin_expired")
     session = call(
         "POST", cloud_url() + "/v1/session/github", {"github_token": token, "name": name}, {}
     )
@@ -131,7 +136,7 @@ def register(directory: Path, name: str, *, call: Fetch = fetch) -> dict[str, An
         raise AccountError("Sign in first: duckterm ducky signin")
     raw = private_read(directory / "ducky-bridge.json")
     if not raw:
-        raise AccountError("Turn on Ducky first: duckterm ducky pair")
+        raise AccountError("Turn on Ducky first: duckterm ducky pair", "setup_unavailable")
     from duckterm.mobile.cli import address, local_name
 
     config = json.loads(raw)

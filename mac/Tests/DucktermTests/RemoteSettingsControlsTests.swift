@@ -10,7 +10,7 @@ final class RemoteSettingsControlsTests: XCTestCase {
         let app = AppDelegate(launchAdmission: WorkspaceLaunchAdmission(), editionRequest: { _ in
             if fail { throw URLError(.timedOut) }
             return response
-        }, makePairing: { _, _ in fatalError("Pairing is not part of this test") })
+        }, makePairing: { _, _, _ in fatalError("Pairing is not part of this test") })
         let controls = app.remoteSettings
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 500, height: 300),
                               styleMask: [.titled], backing: .buffered, defer: false)

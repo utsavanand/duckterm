@@ -7,13 +7,17 @@ struct DuckyPairingDevice: Decodable, Equatable {
     let capabilities: [String]?
     let rePair: Bool?
     let authorizationRevision: Int?
+    /// Account claims: the GitHub login the phone signed in with, and the code both screens show.
+    let login: String?
+    let code: String?
     init(id: String, name: String, expiresAt: Int?, capabilities: [String]? = nil,
-         rePair: Bool? = nil, authorizationRevision: Int? = nil) {
+         rePair: Bool? = nil, authorizationRevision: Int? = nil, login: String? = nil, code: String? = nil) {
         self.id = id; self.name = name; self.expiresAt = expiresAt; self.capabilities = capabilities
-        self.rePair = rePair; self.authorizationRevision = authorizationRevision
+        self.rePair = rePair; self.authorizationRevision = authorizationRevision; self.login = login; self.code = code
     }
     enum CodingKeys: String, CodingKey {
-        case id, name, capabilities; case expiresAt = "expires_at", rePair = "re_pair", authorizationRevision = "authorization_revision"
+        case id, name, capabilities, login, code
+        case expiresAt = "expires_at", rePair = "re_pair", authorizationRevision = "authorization_revision"
     }
     var grantedCapabilities: Set<String> { Set(capabilities ?? ["status:read"]) }
     var valid: Bool {
@@ -23,7 +27,9 @@ struct DuckyPairingDevice: Decodable, Equatable {
             } && (capabilities == nil || (Set(capabilities!).count == capabilities!.count &&
                 grantedCapabilities.isSubset(of: DuckyPairingModel.knownCapabilities))) &&
             (authorizationRevision == nil || (authorizationRevision! >= 0 && authorizationRevision! < Int.max)) &&
-            (rePair != true || (capabilities != nil && authorizationRevision != nil))
+            (rePair != true || (capabilities != nil && authorizationRevision != nil)) &&
+            (login == nil || DuckyAccount.validLogin(login!)) &&
+            (code == nil || code!.range(of: "^[0-9]{4}\\z", options: .regularExpression) != nil)
     }
 }
 
@@ -46,6 +52,7 @@ enum DuckyPairingEvent: Equatable {
     case invitation(DuckyPairingInvitation), pending(DuckyPairingDevice)
     case approved(DuckyPairingDevice), denied(DuckyPairingDevice)
     case expired(pending: Bool), error(String), cancelled
+    case signInCode(String, URL), signedIn(String), claims(login: String?, devices: [DuckyPairingDevice])
 
     static func decode(_ data: Data) throws -> Self {
         struct Frame: Decodable {
@@ -56,6 +63,10 @@ enum DuckyPairingEvent: Equatable {
             var device: DuckyPairingDevice?
             var phase: String?
             var code: String?
+            var user_code: String?
+            var verification_uri: String?
+            var login: String?
+            var devices: [DuckyPairingDevice]?
         }
         guard data.count <= 8192 else { throw Failure.invalid }
         let frame = try JSONDecoder().decode(Frame.self, from: data)
@@ -82,9 +93,24 @@ enum DuckyPairingEvent: Equatable {
             return .expired(pending: frame.phase == "pending")
         case "error":
             guard let code = frame.code,
-                  ["setup_unavailable", "listener_unavailable", "pairing_busy", "invalid_command", "approval_unavailable", "pairing_failed"].contains(code) else { throw Failure.invalid }
+                  ["setup_unavailable", "listener_unavailable", "pairing_busy", "invalid_command", "approval_unavailable", "pairing_failed",
+                   "signin_unavailable", "signin_expired", "service_unavailable"].contains(code) else { throw Failure.invalid }
             return .error(code)
         case "cancelled": return .cancelled
+        case "code":
+            // Only GitHub's own device page may be opened in the owner's browser.
+            guard let code = frame.user_code, code.range(of: "^[A-Z0-9]{4}-[A-Z0-9]{4}\\z", options: .regularExpression) != nil,
+                  frame.verification_uri == "https://github.com/login/device",
+                  let url = URL(string: "https://github.com/login/device") else { throw Failure.invalid }
+            return .signInCode(code, url)
+        case "signed_in":
+            guard let login = frame.login, DuckyAccount.validLogin(login) else { throw Failure.invalid }
+            return .signedIn(login)
+        case "claims":
+            guard let devices = frame.devices, devices.count <= 4,
+                  devices.allSatisfy({ $0.valid && $0.code != nil && $0.login != nil && $0.expiresAt != nil }),
+                  frame.login.map(DuckyAccount.validLogin) ?? true else { throw Failure.invalid }
+            return .claims(login: frame.login, devices: devices)
         default: throw Failure.invalid
         }
     }
@@ -95,9 +121,11 @@ enum DuckyPairingEvent: Equatable {
 struct DuckyPairingFrames {
     private var buffer = Data()
     private var total = 0
+    /// A ceremony is a handful of frames; the account watcher sends one per change for as long as the app runs.
+    var limit = 65536
     mutating func append(_ bytes: Data) throws -> [DuckyPairingEvent] {
         total += bytes.count
-        guard total <= 65536 else { throw DuckyPairingEvent.Failure.invalid }
+        guard total <= limit else { throw DuckyPairingEvent.Failure.invalid }
         buffer.append(bytes)
         var events: [DuckyPairingEvent] = []
         while let newline = buffer.firstIndex(of: 10) {
@@ -145,6 +173,8 @@ final class DuckyPairingModel {
     private let cancelAuthentication: () -> Void
     private let now: () -> Date
     private let verifiedEdition: () -> DesktopEdition?
+    /// False for an account claim: the phone is already waiting, so there is no invitation.
+    let expectsInvitation: Bool
     private var transport: DuckyPairingTransport?
     private var authentication: Task<Void, Never>?
     private var generation = 0
@@ -157,10 +187,10 @@ final class DuckyPairingModel {
     init(makeTransport: @escaping () -> DuckyPairingTransport,
          authenticate: @escaping (String) async -> Bool,
          cancelAuthentication: @escaping () -> Void = {}, now: @escaping () -> Date = Date.init,
-         verifiedEdition: @escaping () -> DesktopEdition? = { nil }) {
+         verifiedEdition: @escaping () -> DesktopEdition? = { nil }, expectsInvitation: Bool = true) {
         self.makeTransport = makeTransport; self.authenticate = authenticate
         self.cancelAuthentication = cancelAuthentication; self.now = now
-        self.verifiedEdition = verifiedEdition
+        self.verifiedEdition = verifiedEdition; self.expectsInvitation = expectsInvitation
     }
 
     func start() {
@@ -188,13 +218,19 @@ final class DuckyPairingModel {
     func receive(_ event: DuckyPairingEvent) {
         guard state != .closed else { return }
         switch event {
+        case .signInCode, .signedIn, .claims: fail("pairing_failed"); return
         case .invitation(let invitation):
-            guard state == .opening, invitation.expiresAt <= Int(now().timeIntervalSince1970) + 605 else { fail("pairing_failed"); return }
+            guard expectsInvitation, state == .opening, invitation.expiresAt <= Int(now().timeIntervalSince1970) + 605 else { fail("pairing_failed"); return }
             invitationExpiry = invitation.expiresAt
             state = .invitation(invitation)
         case .pending(let device):
-            guard case .invitation = state, device.valid, let expiry = device.expiresAt,
-                  let invitationExpiry, expiry <= invitationExpiry else { fail("pairing_failed"); return }
+            if expectsInvitation {
+                guard case .invitation = state, device.valid, let expiry = device.expiresAt,
+                      let invitationExpiry, expiry <= invitationExpiry else { fail("pairing_failed"); return }
+            } else {
+                guard state == .opening, device.valid, device.code != nil, let expiry = device.expiresAt,
+                      expiry <= Int(now().timeIntervalSince1970) + 605 else { fail("pairing_failed"); return }
+            }
             state = .pending(device)
             selectedCapabilities = device.rePair == true ? device.grantedCapabilities : ["status:read"]
             if !availability.folder { selectedCapabilities.remove("analysis:folder") }
