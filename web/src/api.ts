@@ -165,7 +165,6 @@ export interface FolderMessagePlan {
   recipients: { session_id: string; name: string }[];
 }
 
-// One Fleet monitor Pulse item from GET /fleet/pulse (needs-you items come from relay notes).
 // Agent-to-agent mail: who wrote to whom, never the text.
 export interface PeerMail {
   id: string;
@@ -175,6 +174,7 @@ export interface PeerMail {
   created_at: number;
 }
 
+// One Fleet monitor Pulse item from GET /fleet/pulse (needs-you items come from relay notes).
 export interface PulseEvent { kind: "needs" | "pr" | "release" | "artifact"; at: number; title: string; name?: string; session_key?: string; repo?: string; detail?: string; count?: number }
 
 export interface FleetAnswer { answer: string; exchange: OracleExchange; sessions: string[] }
