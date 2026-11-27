@@ -1,3 +1,15 @@
+## 2026-11-27 — A hardened runner only protects the calls that use it
+
+#496 routed review's git calls through one runner that turns off every
+program a repository can name. QA testing the duplicate #520 found a plain
+`git fetch --all` in `git/worktrees.py`. That fetch lists branches for the new
+worktree picker, in a repository sessions work in, so its reference-transaction
+hook ran as the server. It now goes through review/git, fetches only origin,
+and has a timeout.
+
+When hardening a shared runner, search for every other caller of the same
+command, not only the runner's own callers.
+
 ## 2026-11-26 — The top folder can be right while the git folder is someone else's
 
 #504's check that git's top folder is the session's folder missed a `.git`
