@@ -43,7 +43,6 @@ import { FlowsView } from "./FlowsView";
 import { MemoryView } from "./MemoryView";
 import { TimelineView } from "./TimelineView";
 import { SessionFilesView } from "./SessionFilesView";
-import { ArtifactsView } from "./ArtifactsView";
 import { PrList } from "./review/PrList";
 import { ReviewWorkspace } from "./review/ReviewWorkspace";
 import type { PrRow } from "./api";
@@ -77,6 +76,7 @@ import { useFolders } from "./useFolders";
 import "./sidebarDensity.css";
 import "./oracleNavigation.css";
 import { AutopilotPage, useAutopilotSummary } from "./Autopilot";
+import { SupportChat } from "./SupportChat";
 import { useAttended } from "./useAttended";
 import { EditionProvider, useEdition } from "./edition";
 
@@ -146,7 +146,8 @@ function Dashboard() {
   const sidebarOracle = editionId === "full" && has("oracle") && has("overview");
   // Autopilot shares the Oracle layer: a sidebar row above Oracle opens it.
   const sidebarAutopilot = sidebarOracle && has("autopilot");
-  const [towerMode, setTowerMode] = useState<"oracle" | "autopilot">("oracle");
+  const sidebarSupport = sidebarOracle && has("support");
+  const [towerMode, setTowerMode] = useState<"oracle" | "autopilot" | "support">("oracle");
   const autopilotSummary = useAutopilotSummary(sidebarAutopilot);
   const [analyticsTab, setAnalyticsTab] = useState<AnalyticsTab | null>(null);
   const relayOpen = useRelayCount(has("oracle"));
@@ -213,13 +214,14 @@ function Dashboard() {
   const [launchGroup, setLaunchGroup] = useState<string | undefined>(undefined);
   const [checkpointTarget, setCheckpointTarget] = useState<{ key: string; request: number } | null>(null);
   const [memoryTarget, setMemoryTarget] = useState<{ key: string; revision: string; checkpoint?: string } | null>(null);
-  const [chosenView, setView] = useState<"terminal" | "messages" | "history" | "inbox" | "artifacts" | "memory" | "prs" | "flows">(
+  const [chosenView, setView] = useState<"terminal" | "messages" | "history" | "inbox" | "code" | "artifacts" | "memory" | "prs" | "flows">(
     "terminal",
   );
-  // Coding editions combine files and saved artifacts; Lite shows saved outputs.
+  // Live code and saved outputs are separate destinations.
   const viewFeature = { history: has("checkpoints") || has("context"), memory: has("context"), inbox: has("inbox"),
-    artifacts: has("explorer") || has("artifacts"), prs: has("pr_review"), flows: has("skill_kits") } as Record<string, boolean>;
+    code: has("explorer"), artifacts: has("artifacts"), prs: has("pr_review"), flows: has("skill_kits") } as Record<string, boolean>;
   const view = viewFeature[chosenView] === false ? "terminal" : chosenView;
+  const [artifactTarget, setArtifactTarget] = useState<{ key: string; id: string } | null>(null);
   const [messageFolder, setMessageFolder] = useState<string | null>(null);
   // The PR open in the review workspace (PRs view); null shows the list.
   const [review, setReview] = useState<{ repo: string; ref: string; from?: string } | null>(null);
@@ -364,7 +366,7 @@ function Dashboard() {
     ? { summary: autopilotSummary, open: () => { setHomeOpen(false); setTowerMode("autopilot"); setTowerOpen(true); setAnalyticsTab(null); } }
     : null, [sidebarAutopilot, autopilotSummary]);
   const towerLayer = towerVisible && <div className="rd-tower-layer">
-    {towerMode === "autopilot" && sidebarAutopilot ? <AutopilotPage /> : analyticsTab ? <Analytics initialTab={analyticsTab} sessions={agents} onBack={() => setAnalyticsTab(null)} /> : <LiveControlTower
+    {towerMode === "autopilot" && sidebarAutopilot ? <AutopilotPage /> : towerMode === "support" && sidebarSupport ? <SupportChat /> : analyticsTab ? <Analytics initialTab={analyticsTab} sessions={agents} onBack={() => setAnalyticsTab(null)} /> : <LiveControlTower
       onAnalytics={setAnalyticsTab}
       agents={agents}
       onBack={() => setTowerOpen(false)}
@@ -478,7 +480,7 @@ function Dashboard() {
               <PanelToggle side="left" collapsed={sidePanels.collapsed.left} onToggle={() => sidePanels.toggle("left")} />
             </div>
             {/* Narrow windows stack Agents above the work area; the two rows share one strip there. */}
-            <div className={sidebarAutopilot ? "rd-sidebar-tops" : "rd-sidebar-tops-single"}>
+            <div className={sidebarAutopilot || sidebarSupport ? "rd-sidebar-tops" : "rd-sidebar-tops-single"}>
               {sidebarAutopilot && <button className="rd-autopilot-row" type="button" aria-label="Autopilot" aria-pressed={towerVisible && towerMode === "autopilot"}
                 onClick={() => { setTowerMode("autopilot"); setTowerOpen(true); setAnalyticsTab(null); }}>
                 <svg viewBox="0 0 26 26" aria-hidden="true"><rect x="1" y="1" width="24" height="24" rx="7" fill="var(--brand-green)" /><path d="M8 17.5 13 7l5 10.5-5-2.6z" fill="#fff" /></svg>
@@ -489,6 +491,11 @@ function Dashboard() {
                 onClick={() => { setTowerMode("oracle"); setTowerOpen(true); setAnalyticsTab(null); }}>
                 <img src={fullDuckMark} alt="" />
                 <span>Oracle<small>All workspaces</small></span>
+              </button>}
+              {sidebarSupport && <button className="rd-oracle-row rd-support-row" type="button" aria-label="Support" aria-pressed={towerVisible && towerMode === "support"}
+                onClick={() => { setTowerMode("support"); setTowerOpen(true); setAnalyticsTab(null); }}>
+                <svg viewBox="0 0 26 26" aria-hidden="true"><rect x="1" y="1" width="24" height="24" rx="7" fill="var(--accent)" /><path d="M10 10.2a3 3 0 1 1 4.4 2.6c-.9.5-1.4 1.1-1.4 2.1v.6" fill="none" stroke="var(--accent-fg)" strokeWidth="2" strokeLinecap="round" /><circle cx="13" cy="19" r="1.3" fill="var(--accent-fg)" /></svg>
+                <span>Support<small>How DuckTerm works</small></span>
               </button>}
             </div>
             {sessions.length === 0 && folders.length === 0 ? (
@@ -555,8 +562,9 @@ function Dashboard() {
               >
                 Inbox{selected && inboxCounts[selected.key] ? ` (${inboxCounts[selected.key]})` : ""}
               </button>}
-              {viewFeature.artifacts && <button className={view === "artifacts" ? "active" : ""} onClick={() => setView("artifacts")}>
-                {has("artifacts") ? "Artifacts" : "Explorer"}
+              {viewFeature.code && <button className={view === "code" ? "active" : ""} onClick={() => setView("code")}>Code explorer</button>}
+              {viewFeature.artifacts && <button className={view === "artifacts" ? "active" : ""} onClick={() => { setArtifactTarget(null); setView("artifacts"); }}>
+                Artifacts
               </button>}
               {viewFeature.prs && <button className={view === "prs" ? "active" : ""} onClick={() => setView("prs")}>
                 PRs
@@ -600,10 +608,12 @@ function Dashboard() {
                 )}
               </div>
             )}
-            {view === "artifacts" && (
+            {(view === "code" || view === "artifacts") && (
               <div className="rd-messages-wrap rd-files-wrap">
-                {selected ? has("explorer") ? <SessionFilesView session={selected} artifacts={has("artifacts")} /> : <ArtifactsView key={selected.key} sessionKey={selected.key} sessionName={selected.label} />
-                  : <p className="rd-panel-empty">Select a session to see its artifacts.</p>}
+                {selected ? <SessionFilesView key={`${selected.key}:${view}`} session={selected} mode={view} artifacts={has("artifacts")} browse={has("explorer")}
+                  artifactId={artifactTarget?.key === selected.key ? artifactTarget.id : undefined}
+                  onOpenArtifact={id => { setArtifactTarget({ key: selected.key, id }); setView("artifacts"); }} />
+                  : <p className="rd-panel-empty">Select a session to see its {view === "code" ? "code" : "artifacts"}.</p>}
               </div>
             )}
             {view === "flows" && (

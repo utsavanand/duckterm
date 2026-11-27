@@ -1,3 +1,82 @@
+## 2026-11-26 — The narrow-strip rule never hid Oracle's subtitle
+
+Compacting the sidebar rows for short windows first saved only the Autopilot
+row: `.rd-sidebar-tops small` ties `.rd-oracle-row small` on specificity, and
+oracleNavigation.css loads later, so Oracle and Support kept their subtitles
+and 26px icons. The narrow-window strip had lost the same way since it was
+added: its Oracle cell kept a subtitle and stood 57px tall instead of 38. Unit tests can't see media queries; the
+screenshot's measured height was the only signal. Scope container overrides
+with `> button` and measure the rows, not just the first one.
+
+## 2026-11-25 — A pinned short window is a budget every sidebar row spends
+
+sidebar-order.spec.ts pins a 652px window to force a scrolling agent list,
+and drags a session onto a folder header about 320px away. Main's agent
+search box and #473's Support row each took height from the tree, leaving
+285px, and CI failed deterministically only after both met in one branch.
+When a spec pins a short viewport, say what the geometry needs next to it,
+and re-check it when anything is added above the tree.
+
+## 2026-11-25 — An icon tile on a theme token needs that token's foreground
+
+The Support sidebar icon filled its tile with --accent and drew the glyph in
+white. Dark mode makes --accent near-white, so the question mark measured
+1.09:1 and disappeared; browser tests and visibility checks still passed.
+Pair a theme-dependent background with its foreground token (--accent-fg)
+and check new icons in both themes. The same PR broke an e2e that counted
+feature-flag rows as a magic number; it now derives the count from
+/feature-flags.
+
+## 2026-11-26 — Hook text cannot authorize an owner question
+
+The permission-question fast path trusted Stop hook text before reading the
+session transcript. A forged hook could create Waiting and feed an owner answer
+rule. Verify the final text against the recorded conversation before either
+operation. Keep the no-model path for verified asks and allow one settle retry
+when the transcript has not flushed; a new turn invalidates that retry.
+
+## 2026-11-26 — Human and session sender identities must stay distinct
+
+Message cleanup used the same sender/recipient predicate for all unfinished
+mail. An event-created session named owner collided with the human sender and
+could cancel messages to other sessions. Reserve that identity in session
+validation and event storage, and limit read-broadcast cleanup to the recipient.
+Protect queued human mail too, including revocation from an older saved row.
+
+## 2026-11-26 — CSP does not block frame self-navigation
+
+A sandboxed iframe can navigate itself even when connect-src is none. Keep
+interactive artifacts behind the Mac navigation delegate; ordinary browsers use
+a sanitized static preview. Test location changes, refresh tags and SVG links,
+not just fetch. A selection channel identifies a frame, not trustworthy text:
+the document shares its realm, so show quote bounds and label it untrusted.
+
+## 2026-11-25 — Review content by identity and version, not storage location
+
+A worktree disappearing must not move an artifact into a different tab. Keep
+all saved outputs together, show source availability per row, and distinguish
+live bytes from saved bytes. Comments belong to the exact artifact ID or
+working-directory path and content hash; earlier versions remain readable but
+must never silently anchor to new text. Interactive HTML needs an opaque frame,
+restricted resource policy, validated messages, and native navigation guards
+that cannot launch external apps on behalf of an untrusted subframe.
+
+## 2026-11-25 — Searchable artifact labels start at registration
+
+A label filter is useful only when producers classify their deliverables. The
+shipped collaboration instructions should explain the existing kind values,
+require an explicit kind and a descriptive subject in each title, and preserve
+accurate classification when updating an artifact. Reuse the current metadata
+rather than adding a second label vocabulary.
+
+## 2026-11-26 — Session search must include the folder path
+
+The sidebar searched session labels only, hiding relevant sessions when the owner
+searched for their folder. Match the existing folder path as well, including
+ancestor names, and feed those results through the same filters and counts.
+The existing search test explicitly excluded folder matches; update that contract
+and cover nested paths, archived sessions, and moves while a query is active.
+
 ## 2026-11-26 — A security check written for the root broke the subfolder
 
 The #504 follow-up rejected a repository whose worktree is somewhere else by

@@ -78,7 +78,20 @@ class TestValidators:
 
     @pytest.mark.parametrize(
         "key",
-        ["", None, ".", "..", "../etc", "a b", "a;rm -rf", "a/b", "x" * 129, "a$b", "a`b`"],
+        [
+            "",
+            None,
+            ".",
+            "..",
+            "owner",
+            "../etc",
+            "a b",
+            "a;rm -rf",
+            "a/b",
+            "x" * 129,
+            "a$b",
+            "a`b`",
+        ],
     )
     def test_invalid_session_keys_rejected(self, key: str | None) -> None:
         assert security.valid_session_key(key) is False
