@@ -99,11 +99,16 @@ The Mac app does not require this separate CLI installation.
 
 ## Upgrade
 
-Back up your data first:
+Back up your data first. Quit DuckTerm and stop any `duckterm serve`
+terminal, then copy its home folder:
 
 ```sh
-duckterm backup
+cp -Rp ~/.duckterm ~/duckterm-backup-$(date +%Y%m%d)
 ```
+
+Lite keeps its data in `~/.duckterm-lite` and Code in `~/.duckterm-code`.
+`duckterm backup` makes a smaller archive, but only once the `backup` feature
+flag is on; see [backup and restore](backups.md).
 
 For the native app, quit it, replace the app in Applications with the new
 release, and reopen it. The backend and private runtimes update together.
