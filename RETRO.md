@@ -5,6 +5,24 @@ forever, and each saved answer was copied whole (up to 256 KB, 200 kept). When
 the UI waits on someone, list only who can answer, have the server refuse the
 rest, and bound what is copied into a history by bytes, not just by count.
 
+## 2026-11-26 — Verify hardening advice against the pinned dependency
+
+Serve static assets with nosniff alongside correct MIME types, including PDF
+workers and decoders. Verify suggested library switches before adding them:
+PDF.js 6.5 has removed isEvalSupported and its eval path. Treat optional
+dependency removal as a build change; Rollup needs its optional native package,
+so omitting every optional package breaks the release build.
+
+## 2026-11-26 — Test bundled document readers through the real server
+
+A PDF worker built successfully but failed in the app because the static server
+served .mjs as application/octet-stream. The modern PDF.js build also used Map
+methods missing in macOS WebKit; bundle the matching legacy renderer/worker and
+probe the actual native engine. Verify worker/resource URLs and MIME
+types through the packaged server, not just Vite. Page comments need both a
+content hash and a page number: identical text on different pages must not make
+feedback jump to the wrong occurrence. Scanned pages still need page comments.
+
 ## 2026-11-26 — The narrow-strip rule never hid Oracle's subtitle
 
 Compacting the sidebar rows for short windows first saved only the Autopilot

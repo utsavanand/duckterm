@@ -29,7 +29,7 @@ Shipped adapters: `claude-code`, `codex`, `copilot`, `generic`.
 ## 2. MetaHarnesses — collections of skills, hooks, and sub-agents
 
 A MetaHarness like [uv-suite](https://github.com/utsavanand/uv-suite) bundles skills,
-hooks, sub-agents, guardrails, and personas. The **MetaHarnesses** item in
+hooks, sub-agents and guardrails. The **MetaHarnesses** item in
 Settings lists the MetaHarnesses you have added by folder path and shows what each
 contains; the session panel's "MetaHarness" row shows which MetaHarness a session's
 folder has installed.
@@ -59,7 +59,7 @@ The one place a MetaHarness script runs is a flow's `exec` step, at run time, an
 a script the install on this machine recorded (see Flows and the runner); a
 MetaHarness's hooks are installed only at the MetaHarness digest reviewed at Enable. Both
 pins are the owner's decision of 2026-11-22.
-The format is the Skill MetaHarness Specification (`docs/specs/skill-kit-protocol-spec.md`
+The format is the MetaHarness Specification (`docs/specs/skill-kit-protocol-spec.md`
 on the spec branch); `examples/metaharnesses/sample-kit` holds one of every
 component kind and is the MetaHarness the installer is tried on.
 
@@ -96,21 +96,21 @@ text lives in the shared AGENTS.md.
 The CLI is `duckterm metaharness` (`duckterm kit` stays as an alias: installed `/flow` shortcuts call it) and works from a bare clone, no server needed:
 
 ```
-duckterm kit validate <kit>                      # authoring rules; runs no kit code
-duckterm kit plan     <kit> --project . --harness claude-code --harness codex
-duckterm kit install  <kit> --project . [--harness …] [--option persona=sport] [--replace]
-duckterm kit verify   --project .                # every recorded file against its hash
-duckterm kit uninstall <name> --project .        # exactly what the record says, nothing else
-duckterm kit run <kit>/<flow> --project . [--harness claude-code|codex] [--input name=value]
-duckterm kit run --resume <run-id> [--gate <step> approve|reject]
-duckterm kit runs --project .                    # every run recorded here
+duckterm metaharness validate <kit>                      # authoring rules; runs no kit code
+duckterm metaharness plan     <kit> --project . --harness claude-code --harness codex
+duckterm metaharness install  <kit> --project . [--harness …] [--option name=value] [--replace]
+duckterm metaharness verify   --project .                # every recorded file against its hash
+duckterm metaharness uninstall <name> --project .        # exactly what the record says, nothing else
+duckterm metaharness run <kit>/<flow> --project . [--harness claude-code|codex] [--input name=value]
+duckterm metaharness run --resume <run-id> [--gate <step> approve|reject]
+duckterm metaharness runs --project .                    # every run recorded here
 ```
 
 `plan` prints one row per component and one status per harness: *installed*,
 *installed, needs trust* (Codex project hooks), *not supported* with the
-reason (OpenCode hooks, Copilot permissions, Codex read/write rules),
-*installed, not yet verified* (OpenCode, docs only), *not applicable* (an
-option not chosen). Where files land per harness is the adapter table in
+reason (Copilot permissions, Codex read/write rules), *installed, not yet
+verified* (OpenCode, whose adapter rests on its docs alone), *not applicable*
+(an option not chosen). Where files land per harness is the adapter table in
 `src/duckterm/kits/adapters.py`:
 
 | | Claude Code | Codex | Copilot | OpenCode |
@@ -119,7 +119,7 @@ option not chosen). Where files land per harness is the adapter table in
 | knowledge, paths | `.claude/rules/<kit>-<name>.md` | not supported | `.github/instructions/…` | not supported |
 | skills | `.claude/skills` | `.agents/skills` | reads both | reads both |
 | agents | `.claude/agents/*.md` | `.codex/agents/*.toml` | reads `.claude/agents` | `.opencode/agents/*.md` |
-| hooks | `.claude/settings.json` | `.codex/hooks.json`, needs trust | `.github/hooks/<kit>.json` | not supported |
+| hooks | `.claude/settings.json` | `.codex/hooks.json`, needs trust | `.github/hooks/<kit>.json` | `.opencode/plugins/duckterm-<kit>.js`, not yet verified |
 | permissions | `permissions` in settings | `.codex/rules/<kit>.rules` (shell only) | flags only | `opencode.json` |
 | MCP tools | `.mcp.json` | `.codex/config.toml` | `.mcp.json` | `opencode.json` |
 
@@ -127,6 +127,14 @@ Hooks go through a shim the installer writes beside the MetaHarness's scripts
 (`_skill_kit_shim.py`): it rewrites each harness's payload to one neutral
 shape, so a MetaHarness author writes one script, and maps a block decision back to
 what that harness honours (exit 2, or a JSON decision for Copilot stop events).
+OpenCode has no command hooks: the installer writes one plugin per MetaHarness
+into `.opencode/plugins/`, which registers each hook with OpenCode's V2 plugin
+API (`execute.before`, `execute.after`, `prompt`, `compaction`, and the
+`session.idle` event for `stop`), runs the shim with the kit's script, and
+throws on a block, which only `execute.before` honours. Session start and end,
+tool failures, permission requests, notifications and subagent events have no
+plugin surface and show as not supported. OpenCode is not probed, so these
+rows read *installed, not yet verified*.
 
 Knowledge never replaces a hand-written `AGENTS.md` or `CLAUDE.md`: it is an
 attributed block, or a rule in `.duckterm-rules.json` where the folder uses
@@ -285,8 +293,7 @@ that record, never the MetaHarness's current files or the repository's own copy
 of the record, and passes a MetaHarness's flags only while its folder still
 hashes the same (a changed MetaHarness's flags are dropped and logged until Enable
 reviews it again). A permission `match` may not contain `)`, `,` or a
-newline, so one rule cannot read as two. OpenCode hooks (JS plugins)
-have no fix yet. Enabling installs into every matching repository known
+newline, so one rule cannot read as two. Enabling installs into every matching repository known
 now, for every harness, with the options and fixes the review showed; the
 policy keeps them (`options`, `fallbacks`) for the installs SessionStart
 does later. Enable pins a digest of the MetaHarness tree
