@@ -7,6 +7,7 @@ import { Duck, poseFor } from "./Duck";
 import { SessionLocationDuck, sessionLocation } from "./SessionLocationDuck";
 import { OracleChat } from "./OracleChat";
 import { NoteCard } from "./RelayNotes";
+import { FleetPulse } from "./FleetPulse";
 import { useRelay } from "./relay";
 import {
   TowerAgent,
@@ -146,6 +147,7 @@ export function ControlTower({
     const needAgents = new Set(needs.map((n) => n.session_key)).size;
     return (
       <div className="rd-tower rd-tower-widgets rd-fleet">
+        <div className="rd-fleet-main">
         <div className="rd-tower-bar">
           <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={onBack} title="Back to sessions (Esc)">
             ← Sessions
@@ -188,6 +190,8 @@ export function ControlTower({
             <button className="rd-btn rd-btn-ghost rd-btn-sm" onClick={() => onAnalytics("tokens")}>Full analytics ↗</button>
           </div>
         </div>
+        </div>
+        <FleetPulse needs={needs} now={now} onNeeds={() => setNeedsOpen(true)} onOpenTerminal={onOpenTerminal} />
         {needsOpen && (
           <>
             <div className="rd-fleet-scrim" onClick={() => setNeedsOpen(false)} />
