@@ -172,6 +172,50 @@ def test_due_after_fifty_messages_or_fifteen_quiet_minutes(memory_rig):
     assert auto.due(conn, NOW, set()) == ["busy"]
 
 
+def test_fifty_messages_wait_for_a_pause(memory_rig):
+    # Mid-turn the conversation file keeps changing while it is copied, and the
+    # checkpoint failed (2026-11-25: 7 of 8 automatic failures).
+    from duckterm.core import auto_checkpoints as auto
+
+    server = memory_rig[0]
+    agents(server, "working")
+    messages(server, "working", 50, NOW - 5000)
+    server.history.record(
+        {"_id": "tool", "_ts": NOW - 1000, "session_key": "working", "event_type": "PreToolUse"}
+    )
+    conn = server.history._conn
+    assert auto.due(conn, NOW, set()) == []
+    assert auto.due(conn, NOW - 1000 + auto.SETTLED_MS, set()) == ["working"]
+    server.history.record(
+        {"_id": "end", "_ts": NOW, "session_key": "working", "event_type": "Stop"}
+    )
+    assert auto.due(conn, NOW + 1, set()) == ["working"]
+
+
+def test_a_stale_saved_copy_is_not_checkpointed_as_current(memory_rig, monkeypatch):
+    # When the live conversation can't be read, memory falls back to an older
+    # saved copy. A checkpoint of it would present old work as current, and an
+    # old-format copy crashed the checkpoint with a KeyError.
+    from duckterm import memory_continuity
+
+    server, calls = rig(memory_rig, monkeypatch)
+    real = memory_continuity.capture
+
+    async def fallback(server, key, captured):
+        captured = await real(server, key, captured)
+        captured["memory_sources"] = [
+            {**s, "retained_fallback": True} if s["kind"] == "conversation" else s
+            for s in captured["memory_sources"]
+        ]
+        return captured
+
+    monkeypatch.setattr(memory_continuity, "capture", fallback)
+    update = run(server, memory_checkpoint.AUTOMATIC_LABEL)["record"]["summary_update"]
+    assert update["state"] == "failed" and update["reason"] == "source_changed"
+    assert update["diagnostic"] == "freeze:memory_conflict"
+    assert calls == []
+
+
 def test_tick_honours_the_switch_two_at_a_time_and_pending_restarts(memory_rig, monkeypatch):
     server, _, _, tmp = memory_rig
     agents(server, "a", "b", "c", "d")

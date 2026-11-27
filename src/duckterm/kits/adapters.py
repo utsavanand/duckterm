@@ -116,6 +116,18 @@ _COPILOT_EVENTS = {
 }
 COPILOT_EXIT2_BLOCKS = ("before_tool", "permission_request")
 COPILOT_JSON_BLOCKS = ("stop", "subagent_stop")
+# OpenCode V2 plugins (opencode.ai/docs/build/plugins): neutral event → the
+# `ctx.<domain>.hook(name)` registration, or the server event to subscribe to.
+# Session start/end, tool failures, permission requests, notifications and
+# subagents have no documented plugin surface. Docs only, no probe yet.
+_OPENCODE_EVENTS = {
+    "before_tool": "tool:execute.before",
+    "after_tool": "tool:execute.after",
+    "prompt_submit": "session:prompt",
+    "before_compact": "session:compaction",
+    "stop": "event:session.idle",
+}
+OPENCODE_THROW_BLOCKS = ("before_tool",)  # throwing in execute.before aborts the call
 
 CLAUDE_CODE = Adapter(
     id="claude-code",
@@ -196,11 +208,11 @@ OPENCODE = Adapter(
     agents_dir=".opencode/agents",
     agents_format="md",
     reads_claude_agents=False,
-    hooks_file=None,
-    hooks_dir=None,
-    hook_events={},
-    hook_format="none",
-    hook_blocking="none",
+    hooks_file=".opencode/plugins/duckterm-{kit}.js",
+    hooks_dir=".opencode/hooks/{kit}",
+    hook_events=_OPENCODE_EVENTS,
+    hook_format="plugin",
+    hook_blocking="throw",
     needs_trust=False,
     permissions="opencode",
     mcp_file="opencode.json",
@@ -230,6 +242,15 @@ OPENCODE_TOOL = {
     "search": "grep",
 }
 COPILOT_TOOL = {"shell": "shell", "write": "write", "read": "read", "edit": "write"}
+# Tool names an OpenCode `execute.before` event may carry for each neutral
+# match; both the V1 and V2 spellings of the shell tool, as neither is probed.
+OPENCODE_MATCH = {
+    "shell": ["bash", "shell"],
+    "read": ["read"],
+    "write": ["write"],
+    "edit": ["edit", "patch"],
+    "search": ["grep", "glob"],
+}
 
 SHIM_NAME = "_skill_kit_shim.py"
 ATTR_OPEN = "<!-- skill-kit {kit}:{name} v{version} -->"
@@ -580,18 +601,6 @@ def place_hook(
     out: list[Placement] = []
     for h in chosen:
         a = ADAPTERS[h]
-        if a.hook_format == "none":
-            out.append(
-                Placement(
-                    cid,
-                    h,
-                    "hook",
-                    "none",
-                    status=NOT_SUPPORTED,
-                    note="OpenCode hooks are JS plugins only",
-                )
-            )
-            continue
         harness_event = a.hook_events.get(event)
         if harness_event is None:
             out.append(
@@ -617,6 +626,19 @@ def place_hook(
             note = "blocks through JSON decision, which the shim emits"
         if h == "copilot":
             note = (note + "; " if note else "") + "timeouts fail open in Copilot"
+        if a.hook_format == "plugin" and blocking and event not in OPENCODE_THROW_BLOCKS:
+            out.append(
+                Placement(
+                    cid,
+                    h,
+                    "hook",
+                    "none",
+                    status=NOT_SUPPORTED,
+                    note="blocking refused: in OpenCode only execute.before blocks, "
+                    f"not {harness_event}",
+                )
+            )
+            continue
         assert a.hooks_dir is not None and a.hooks_file is not None
         hooks_dir = a.hooks_dir.format(kit=kit.name)
         script_rel = f"{hooks_dir}/{script.name}"
@@ -643,6 +665,30 @@ def place_hook(
                 executable=True,
             )
         )
+        if a.hook_format == "plugin":
+            # One generated plugin per kit carries every hook; plan.build
+            # gathers these into that write (opencode_plugin_placement).
+            out.append(
+                Placement(
+                    cid,
+                    h,
+                    "hook",
+                    "opencode-hook",
+                    a.hooks_file.format(kit=kit.name),
+                    data={
+                        "event": event,
+                        "hook": harness_event,
+                        "match": OPENCODE_MATCH[str(match)] if match else None,
+                        "script": script_rel,
+                        "blocking": blocking,
+                        "timeout": timeout,
+                    },
+                    status=NOT_VERIFIED,
+                    note="a generated plugin runs the shim; OpenCode's plugin API is docs only, "
+                    "not probed; timeouts fail open",
+                )
+            )
+            continue
         command = shim_command(a, kit, event, script_rel)
         effective_timeout = min(timeout, a.extra.get("hook_timeout_cap", timeout))
         if effective_timeout != timeout:
@@ -688,6 +734,108 @@ def place_hook(
             )
         )
     return out
+
+
+_PLUGIN_TEMPLATE = """\
+// Written by DuckTerm for the {kit} MetaHarness; reinstalling rewrites it.
+// Each hook runs the kit's own script through the shim beside it, which
+// turns OpenCode's event into the neutral payload the script reads.
+import {{ Plugin }} from "@opencode/plugin"
+import {{ spawnSync }} from "node:child_process"
+
+const KIT = {kit_json}
+const SHIM = {shim_json}
+const HOOKS = {hooks_json}
+
+function run(ctx, hook, payload) {{
+  const proc = spawnSync("python3", [SHIM, "opencode", hook.event, KIT, hook.script], {{
+    cwd: ctx.location.directory,
+    input: JSON.stringify(payload),
+    encoding: "utf8",
+    timeout: hook.timeout * 1000,
+  }})
+  if (proc.error) {{
+    console.error(`${{KIT}} ${{hook.event}} hook did not run: ${{proc.error.message}}`)
+    return
+  }}
+  const stderr = (proc.stderr || "").trim()
+  if (proc.status === 2) throw new Error(stderr || `${{KIT}}: blocked by the ${{hook.event}} hook`)
+  if (stderr) console.error(stderr)
+}}
+
+export default Plugin.define({{
+  id: `duckterm-${{KIT}}`,
+  async setup(ctx) {{
+    const controller = new AbortController()
+    for (const hook of HOOKS) {{
+      if (hook.hook === "tool:execute.before") {{
+        await ctx.tool.hook("execute.before", (event) => {{
+          if (hook.match && !hook.match.includes(event.tool)) return
+          run(ctx, hook, {{
+            tool_name: event.tool,
+            tool_input: event.input,
+            session_id: event.sessionID,
+          }})
+        }})
+      }} else if (hook.hook === "tool:execute.after") {{
+        await ctx.tool.hook("execute.after", (event) => {{
+          if (hook.match && !hook.match.includes(event.tool)) return
+          run(ctx, hook, {{
+            tool_name: event.tool,
+            tool_input: event.input,
+            tool_response: event.output,
+            session_id: event.sessionID,
+          }})
+        }})
+      }} else if (hook.hook === "session:prompt") {{
+        await ctx.session.hook("prompt", (event) => {{
+          run(ctx, hook, {{ prompt: event.prompt, session_id: event.sessionID }})
+        }})
+      }} else if (hook.hook === "session:compaction") {{
+        await ctx.session.hook("compaction", (event) => {{
+          run(ctx, hook, {{ session_id: event.sessionID }})
+        }})
+      }} else if (hook.hook === "event:session.idle") {{
+        ;(async () => {{
+          for await (const event of ctx.event.subscribe({{ signal: controller.signal }})) {{
+            if (event.type !== "session.idle") continue
+            run(ctx, hook, {{ session_id: event.properties?.sessionID }})
+          }}
+        }})().catch(() => {{}})
+      }}
+    }}
+    return () => controller.abort()
+  }},
+}})
+"""
+
+
+def opencode_plugin_placement(kit: m.Kit, placements: list[Placement]) -> Placement | None:
+    """Fold the kit's `opencode-hook` placements into the one plugin file
+    OpenCode loads from `.opencode/plugins/`; the per-hook rows stay for the
+    table but write nothing themselves."""
+    hooks = [p for p in placements if p.op == "opencode-hook"]
+    if not hooks:
+        return None
+    for p in hooks:
+        p.op = "none"
+    a = OPENCODE
+    assert a.hooks_dir is not None
+    source = _PLUGIN_TEMPLATE.format(
+        kit=kit.name,
+        kit_json=json.dumps(kit.name),
+        shim_json=json.dumps(f"{a.hooks_dir.format(kit=kit.name)}/{SHIM_NAME}"),
+        hooks_json=json.dumps([p.data for p in hooks], indent=2),
+    )
+    return Placement(
+        hooks[0].component,
+        a.id,
+        "hook",
+        "write",
+        hooks[0].path,
+        content=source.encode(),
+        status=NOT_VERIFIED,
+    )
 
 
 def copilot_flags(kit: m.Kit) -> list[str]:

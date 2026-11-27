@@ -42,6 +42,19 @@ export function HomeChat({ sessions, onOpenTerminal }: { sessions: ChatSession[]
     return () => { stale = true; };
   }, []);
   useEffect(() => { const el = logRef.current; if (el) el.scrollTop = el.scrollHeight; }, [log, pending, error]);
+  // "/" jumps to the chat, unless the owner is typing somewhere (a terminal is a
+  // textarea too), a dialog is open, or Home is hidden under a review.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement;
+      if (event.key !== "/" || event.metaKey || event.ctrlKey || event.altKey || event.defaultPrevented) return;
+      if (target.closest("input, textarea, select, [contenteditable], [role=dialog]") || !input.current || input.current.closest("[hidden]")) return;
+      event.preventDefault();
+      input.current.focus();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, []);
   const waiting = log.some(e => e.key && !SETTLED.has(e.reply?.status ?? ""));
   useEffect(() => {
     if (!waiting) return;
@@ -116,12 +129,14 @@ export function HomeChat({ sessions, onOpenTerminal }: { sessions: ChatSession[]
       </div>}
       <form className="rd-home-compose" onSubmit={event => { event.preventDefault(); void ask(q); }}>
         <textarea ref={input} aria-label="Ask DuckTerm" rows={1} value={q}
+          aria-keyshortcuts="/"
           placeholder={messaging ? "Ask about your teams, or @ a session to ask it…" : "Ask about your teams, the factory, PRs or spend…"}
           onChange={event => setQ(event.target.value)}
           onKeyDown={event => {
             if ((event.key === "Tab" || event.key === "Enter") && matches.length) { event.preventDefault(); pick(matches[0]); return; }
             if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); void ask(q); }
           }} />
+        <kbd className="rd-home-kbd" title="Press / to ask from anywhere on Home">/</kbd>
         <button className="rd-btn rd-btn-primary rd-btn-sm" disabled={pending !== null}>Ask</button>
       </form>
     </div>

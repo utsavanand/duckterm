@@ -255,6 +255,8 @@ def _path_feature(method: str, path: str, body: bytes) -> str | None:
         return "home"
     if path.startswith("/file"):
         return "explorer" if method == "GET" else "file_editing"
+    if path in ("/fleet/pulse", "/fleet/mail"):
+        return "fleet_monitor"
     if path == "/fleet/ask":
         try:
             payload = json.loads(body or b"{}")

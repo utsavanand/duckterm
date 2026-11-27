@@ -667,6 +667,77 @@ def test_a_gate_on_the_worktree_shows_new_files_and_holds_the_tree_it_approved(t
     assert "approved_tree" not in run2.state
 
 
+def test_the_review_sees_the_runs_change_after_an_executor_committed_it(tmp_path):
+    # Autopilot commits after every step, so HEAD moves past the work. The
+    # review's workspace.diff came out empty on the first real run.
+    project = _git_project(tmp_path, FEATURE, "feature")
+    git = ["git", "-c", "user.email=t@t", "-c", "user.name=t", "-c", "commit.gpgsign=false"]
+
+    class Commits(Fake):
+        def run_process(self, argv, *, cwd, env, stdin, timeout):
+            if env.get("SKILL_KIT_STEP") == "spec":
+                (Path(cwd) / "README.md").write_text("hello\nbuilt\n")
+            return super().run_process(argv, cwd=cwd, env=env, stdin=stdin, timeout=timeout)
+
+        def after_step(self, run, attempt):
+            super().after_step(run, attempt)
+            subprocess.run([*git, "add", "-A", "--", ".", ":(exclude).duckterm"], cwd=project)
+            subprocess.run(
+                [*git, "commit", "-q", "--allow-empty", "-m", attempt["step"]],
+                cwd=project,
+                check=True,
+            )
+
+    fake = Commits(
+        {
+            "spec": [(0, {"status": "done", "_files": {"spec.md": "# s"}})],
+            "judge": [(0, {"verdict": "ship", "_files": {"notes.md": "n"}})],
+        }
+    )
+    run = runner.start(
+        project, "flowkit/feature", harness="claude-code", inputs={"topic": "x"}, executor=fake
+    )
+    base = run.state["base"]
+    run = runner.resume(project, run.id, gate=("signoff", "approve"), executor=fake)
+    assert run.state["state"] == "succeeded", run.state["failure"]
+    assert (
+        base
+        and subprocess.run(
+            ["git", "rev-parse", "HEAD"], cwd=project, capture_output=True, text=True
+        ).stdout.strip()
+        != base
+    )
+    shown = (project / runner.RUNS / run.id / "judge" / "1" / "workspace.diff").read_text()
+    assert "+built" in shown, shown
+
+
+@pytest.mark.parametrize("forged", ["--index-output={victim}", "HEAD~1", "main"])
+def test_a_forged_base_is_never_handed_to_git(tmp_path, forged):
+    # run.json is writable from the sandbox; a base read as an option made
+    # `git read-tree` write an index file anywhere the server could write
+    project = _git_project(tmp_path, FEATURE, "feature")
+    fake = Fake({"spec": [(0, {"status": "done", "_files": {"spec.md": "# s"}})]})
+    run = runner.start(
+        project, "flowkit/feature", harness="claude-code", inputs={"topic": "x"}, executor=fake
+    )
+    (project / "README.md").write_text("hello\nchanged\n")
+    victim = tmp_path / "victim"
+    run.state["base"] = forged.format(victim=victim)
+    diff, tree = runner._workspace(run, run.dir)
+    assert not victim.exists()
+    assert "+changed" in diff and tree
+
+
+def test_a_run_outside_git_records_no_base(tmp_path):
+    project = _project(tmp_path, FEATURE, "feature")
+    fake = Fake({"spec": [(0, {"status": "done", "_files": {"spec.md": "# s"}})]})
+    run = runner.start(
+        project, "flowkit/feature", harness="claude-code", inputs={"topic": "x"}, executor=fake
+    )
+    assert run.state["base"] is None
+    assert run.state["state"] == "waiting_gate"
+
+
 def test_run_paths_stay_inside_the_project(tmp_path):
     project = _project(tmp_path, PIPELINE, "pipeline")
     run = runner.Run(project, {"run_id": "r-x"}, {"steps": []}, {})

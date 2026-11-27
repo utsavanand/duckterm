@@ -23,6 +23,17 @@ worktree whose git folder points back at it, or a submodule whose
 A repository has a worktree and a git folder, and either can be pointed
 elsewhere. Check both.
 
+## 2026-11-26 — A deadline checked between calls still waits for the slowest one
+
+Pulse's refresh stopped starting new git calls after 20 s. Each call still
+had its own 15 s timeout, so a refresh could run up to 15 s past its
+deadline. `git tag --list` also returned every v* tag before Python kept ten.
+Now each call's timeout is whatever remains of the deadline, at most 15 s,
+and `for-each-ref --count` cuts the tag list inside git.
+
+A time budget has to be passed into each call, not just checked between
+them.
+
 ## 2026-11-26 — A specific allow beats a general deny, whoever sets it
 
 #496 blocked every transport except https, ssh and file by passing
@@ -38,6 +49,60 @@ repository's. Those entries are now skipped.
 
 A deny by default is only as strong as the most specific allow anyone can
 add. Check how git ranks a key before trusting a general setting.
+
+## 2026-11-26 — Improve readability without replacing the app theme
+
+Page-local overrides of shared colors made AGENTS.md look like a different app.
+Use the existing background, control, font and secondary-text tokens instead;
+keep semantic color on small labels and status edges. Review both themes in
+context after preview approval, rather than judging an isolated palette alone.
+
+## 2026-11-27 — A diff against HEAD is empty once something commits the work
+
+The runner built workspace.diff against HEAD. Autopilot's executor commits
+after every step, so on the first real run the review step got an empty diff
+and passed only because the reviewer looked at HEAD on its own. A diff that
+stands for "what this run changed" needs the run's starting commit, recorded
+at start, not whatever HEAD is when the diff is taken.
+
+## 2026-11-26 — Automatic checkpoints failed on busy agents, and one fallback checkpointed old work
+
+The first night of automatic checkpoints: 86 succeeded, 8 failed, every
+failure on an agent that was mid-turn. The 50-message trigger fires while the
+agent is still writing, so copying the conversation kept hitting a changing
+file. One failure was a KeyError: when the live conversation can't be read,
+memory substitutes an older saved copy (meant for search), and the checkpoint
+read that copy's fingerprint, which old-format copies lack. With a new-format
+copy there was no error at all: the checkpoint summarized old work and called
+it current. Message-count checkpoints now wait for a turn end or a quiet
+minute, the fallback copy is refused, and the log says which step refused.
+Lesson: a fallback that is right for one reader (search) can be wrong for
+another (a checkpoint); mark it, and have each reader decide.
+
+## 2026-11-26 — A waiting reply needs a recipient that can still answer
+
+Home's @ offered every session, so a question to an ended one showed "Waiting"
+forever, and each saved answer was copied whole (up to 256 KB, 200 kept). When
+the UI waits on someone, list only who can answer, have the server refuse the
+rest, and bound what is copied into a history by bytes, not just by count.
+
+## 2026-11-26 — Verify hardening advice against the pinned dependency
+
+Serve static assets with nosniff alongside correct MIME types, including PDF
+workers and decoders. Verify suggested library switches before adding them:
+PDF.js 6.5 has removed isEvalSupported and its eval path. Treat optional
+dependency removal as a build change; Rollup needs its optional native package,
+so omitting every optional package breaks the release build.
+
+## 2026-11-26 — Test bundled document readers through the real server
+
+A PDF worker built successfully but failed in the app because the static server
+served .mjs as application/octet-stream. The modern PDF.js build also used Map
+methods missing in macOS WebKit; bundle the matching legacy renderer/worker and
+probe the actual native engine. Verify worker/resource URLs and MIME
+types through the packaged server, not just Vite. Page comments need both a
+content hash and a page number: identical text on different pages must not make
+feedback jump to the wrong occurrence. Scanned pages still need page comments.
 
 ## 2026-11-26 — The narrow-strip rule never hid Oracle's subtitle
 
@@ -202,6 +267,46 @@ remote's value, and `file` is allowed.
 Before trusting a `-c` override, check how git combines that key: last-wins,
 first-wins, or a list. And a test fixture that loosens what the product
 allows hides exactly the behaviour a real user hits.
+
+## 2026-11-25 — Preview the layout with the real fleet, not the fixture
+
+The pods looked fine with three fixture agents. With the owner's 33, the
+24-agent team was squeezed into half the width beside a team of three, and the
+arrows were drawn over the duck labels. A team with several pods now takes the
+full row and the arrows draw behind the ducks. Only the real-data preview found
+either problem.
+
+## 2026-11-26 — A deadline checked after the slow part bounds nothing
+
+The Pulse's 20 s deadline was checked per repository and per tag, but the
+first step, one `rev-parse` per folder a session reports, ran before it. That
+is up to 40 calls of 15 s each. A deadline has to be checked by every loop that
+calls out, and each call's timeout should be the time left.
+
+## 2026-11-25 — A ref's name is input, so pass git the commit
+
+The Pulse asked `rev-parse --abbrev-ref origin/HEAD` for the default branch and
+handed the name to `git log`. Refnames can't start with "-", but a branch can
+be called `refs/heads/--output=/path`, and its short name can. A session that
+pointed origin/HEAD at one made the server write the merge log, with commit
+subjects it controls, to any file the server can write. The Pulse now resolves
+origin/HEAD to a commit id and passes `--end-of-options` before every
+revision. The same review found the refresh unbounded: every folder a session
+names costs git calls, and overlapping 30 s polls each ran their own. Folders,
+tags and total time per refresh are now capped, and polls share one refresh.
+
+## 2026-11-25 — A path a session names is code the server may run
+
+The Pulse runs `git log` on every recent session's folder, and the folder
+comes from hook reports. Security found that a repository's own config with
+`log.showSignature=true` makes `git log` run its `gpg.program` to verify a
+signed commit, so any agent able to write a .git/config could have the server
+run its program every 30 s. review/git already turned off the fsmonitor for
+the same reason; signature verifiers are the same class. Every review git call
+now passes `log.showSignature=false` and points all three gpg programs at
+`false`. The first regression test passed without the fix because the signed
+commit wasn't a merge, which `--merges` never shows; it now signs the PR merge
+and checks the program really runs without the overrides.
 
 ## 2026-11-25 — Hardening one call path leaves its neighbours open
 

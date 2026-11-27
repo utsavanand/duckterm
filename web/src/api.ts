@@ -165,6 +165,18 @@ export interface FolderMessagePlan {
   recipients: { session_id: string; name: string }[];
 }
 
+// Agent-to-agent mail: who wrote to whom, never the text.
+export interface PeerMail {
+  id: string;
+  sender: string;
+  recipient: string;
+  kind: string;
+  created_at: number;
+}
+
+// One Fleet monitor Pulse item from GET /fleet/pulse (needs-you items come from relay notes).
+export interface PulseEvent { kind: "needs" | "pr" | "release" | "artifact"; at: number; title: string; name?: string; session_key?: string; repo?: string; detail?: string; count?: number }
+
 export interface FleetAnswer { answer: string; exchange: OracleExchange; sessions: string[] }
 
 // Ask Oracle reading a message as a send to one agent (flag oracle_messages).
@@ -603,18 +615,18 @@ export const api = {
     return data;
   },
   annotations: (key: string) => get<{ annotations: { id: string; quote: string; note: string; created_at: number }[] }>(`/sessions/${encodeURIComponent(key)}/annotations`, undefined, { authed: true }),
-  fileFeedback: async (key: string, file: { path: string; root: string; sha256: string }, quote: string, note: string) => {
+  fileFeedback: async (key: string, file: { path: string; root: string; sha256: string }, quote: string, note: string, page?: number) => {
     const response = await fetch(`/sessions/${encodeURIComponent(key)}/annotations`, {
       method: "POST", headers: authHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ file_path: file.path, file_root: file.root, file_sha256: file.sha256, quote, note }),
+      body: JSON.stringify({ file_path: file.path, file_root: file.root, file_sha256: file.sha256, quote, note, pdf_page: page }),
     });
     const data = await response.json();
     if (!response.ok || !data.sent) throw new Error(data.error || "Feedback was not sent. Try again when the agent is live.");
   },
-  artifactFeedback: async (key: string, artifact: Artifact, quote: string, note: string) => {
+  artifactFeedback: async (key: string, artifact: Artifact, quote: string, note: string, page?: number) => {
     const response = await fetch(`/sessions/${encodeURIComponent(key)}/annotations`, {
       method: "POST", headers: authHeaders({ "Content-Type": "application/json" }),
-      body: JSON.stringify({ artifact_id: artifact.id, artifact_sha256: artifact.sha256, quote, note }),
+      body: JSON.stringify({ artifact_id: artifact.id, artifact_sha256: artifact.sha256, quote, note, pdf_page: page }),
     });
     const data = await response.json();
     if (!response.ok || !data.sent) throw new Error(data.error || "Feedback was not sent. Try again when the agent is live.");
@@ -723,6 +735,8 @@ export const api = {
       (r) => r.json() as Promise<{ messages: OracleExchange[] }>,
     ),
   controlTower: () => get<TowerInsights>("/control-tower"),
+  fleetPulse: () => get<{ events: PulseEvent[] }>("/fleet/pulse"),
+  fleetMail: () => get<{ messages: PeerMail[] }>("/fleet/mail"),
   relay: (signal?: AbortSignal) => get<RelayState>("/relay", undefined, { signal }),
   voiceStatus: () => get<LocalVoiceStatus>("/voice/status"),
   voiceInstall: async (): Promise<LocalVoiceStatus> => {
