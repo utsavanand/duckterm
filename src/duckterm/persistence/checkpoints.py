@@ -8,6 +8,7 @@ A rendered file is derived from the database and is not a provider backup.
 
 import uuid
 from collections import Counter
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -76,6 +77,26 @@ def _extract(events: list[Event]) -> dict[str, Any]:
     }
 
 
+def _owns_gitdir(root: Path, git: Callable[..., str]) -> bool:
+    """A .git file can name another repository's git folder, whose branch
+    and file names would then be recorded as this folder's. The git folder
+    must be root/.git itself, or a linked worktree's or submodule's that
+    points back at root."""
+    gitdir = Path(git("rev-parse", "--absolute-git-dir")).resolve()
+    if gitdir == (root / ".git").resolve():
+        return True
+    if not (root / ".git").is_file():
+        return False
+    try:  # a linked worktree's git folder names its .git file
+        back = (gitdir / "gitdir").read_text().strip()
+        if Path(back).resolve() == (root / ".git").resolve():
+            return True
+    except OSError:
+        pass
+    worktree = git("config", "--get", "core.worktree")  # a submodule's
+    return bool(worktree) and (gitdir / worktree).resolve() == root
+
+
 def _git_state(cwd: Path) -> dict[str, Any]:
     # A session can start in a subfolder; its repository is the nearest
     # folder up the physical path that holds a .git.
@@ -97,7 +118,7 @@ def _git_state(cwd: Path) -> dict[str, Any]:
     # core.worktree or a gitdir file can point the repository at another
     # folder, such as $HOME, whose file names would land in the record.
     top = git("rev-parse", "--show-toplevel")
-    if not top or Path(top).resolve() != root:
+    if not top or Path(top).resolve() != root or not _owns_gitdir(root, git):
         return {"git": False, "path": str(cwd)}
     dirty = list(
         dict.fromkeys(

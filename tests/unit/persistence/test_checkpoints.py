@@ -220,6 +220,33 @@ def test_a_session_in_a_subfolder_records_its_repository(
     ]
 
 
+def test_a_git_file_naming_another_repository_records_none_of_it(
+    git_repo: Path, tmp_path: Path
+) -> None:
+    folder = tmp_path / "folder"
+    folder.mkdir()
+    (folder / ".git").write_text(f"gitdir: {git_repo / '.git'}\n")
+    out = subprocess.run(
+        ["git", "-C", str(folder), "ls-files"], capture_output=True, text=True
+    ).stdout
+    assert "README.md" in out  # plain git reads the other repository
+    state = _git_state(folder)
+    assert state["git"] is False
+    assert "README.md" not in str(state)
+
+
+def test_a_submodule_records_its_own_state(git_repo: Path, tmp_path: Path) -> None:
+    sub = tmp_path / "sub"
+    subprocess.run(["git", "clone", "-q", str(git_repo), str(sub)], check=True)
+    parent = tmp_path / "parent"
+    subprocess.run(["git", "init", "-q", "-b", "main", str(parent)], check=True)
+    _git(parent, "-c", "protocol.file.allow=always", "submodule", "add", "-q", str(sub), "mod")
+    (parent / "mod/new.txt").write_text("n\n")
+    state = _git_state(parent / "mod")
+    assert state["git"] is True
+    assert state["dirty_files"] == ["new.txt"]
+
+
 def test_dirty_files_are_capped_and_counted(git_repo: Path) -> None:
     for i in range(MAX_DIRTY_FILES + 5):
         (git_repo / f"new{i}.txt").write_text("n\n")

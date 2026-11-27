@@ -1,3 +1,16 @@
+## 2026-11-26 — The top folder can be right while the git folder is someone else's
+
+#504's check that git's top folder is the session's folder missed a `.git`
+file that names another repository's git folder. Its top folder is still
+the session's folder, but the branch, the index and the tracked file names
+are the other repository's, so they went into the checkpoint. The git folder
+must now be the folder's own `.git`. For a `.git` file, it must be a linked
+worktree whose git folder points back at it, or a submodule whose
+`core.worktree` does.
+
+A repository has a worktree and a git folder, and either can be pointed
+elsewhere. Check both.
+
 ## 2026-11-26 — A specific allow beats a general deny, whoever sets it
 
 #496 blocked every transport except https, ssh and file by passing
