@@ -159,6 +159,14 @@ it("sends nothing to an @ name that is no session, and treats @ as text without 
   expect(api.messageSession).not.toHaveBeenCalled();
 });
 
+it("leaves ended sessions out of the @ list, since they would never answer", async () => {
+  const ended = ["terminated", "stopped", "interrupted", "archived", "merged"].map(state => agent({ key: `old-${state}`, label: `dev ${state}`, shownState: state as TowerAgent["shownState"] }));
+  await show([...FULL, "home", "oracle_messages"], { agents: [agent({ key: "live", label: "dev live" }), ...ended] });
+  const chat = within(screen.getByRole("article", { name: "Ask DuckTerm" }));
+  fireEvent.change(chat.getByRole("textbox", { name: "Ask DuckTerm" }), { target: { value: "@dev" } });
+  expect(within(chat.getByRole("listbox", { name: "Ask a session" })).getAllByRole("option").map(o => o.textContent)).toEqual(["dev live Duckterm · idle"]);
+});
+
 it("answers in the Home chat from the shared fleet conversation, without the agents' notes", async () => {
   vi.mocked(api.relay).mockResolvedValue({ notes: [{ id: "n1", session_key: "qa", name: "qa", folder: "Nourish/app", runtime: "claude-code", kind: "question", status: "open", created_at: NOW - 3_600_000, question: "Deploy now?" }], rules: [], open: 1 });
   vi.mocked(api.fleetAsk).mockResolvedValue({ exchange: { q: "Who is stuck?", a: "Nobody is stuck.", at: 1 } } as never);

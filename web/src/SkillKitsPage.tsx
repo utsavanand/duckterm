@@ -656,7 +656,9 @@ function ReviewView({ kit, view, busy, onBack, onFix, onEnable }: {
   const plan = review.plan;
   const repos = review.repositories;
   const soft = repos.flatMap((r) => r.conflicts.filter((c) => c.kind === "file-exists").map((c) => ({ ...c, project: r.project, workspace: r.workspace })));
-  const hard = repos.flatMap((r) => r.conflicts.filter((c) => c.kind !== "file-exists").map((c) => ({ ...c, project: r.project, workspace: r.workspace })));
+  // An overlap is another MetaHarness in the same repository doing the same job under another name: both install, the owner is told.
+  const overlaps = repos.flatMap((r) => r.conflicts.filter((c) => c.kind === "overlap").map((c) => ({ ...c, project: r.project, workspace: r.workspace })));
+  const hard = repos.flatMap((r) => r.conflicts.filter((c) => c.kind !== "file-exists" && c.kind !== "overlap").map((c) => ({ ...c, project: r.project, workspace: r.workspace })));
   // A manifest error is the kit's, not a repository's: one line however many repositories.
   const errors = Array.from(new Map(plan.findings.filter((f) => f.level === "error").map((f) => [f.component + f.message, f])).values());
   const hooks = kit.inventory?.components.hook?.length ?? 0;
@@ -665,7 +667,7 @@ function ReviewView({ kit, view, busy, onBack, onFix, onEnable }: {
   const fallbackFixes = review.fixes.filter((f): f is Extract<KitFix, { kind: "fallback" }> => f.kind === "fallback");
   const unsupported = plan.harnesses.map((h) => ({ harness: h, count: plan.rows.filter((r) => r.harnesses[h] === "not supported").length })).filter((x) => x.count > 0);
   const workspaceNames = Array.from(new Set(repos.map((r) => workspaceLabel(r.workspace))));
-  const attention = untrusted.length + fallbackFixes.length + soft.length + hard.length + unsupported.reduce((n, u) => n + u.count, 0) - fallbackFixes.reduce((n, f) => n + f.harnesses.length, 0);
+  const attention = untrusted.length + fallbackFixes.length + soft.length + overlaps.length + hard.length + unsupported.reduce((n, u) => n + u.count, 0) - fallbackFixes.reduce((n, f) => n + f.harnesses.length, 0);
   const fixable = (trustFix ? 1 : 0) + fallbackFixes.length + (soft.length && !replace ? 1 : 0);
   const byKind = KIND_ORDER.filter((k) => plan.rows.some((r) => r.kind === k)).map((kind) => ({ kind, rows: plan.rows.filter((r) => r.kind === kind) }));
   return (
@@ -677,7 +679,7 @@ function ReviewView({ kit, view, busy, onBack, onFix, onEnable }: {
         </div>
         <div className="rd-kits-pills">
           <Pill tone={errors.length ? "bad" : "ok"}>{errors.length ? `${errors.length} error${errors.length === 1 ? "" : "s"}` : "validate ok"}</Pill>
-          <Pill tone={hard.length ? "bad" : soft.length && !replace ? "warn" : "ok"}>{soft.length + hard.length} conflict{soft.length + hard.length === 1 ? "" : "s"}</Pill>
+          <Pill tone={hard.length ? "bad" : (soft.length && !replace) || overlaps.length ? "warn" : "ok"}>{soft.length + overlaps.length + hard.length} conflict{soft.length + overlaps.length + hard.length === 1 ? "" : "s"}</Pill>
         </div>
       </div>
 
@@ -698,6 +700,12 @@ function ReviewView({ kit, view, busy, onBack, onFix, onEnable }: {
             <Pill tone={replace ? "ok" : "warn"}>conflict</Pill>
             <span><span className="rd-kits-mono">{c.path}</span> {c.detail} in {workspaceLabel(c.workspace)}'s repository; {replace ? "it will be replaced with the MetaHarness's (the original is snapshotted first)." : "it is kept and the component skipped there."}</span>
             {!replace && <button type="button" className="rd-kits-fix" disabled={busy} onClick={() => onFix({ kind: "replace", project: c.project, path: c.path })}>Fix · replace with the MetaHarness's</button>}
+          </div>
+        ))}
+        {overlaps.map((c) => (
+          <div className="rd-kits-fixrow" key={c.project + c.component + c.detail} data-testid="rd-kits-overlap">
+            <Pill tone="warn">overlap</Pill>
+            <span>{c.detail} in {workspaceLabel(c.workspace)}'s repository. Both install, but one job done twice costs context and can answer twice; enable one of them there.</span>
           </div>
         ))}
         {hard.map((c) => (
@@ -758,7 +766,6 @@ function MatrixSection({ kind, rows, harnesses, fixes, trustAbove, busy, onFix }
           {fixes.map((f) => <span key={f.component} className="rd-kits-pills"><Pill tone="warn">{f.component.split("/")[2]}: no path scope on {f.harnesses.join(", ")}</Pill><button type="button" className="rd-kits-fix" disabled={busy} onClick={(e) => { e.preventDefault(); onFix(f); }}>{describeFix(f)}</button></span>)}
           {needsTrust.map((h) => <Pill key={h} tone="warn">{h}: needs trust{trustAbove ? " · fix above" : ""}</Pill>)}
           {unfixable.map((u) => <Pill key={u.harness} tone="bad">{u.harness}: {u.count} not supported</Pill>)}
-          {unfixable.some((u) => u.harness === "opencode" && kind === "hook") && <Pill tone="mute">no fix yet · plugin planned</Pill>}
           {fixes.length === 0 && unfixable.length === 0 && needsTrust.length === 0 && (kind === "settings" || kind === "team" || (notApplicable && only && only.length < harnesses.length)
             ? <Pill tone="mute">{kind === "team" ? "offered · New team instantiates it" : `${(only || []).join(", ")} only`}</Pill>
             : <Pill tone="ok">installed everywhere</Pill>)}

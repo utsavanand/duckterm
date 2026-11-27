@@ -36,7 +36,7 @@ const plan: KitPlan = {
   findings: [], conflicts: [{ path: ".claude/agents/reviewer.md", kind: "file-exists", detail: "exists and is not from a kit", choices: ["keep", "replace"], component: "sample-kit/agent/reviewer" }],
   rows: [
     { component: "sample-kit/skill/review-diff", kind: "skill", harnesses: { "claude-code": "installed", codex: "installed", copilot: "installed", opencode: "installed" }, notes: [] },
-    { component: "sample-kit/hook/stop-remind-tests", kind: "hook", harnesses: { "claude-code": "installed", codex: "installed, needs trust", copilot: "installed", opencode: "not supported" }, notes: [] },
+    { component: "sample-kit/hook/stop-remind-tests", kind: "hook", harnesses: { "claude-code": "installed", codex: "installed, needs trust", copilot: "installed", opencode: "installed, not yet verified" }, notes: [] },
   ],
   files: [{ path: ".claude/skills/review-diff", op: "copy-tree", harness: "shared", component: "sample-kit/skill/review-diff" }],
 };
@@ -113,7 +113,8 @@ it("enables a kit for chosen workspaces: one matrix in sections, what each harne
   expect(await screen.findByText(/payments · every harness/)).toBeVisible();
   expect(screen.getByText("Knowledge")).toBeVisible();
   expect(screen.getByText("Hooks")).toBeVisible();
-  expect(screen.getByText("opencode: 1 not supported")).toBeVisible();
+  expect(screen.getByText("codex: needs trust")).toBeVisible();
+  expect(screen.queryByText(/opencode: \d+ not supported/)).toBeNull(); // hooks reach OpenCode through a generated plugin
   expect(screen.getByText("api-conventions: no path scope on codex, opencode")).toBeVisible();
   expect(screen.getAllByRole("heading", { name: /Review: sample-kit/ })).toHaveLength(1);
   fireEvent.click(screen.getByRole("button", { name: "Fix · load it always on codex, opencode" }));
@@ -237,4 +238,25 @@ it("browses to a kit folder: plain folders cannot be picked, a multi-kit folder 
   expect(screen.queryByRole("button", { name: "Use this folder" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: "Use uv-suite-fast" }));
   expect(screen.getByLabelText("MetaHarness folder")).toHaveValue("/Users/me/Downloads/uv-suite/skill-kit.fast.toml");
+});
+
+it("an overlap with another MetaHarness is called out on the review and does not block Enable", async () => {
+  vi.mocked(api.kitsCatalog).mockResolvedValue({ ...catalog, kits: [uvSuite, sample] });
+  const overlap = { path: "", kind: "overlap", detail: "skill 'review-diff' and uv-suite's 'uvs-review' both produce 'verdict'", choices: ["keep both", "enable one"], component: "sample-kit/skill/review-diff" };
+  vi.mocked(api.kitsReview).mockResolvedValue(reviewOf({ repositories: [{ workspace: "payments", project: "/ws/payments", installed: false, conflicts: [overlap], codex_trusted: true }], fixes: [] }));
+  vi.mocked(api.kitsEnable).mockResolvedValue({ kit: "sample-kit", policy: { scope: "workspaces", workspaces: ["payments"] }, installed: [{ workspace: "payments", project: "/ws/payments" }], already: [], failed: [], pending: [] });
+  render(<SkillKitsPage onClose={() => {}} fallback={null} />);
+  fireEvent.click((await screen.findAllByRole("button", { name: "Open" }))[1]);
+  fireEvent.click(await screen.findByRole("button", { name: "Enable for workspaces…" }));
+  fireEvent.click(screen.getByLabelText("These workspaces"));
+  fireEvent.click(screen.getByLabelText("payments"));
+  fireEvent.click(screen.getByRole("button", { name: "Review what will change" }));
+  const row = await screen.findByTestId("rd-kits-overlap");
+  expect(row).toHaveTextContent("both produce 'verdict' in payments's repository");
+  expect(row).toHaveTextContent("enable one of them there");
+  expect(screen.getByText("1 conflict")).toBeVisible();
+  expect(screen.queryByText(/A hard conflict refuses the install/)).toBeNull();
+  expect(screen.getByRole("button", { name: "Enable" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "Enable" }));
+  await waitFor(() => expect(api.kitsEnable).toHaveBeenCalledWith({ kit: "sample-kit", scope: "workspaces", workspaces: ["payments"], options: {}, fallbacks: [], replace: false }, ""));
 });

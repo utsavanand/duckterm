@@ -239,3 +239,20 @@ it("without the autopilot flag there is no Autopilot row and no autopilot reques
   expect(screen.queryByRole("button", { name: "Autopilot" })).toBeNull();
   expect(probe.requests.filter(path => path.startsWith("/api/autopilot"))).toEqual([]);
 });
+
+it("Support sits below Oracle and Autopilot only with its flag, and opens its chat", async () => {
+  await mount([...FULL, "autopilot", "support"]);
+  const rows = ["Autopilot", "Oracle main chat", "Support"].map(name => screen.getByRole("button", { name }));
+  expect(rows[0].compareDocumentPosition(rows[1]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  expect(rows[1].compareDocumentPosition(rows[2]) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  await act(async () => { fireEvent.click(rows[2]); });
+  expect(rows[2]).toHaveAttribute("aria-pressed", "true");
+  expect(rows[1]).toHaveAttribute("aria-pressed", "false");
+  expect(await screen.findByRole("textbox", { name: "Message Support" })).toBeVisible();
+  expect(probe.requests).toContain("/support/chat");
+  cleanup();
+  probe.requests = [];
+  await mount(FULL);
+  expect(screen.queryByRole("button", { name: "Support" })).toBeNull();
+  expect(probe.requests.filter(path => path.startsWith("/support"))).toEqual([]);
+});
