@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 from pathlib import Path
 
@@ -146,3 +147,23 @@ def test_the_clones_diff_driver_does_not_run(
     _git(repo, "config", "diff.external", str(driver))
     assert "+three" in runs.detail("r1")["changes"]["patch"]
     assert not ran.exists()
+
+
+@pytest.mark.parametrize("kind", ["fifo", "directory", "linked folder"])
+def test_a_spec_that_is_not_a_regular_file_is_not_read(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    # a FIFO left by the sandbox blocked the reading thread for good
+    repo = _run(tmp_path, monkeypatch, "out/spec.md")
+    if kind == "fifo":
+        (repo / "out").mkdir()
+        os.mkfifo(repo / "out/spec.md")
+    elif kind == "directory":
+        (repo / "out/spec.md").mkdir(parents=True)
+    else:
+        (tmp_path / "elsewhere").mkdir()
+        (tmp_path / "elsewhere/spec.md").write_text("host file")
+        (repo / "out").symlink_to(tmp_path / "elsewhere")
+    d = runs.detail("r1")
+    assert d["spec"] is None
+    assert d["attempts"][0]["step"] == "spec"

@@ -38,6 +38,7 @@ describe("modelHtml (answers about untrusted diffs)", () => {
       '<img src="https://evil.example/a"> <picture><source srcset="https://evil.example/b"></picture>',
       '<video poster="https://evil.example/c"></video> <svg><image href="https://evil.example/d"/></svg>',
       '<p style="background:url(https://evil.example/e)">styled</p> <iframe src="https://evil.example/f"></iframe>',
+      '<input type="image" src="https://evil.example/g"> <form action="https://evil.example/h"><button>go</button></form>',
     ].join("\n\n"));
     expect(out).not.toContain("evil.example");
     expect(out).toContain("Answer");

@@ -8,6 +8,7 @@ reads those files; there is no table (spec §7.3).
 
 import json
 import os
+import stat
 import subprocess
 import threading
 import time
@@ -213,21 +214,34 @@ DIFF_CAP = 400_000
 
 
 def _read_capped(root: Path, rel: str, cap: int) -> bytes | None:
-    """At most cap bytes of root/rel, a file the sandbox may have written:
-    None when any part of the path is a link or the file is missing. The
-    last part is opened with O_NOFOLLOW, so a link swapped in after the
-    check is refused too."""
-    path = root
-    for part in Path(rel).parts:
-        path = path / part
-        if path.is_symlink():
-            return None
+    """At most cap bytes of root/rel, a file the sandbox may have written, or
+    None. Each folder is opened relative to the last with O_NOFOLLOW, so a link
+    anywhere on the path, even one swapped in by a live sandbox, is refused;
+    and only a regular file is read, since a FIFO would block the reading
+    thread for good."""
+    parts = Path(rel).parts
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+        fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
     except OSError:
         return None
-    with os.fdopen(fd, "rb") as f:
-        return f.read(cap)
+    try:
+        for part in parts[:-1]:
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = child
+        child = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+        os.close(fd)
+        fd = child
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None
+        with os.fdopen(fd, "rb") as f:
+            fd = -1
+            return f.read(cap)
+    except OSError:
+        return None
+    finally:
+        if fd >= 0:
+            os.close(fd)
 
 
 def changes(project: Path, base: str) -> dict[str, Any] | None:
