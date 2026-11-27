@@ -42,7 +42,11 @@ _SNAPSHOT_ID_RE = re.compile(r"^snap-[0-9]+$")
 
 
 def valid_session_key(key: str | None) -> bool:
-    return bool(key) and key not in {".", ".."} and _SESSION_KEY_RE.fullmatch(key or "") is not None
+    return (
+        bool(key)
+        and key not in {".", "..", "owner"}
+        and _SESSION_KEY_RE.fullmatch(key or "") is not None
+    )
 
 
 def valid_tty(tty: str | None) -> bool:

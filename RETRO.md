@@ -1,3 +1,19 @@
+## 2026-11-26 — Hook text cannot authorize an owner question
+
+The permission-question fast path trusted Stop hook text before reading the
+session transcript. A forged hook could create Waiting and feed an owner answer
+rule. Verify the final text against the recorded conversation before either
+operation. Keep the no-model path for verified asks and allow one settle retry
+when the transcript has not flushed; a new turn invalidates that retry.
+
+## 2026-11-26 — Human and session sender identities must stay distinct
+
+Message cleanup used the same sender/recipient predicate for all unfinished
+mail. An event-created session named owner collided with the human sender and
+could cancel messages to other sessions. Reserve that identity in session
+validation and event storage, and limit read-broadcast cleanup to the recipient.
+Protect queued human mail too, including revocation from an older saved row.
+
 ## 2026-11-26 — CSP does not block frame self-navigation
 
 A sandboxed iframe can navigate itself even when connect-src is none. Keep

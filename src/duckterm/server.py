@@ -4615,20 +4615,6 @@ class Server:
         if et == events.STOP and row and row["state"] not in AT_REST_STATES:
             final = event.get("last_assistant_message")
             final = final if isinstance(final, str) else None
-            direct = permission_question(final or "")
-            if direct and not self._owner_question_pending(key):
-                self.relay.add(
-                    {
-                        **self._relay_session_fields(key),
-                        "kind": "question",
-                        "urgency": "blocked",
-                        "created_at": now,
-                        "question": direct,
-                        "options": [],
-                        "excerpt": (final or "")[-1200:],
-                        "detected_without_model": True,
-                    }
-                )
             try:
                 loop = asyncio.get_running_loop()
             except RuntimeError:
@@ -4882,31 +4868,68 @@ class Server:
                 and self.history.last_event_ts(key, events.USER_PROMPT_SUBMIT) <= at
             )
 
-        await asyncio.sleep(self._RELAY_SETTLE_S)
-        if not still_current():
-            return
-        if self._owner_question_pending(key):
-            # A direct permission ask was already surfaced synchronously. Keep
-            # the existing owner-authored answer-rule path for that same note.
-            direct = next(
-                (
-                    n
-                    for n in self.relay.open_notes()
-                    if n["session_key"] == key
-                    and n["kind"] == "question"
-                    and n.get("created_at") == at
-                    and n.get("detected_without_model")
-                ),
-                None,
+        def latest_assistant_text(messages: list[dict[str, object]]) -> str:
+            last = next(
+                (m for m in reversed(messages) if m.get("role") in {"user", "assistant"}), None
             )
-            if direct is not None and final_message is not None:
-                await self._relay_question_rule(direct, final_message)
+            return self._message_text(last) if last and last.get("role") == "assistant" else ""
+
+        def verified(text: str) -> bool:
+            if final_message is None:
+                return True
+            hint = final_message.strip()
+            # The hook sends at most 12,000 characters, before trimming. The
+            # transcript reader trims whitespace, so compare a bounded suffix
+            # only when the hook actually reached that cap.
+            return bool(
+                text
+                and hint
+                and (hint == text or (len(final_message) == 12000 and text.endswith(hint)))
+            )
+
+        # Hook text is a hint, not evidence: only the session's recorded transcript
+        # may create an owner question or feed an answer rule. Direct permission
+        # asks avoid the classifier delay, but still read that transcript first.
+        direct_hint = permission_question(final_message or "")
+        if not direct_hint:
+            await asyncio.sleep(self._RELAY_SETTLE_S)
+        if not still_current() or self._owner_question_pending(key):
             return
         messages = await asyncio.to_thread(self._read_messages, self._message_source(key))
-        if not still_current():
+        if not still_current() or self._owner_question_pending(key):
             return
-        last = next((m for m in reversed(messages) if m.get("role") == "assistant"), None)
-        final = final_message if final_message is not None else self._message_text(last)
+        final = latest_assistant_text(messages)
+        if not verified(final):
+            if not direct_hint:
+                return
+            # The hook can arrive before the CLI flushes its last message. Allow
+            # the existing settle interval once; never fall back to hook text.
+            await asyncio.sleep(self._RELAY_SETTLE_S)
+            if not still_current() or self._owner_question_pending(key):
+                return
+            messages = await asyncio.to_thread(self._read_messages, self._message_source(key))
+            if not still_current() or self._owner_question_pending(key):
+                return
+            final = latest_assistant_text(messages)
+            if not verified(final):
+                return
+        direct = permission_question(final)
+        if direct:
+            note = self.relay.add(
+                {
+                    **self._relay_session_fields(key),
+                    "kind": "question",
+                    "urgency": "blocked",
+                    "created_at": at,
+                    "question": direct,
+                    "options": [],
+                    "excerpt": final[-1200:],
+                    "detected_without_model": True,
+                }
+            )
+            self._mark_question_waiting(key)
+            await self._relay_question_rule(note, final)
+            return
         if not final or not ASK_CUES.search(final[-900:]):
             return
         if any(

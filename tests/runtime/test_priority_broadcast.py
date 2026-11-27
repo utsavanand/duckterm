@@ -574,3 +574,38 @@ def test_read_priority_stops_counting_only_when_recipient_permanently_ends(
         call(history, fresh, "POST", f"/questions/{priority['id']}/answer", {"text": "Recovered"})
         counts = dispatch(server, "GET", "/session-inbox-counts", owner)[1]
         assert counts["unanswered_counts"] == {"peer": 1, "codex": 1}
+
+
+def test_owner_session_events_and_legacy_revocation_preserve_other_recipients(scenario):
+    history, server, owner, creds = scenario
+    send(server, owner, "Read priority", "owner-key-read")
+    call(history, creds["claude"], "GET", "/inbox")
+    send(server, owner, "Queued priority", "owner-key-queued")
+    direct = history.session_api.owner_message("peer", "Owner question")
+    before = [
+        tuple(row)
+        for row in history._conn.execute(
+            "SELECT id, status, answered_at FROM session_questions ORDER BY id"
+        )
+    ]
+    for i, event_type in enumerate(("SessionStart", "SessionEnd")):
+        history.record(
+            {
+                "_id": f"reserved-owner-{i}",
+                "_ts": i + 10,
+                "event_type": event_type,
+                "session_key": "owner",
+                "test": True,
+            }
+        )
+    assert history.session("owner") is None
+    # Even an old saved row or internal caller cannot cancel human-sent mail.
+    history.session_api.revoke("owner")
+    after = [
+        tuple(row)
+        for row in history._conn.execute(
+            "SELECT id, status, answered_at FROM session_questions ORDER BY id"
+        )
+    ]
+    assert after == before
+    assert any(row[0] == direct for row in after)
