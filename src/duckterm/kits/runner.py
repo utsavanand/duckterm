@@ -990,7 +990,12 @@ def _harness(
         "-o",
         str(last),
     ]
-    argv += ["--dangerously-bypass-approvals-and-sandbox"] if lim.yolo else ["--full-auto"]
+    # `codex exec` dropped --full-auto (0.155 rejects it); the sandbox flag is what it meant
+    argv += (
+        ["--dangerously-bypass-approvals-and-sandbox"]
+        if lim.yolo
+        else ["--sandbox", "workspace-write"]
+    )
     argv.append(prompt)
     res = ex.run_process(argv, cwd=run.project, env=env, stdin="", timeout=timeout)
     final = _last_json(last.read_text()) if last.is_file() else None
@@ -1058,7 +1063,9 @@ def _file_outputs(skill: dict[str, Any]) -> dict[str, str]:
 
 def _schema(skill: dict[str, Any], kind: str) -> dict[str, Any]:
     props: dict[str, Any] = {"reason": {"type": "string"}}
-    required: list[str] = []
+    # strict output schemas (Codex's --output-schema) require every property to be
+    # listed in `required`; a free-text reason is always asked for anyway
+    required: list[str] = ["reason"]
     choice = _choice_output(skill)
     if choice:
         props[choice[0]] = {"type": "string", "enum": choice[1]}
