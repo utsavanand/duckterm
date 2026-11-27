@@ -1,3 +1,11 @@
+## 2026-11-26 — Verify hardening advice against the pinned dependency
+
+Serve static assets with nosniff alongside correct MIME types, including PDF
+workers and decoders. Verify suggested library switches before adding them:
+PDF.js 6.5 has removed isEvalSupported and its eval path. Treat optional
+dependency removal as a build change; Rollup needs its optional native package,
+so omitting every optional package breaks the release build.
+
 ## 2026-11-26 — Test bundled document readers through the real server
 
 A PDF worker built successfully but failed in the app because the static server
