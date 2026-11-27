@@ -853,11 +853,13 @@ def create_team(body: dict[str, Any]) -> dict[str, Any]:
     template = next((p for p in offered if p.get("name") == team_name), None)
     if template is None:
         raise KitApiError(404, f"kit {kit_name!r} offers no team {team_name!r}")
-    roles = template.get("roles") or {}
-    problems = validate.role_problems(
-        {str(r): str((spec or {}).get("purpose", "")) for r, spec in roles.items()},
-        template.get("rules") or [],
-    )
+    # The template is checked whether it came from the manifest or from the
+    # repository's record, which anyone working there can edit.
+    roles = template.get("roles")
+    rules = template.get("rules")
+    if not isinstance(roles, dict) or not roles or not isinstance(rules, list):
+        raise KitApiError(400, f"team {team_name!r}: roles is a table of roles and rules a list")
+    problems = validate.role_problems(roles, rules)
     if problems:
         raise KitApiError(400, f"team {team_name!r}: " + "; ".join(problems))
     existing = team_for_folder(folder)

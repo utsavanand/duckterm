@@ -868,6 +868,43 @@ def test_create_team_takes_the_template_from_the_added_kit_not_the_repository_re
     assert set(out["team"]["roles"]) == {"dev", "reviewer"}
 
 
+def test_create_team_checks_a_repository_record_template_as_hard_as_a_manifest(
+    tmp_path, monkeypatch
+):
+    """Security INFO on #518: an unregistered kit's record (no kit_path) is
+    still the template; a role written as a number, or forty skills, was a
+    500 or unbounded. Both are a 400 now."""
+    from duckterm.helpers import instance
+
+    monkeypatch.setattr(instance, "home", lambda: tmp_path / "home")
+    project = _project(tmp_path)
+    (project / ".git").mkdir()
+    api.install_kit({"kit": str(SAMPLE), "project": str(project), "harnesses": ["claude-code"]})
+    record_path = project / ".duckterm" / "installed.json"
+    record = json.loads(record_path.read_text())
+    template = record["kits"]["sample-kit"]["procedures"][0]
+    template["roles"]["dev"] = "just a string"
+    template["roles"]["reviewer"]["skills"] = [f"s{i}" for i in range(40)]
+    record_path.write_text(json.dumps(record))
+    with pytest.raises(api.KitApiError) as refused:
+        api.create_team({"kit": "sample-kit", "team": "feature-squad", "project": str(project)})
+    assert refused.value.status == 400
+    message = str(refused.value)
+    assert "role 'reviewer': skills is a list of at most 32" in message
+    assert "role 'dev'" not in message  # a bare string is read as the purpose
+    template["roles"]["dev"] = 7
+    template["roles"]["reviewer"]["skills"] = ["ok"]
+    record_path.write_text(json.dumps(record))
+    with pytest.raises(api.KitApiError) as refused:
+        api.create_team({"kit": "sample-kit", "team": "feature-squad", "project": str(project)})
+    assert refused.value.status == 400 and "role 'dev': not a table" in str(refused.value)
+    template["roles"] = "none"
+    record_path.write_text(json.dumps(record))
+    with pytest.raises(api.KitApiError) as refused:
+        api.create_team({"kit": "sample-kit", "team": "feature-squad", "project": str(project)})
+    assert refused.value.status == 400 and "roles is a table" in str(refused.value)
+
+
 def test_create_team_refuses_a_template_with_too_many_or_badly_named_roles(tmp_path, monkeypatch):
     from duckterm.helpers import instance
     from duckterm.kits import validate
@@ -893,7 +930,9 @@ def test_create_team_refuses_a_template_with_too_many_or_badly_named_roles(tmp_p
     messages = [str(f) for f in validate.validate(kit)]
     assert any("13 roles; a team has at most 12" in msg for msg in messages)
     assert any("role 'Dev Lead': a name is lowercase" in msg for msg in messages)
-    assert any("purpose is 301 characters" in msg for msg in messages)
+    assert any(
+        "role 'Dev Lead': purpose is text of at most 300 characters" in msg for msg in messages
+    )
     assert any("rule 1 is 2" in msg and "200 at most" in msg for msg in messages)
     for team, text in (("crowd", "13 roles"), ("odd", "Dev Lead")):
         with pytest.raises(api.KitApiError) as refused:
