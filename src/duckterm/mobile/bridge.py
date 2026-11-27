@@ -10,7 +10,7 @@ import secrets
 import ssl
 import stat
 import time
-from collections import deque
+from collections import Counter, deque
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import parse_qs, urlsplit
@@ -45,6 +45,14 @@ REQUESTS_PER_CONNECTION = 100
 # refresh, so a phone reads the snapshot at most about once a second.
 EVENTS_WAIT_SECONDS = 25
 EVENTS_COALESCE_SECONDS = 1.0
+# A phone keeps one /v2/events request open; two covers a retry overlapping it.
+EVENTS_PER_DEVICE = 2
+CONNECTIONS = 32
+# Before authentication a client gets this long for its request line, headers and body.
+HEADER_SECONDS = 5
+CONNECTIONS_PER_PEER = 8
+# Revocation runs in the CLI's process, so open connections notice it by polling.
+REVOCATION_CHECK_SECONDS = 2.0
 # Request lines are unauthenticated text: only these fixed labels reach the log,
 # anything else is "unknown" (path) or "?" (method).
 LOGGED_ROUTES = frozenset(
@@ -127,11 +135,21 @@ class Bridge:
         self.listener: asyncio.Server | None = None
         self.connections: set[asyncio.StreamWriter] = set()
         self.handlers: set[asyncio.Task[None]] = set()
+        self.peers: Counter[str] = Counter()
+        self.waiting: Counter[str] = Counter()
+        # Authenticated device per connection, so revoking a phone closes its sockets.
+        self.owners: dict[asyncio.StreamWriter, tuple[str, asyncio.Task[None] | None]] = {}
+        self.watcher: asyncio.Task[None] | None = None
         self.claims: deque[float] = deque()
         self.initial_cursor = secrets.token_hex(16)
 
     async def dispatch(
-        self, method: str, target: str, headers: dict[str, str], body: bytes
+        self,
+        method: str,
+        target: str,
+        headers: dict[str, str],
+        body: bytes,
+        writer: asyncio.StreamWriter | None = None,
     ) -> tuple[int, dict[str, Any]]:
         # Never accept browser-origin requests, owner tokens, session grants,
         # arbitrary forwarding paths, or unscoped desktop operations.
@@ -186,6 +204,10 @@ class Bridge:
                 authorization.removeprefix("Ducky "),
                 pending=parsed.path == "/v1/pair/status",
             )
+            if writer is not None and device["status"] == "active":
+                self.owners[writer] = (device["id"], asyncio.current_task())
+                if self.watcher is None or self.watcher.done():
+                    self.watcher = asyncio.create_task(self.watch_revocations())
             if parsed.path == "/v1/pair/status":
                 if parsed.query:
                     raise ValueError("Unexpected query")
@@ -199,7 +221,15 @@ class Bridge:
                 seen = query["cursor"][0]
                 if not seen.isalnum() or len(seen) > 64:
                     raise ValueError("Invalid event cursor")
-                changed = await self.wait_for_change(seen)
+                if self.waiting[device["id"]] >= EVENTS_PER_DEVICE:
+                    return 429, {"error": "Too many waiting requests"}
+                self.waiting[device["id"]] += 1
+                try:
+                    changed = await self.wait_for_change(seen)
+                finally:
+                    self.waiting[device["id"]] -= 1
+                    if not self.waiting[device["id"]]:
+                        del self.waiting[device["id"]]
                 # Revocation while waiting wins over the answer.
                 await self.recheck(device, "status:read")
                 return 200, {
@@ -331,11 +361,34 @@ class Bridge:
         if not (self.directory / "ducky-bridge.json").is_file():
             raise MessageError(503, "disabled")
 
+    async def watch_revocations(self) -> None:
+        stamp = None
+        while self.owners:
+            with contextlib.suppress(OSError):
+                current = self.grants.path.stat().st_mtime_ns
+                if current != stamp:
+                    stamp = current
+                    active = {
+                        device["id"]
+                        for device in await asyncio.to_thread(self.grants.devices)
+                        if device["status"] == "active"
+                    }
+                    for writer, (identifier, handler) in tuple(self.owners.items()):
+                        if identifier not in active:
+                            self.owners.pop(writer, None)
+                            writer.close()
+                            if handler is not None:
+                                handler.cancel()
+            await asyncio.sleep(REVOCATION_CHECK_SECONDS)
+
     async def handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
-        if len(self.connections) >= 32:
+        peername = writer.get_extra_info("peername")
+        peer = peername[0] if peername else "-"
+        if len(self.connections) >= CONNECTIONS or self.peers[peer] >= CONNECTIONS_PER_PEER:
             writer.close()
             return
         self.connections.add(writer)
+        self.peers[peer] += 1
         handler = asyncio.current_task()
         if handler is not None:
             self.handlers.add(handler)
@@ -345,6 +398,10 @@ class Bridge:
                     break
         finally:
             self.connections.discard(writer)
+            self.owners.pop(writer, None)
+            self.peers[peer] -= 1
+            if not self.peers[peer]:
+                del self.peers[peer]
             if handler is not None:
                 self.handlers.discard(handler)
             writer.close()
@@ -361,7 +418,7 @@ class Bridge:
         keep = False
         try:
             # The first request must arrive promptly; a kept connection may idle.
-            async with asyncio.timeout(5 if first else IDLE_SECONDS):
+            async with asyncio.timeout(HEADER_SECONDS if first else IDLE_SECONDS):
                 line = await reader.readline()
             if not line and not first:
                 return False
@@ -372,8 +429,8 @@ class Bridge:
             logged_method = method if method in {"GET", "POST"} else "?"
             if not target.startswith("/") or len(target) > 2048:
                 raise ValueError("Invalid target")
-            budget = EVENTS_WAIT_SECONDS + 5 if path == "/v2/events" else 5
-            async with asyncio.timeout(budget):
+            # Only an authenticated /v2/events request may outlast HEADER_SECONDS.
+            async with asyncio.timeout(HEADER_SECONDS):
                 headers = await read_headers(reader)
                 limit = (
                     32768
@@ -392,7 +449,9 @@ class Bridge:
                     )
                     return False
                 body = await read_body(reader, headers, max_bytes=limit)
-                status, response = await self.dispatch(method, target, headers, body)
+            # wait_for_change bounds /v2/events by itself.
+            async with asyncio.timeout(None if path == "/v2/events" else 5):
+                status, response = await self.dispatch(method, target, headers, body, writer)
                 outcome = str(status)
                 # Opt-in: Apple's URL loading asks for keep-alive; one-shot clients don't.
                 keep = status < 400 and headers.get("connection", "").lower() == "keep-alive"
@@ -451,6 +510,8 @@ class Bridge:
         # A waiting /v2/events request would otherwise hold shutdown for its full wait.
         for handler in tuple(self.handlers):
             handler.cancel()
+        if self.watcher is not None:
+            self.watcher.cancel()
         if self.listener is not None:
             await self.listener.wait_closed()
 

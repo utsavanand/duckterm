@@ -761,3 +761,137 @@ def test_bridge_log_closes_its_descriptor_when_securing_it_fails(tmp_path, monke
         leaked.append(fd)
         os.close(fd)
     assert opened and not leaked, "a suppressed setup error must not leak the open descriptor"
+
+
+async def _started(server, root):
+    configure(root, "127.0.0.1", 4430)
+    config = json.loads((root / "ducky-bridge.json").read_text())
+    config["port"] = 0
+    (root / "ducky-bridge.json").write_text(json.dumps(config))
+    bridge = await start(server)
+    token, device = paired(bridge.grants)
+    bridge.grants.approve(device["id"])
+    port = bridge.listener.sockets[0].getsockname()[1]
+    context = ssl.create_default_context(cafile=str(root / "ducky-cert.pem"))
+
+    async def connect():
+        return await asyncio.open_connection(
+            "127.0.0.1", port, ssl=context, server_hostname="127.0.0.1"
+        )
+
+    return bridge, token, device, connect
+
+
+async def _trickle(writer):
+    for index in range(40):
+        writer.write(f"X-Slow-{index}: 1\r\n".encode())
+        await writer.drain()
+        await asyncio.sleep(0.1)
+
+
+def test_slow_headers_lose_the_connection_on_every_route(app, monkeypatch):
+    import duckterm.mobile.bridge as bridge_module
+
+    server, root = app
+    monkeypatch.setattr(bridge_module, "HEADER_SECONDS", 0.3)
+
+    async def run():
+        bridge, _, _, connect = await _started(server, root)
+        try:
+            for path in ("/v2/events?cursor=a", "/v2/snapshot"):
+                reader, writer = await connect()
+                writer.write(f"GET {path} HTTP/1.1\r\n".encode())
+
+                feeding = asyncio.create_task(_trickle(writer))
+                # Unauthenticated: dropped after HEADER_SECONDS, never the events wait.
+                assert await asyncio.wait_for(reader.read(), 2) == b""
+                feeding.cancel()
+                writer.close()
+        finally:
+            await bridge.close()
+
+    asyncio.run(run())
+
+
+def test_one_device_holds_at_most_two_event_waits(app, monkeypatch):
+    import duckterm.mobile.bridge as bridge_module
+
+    server, root = app
+    (root / "ducky-bridge.json").write_text("{}")
+    bridge = Bridge(server, root)
+    token, device = paired(bridge.grants)
+    bridge.grants.approve(device["id"])
+    headers = {"authorization": "Ducky " + token}
+    monkeypatch.setattr(bridge_module, "EVENTS_WAIT_SECONDS", 0.5)
+
+    async def run():
+        cursor = bridge.latest_cursor()
+
+        def events():
+            return bridge.dispatch("GET", f"/v2/events?cursor={cursor}", headers, b"")
+
+        waits = [asyncio.create_task(events()) for _ in range(2)]
+        await asyncio.sleep(0.05)
+        assert (await events())[0] == 429
+        assert [(await wait)[0] for wait in waits] == [200, 200]
+        # The slots come back once the waits answer.
+        assert (await events())[0] == 200
+
+    asyncio.run(run())
+
+
+def test_one_address_cannot_take_every_connection(app, monkeypatch):
+    import duckterm.mobile.bridge as bridge_module
+
+    server, root = app
+    monkeypatch.setattr(bridge_module, "CONNECTIONS_PER_PEER", 2)
+
+    async def run():
+        bridge, _, _, connect = await _started(server, root)
+        try:
+            held = [await connect() for _ in range(2)]
+            await asyncio.sleep(0.1)
+            reader, writer = await connect()
+            assert await asyncio.wait_for(reader.read(), 2) == b""
+            writer.close()
+            for _, held_writer in held:
+                held_writer.close()
+        finally:
+            await bridge.close()
+
+    asyncio.run(run())
+
+
+def test_revoking_a_phone_closes_its_kept_and_waiting_connections(app, monkeypatch):
+    import duckterm.mobile.bridge as bridge_module
+
+    server, root = app
+    monkeypatch.setattr(bridge_module, "REVOCATION_CHECK_SECONDS", 0.05)
+
+    async def run():
+        bridge, token, device, connect = await _started(server, root)
+        try:
+            kept_reader, kept_writer = await connect()
+            kept_writer.write(
+                f"GET /v2/snapshot HTTP/1.1\r\nHost: x\r\nConnection: keep-alive\r\n"
+                f"Authorization: Ducky {token}\r\n\r\n".encode()
+            )
+            raw = await asyncio.wait_for(kept_reader.readuntil(b"\r\n\r\n"), 2)
+            length = int(raw.split(b"Content-Length: ")[1].split(b"\r\n")[0])
+            await kept_reader.readexactly(length)
+            waiting_reader, waiting_writer = await connect()
+            waiting_writer.write(
+                f"GET /v2/events?cursor={bridge.latest_cursor()} HTTP/1.1\r\nHost: x\r\n"
+                f"Authorization: Ducky {token}\r\n\r\n".encode()
+            )
+            await asyncio.sleep(0.2)
+            assert not kept_reader.at_eof() and not waiting_reader.at_eof()
+            bridge.grants.revoke(device["id"])
+            assert await asyncio.wait_for(kept_reader.read(), 2) == b""
+            assert await asyncio.wait_for(waiting_reader.read(), 2) == b""
+            kept_writer.close()
+            waiting_writer.close()
+        finally:
+            await bridge.close()
+
+    asyncio.run(run())
