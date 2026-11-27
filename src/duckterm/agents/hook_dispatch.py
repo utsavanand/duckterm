@@ -20,7 +20,7 @@ from duckterm.helpers import instance
 
 # Increment when changing the shared script or its pinned jq. An older app may
 # use a newer v1 handler, but must never replace it with an older handler.
-REVISION = 2
+REVISION = 3
 LEGACY_FULL = "legacy-full"
 
 

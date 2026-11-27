@@ -48,6 +48,28 @@ located that control by name, so it timed out rather than failing an assertion.
 A renamed control is an API change for anything that queries by role and name.
 Keep the accessible name when the visible word changes, with aria-label.
 
+## 2026-11-26 — Automatic checkpoints failed on busy agents, and one fallback checkpointed old work
+
+The first night of automatic checkpoints: 86 succeeded, 8 failed, every
+failure on an agent that was mid-turn. The 50-message trigger fires while the
+agent is still writing, so copying the conversation kept hitting a changing
+file. One failure was a KeyError: when the live conversation can't be read,
+memory substitutes an older saved copy (meant for search), and the checkpoint
+read that copy's fingerprint, which old-format copies lack. With a new-format
+copy there was no error at all: the checkpoint summarized old work and called
+it current. Message-count checkpoints now wait for a turn end or a quiet
+minute, the fallback copy is refused, and the log says which step refused.
+Lesson: a fallback that is right for one reader (search) can be wrong for
+another (a checkpoint); mark it, and have each reader decide.
+
+## 2026-11-26 — A waiting reply needs a recipient that can still answer
+
+Home's @ offered every session, so a question to an ended one showed "Waiting"
+forever, and each saved answer was copied whole (up to 256 KB, 200 kept). When
+the UI waits on someone, list only who can answer, have the server refuse the
+rest, and bound what is copied into a history by bytes, not just by count.
+
+
 ## 2026-11-26 — Verify hardening advice against the pinned dependency
 
 Serve static assets with nosniff alongside correct MIME types, including PDF
