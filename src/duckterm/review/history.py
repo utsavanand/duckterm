@@ -289,7 +289,13 @@ def compare(repo: str, older: dict[str, Any], newer: dict[str, Any]) -> dict[str
     try:
         changed_files = set(
             git.run(
-                repo, "diff", "--name-only", older["tag"], newer["tag"], timeout=60
+                repo,
+                "diff",
+                "--no-textconv",
+                "--name-only",
+                older["tag"],
+                newer["tag"],
+                timeout=60,
             ).splitlines()
         )
     except git.ReviewGitError:
@@ -332,6 +338,7 @@ def touched_releases(repo: str, rows: list[dict[str, Any]], paths: list[str]) ->
             changed = git.run(
                 repo,
                 "diff",
+                "--no-textconv",
                 "--name-only",
                 f"{row['previous']}" if row["previous"] else f"{row['tag']}~1",
                 row["tag"],

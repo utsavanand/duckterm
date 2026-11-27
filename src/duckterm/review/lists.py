@@ -472,9 +472,11 @@ def _row(
         if heads is not None
         else git.ref_exists(repo, f"refs/remotes/origin/{branch}")
     )
-    head_ref = branch if local and git.ref_exists(repo, f"refs/heads/{branch}") else None
+    # Full ref names: a branch can be called "--output=<path>".
+    local_ref = f"refs/heads/{branch}"
+    head_ref = local_ref if local and git.ref_exists(repo, local_ref) else None
     if head_ref is None and pushed and git.ref_exists(repo, f"refs/remotes/origin/{branch}"):
-        head_ref = f"origin/{branch}"
+        head_ref = f"refs/remotes/origin/{branch}"
     ahead = behind = None
     size = None
     conflict = None
