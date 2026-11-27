@@ -503,3 +503,47 @@ def test_file_feedback_refuses_root_change_during_read(app, tmp_path, monkeypatc
     )
     assert status == 409
     assert not server.history.annotations("a")
+
+
+def test_pdf_file_feedback_keeps_page_in_saved_comment_and_agent_prompt(app, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    server, _, owner, root = root_for(app, tmp_path)
+    path = root / "review.pdf"
+    path.write_bytes(b"%PDF-1.4\nfixture")
+    opened = session_files.content(str(root), "review.pdf")
+    writes = []
+
+    async def write(value):
+        writes.append(value)
+        return True
+
+    monkeypatch.setattr(
+        server.orchestrator,
+        "get",
+        lambda _: SimpleNamespace(running=True, write_queued_bytes=write),
+    )
+    data = {
+        "file_path": "review.pdf",
+        "file_root": opened["root"],
+        "file_sha256": opened["sha256"],
+        "pdf_page": 3,
+        "quote": "",
+        "note": "Diagram comment",
+    }
+
+    def send(payload):
+        return dispatch(
+            server, "POST", "/sessions/a/annotations", owner, json.dumps(payload).encode()
+        )
+
+    assert send({**data, "pdf_page": True})[0] == 400
+    assert not writes
+    assert send(data)[1]["sent"] is True
+    prompt = json.loads(writes[0].decode().removeprefix("File feedback: ").strip())
+    stored = json.loads(server.history.annotations("a")[0]["quote"])
+    assert prompt["pdf_page"] == stored["pdf_page"] == 3
+    assert prompt["sha256"] == stored["sha256"] == opened["sha256"]
+    path.write_bytes(b"%PDF-1.4\nchanged")
+    assert send(data)[0] == 409
+    assert len(writes) == 1

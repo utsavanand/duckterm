@@ -1,3 +1,13 @@
+## 2026-11-26 — Test bundled document readers through the real server
+
+A PDF worker built successfully but failed in the app because the static server
+served .mjs as application/octet-stream. The modern PDF.js build also used Map
+methods missing in macOS WebKit; bundle the matching legacy renderer/worker and
+probe the actual native engine. Verify worker/resource URLs and MIME
+types through the packaged server, not just Vite. Page comments need both a
+content hash and a page number: identical text on different pages must not make
+feedback jump to the wrong occurrence. Scanned pages still need page comments.
+
 ## 2026-11-26 — The narrow-strip rule never hid Oracle's subtitle
 
 Compacting the sidebar rows for short windows first saved only the Autopilot

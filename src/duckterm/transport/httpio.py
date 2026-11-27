@@ -35,6 +35,8 @@ _REASON = {
 _CONTENT_TYPES = {
     ".html": "text/html",
     ".js": "text/javascript",
+    ".mjs": "text/javascript",
+    ".wasm": "application/wasm",
     ".css": "text/css",
     ".svg": "image/svg+xml",
     ".json": "application/json",

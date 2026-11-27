@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from duckterm.core.session_api import APIError
+from duckterm.feedback_context import pdf_page_context
 from duckterm.helpers import security
 from duckterm.session_files import content, relative_path
 from duckterm.transport.httpio import write_json
@@ -55,12 +56,14 @@ async def add_file_annotation(
             raise APIError(
                 409, "This file changed. Review its latest version before sending feedback."
             )
+        page_context = pdf_page_context(req, file["media_type"])
         supervisor = server.orchestrator.get(key)
         if supervisor is None or not await asyncio.to_thread(getattr, supervisor, "running"):
             raise APIError(
                 409, "Feedback was not sent: no live terminal. Your comment is kept here."
             )
         context = {
+            **page_context,
             "type": "file_feedback",
             "root": file["root"],
             "path": path,
