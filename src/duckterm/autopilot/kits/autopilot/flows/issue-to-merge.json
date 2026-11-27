@@ -1,6 +1,6 @@
 {
   "name": "issue-to-merge",
-  "description": "Spec, fix, check, draft pull request.",
+  "description": "Spec the fix from an issue, build it, review it, draft the pull request",
   "inputs": { "issue": "the issue: number, title, body, labels and URL, as JSON" },
   "triggers": [
     { "type": "github-issue", "input": "issue" },
@@ -8,11 +8,12 @@
     { "type": "slack-message", "input": "issue" }
   ],
   "steps": [
-    { "id": "spec", "run": "spec-fix", "with": { "issue": "inputs.issue" } },
-    { "id": "build", "run": "build-fix",
-      "with": { "issue": "inputs.issue", "spec": "steps.spec.outputs.spec" } },
-    { "id": "check", "decide": "check-fix",
+    { "id": "spec", "run": "spec", "with": { "issue": "inputs.issue" } },
+    { "id": "build", "run": "implement",
+      "with": { "spec": "steps.spec.outputs.spec", "findings": "steps.check.outputs.findings?" } },
+    { "id": "check", "decide": "review",
       "with": { "spec": "steps.spec.outputs.spec", "diff": "workspace.diff" },
-      "routes": { "ok": "end", "broken": "fail" }, "default": "broken" }
+      "routes": { "approve": "end", "revise": "build", "reject": "fail" },
+      "default": "reject", "max_loops": 2 }
   ]
 }

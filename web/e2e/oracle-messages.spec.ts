@@ -31,6 +31,8 @@ test("Ask Oracle sends to one agent after the owner confirms, and asks when unsu
   await box.press("Enter");
   const which = page.getByRole("group", { name: "Which agent did you mean?" });
   await which.getByRole("button", { name: /main-dev-2/ }).click();
+  expect(await inbox("main-dev-2")).toEqual([]);
+  await page.getByRole("group", { name: "Message to main-dev-2" }).getByRole("button", { name: "Send" }).click();
   await expect(page.getByText("Sent to main-dev-2:", { exact: false })).toBeVisible();
   expect(await inbox("main-dev-2")).toContain("rebase on main");
   expect(await inbox("main-dev")).toEqual([]);

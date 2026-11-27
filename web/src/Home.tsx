@@ -135,7 +135,7 @@ function AutopilotTile() {
 
 function ChatWidget() {
   const { agents, onOpenTerminal } = useContext(HomeActions);
-  const sessions = useMemo(() => agents.map(a => ({ key: a.key, name: a.label })), [agents]);
+  const sessions = useMemo(() => agents.map(a => ({ key: a.key, name: a.label, folder: a.group, state: a.shownState })), [agents]);
   return <HomeChat sessions={sessions} onOpenTerminal={onOpenTerminal} />;
 }
 

@@ -1,4 +1,4 @@
-import { act, cleanup, fireEvent, render, renderHook, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, renderHook, screen, within } from "@testing-library/react";
 import { afterEach, expect, it, vi } from "vitest";
 import { AgentTree } from "./AgentTree";
 import { ComponentProps } from "react";
@@ -155,7 +155,7 @@ it("counts unanswered sessions once, respects other facets, and refreshes after 
   expect(screen.getByRole("status")).toHaveTextContent("1 of 3");
 });
 
-it("search finds nested and remote agent names while preserving filters and expansion", () => {
+it("search finds agent and folder names while preserving filters and expansion", () => {
   const onOpen = vi.fn();
   const props = { sessions: [session("UI-dev", { inboxUnanswered: 1 }), session("QA-dev", { host: "remote", group: "Other", parentKey: "parent", inboxUnanswered: 1 }), session("parent", { group: "Other" }), session("docs", { group: "dev", inboxUnanswered: 1 })], now: 0,
     folders: ["Project", "Other", "dev"], selectedKey: "UI-dev", onOpen,
@@ -164,11 +164,11 @@ it("search finds nested and remote agent names while preserving filters and expa
   fireEvent.click(screen.getByRole("button", { name: "Expand Project" }));
   const search = screen.getByRole("searchbox", { name: "Search agents by name" });
   fireEvent.change(search, { target: { value: " DEV " } });
-  expect(view.container.querySelectorAll(".rd-row")).toHaveLength(2);
+  expect(view.container.querySelectorAll(".rd-row")).toHaveLength(3);
   expect(view.container.querySelectorAll(".rd-row-name mark")).toHaveLength(2);
-  expect(screen.queryByText("docs", { exact: true })).not.toBeInTheDocument();
+  expect(screen.getByText("docs", { exact: true })).toBeInTheDocument();
   fireEvent.click(screen.getByRole("button", { name: "Filters" }));
-  fireEvent.click(screen.getByRole("button", { name: "Unanswered inbox 2" }));
+  fireEvent.click(screen.getByRole("button", { name: "Unanswered inbox 3" }));
   fireEvent.click(screen.getByRole("button", { name: "Remote 1" }));
   expect(view.container.querySelectorAll(".rd-row")).toHaveLength(1);
   expect(view.container.querySelector(".rd-row-name")).toHaveTextContent("QA-dev");
@@ -180,4 +180,29 @@ it("search finds nested and remote agent names while preserving filters and expa
   expect(screen.getByRole("button", { name: "Expand Other" })).toBeInTheDocument();
   expect(view.container.querySelector(".rd-row.selected")).toHaveTextContent("UI-dev");
   expect(onOpen).not.toHaveBeenCalled();
+});
+
+
+it("search matches ancestor paths, excludes archives, and follows folder changes", () => {
+  const props = { sessions: [
+    session("writer", { group: "Product/Research" }),
+    session("reviewer", { group: "Product/QA", host: "remote" }),
+    session("old", { group: "Product/QA", state: "archived" }),
+    session("merged", { group: "Product/QA", state: "merged" }),
+    session("loose", { group: "" }),
+  ], now: 0, folders: ["Product/Research", "Product/QA"], selectedKey: null,
+    onOpen: vi.fn(), onFoldersChanged: vi.fn(), onSessionMoved: vi.fn(),
+    onOpenGrid: vi.fn(), onNewSessionIn: vi.fn(), folderThemes: {} };
+  const view = render(<ControlledTree {...props} />);
+  const search = screen.getByRole("searchbox", { name: "Search agents by name" });
+  const names = () => [...view.container.querySelectorAll(".rd-row-name")].map(row => row.textContent);
+  fireEvent.change(search, { target: { value: " PRODUCT " } });
+  expect(names()).toEqual(["writer", "reviewer"]);
+  expect(within(screen.getByRole("region", { name: "Session filters" })).getByRole("status")).toHaveTextContent("2 of 3");
+  fireEvent.change(search, { target: { value: "product/research" } });
+  expect(names()).toEqual(["writer"]);
+  view.rerender(<ControlledTree {...props} sessions={props.sessions.map(s => s.key === "writer" ? { ...s, group: "Other" } : s)} />);
+  expect(names()).toEqual([]);
+  fireEvent.change(search, { target: { value: "ungrouped" } });
+  expect(names()).toEqual(["loose"]);
 });

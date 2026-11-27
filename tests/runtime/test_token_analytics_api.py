@@ -1,4 +1,5 @@
 import json
+import threading
 from datetime import UTC, datetime
 
 from tests.runtime.test_session_api import dispatch
@@ -30,6 +31,14 @@ def test_owner_auth_range_validation_and_exact_model(tmp_path, monkeypatch):
     history = HistoryStore(tmp_path / "test.sqlite")
     try:
         server = Server(history=history)
+        loop_thread = threading.get_ident()
+        read_identities = server._token_identities
+
+        def worker_identities():
+            assert threading.get_ident() != loop_thread
+            return read_identities()
+
+        monkeypatch.setattr(server, "_token_identities", worker_identities)
         owner = {"x-duckterm-token": server.token}
         assert dispatch(server, "GET", "/analytics/tokens", {})[0] == 401
         for query in ["days=0", "days=no", "days=7&days=1", "days=99999"]:

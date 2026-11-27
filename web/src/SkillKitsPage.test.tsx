@@ -238,3 +238,24 @@ it("browses to a kit folder: plain folders cannot be picked, a multi-kit folder 
   fireEvent.click(screen.getByRole("button", { name: "Use uv-suite-fast" }));
   expect(screen.getByLabelText("MetaHarness folder")).toHaveValue("/Users/me/Downloads/uv-suite/skill-kit.fast.toml");
 });
+
+it("an overlap with another MetaHarness is called out on the review and does not block Enable", async () => {
+  vi.mocked(api.kitsCatalog).mockResolvedValue({ ...catalog, kits: [uvSuite, sample] });
+  const overlap = { path: "", kind: "overlap", detail: "skill 'review-diff' and uv-suite's 'uvs-review' both produce 'verdict'", choices: ["keep both", "enable one"], component: "sample-kit/skill/review-diff" };
+  vi.mocked(api.kitsReview).mockResolvedValue(reviewOf({ repositories: [{ workspace: "payments", project: "/ws/payments", installed: false, conflicts: [overlap], codex_trusted: true }], fixes: [] }));
+  vi.mocked(api.kitsEnable).mockResolvedValue({ kit: "sample-kit", policy: { scope: "workspaces", workspaces: ["payments"] }, installed: [{ workspace: "payments", project: "/ws/payments" }], already: [], failed: [], pending: [] });
+  render(<SkillKitsPage onClose={() => {}} fallback={null} />);
+  fireEvent.click((await screen.findAllByRole("button", { name: "Open" }))[1]);
+  fireEvent.click(await screen.findByRole("button", { name: "Enable for workspaces…" }));
+  fireEvent.click(screen.getByLabelText("These workspaces"));
+  fireEvent.click(screen.getByLabelText("payments"));
+  fireEvent.click(screen.getByRole("button", { name: "Review what will change" }));
+  const row = await screen.findByTestId("rd-kits-overlap");
+  expect(row).toHaveTextContent("both produce 'verdict' in payments's repository");
+  expect(row).toHaveTextContent("enable one of them there");
+  expect(screen.getByText("1 conflict")).toBeVisible();
+  expect(screen.queryByText(/A hard conflict refuses the install/)).toBeNull();
+  expect(screen.getByRole("button", { name: "Enable" })).toBeEnabled();
+  fireEvent.click(screen.getByRole("button", { name: "Enable" }));
+  await waitFor(() => expect(api.kitsEnable).toHaveBeenCalledWith({ kit: "sample-kit", scope: "workspaces", workspaces: ["payments"], options: {}, fallbacks: [], replace: false }, ""));
+});

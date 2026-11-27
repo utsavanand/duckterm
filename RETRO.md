@@ -26,6 +26,117 @@ Pair a theme-dependent background with its foreground token (--accent-fg)
 and check new icons in both themes. The same PR broke an e2e that counted
 feature-flag rows as a magic number; it now derives the count from
 /feature-flags.
+## 2026-11-26 — CSP does not block frame self-navigation
+
+A sandboxed iframe can navigate itself even when connect-src is none. Keep
+interactive artifacts behind the Mac navigation delegate; ordinary browsers use
+a sanitized static preview. Test location changes, refresh tags and SVG links,
+not just fetch. A selection channel identifies a frame, not trustworthy text:
+the document shares its realm, so show quote bounds and label it untrusted.
+
+## 2026-11-25 — Review content by identity and version, not storage location
+
+A worktree disappearing must not move an artifact into a different tab. Keep
+all saved outputs together, show source availability per row, and distinguish
+live bytes from saved bytes. Comments belong to the exact artifact ID or
+working-directory path and content hash; earlier versions remain readable but
+must never silently anchor to new text. Interactive HTML needs an opaque frame,
+restricted resource policy, validated messages, and native navigation guards
+that cannot launch external apps on behalf of an untrusted subframe.
+
+## 2026-11-25 — Searchable artifact labels start at registration
+
+A label filter is useful only when producers classify their deliverables. The
+shipped collaboration instructions should explain the existing kind values,
+require an explicit kind and a descriptive subject in each title, and preserve
+accurate classification when updating an artifact. Reuse the current metadata
+rather than adding a second label vocabulary.
+
+## 2026-11-26 — Session search must include the folder path
+
+The sidebar searched session labels only, hiding relevant sessions when the owner
+searched for their folder. Match the existing folder path as well, including
+ancestor names, and feed those results through the same filters and counts.
+The existing search test explicitly excluded folder matches; update that contract
+and cover nested paths, archived sessions, and moves while a query is active.
+
+## 2026-11-26 — Copy approved as a phrase loses the test the button had
+
+A revoke action moved from a standalone button to a phrase inside a sentence,
+which the owner preferred and approved. The wording was reviewed; the coverage
+was not. Nothing had asserted the old button either, so the change did not
+delete a test -- it inherited an absence, and the review of the new wording felt
+like the review of the behaviour.
+
+The uncovered part was not the link's presence but its destination, which is
+chosen server-side from the credential source: /settings/applications for a
+`gh auth login` OAuth grant, /settings/tokens for a pasted PAT. Neither page
+lists the other's entry, so a wrong destination shows the owner a list their
+credential is absent from -- indistinguishable from already revoked. A one-line
+UI element can still carry a branch, and a branch with two wrong-looking-correct
+outcomes deserves a test per outcome.
+
+Rule: when a control becomes prose, ask what asserted it before. "It is only a
+link" describes the markup, not the consequence. Mutation-check the new test
+before trusting it: collapsing the server branch to a single page, and
+hardcoding the href in the component, each had to fail something.
+
+## 2026-11-25 — A tooltip shouldn't take clicks
+
+The Oracle tower's hover and focus card is fixed-position and drawn above the
+page. Left open, it intercepted the click meant for the Needs you tile beneath
+it, which CI saw as a 30 s timeout (three times). fb421590 changed the spec to
+dismiss it first; the product now lets clicks through until the card is pinned.
+
+## 2026-11-25 — Choosing a recipient isn't approving the words
+
+Ask Oracle sent at once after the owner picked an agent on a "which agent?"
+card, whenever the model's text was a substring of what the owner typed. A
+fragment can flip the meaning ("not to merge" becomes "merge"), and the owner
+never saw it. A pick now opens the same Send card as any other plan.
+
+## 2026-11-25 — Interrupted sessions retain unfinished requests
+
+QA caught a regression in the Unanswered cleanup fix: both lifecycle paths
+treated interrupted sessions as final, despite interruption being resumable.
+The original regression covered explicit Stop but not a terminal crash. Both
+paths now preserve pending requests for stopped and interrupted sessions while
+still revoking credentials. Tests cover every resting state through direct
+state changes and events, late exits, and resuming to answer retained work.
+Lesson: derive lifecycle test cases from the runtime's state contract; testing
+one resumable state does not cover the other.
+
+## 2026-11-25 — Reading a priority message does not finish it
+
+Final session cleanup cancelled queued and accepted inbox requests, but missed
+priority broadcasts that the agent had read without acknowledging. Those rows
+still counted as Unanswered after the recipient ended and lost its credentials.
+Cleanup now cancels those unfinished broadcasts too, preserving their history.
+Resumable stops keep them pending; informational read notices stay unchanged.
+Lesson: when adding a pending message state, check lifecycle cleanup as well as
+inbox counts. The regression exercises inbox read, SessionEnd, revoked access,
+and the actual Unanswered count, including the resumable-stop case.
+
+## 2026-11-25 — A cache does not share work while it is empty
+
+Home requests PR rows for several folders together. Every cold request saw
+the same expired branch-owner cache and started its own event scan and Git
+lookups. Twelve simultaneous calls reproduced twelve rebuilds. Share one
+in-flight rebuild, cache only successful results, and let it finish when one
+caller disconnects. Test the overlap and failure path with explicit gates,
+not machine-wide CPU stress.
+
+The analytics worker also received identities computed on the event loop:
+argument evaluation scanned all event JSON before the worker ever started.
+Read identities through a worker-owned, read-only SQLite snapshot. Moving
+the expensive call requires moving its expensive arguments too; do not
+reuse the loop's SQLite connection from a thread.
+
+TokenLedger had its own whole-suffix read/split allocation, independent of
+the MessageCache reader fixed earlier. Stream its raw input too, preserving
+byte line splitting and the incomplete trailing record. Chunking reduces
+temporary allocation; it does not eliminate full-history scan time or bound
+the largest individual record and retained accounting state.
 
 ## 2026-11-25 — The Autopilot page matched its mock and still looked wrong
 

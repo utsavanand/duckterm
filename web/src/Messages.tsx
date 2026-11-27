@@ -1,3 +1,4 @@
+import { isFileComment } from "./fileComments";
 import { routedFetch as fetch } from "./hostTransport";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, authHeaders } from "./api";
@@ -39,7 +40,7 @@ export function Messages({ sessionKey, sessionName = "Messages", active = true, 
   const messageState = useSessionResource<Message>(sessionKey, "messages", active);
   const annotationState = useSessionResource<Annotation>(sessionKey, "annotations", active, annotationVersion);
   const annotations = useMemo(() => (annotationState.items ?? []).filter(note =>
-    typeof note.id === "string" && typeof note.quote === "string" && typeof note.note === "string"), [annotationState.items]);
+    typeof note.id === "string" && typeof note.quote === "string" && typeof note.note === "string" && !isFileComment(note.quote)), [annotationState.items]);
   const annotationError = annotationState.error ? "Could not load comments. Retrying…" : "";
   const messages = useMemo(() => messageState.items ?? [], [messageState.items]);
   const transcript = messageState.transcript;
