@@ -27,10 +27,30 @@ def _env() -> dict[str, str]:
     return env
 
 
+# Repositories here are found through paths agents report, so their config is
+# agent-written. These settings name programs that read-only commands would
+# otherwise run: signature checks (log, show), the reference-transaction hook
+# and ext:: remotes (fetch). Command-line -c beats single-valued repository
+# config; multi-valued keys such as remote.origin.uploadpack need an option.
+_SAFE_CONFIG = (
+    "-c", "core.fsmonitor=false",
+    "-c", "core.hooksPath=/dev/null",
+    "-c", "log.showSignature=false",
+    "-c", "gpg.program=false",
+    "-c", "gpg.ssh.program=false",
+    "-c", "gpg.x509.program=false",
+    "-c", "protocol.ext.allow=never",
+)  # fmt: skip
+
+
+def _command(path: str | Path, *args: str) -> list[str]:
+    return ["git", *_SAFE_CONFIG, "-C", str(path), *args]
+
+
 def run(path: str | Path, *args: str, timeout: float = 15) -> str:
     try:
         result = subprocess.run(
-            ["git", "-c", "core.fsmonitor=false", "-C", str(path), *args],
+            _command(path, *args),
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -133,19 +153,19 @@ def conflicts(repo: str | Path, base: str, head: str) -> bool | None:
     if resolve(repo, base) is None or resolve(repo, head) is None:
         return None
     try:
+        # An attribute can name a merge driver from repository config, which
+        # merge-tree would run. An empty driver fails to start, and git then
+        # reports the file as conflicting.
+        drivers = run(repo, "config", "--name-only", "--get-regexp", r"^merge\..+\.driver$")
+    except ReviewGitError:
+        drivers = ""
+    names = drivers.splitlines()
+    if any("=" in name for name in names):
+        return None
+    blank = [arg for name in names for arg in ("-c", f"{name}=")]
+    try:
         result = subprocess.run(
-            [
-                "git",
-                "-c",
-                "core.fsmonitor=false",
-                "-C",
-                str(repo),
-                "merge-tree",
-                "--write-tree",
-                "--name-only",
-                base,
-                head,
-            ],
+            [*_command(repo, *blank), "merge-tree", "--write-tree", "--name-only", base, head],
             capture_output=True,
             text=True,
             timeout=30,
@@ -216,7 +236,7 @@ def fetch(repo: str | Path, refs: list[str], *, tags: bool = True) -> str | None
     """Bring the named remote branches and the tags up to date. Every ref must
     exist on origin (see remote_heads). Bounded and non-fatal: returns the
     error text when the network is unavailable."""
-    args = ["fetch", "--quiet", "--no-recurse-submodules"]
+    args = ["fetch", "--quiet", "--no-recurse-submodules", "--upload-pack=git-upload-pack"]
     if tags:
         args.append("--tags")
     args.append("origin")

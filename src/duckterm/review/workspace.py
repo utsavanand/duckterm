@@ -120,6 +120,7 @@ def diff_payload(target: Target, *, since: str | None, whitespace: bool) -> dict
     args = (
         "diff",
         "--no-ext-diff",
+        "--no-textconv",
         "--no-color",
         "--find-renames",
         target.base_sha,

@@ -1,3 +1,14 @@
+## 2026-11-26 — Read-only git still runs programs named in repository config
+
+The review platform runs git on repositories found through paths agents
+report, so the repository config is agent-written. `core.fsmonitor=false`
+covered one setting; `log.showSignature` with `gpg.ssh.program`, a
+`diff.<x>.textconv`, a `merge.<x>.driver`, the reference-transaction hook and
+an `ext::` remote each made a "read" run a planted program, found while
+reviewing the Fleet Pulse panel. Override every program-naming key the
+command can reach, and check multi-valued keys: `-c` loses to repository
+config for remote.origin.uploadpack, so fetch takes `--upload-pack` instead.
+
 ## 2026-11-26 — The narrow-strip rule never hid Oracle's subtitle
 
 Compacting the sidebar rows for short windows first saved only the Autopilot

@@ -134,6 +134,20 @@ def test_whitespace_toggle_hides_reindents_without_changing_hashes(branch_repo: 
     assert "src/duckterm/app.py" not in {f["path"] for f in tight["files"]}
 
 
+def test_diff_runs_no_configured_text_converter(branch_repo: Path, tmp_path: Path) -> None:
+    program = tmp_path / "planted.sh"
+    program.write_text(f"#!/bin/sh\necho ran >> {tmp_path / 'ran.txt'}\ncat \"$1\"\n")
+    program.chmod(0o755)
+    write(branch_repo, ".git/info/attributes", "*.py diff=planted\n")
+    run(branch_repo, "config", "diff.planted.textconv", str(program))
+    target = workspace.resolve(str(branch_repo), "duckterm/feature")
+
+    payload = workspace.diff_payload(target, since=None, whitespace=True)
+
+    assert "src/duckterm/app.py" in {f["path"] for f in payload["files"]}
+    assert not (tmp_path / "ran.txt").exists()
+
+
 def test_mark_viewed_validates_its_body(branch_repo: Path) -> None:
     target = workspace.resolve(str(branch_repo), "duckterm/feature")
     for body in (

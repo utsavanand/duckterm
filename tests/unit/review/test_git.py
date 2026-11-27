@@ -110,3 +110,74 @@ def test_remote_heads_and_fetch_track_pushes(git_repo: Path, tmp_path: Path) -> 
     assert heads is not None and heads["duckterm/abc"] == run(clone, "rev-parse", "HEAD")
     assert git.fetch(clone, ["main", "duckterm/abc"]) is None
     assert git.ref_exists(clone, "refs/remotes/origin/duckterm/abc")
+
+
+@pytest.fixture
+def planted(tmp_path: Path) -> Path:
+    """A program that records each run in ran.txt, for repository config to name."""
+    program = tmp_path / "planted.sh"
+    program.write_text(f'#!/bin/sh\necho "$@" >> {tmp_path / "ran.txt"}\nexit 0\n')
+    program.chmod(0o755)
+    return program
+
+
+def ran(planted: Path) -> bool:
+    return (planted.parent / "ran.txt").exists()
+
+
+def test_commit_signature_check_runs_no_configured_program(git_repo: Path, planted: Path) -> None:
+    raw = run(git_repo, "cat-file", "commit", "HEAD")
+    header, body = raw.split("\n\n", 1)
+    signature = "gpgsig -----BEGIN SSH SIGNATURE-----\n U1NIU0lH\n -----END SSH SIGNATURE-----"
+    signed = subprocess.run(
+        ["git", "-C", str(git_repo), "hash-object", "-t", "commit", "-w", "--stdin"],
+        input=f"{header}\n{signature}\n\n{body}\n",
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    run(git_repo, "update-ref", "refs/heads/signed", signed)
+    run(git_repo, "config", "log.showSignature", "true")
+    for key in ("gpg.program", "gpg.ssh.program", "gpg.x509.program"):
+        run(git_repo, "config", key, str(planted))
+
+    assert git.commit_time(git_repo, "signed") is not None
+    assert not ran(planted)
+
+
+def test_conflict_check_runs_no_configured_merge_driver(git_repo: Path, planted: Path) -> None:
+    commit(git_repo, ".gitattributes", "README.md merge=planted\n", "attributes")
+    run(git_repo, "config", "merge.planted.driver", f"{planted} %O %A %B")
+    run(git_repo, "checkout", "-q", "-b", "clash")
+    commit(git_repo, "README.md", "clash\n", "rewrite readme on branch")
+    run(git_repo, "checkout", "-q", "main")
+    commit(git_repo, "README.md", "main moved\n", "rewrite readme on main")
+
+    assert git.conflicts(git_repo, "main", "clash") is True
+    assert not ran(planted)
+
+
+def test_fetch_runs_no_configured_hook_or_upload_pack(
+    git_repo: Path, tmp_path: Path, planted: Path
+) -> None:
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "clone", "-q", str(git_repo), str(clone)], check=True)
+    hook = clone / ".git" / "hooks" / "reference-transaction"
+    hook.write_text(f"#!/bin/sh\nexec {planted} hook\n")
+    hook.chmod(0o755)
+    run(clone, "config", "remote.origin.uploadpack", str(planted))
+    commit(git_repo, "z.txt", "z\n", "z")
+
+    assert git.fetch(clone, ["main"]) is None
+    assert run(clone, "rev-parse", "origin/main") == run(git_repo, "rev-parse", "main")
+    assert not ran(planted)
+
+
+def test_fetch_refuses_an_ext_remote(git_repo: Path, tmp_path: Path, planted: Path) -> None:
+    clone = tmp_path / "clone"
+    subprocess.run(["git", "clone", "-q", str(git_repo), str(clone)], check=True)
+    run(clone, "config", "protocol.ext.allow", "always")
+    run(clone, "config", "remote.origin.url", f"ext::{planted} %S")
+
+    assert git.fetch(clone, ["main"]) is not None
+    assert not ran(planted)
