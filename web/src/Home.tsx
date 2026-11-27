@@ -216,13 +216,28 @@ function NeedDialog({ note, rules, onChange, onClose, onOpenTerminal }: {
 const AGENT_NAMES: Record<string, string> = { "claude-code": "Claude Code", codex: "Codex" };
 const AGENT_COLORS = ["var(--brand-green)", "var(--busy)", "var(--wait)"];
 
+// Spend and Usage read the same slow week of tokens. They share one request,
+// so they can't disagree (one loaded, the other "Load failed"). Usage mounts
+// only after the saved layout loads, so a result is kept for a minute; a
+// failure is not kept, so the next mount tries again.
+const WEEK_KEPT_MS = 60_000;
+let week: { load: Promise<TokenAnalytics>; at: number } | null = null;
+function loadWeekOfTokens() {
+  if (!week || Date.now() - week.at > WEEK_KEPT_MS) {
+    const load = loadAnalytics<TokenAnalytics>("tokens", new URLSearchParams({ days: "7" }), new AbortController().signal);
+    const entry = { load, at: Date.now() };
+    load.catch(() => { if (week === entry) week = null; });
+    week = entry;
+  }
+  return week.load;
+}
+
 function useWeekOfTokens() {
   const [data, setData] = useState<TokenAnalytics | null>(null), [error, setError] = useState("");
   useEffect(() => {
-    const controller = new AbortController();
-    loadAnalytics<TokenAnalytics>("tokens", new URLSearchParams({ days: "7" }), controller.signal)
-      .then(setData, (e: Error) => { if (!controller.signal.aborted) setError(e.message); });
-    return () => controller.abort();
+    let stale = false;
+    loadWeekOfTokens().then(d => { if (!stale) setData(d); }, (e: Error) => { if (!stale) setError(e.message); });
+    return () => { stale = true; };
   }, []);
   return { data, error };
 }
