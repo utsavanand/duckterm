@@ -34,10 +34,11 @@
 .rd-home-layer .rd-btn-primary, .rd-home-backdrop .rd-btn-primary { background:var(--m-fg); border-color:var(--m-fg); color:var(--m-bg) }
 .rd-home-layer .rd-btn-primary:hover:not(:disabled), .rd-home-backdrop .rd-btn-primary:hover:not(:disabled) { background:var(--m-fg); border-color:var(--m-fg); opacity:.88 }
 
-.rd-home { padding:14px 20px 16px }
+.rd-home { padding:10px 20px 16px }
 .rd-home-review { position:absolute; inset:0; overflow:auto; background:var(--bg) }
-.rd-home-bar { display:flex; align-items:center; gap:8px; margin-bottom:14px; position:relative }
-.rd-home-bar h1 { font-size:26px; font-weight:500; letter-spacing:-.02em; margin:0; margin-right:auto }
+.rd-home-bar { display:flex; align-items:center; gap:8px; margin-bottom:10px; position:relative }
+.rd-home-summary { margin:0 auto 0 0; font-family:var(--m-mono); font-size:12px; color:var(--m-muted); font-variant-numeric:tabular-nums; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; min-width:0 }
+.rd-home-summary .wait { color:var(--m-warn) }
 .rd-home-add { position:relative }
 .rd-home-add .rd-widget-add { top:30px; width:290px; max-height:70vh; overflow:auto; display:flex; flex-direction:column; border-radius:0; border:1px solid var(--m-line); background:var(--m-raise); box-shadow:none }
 .rd-home-catalog-group { display:flex; flex-direction:column }
@@ -113,6 +114,8 @@ button.rd-home-nav:hover { background:var(--m-panel) }
 .rd-home-compose textarea { flex:1; border:0; background:none; resize:none; outline:none; font:inherit; font-size:14px; color:var(--m-fg); min-height:22px; max-height:90px }
 .rd-home-compose textarea::placeholder { color:var(--m-faint) }
 .rd-home-compose:focus-within { border-color:var(--m-muted) }
+.rd-home-kbd { align-self:center; font-family:var(--m-mono); font-size:11px; color:var(--m-faint); border:1px solid var(--m-line); padding:0 5px; line-height:18px }
+.rd-home-compose:focus-within .rd-home-kbd { display:none }
 
 .rd-home-row-link { border:0; background:none; padding:0; font:inherit; color:var(--m-fg); text-align:left; cursor:pointer; overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
 .rd-home-row-link:hover { text-decoration:underline }
@@ -180,6 +183,10 @@ button.rd-home-nav:hover { background:var(--m-panel) }
 
 /* Pull requests: risk first, then where to look. */
 .rd-home-prs li { display:block }
+.rd-home-pr-group h3 { margin:0; padding:10px 0 4px; font-family:var(--m-mono); font-size:11px; font-weight:500; text-transform:uppercase; letter-spacing:.08em; color:var(--m-muted) }
+.rd-home-pr-group:first-child h3 { padding-top:0 }
+.rd-home-pr-group h3 span { color:var(--m-faint); margin-left:6px; font-variant-numeric:tabular-nums }
+.rd-home-pr-group[aria-label="Needs attention"] h3 { color:var(--m-danger) }
 .rd-home-pr { display:flex; flex-direction:column; gap:3px; min-width:0 }
 .rd-home-pr-top { display:flex; align-items:baseline; gap:10px; min-width:0 }
 .rd-home-pr-title { flex:1; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; color:var(--m-fg) }
@@ -207,6 +214,8 @@ button.rd-home-nav:hover { background:var(--m-panel) }
 @media (max-width:760px) {
   .rd-home { padding:12px 16px 32px }
   .rd-home-bar .rd-btn { display:none }
+  .rd-home-bar { flex-wrap:wrap }
+  .rd-home-summary { white-space:normal }
   .rd-home-grid { grid-template-columns:1fr; grid-auto-rows:auto }
   .rd-home-grid .rd-home-widget { grid-column:1 !important; grid-row:auto !important; min-height:120px }
   .rd-home-grid .rd-home-widget:has(.rd-home-chat) { min-height:460px }
