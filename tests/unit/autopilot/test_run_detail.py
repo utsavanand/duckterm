@@ -97,7 +97,9 @@ def test_a_spec_path_outside_the_clone_or_through_a_link_is_not_read(
     repo = _run(tmp_path, monkeypatch, escape)
     secret.write_text("host file")
     (repo / "linked.md").symlink_to(secret)
-    assert runs.detail("r1")["spec"] is None
+    d = runs.detail("r1")
+    assert d["spec"] is None
+    assert "host file" not in json.dumps(d)
 
 
 def test_a_run_from_before_base_sha_was_recorded_diffs_from_the_default_branch(
