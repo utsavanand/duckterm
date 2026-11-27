@@ -1,3 +1,30 @@
+## 2026-11-26 — A deadline checked between calls still waits for the slowest one
+
+Pulse's refresh stopped starting new git calls after 20 s. Each call still
+had its own 15 s timeout, so a refresh could run up to 15 s past its
+deadline. `git tag --list` also returned every v* tag before Python kept ten.
+Now each call's timeout is whatever remains of the deadline, at most 15 s,
+and `for-each-ref --count` cuts the tag list inside git.
+
+A time budget has to be passed into each call, not just checked between
+them.
+
+## 2026-11-26 — A specific allow beats a general deny, whoever sets it
+
+#496 blocked every transport except https, ssh and file by passing
+`protocol.allow=never`. git checks `protocol.<name>.allow` first, though,
+from any scope. A repository could set `protocol.ext.allow=always` with an
+`ext::<command>` origin, which runs the command as the transport. It could
+also set `remote.origin.vcs` and allow that name, which runs
+`git-remote-<name>` from PATH. Every call now pins ext and fd to `never`, and
+network calls refuse a repository whose own config sets any `protocol.*`
+or `remote.*.vcs`. The first run broke every fetch: `--show-scope` reports
+DuckTerm's own `-c` pins as scope `command`, and the check took them for the
+repository's. Those entries are now skipped.
+
+A deny by default is only as strong as the most specific allow anyone can
+add. Check how git ranks a key before trusting a general setting.
+
 ## 2026-11-26 — The narrow-strip rule never hid Oracle's subtitle
 
 Compacting the sidebar rows for short windows first saved only the Autopilot
