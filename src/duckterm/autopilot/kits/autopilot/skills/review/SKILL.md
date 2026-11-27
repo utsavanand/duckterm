@@ -29,7 +29,8 @@ URL: read `gh pr view <pr>` for title and description and `gh pr diff <pr>`
 for the diff; without the GitHub CLI, say so and stop), or `diff` (a file). It may also name `spec`, the spec the change
 was built from. Invoked directly, review the staged diff, else the working
 tree diff, else `git diff <branch>...HEAD` when `$ARGUMENTS` names a branch.
-An empty diff means there is nothing to review: say so and stop.
+An empty diff means there is nothing to review: say so and ask for a branch or
+a pull request number instead.
 
 ## Context to read first
 

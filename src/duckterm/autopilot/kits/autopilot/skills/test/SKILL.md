@@ -25,8 +25,8 @@ allowed-tools:
 $ARGUMENTS
 
 `--integration` tests the target through its real neighbours (database,
-files, HTTP); otherwise unit. With no target, say what you would test and
-stop.
+files, HTTP); otherwise unit. With no target, ask which file, function or feature to test,
+in one question, and wait.
 
 ## Match the project
 

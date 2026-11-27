@@ -22,7 +22,8 @@ $ARGUMENTS
 When a flow runs this skill, the Inputs JSON carries `issue` (number, title, body,
 labels and URL) and the runner names the output path. Otherwise `$ARGUMENTS` is
 the request; an issue number or URL is read with `gh issue view <id> --json
-title,body,labels,url`. Without the GitHub CLI, say so and ask for the issue
+title,body,labels,url`. With no argument and no issue, ask what to spec, in one
+question, and wait; do not guess a subject. Without the GitHub CLI, say so and ask for the issue
 text instead; the rest of the skill does not need it.
 
 ## Context to read first
