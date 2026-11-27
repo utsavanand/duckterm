@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { api, KitCatalog, KitDetail, KitEnableResult, KitEntry, KitFix, KitPlanRow, KitProcedure, KitReview, KitWorkspace } from "./api";
 import { DirBrowser } from "./DirBrowser";
 import { Button, useToast } from "./ui";
+import { teamRequest } from "./teams";
 import "./skillKits.css";
 
 // The MetaHarnesses page (Settings › MetaHarnesses): the MetaHarnesses added to DuckTerm,
@@ -228,8 +229,7 @@ export function SkillKitsPage({
   async function createTeam(kit: KitEntry, team: string, name: string) {
     setBusy(true);
     try {
-      const project = kit.installed_in[0]?.project ?? null;
-      const out = await api.kitsCreateTeam({ project, kit_path: kit.path, kit: kit.name, team, name }, sessionKey);
+      const out = await api.kitsCreateTeam(teamRequest(kit, team, name), sessionKey);
       toast(`Team ${out.team.team}: workspace "${out.team.folder}" created with ${Object.keys(out.team.roles).length} roles`, "ok");
       onTeamCreated?.(out.team.folder);
     } catch (e) {
