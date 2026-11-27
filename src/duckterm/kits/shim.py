@@ -10,6 +10,8 @@ payload, pipes that to the kit's script, and maps the script's result back:
 exit 0 allows; exit 2 blocks (with the reason on stderr); an optional single
 JSON line on stdout {"decision": "allow|block", "reason": …, "context": …}
 is honoured too. Everything the shim has no mapping for stays under `raw`.
+Claude Code, Codex and Copilot run it as a command hook; OpenCode runs it
+from the plugin DuckTerm generates, which throws on exit 2.
 """
 
 import json
@@ -39,6 +41,7 @@ COPILOT_TOOLS = {
     "edit": "edit",
     "grep": "search",
     "glob": "search",
+    "patch": "edit",
 }
 CLAUDE_EVENT = {
     "session_start": "SessionStart",
@@ -56,6 +59,7 @@ CLAUDE_EVENT = {
 }
 COPILOT_EXIT2 = ("before_tool", "permission_request")
 COPILOT_JSON = ("stop", "subagent_stop")
+OPENCODE_EXIT2 = ("before_tool",)  # the plugin throws on exit 2, aborting the tool call
 
 
 def normalise_input(name: str, params: dict[str, Any]) -> dict[str, Any]:
@@ -94,7 +98,7 @@ def normalise(
         result = payload.get("tool_response")
         session = payload.get("session_id")
         version = payload.get("version") or payload.get("harness_version")
-    else:  # copilot
+    else:  # copilot, or the OpenCode plugin sending the same keys
         raw_name = payload.get("toolName") or payload.get("tool_name")
         if raw_name:
             name = COPILOT_TOOLS.get(str(raw_name).lower(), str(raw_name))
@@ -139,7 +143,11 @@ def map_result(
         # exit 1 never blocks anywhere; surface the failure without stopping the agent
         return 0, "", stderr
     if decision == "block":
-        if harness in ("claude-code", "codex") or (harness == "copilot" and event in COPILOT_EXIT2):
+        if (
+            harness in ("claude-code", "codex")
+            or (harness == "copilot" and event in COPILOT_EXIT2)
+            or (harness == "opencode" and event in OPENCODE_EXIT2)
+        ):
             return 2, "", reason
         if harness == "copilot" and event in COPILOT_JSON:
             return 0, json.dumps({"decision": "block", "reason": reason}), ""

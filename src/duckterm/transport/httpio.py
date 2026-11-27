@@ -35,6 +35,8 @@ _REASON = {
 _CONTENT_TYPES = {
     ".html": "text/html",
     ".js": "text/javascript",
+    ".mjs": "text/javascript",
+    ".wasm": "application/wasm",
     ".css": "text/css",
     ".svg": "image/svg+xml",
     ".json": "application/json",
@@ -142,6 +144,7 @@ async def write_file(writer: asyncio.StreamWriter, path: Path, *, immutable: boo
         f"HTTP/1.1 200 OK\r\n"
         f"Content-Length: {len(body)}\r\n"
         f"Content-Type: {ctype}\r\n"
+        "X-Content-Type-Options: nosniff\r\n"
         f"Cache-Control: {cache}\r\n"
         f"{SELF_PROBE_HEADER}: 1\r\n"
         "Connection: close\r\n\r\n"
