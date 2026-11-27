@@ -1,0 +1,122 @@
+/* Incremental Mono lab rollout: workspace chrome only. Home and the rules / PR
+   editors own their styles. Keep terminal palettes, ducks and status colors. */
+.rd-workspace-panes,
+.rd-topbar {
+  --bg: #fafafa;
+  --bg-soft: #f2f2f2;
+  --card: #fafafa;
+  --border: #dedede;
+  --border-strong: #a3a3a3;
+  --text: #171717;
+  --text-soft: #555b56;
+  --muted: #666b67;
+  --accent: #171717;
+  --accent-fg: #fafafa;
+  --mono-selected: #e8eae8;
+  --mono-hover: #eeeeee;
+  --mono-chrome: #f5f5f5;
+  font-family: var(--ui-font, "Geist"), system-ui, -apple-system, sans-serif;
+}
+:root[data-theme="dark"] .rd-workspace-panes,
+:root[data-theme="dark"] .rd-topbar {
+  --bg: #101112;
+  --bg-soft: #1b1d1c;
+  --card: #141615;
+  --border: #303330;
+  --border-strong: #5c625e;
+  --text: #eceeed;
+  --text-soft: #bcc2bd;
+  --muted: #9ba39d;
+  --accent: #eceeed;
+  --accent-fg: #101112;
+  --mono-selected: #232824;
+  --mono-hover: #1c201d;
+  --mono-chrome: #141615;
+}
+.rd-workspace-panes { background: var(--bg); color: var(--text); }
+.rd-topbar { background: var(--bg); border-color: var(--border); }
+.rd-topbar .rd-btn { border-radius: 4px; }
+.rd-topbar .rd-btn-primary { color: var(--accent-fg); background: var(--accent); border-color: var(--accent); }
+.rd-workspace-panes :is(.rd-agents, .rd-context-pane, .rd-terminal-pane) { background: var(--bg); }
+.rd-workspace-panes .rd-panel-head {
+  border-bottom: 1px solid var(--border);
+  color: var(--text-soft);
+  font-weight: 500;
+  padding-top: 12px;
+  padding-bottom: 12px;
+}
+.rd-workspace-panes :is(.rd-panel-toggle, .rd-btn, .rd-row-resume) { border-radius: 4px; }
+.rd-workspace-panes .rd-group-head { font-weight: 500; letter-spacing: 0; }
+.rd-workspace-panes .rd-group-count {
+  font-variant-numeric: tabular-nums;
+  background: transparent;
+  border-radius: 3px;
+}
+.rd-workspace-panes .rd-group-head:hover,
+.rd-workspace-panes .rd-row:hover { background: var(--mono-hover); }
+:root .rd-workspace-panes .rd-row.selected {
+  background: var(--mono-selected);
+  box-shadow: inset 2px 0 0 var(--text-soft);
+}
+:root .rd-workspace-panes .rd-row.selected:hover { background: var(--mono-selected); }
+/* A selected row must not erase the separate attention/inbox indicators. */
+.rd-workspace-panes .rd-row-meta { color: var(--muted); }
+.rd-workspace-panes .rd-focus-pin.active,
+.rd-workspace-panes .rd-focus-pin:hover { color: var(--text); background: var(--mono-selected); }
+.rd-workspace-panes .rd-view-toggle {
+  background: var(--bg);
+  gap: 2px;
+  padding-top: 7px;
+  padding-bottom: 7px;
+}
+.rd-workspace-panes .rd-view-toggle > button {
+  color: var(--text-soft);
+  font-family: inherit;
+  border-radius: 3px;
+  border-bottom: 1px solid transparent;
+}
+.rd-workspace-panes .rd-view-toggle > button:hover { background: var(--mono-hover); color: var(--text); }
+:root .rd-workspace-panes .rd-view-toggle > button.active {
+  background: var(--mono-selected);
+  color: var(--text);
+  border-bottom-color: var(--text-soft);
+}
+.rd-workspace-panes :is(.rd-tab, .rd-context-toggle) { font-family: inherit; }
+.rd-workspace-panes .rd-btn-primary {
+  color: var(--accent-fg);
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.rd-workspace-panes .rd-btn-ghost { background: transparent; border-color: var(--border); }
+.rd-workspace-panes .rd-btn-ghost:hover:not(:disabled) { background: var(--mono-hover); border-color: var(--border-strong); }
+/* Keep visible focus independent from the color used for status or attention. */
+.rd-workspace-panes :is(.rd-btn, .rd-panel-toggle, .rd-focus-pin, .rd-row-resume, .rd-row-click):focus-visible,
+.rd-workspace-panes .rd-view-toggle > button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.rd-workspace-panes .rd-session-controls { border-radius: 4px; background: var(--mono-chrome); }
+.rd-workspace-panes .rd-session-controls-title > strong { font-size: 1rem; }
+.rd-workspace-panes .rd-session-controls-caption { color: var(--muted); font-weight: 500; }
+.rd-workspace-panes .rd-context-section-title { color: var(--text-soft); }
+.rd-workspace-panes :is(.rd-context, .rd-folder-details) h2 { font-weight: 550; }
+.rd-workspace-panes .rd-folder-details { background: var(--bg); }
+.rd-workspace-panes :is(.rd-folder-period, .rd-folder-actions) button { border-radius: 4px; }
+.rd-workspace-panes .rd-folder-period [aria-pressed="true"] {
+  background: var(--mono-selected);
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+/* No blanket descendant resets: documents, syntax highlighting, the xterm
+   canvas and the inline SVG duck poses retain their own appearance. */
+
+:root .rd-workspace-panes .rd-context-tabs > button[aria-selected="true"] {
+  background: var(--mono-selected);
+  color: var(--text);
+  box-shadow: inset 0 -1px var(--text-soft);
+  border-radius: 3px;
+}
+
+.rd-workspace-panes .rd-folder-tabs button { border-radius:3px; border-bottom:1px solid transparent; }
+.rd-workspace-panes .rd-folder-tabs button[aria-selected="true"] { background:var(--mono-selected); color:var(--text); border-bottom-color:var(--text-soft); }
+.rd-workspace-panes .rd-group-head.selected { background:var(--mono-selected); box-shadow:inset 2px 0 var(--text-soft); }

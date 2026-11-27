@@ -1,3 +1,7 @@
+## 2026-11-26 — Roll out visual themes at explicit surface boundaries
+
+A whole-app restyle is difficult to review when it also recolors terminal output, ducks, or unrelated page work. Scope Mono lab to workspace chrome and keep semantic status colors and terminal palettes owned by their existing components. Verify populated dark/light views and navigation before expanding to another surface.
+
 ## 2026-11-26 — A waiting reply needs a recipient that can still answer
 
 Home's @ offered every session, so a question to an ended one showed "Waiting"
