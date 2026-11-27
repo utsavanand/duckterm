@@ -40,8 +40,10 @@ default"), at `src/duckterm/autopilot/kits/autopilot`: two knowledge files
 `plan`, `implement`, `test`, `review`, `qa`, `ship`), the permission rules a
 coding session needs, four flows (`issue-to-merge` with its GitHub, Jira and
 Slack triggers, `pr-review`, `build`, `ship`) and the `feature-team`
-procedure (architect, dev, qa, release; only release pushes). No hook, no
-tool, no model preset. Autopilot installs it into every sandbox run; it
+procedure (architect, dev, qa, release; only release pushes), and one optional
+tool, the GitHub CLI (`spec` reads issues and `review` reads pull requests with
+it; the plan shows it checked or missing and the install goes ahead either
+way). No hook, no model preset. Autopilot installs it into every sandbox run; it
 declares `conflicts_with` the uv-suite MetaHarnesses it grew out of. Skills
 write their files to `.autopilot/` when a person invokes them and to the path
 the runner names when a flow does; `ship` never stages `.autopilot/`.

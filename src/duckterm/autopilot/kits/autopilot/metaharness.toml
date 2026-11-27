@@ -63,6 +63,11 @@ effects = "workspace"
 invocation = "user"
 
 [[components]]
+kind = "tool"
+cli = { binary = "gh", doctor = "gh auth status", install_hint = "brew install gh && gh auth login" }
+description = "GitHub CLI: spec reads an issue by number with it, review reads a pull request. Optional: without it, give spec the requirements in words and review a branch or the working tree"
+
+[[components]]
 kind = "permission"
 rules = [
   { tool = "read", match = "*", decision = "allow" },

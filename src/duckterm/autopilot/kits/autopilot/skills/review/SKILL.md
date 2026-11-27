@@ -26,7 +26,7 @@ $ARGUMENTS
 
 When a flow runs this skill the Inputs JSON names the change: `pr` (a number or
 URL: read `gh pr view <pr>` for title and description and `gh pr diff <pr>`
-for the diff), or `diff` (a file). It may also name `spec`, the spec the change
+for the diff; without the GitHub CLI, say so and stop), or `diff` (a file). It may also name `spec`, the spec the change
 was built from. Invoked directly, review the staged diff, else the working
 tree diff, else `git diff <branch>...HEAD` when `$ARGUMENTS` names a branch.
 An empty diff means there is nothing to review: say so and stop.
