@@ -39,12 +39,17 @@ def _project(value: Any) -> Path:
 
 def may_install_into(root: Path) -> bool:
     """Where a kit may be installed unattended: a git root, not the home
-    folder and not a folder above it (the hooks would run in every session)."""
+    folder and not a folder above it (the hooks would run in every session).
+    Identity, not spelling: on a case-insensitive or normalising file system
+    `~/HOME` and an NFD spelling are the home folder too."""
     if not root.is_dir() or not (root / ".git").exists():
         return False
-    resolved = root.resolve()
-    home = Path.home().resolve()
-    return resolved != home and not home.is_relative_to(resolved)
+    try:
+        resolved = root.resolve()
+        home = Path.home().resolve()
+        return not any(os.path.samefile(resolved, p) for p in (home, *home.parents))
+    except OSError:
+        return False
 
 
 def team_folder(value: Any) -> Path:
@@ -828,18 +833,21 @@ def create_team(body: dict[str, Any]) -> dict[str, Any]:
     # from the added kit's manifest, and the kit is enabled for the new
     # workspace so it is installed before the first session starts.
     project: Path | None = team_folder(body.get("project")) if body.get("project") else None
-    entry = planning.load_record(project)["kits"].get(kit_name) if project else None
-    if entry is not None:
-        version = entry.get("version")
-        offered = entry.get("procedures", [])
-    elif body.get("kit_path"):
+    if body.get("kit_path"):
+        # The added kit's own manifest (the server passes the registered path):
+        # the repository's copy of the install record is writable by whoever
+        # works there and never chooses what a role's session opens with.
         kit = _kit(body.get("kit_path"))
         if kit.name != kit_name:
             raise KitApiError(400, f"{body.get('kit_path')} holds {kit.name!r}, not {kit_name!r}")
         version = kit.version
         offered = procedures(kit)
     elif project:
-        raise KitApiError(404, f"kit {kit_name!r} is not installed in {project}")
+        entry = planning.load_record(project)["kits"].get(kit_name)
+        if entry is None:
+            raise KitApiError(404, f"kit {kit_name!r} is not installed in {project}")
+        version = entry.get("version")
+        offered = entry.get("procedures", [])
     else:
         raise KitApiError(400, "project (an install) or kit_path (an added kit) is required")
     template = next((p for p in offered if p.get("name") == team_name), None)
@@ -848,7 +856,7 @@ def create_team(body: dict[str, Any]) -> dict[str, Any]:
     roles = template.get("roles") or {}
     problems = validate.role_problems(
         {str(r): str((spec or {}).get("purpose", "")) for r, spec in roles.items()},
-        len(template.get("rules") or []),
+        template.get("rules") or [],
     )
     if problems:
         raise KitApiError(400, f"team {team_name!r}: " + "; ".join(problems))

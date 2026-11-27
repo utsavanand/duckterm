@@ -491,11 +491,12 @@ MAX_ROLES = 12
 ROLE_NAME = re.compile(r"^[a-z][a-z0-9-]{0,31}$")
 MAX_PURPOSE = 300
 MAX_RULES = 48
+MAX_RULE_TEXT = 200
 
 
-def role_problems(roles: dict[str, str], rules: int = 0) -> list[str]:
-    """What is wrong with a template's roles (name → purpose) for a team:
-    the same limits at validate time and at Create team."""
+def role_problems(roles: dict[str, str], rules: list[Any] | None = None) -> list[str]:
+    """What is wrong with a template's roles (name → purpose) and rules for a
+    team: the same limits at validate time and at Create team."""
     out = []
     if len(roles) > MAX_ROLES:
         out.append(f"{len(roles)} roles; a team has at most {MAX_ROLES}")
@@ -506,8 +507,13 @@ def role_problems(roles: dict[str, str], rules: int = 0) -> list[str]:
             out.append(
                 f"role {name!r}: purpose is {len(purpose)} characters, {MAX_PURPOSE} at most"
             )
-    if rules > MAX_RULES:
-        out.append(f"{rules} rules; at most {MAX_RULES}")
+    rules = rules or []
+    if len(rules) > MAX_RULES:
+        out.append(f"{len(rules)} rules; at most {MAX_RULES}")
+    for i, rule in enumerate(rules):
+        text = json.dumps(rule, ensure_ascii=False) if isinstance(rule, dict) else str(rule)
+        if len(text) > MAX_RULE_TEXT:
+            out.append(f"rule {i + 1} is {len(text)} characters, {MAX_RULE_TEXT} at most")
     return out
 
 
@@ -536,7 +542,7 @@ def _check_team(kit: m.Kit, team: str, err: Report, skills: dict[str, m.Componen
         for role, spec in roles.items()
     }
     rules = data.get("rules", [])
-    for problem in role_problems(purposes, len(rules) if isinstance(rules, list) else 0):
+    for problem in role_problems(purposes, rules if isinstance(rules, list) else []):
         err(cid, problem)
     for role, spec in roles.items():
         names = spec.get("skills") or [] if isinstance(spec, dict) else []

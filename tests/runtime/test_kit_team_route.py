@@ -142,7 +142,11 @@ def test_create_team_installs_the_kit_and_starts_one_session_per_role_on_the_def
             )
             out.append(
                 await _owner_post(
-                    port, server.token, "/kits/team", {**body, "name": "Quiet", "sessions": False}
+                    port,
+                    server.token,
+                    "/kits/team",
+                    # the registered kit's path wins over the body's
+                    {**body, "name": "Quiet", "sessions": False, "kit_path": "/nowhere/kit"},
                 )
             )
             # a plain folder (or the home folder) is refused before anything is
@@ -185,3 +189,4 @@ def test_create_team_installs_the_kit_and_starts_one_session_per_role_on_the_def
     assert second[0] == 200 and second[1]["harness"] == "codex"
     assert launched[2]["runtime"] == "codex" and launched[2]["test"] is True
     assert quiet[0] == 200 and quiet[1].get("sessions") is None and len(launched) == 4
+    assert set(quiet[1]["team"]["roles"]) == {"dev", "reviewer"}

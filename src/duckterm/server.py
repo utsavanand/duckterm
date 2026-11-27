@@ -3027,10 +3027,14 @@ class Server:
         runs in a thread; a workspace that fails to register takes its record
         back out, so the next attempt is not a 409."""
         kit = str(payload.get("kit") or "")
-        kit_path = payload.get("kit_path") or next(
+        # The registered kit's path wins over the body's: the template a
+        # role's session opens with comes from the kit the owner added.
+        kit_path = next(
             (r["path"] for r in self.history.harnesses() if str(r.get("name")) == kit), None
+        ) or payload.get("kit_path")
+        result: dict[str, Any] = await asyncio.to_thread(
+            kits_api.create_team, {**payload, "kit_path": kit_path}
         )
-        result: dict[str, Any] = await asyncio.to_thread(kits_api.create_team, payload)
         folder = str(result["team"]["folder"])
         try:
             self.history.create_folder(folder, now=int(time.time() * 1000))
