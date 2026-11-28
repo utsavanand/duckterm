@@ -1,3 +1,12 @@
+## 2026-11-27 — The pause check covered one trigger, and a long turn looked quiet
+
+After #507, 3 of 65 automatic checkpoints still failed mid-turn. #507 made the
+50-message trigger wait for a pause, but the 15-quiet-minute trigger measures
+quiet by prompts and turn ends only, so a turn of tool calls running past 15
+minutes counted as quiet. Both triggers now wait for a turn end or a minute with
+no events. Lesson: when a fix guards one entry point, list every path into the
+same step; the failures came back through the other door.
+
 ## 2026-11-27 — A run record that only the list reads hides what the run did
 
 Autopilot's runs list read the runner's receipt down to step names and exit
