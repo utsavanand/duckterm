@@ -33,6 +33,7 @@ CARDS: list[tuple[str, int, str]] = [
     ("author", 8, "How the author got here"),
     ("release", 9, "Release impact"),
     ("questions", 10, "Open questions"),
+    ("design", 11, "Design"),
 ]
 DIFF_ONLY = [
     "intent",
@@ -44,6 +45,7 @@ DIFF_ONLY = [
     "guardrails",
     "blast",
     "author",
+    "design",
 ]
 LATER: dict[str, str] = {}
 FILE = "cards.json"
@@ -351,6 +353,92 @@ SCHEMAS: dict[str, dict[str, Any]] = {
 }
 
 
+CATEGORIES = ["New capability", "Fix and hardening", "Side effects", "Supporting files"]
+ITEM_STATES = ["same", "changed", "added", "removed"]
+SCHEMAS["design"] = {
+    "type": "object",
+    "required": ["scope", "columns", "components", "edges", "changes", "boxes", "box_edges"],
+    "properties": {
+        "scope": {"type": "string"},
+        "columns": {"type": "array", "items": {"type": "string"}},
+        "components": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["id", "label", "sub", "column", "files"],
+                "properties": {
+                    "id": {"type": "string"},
+                    "label": {"type": "string"},
+                    "sub": {"type": "string"},
+                    "column": {"type": "integer"},
+                    "files": {"type": "array", "items": {"type": "string"}},
+                    "external": {"type": "boolean"},
+                },
+            },
+        },
+        "edges": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["from", "to"],
+                "properties": {"from": {"type": "string"}, "to": {"type": "string"}},
+            },
+        },
+        "changes": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["category", "problem", "solution", "files", "components"],
+                "properties": {
+                    "category": {"type": "string", "enum": CATEGORIES},
+                    "problem": {"type": "string"},
+                    "solution": {"type": "string"},
+                    "files": {"type": "array", "items": {"type": "string"}},
+                    "components": {"type": "array", "items": {"type": "string"}},
+                },
+            },
+        },
+        "boxes": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["id", "title", "column", "state", "items"],
+                "properties": {
+                    "id": {"type": "string"},
+                    "title": {"type": "string"},
+                    "column": {"type": "integer"},
+                    "state": {"type": "string", "enum": ITEM_STATES},
+                    "items": {
+                        "type": "array",
+                        "items": {
+                            "type": "object",
+                            "required": ["state", "before", "after"],
+                            "properties": {
+                                "state": {"type": "string", "enum": ITEM_STATES},
+                                "before": {"type": "string"},
+                                "after": {"type": "string"},
+                            },
+                        },
+                    },
+                },
+            },
+        },
+        "box_edges": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "required": ["from", "to", "state"],
+                "properties": {
+                    "from": {"type": "string"},
+                    "to": {"type": "string"},
+                    "state": {"type": "string", "enum": ["same", "added", "removed"]},
+                },
+            },
+        },
+    },
+}
+
+
 TASKS: dict[str, str] = {
     "intent": (
         "# Task: Intent vs diff\n"
@@ -387,6 +475,35 @@ TASKS: dict[str, str] = {
         "that no test in the diff checks. Then suggest at most three tests, each with a test "
         "name, the test file path it belongs in, and a one-line body describing the assertion. "
         "Do not claim coverage from tests that are not in the diff."
+    ),
+    "design": (
+        "# Task: Design of the change\n"
+        "Describe the part of the system this PR touches, for a reviewer who wants the "
+        "shape before the lines. Plain sentences, no file names in prose, no hedging.\n"
+        "1. scope: a short noun phrase naming the area, such as 'API keys and the model path'.\n"
+        "2. columns: 3 to 6 layer names left to right in the direction calls flow, such as "
+        "Frontend, Gateway, Backend, Outside.\n"
+        "3. components: every part of the system the diff changes, plus the few unchanged "
+        "parts it calls or is called by (external: true for services outside the repo). Each "
+        "has a short id, a label of two or three words, sub as the folder or module, its "
+        "column index, and files: the changed paths from the list above that belong to it "
+        "(every changed path belongs to exactly one component; unchanged parts have none).\n"
+        "4. edges: calls or data flow between components, from caller to callee.\n"
+        "5. changes: what changed, as problem then solution, one row per change a reviewer "
+        "would name. Each problem and each solution is one plain sentence of at most 20 "
+        "words; the files list carries the detail, so do not enumerate it. Grouped by "
+        "category: New capability, Fix and hardening, Side effects "
+        "(behaviour the PR does not explain; problem is '') and Supporting files (tests, "
+        "generated code, wording; problem names the kind, solution lists them). Each row "
+        "has the changed files and the component ids it touches. At most 14 rows.\n"
+        "6. boxes and box_edges: the design before and after this PR, at the level of "
+        "routes, classes, tables and key functions. One box per component that matters, with "
+        "its column index; state added for a box the PR creates, removed for one it deletes. "
+        "Each item is one line of at most 28 characters: state same, changed, added or removed, "
+        "before as it was on the base ('' when added) and after as it is at the head ('' when "
+        "removed). At most "
+        "12 boxes and 5 items per box. box_edges join box ids, state added or removed when "
+        "the PR creates or cuts that link."
     ),
     "questions": (
         "# Task: Open questions\n"
@@ -520,6 +637,8 @@ def finish(card: str, ctx: dict[str, Any], data: dict[str, Any]) -> dict[str, An
     elif card == "blast":
         names = {r["symbol"] for r in ctx["blast"]["symbols"]}
         data["risks"] = [r for r in data.get("risks", []) if r.get("symbol") in names]
+    elif card == "design":
+        data = finish_design(ctx, data)
     elif card == "guardrails":
         data["findings"] = [
             f
@@ -527,6 +646,120 @@ def finish(card: str, ctx: dict[str, Any], data: dict[str, Any]) -> dict[str, An
             if isinstance(f, dict) and f.get("status") in ("pass", "finding", "n/a")
         ]
     return data
+
+
+def _text(value: Any, limit: int = 400) -> str:
+    return value.strip()[:limit] if isinstance(value, str) else ""
+
+
+def finish_design(ctx: dict[str, Any], data: dict[str, Any]) -> dict[str, Any]:
+    """Keep only components, files and links the diff supports, and give every
+    changed file a home so the map shows the whole PR."""
+    columns = [_text(c, 40) for c in data.get("columns", []) if _text(c, 40)][:6] or ["Changed"]
+    files = {f["path"]: f for f in ctx["files"]}
+
+    def column(value: Any) -> int:
+        return max(0, min(value, len(columns) - 1)) if isinstance(value, int) else 0
+
+    components: list[dict[str, Any]] = []
+    owned: set[str] = set()
+    for raw in data.get("components", []):
+        cid = _text(raw.get("id"), 40) if isinstance(raw, dict) else ""
+        if not cid or any(c["id"] == cid for c in components):
+            continue
+        mine = [p for p in raw.get("files", []) if p in files and p not in owned]
+        owned.update(mine)
+        components.append(
+            {
+                "id": cid,
+                "label": _text(raw.get("label"), 60) or cid,
+                "sub": _text(raw.get("sub"), 80),
+                "column": column(raw.get("column")),
+                "files": mine,
+                "external": raw.get("external") is True and not mine,
+            }
+        )
+    rest = [p for p in files if p not in owned]
+    if rest:
+        if len(columns) < 6:
+            columns.append("Other")
+        components.append(
+            {
+                "id": "_other",
+                "label": "Other changed files",
+                "sub": f"{len(rest)} files",
+                "column": len(columns) - 1,
+                "files": rest,
+                "external": False,
+            }
+        )
+    for c in components:
+        c["additions"] = sum(files[p]["additions"] for p in c["files"])
+        c["deletions"] = sum(files[p]["deletions"] for p in c["files"])
+        c["new"] = any(files[p]["status"] == "added" for p in c["files"])
+    ids = {c["id"] for c in components}
+
+    def links(raw: Any, known: set[str], states: list[str] | None) -> list[dict[str, str]]:
+        out: list[dict[str, str]] = []
+        for e in raw if isinstance(raw, list) else []:
+            if not isinstance(e, dict) or e.get("from") not in known or e.get("to") not in known:
+                continue
+            link = {"from": e["from"], "to": e["to"]}
+            if states is not None:
+                link["state"] = e.get("state") if e.get("state") in states else "same"
+            if link["from"] != link["to"] and link not in out:
+                out.append(link)
+        return out
+
+    changes: list[dict[str, Any]] = []
+    for raw in data.get("changes", []):
+        if not isinstance(raw, dict) or not _text(raw.get("solution")):
+            continue
+        category = raw.get("category") if raw.get("category") in CATEGORIES else "New capability"
+        changes.append(
+            {
+                "category": category,
+                "problem": _text(raw.get("problem")),
+                "solution": _text(raw.get("solution")),
+                "files": [p for p in raw.get("files", []) if p in files],
+                "components": [c for c in raw.get("components", []) if c in ids],
+            }
+        )
+    changes.sort(key=lambda c: CATEGORIES.index(str(c["category"])))
+    boxes: list[dict[str, Any]] = []
+    for raw in data.get("boxes", [])[:12]:
+        bid = _text(raw.get("id"), 40) if isinstance(raw, dict) else ""
+        if not bid or any(b["id"] == bid for b in boxes):
+            continue
+        items = [
+            {
+                "state": i.get("state") if i.get("state") in ITEM_STATES else "same",
+                "before": _text(i.get("before"), 80),
+                "after": _text(i.get("after"), 80),
+            }
+            for i in raw.get("items", [])[:5]
+            if isinstance(i, dict) and (_text(i.get("before")) or _text(i.get("after")))
+        ]
+        boxes.append(
+            {
+                "id": bid,
+                "title": _text(raw.get("title"), 60) or bid,
+                "column": column(raw.get("column")),
+                "state": raw.get("state") if raw.get("state") in ITEM_STATES else "same",
+                "items": items,
+            }
+        )
+    box_ids = {str(b["id"]) for b in boxes}
+    return {
+        "scope": _text(data.get("scope"), 120),
+        "columns": columns,
+        "components": components,
+        "edges": links(data.get("edges"), ids, None),
+        "changes": changes,
+        "boxes": boxes,
+        "box_edges": links(data.get("box_edges"), box_ids, ["same", "added", "removed"]),
+        "verdict": f"{len(components)} parts · {len(changes)} changes",
+    }
 
 
 def tests_facts(target: Target, ctx: dict[str, Any]) -> dict[str, Any]:
@@ -749,6 +982,7 @@ def release_impact(
             "note": "updated" if readme else "unchanged",
         }
     )
+    moved = base_moved(target, paths)
     failing = [c["name"] for c in checks if c["status"] == "fail"]
     conditional = [c["note"] for c in checks if c["status"] == "conditional"]
     if failing:
@@ -762,6 +996,8 @@ def release_impact(
         )
     return {
         "checks": checks,
+        "commits": [{"sha": c["sha"], "subject": c["subject"]} for c in ctx["commits"][:20]],
+        "base_moved": moved,
         "low_risk": low_risk,
         "condition": condition,
         "verdict": {
@@ -770,6 +1006,22 @@ def release_impact(
             "conditional": "Low risk if " + condition,
         }[low_risk],
     }
+
+
+def base_moved(target: Target, paths: list[str]) -> dict[str, Any] | None:
+    """How far the base branch has moved since this branch left it, and which
+    of this PR's files it changed meanwhile (the likely rebase work)."""
+    try:
+        count = int(
+            git.run(target.repo, "rev-list", "--count", f"{target.base_sha}..{target.base_ref}")
+        )
+        changed = git.run(
+            target.repo, "diff", "--name-only", target.base_sha, target.base_ref
+        ).splitlines()
+    except (git.ReviewGitError, ValueError):
+        return None
+    mine = set(paths)
+    return {"commits": count, "overlap": [p for p in changed if p in mine][:50]}
 
 
 # ── generation ──
@@ -842,11 +1094,13 @@ async def generate_all(
     *,
     only: list[str] | None = None,
     author_facts: dict[str, Any] | None = None,
+    design: bool = True,
 ) -> dict[str, Any]:
     """Write the diff-only cards for this head, deterministic ones first, then
-    the open questions from whatever is ready."""
+    the open questions from whatever is ready. The design card feeds only the
+    review_v2 boards, so it costs a model call only when they are on."""
     ctx = context(target, payload)
-    wanted = [c for c in DIFF_ONLY if only is None or c in only]
+    wanted = [c for c in DIFF_ONLY if (only is None or c in only) and (design or c != "design")]
     existing = store.load(target.directory, FILE)
     cards: dict[str, Any] = (
         dict(existing.get("cards") or {}) if existing.get("head_sha") == target.head_sha else {}

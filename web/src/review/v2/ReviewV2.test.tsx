@@ -47,7 +47,7 @@ function open() {
 it("shows the five boards behind the flag, with chat folded until asked for", async () => {
   open();
   const tabs = await screen.findByRole("tablist", { name: "Review views" });
-  expect(within(tabs).getAllByRole("tab").map(tab => tab.textContent?.replace(/\d+\/\d+/, ""))).toEqual(["Map", "Changes", "Files", "Release readinessnot ready", "History"]);
+  expect(within(tabs).getAllByRole("tab").map(tab => tab.textContent?.replace(/\d+\/\d+/, ""))).toEqual(["Mapwhole PR", "Changes", "Files", "Release readinessnot ready", "History"]);
   expect(screen.queryByRole("complementary", { name: "Review chat" })).toBeNull();
   fireEvent.click(screen.getByRole("button", { name: /Chat/ }));
   expect(await screen.findByRole("complementary", { name: "Review chat" })).toBeInTheDocument();
@@ -98,4 +98,97 @@ it("sends a blocking readiness item to the authoring session's inbox in one clic
   fireEvent.click(screen.getByRole("button", { name: "Send to main" }));
   expect(await screen.findByText("Sent to main · waiting")).toBeInTheDocument();
   expect(api.reviewSend).toHaveBeenCalledWith(header.repo, "9", { card: "release", items: [text.value], session: "s-main" });
+});
+
+const design: ReviewCard = { id: "design", number: 11, title: "Design", status: "ready", data: {
+  scope: "API keys and the model path", columns: ["Contract", "Backend", "Outside"],
+  components: [
+    { id: "proto", label: "Auth contract", sub: "shared/proto", column: 0, files: ["shared/proto/auth.proto"], external: false, additions: 2, deletions: 1, new: false },
+    { id: "auth", label: "Auth service", sub: "services/auth_service", column: 1, files: ["backend/entourage/services/auth_service.py"], external: false, additions: 2, deletions: 1, new: false },
+    { id: "check", label: "Key check", sub: "services/ai_connection", column: 1, files: ["backend/entourage/services/ai_connection.py"], external: false, additions: 69, deletions: 0, new: true },
+    { id: "ext", label: "Provider APIs", sub: "external", column: 2, files: [], external: true, additions: 0, deletions: 0, new: false },
+  ],
+  edges: [{ from: "proto", to: "auth" }, { from: "auth", to: "check" }, { from: "check", to: "ext" }],
+  changes: [
+    { category: "New capability", problem: "A wrong key was saved anyway.", solution: "Check the key with one live call before saving", files: ["backend/entourage/services/ai_connection.py", "backend/entourage/services/auth_service.py"], components: ["auth", "check"] },
+    { category: "Side effects", problem: "", solution: "Claude's default model changes for every caller", files: ["shared/proto/auth.proto"], components: ["proto"] },
+  ],
+  boxes: [
+    { id: "svc", title: "AuthService", column: 1, state: "same", items: [{ state: "changed", before: "SetApiKey: format check", after: "SetApiKey: live check" }, { state: "removed", before: "_validate_provider_key", after: "" }] },
+    { id: "chk", title: "Key check", column: 1, state: "added", items: [{ state: "added", before: "", after: "check_api_key" }] },
+  ],
+  box_edges: [{ from: "svc", to: "chk", state: "added" }], verdict: "4 parts · 2 changes",
+} };
+function withDesign() {
+  vi.mocked(api.reviewCards).mockResolvedValue({ head_sha: "9fc926e2222", stale: false, running: false, cards: [release, design] });
+}
+
+it("draws the map from the design card and opens a part's files from it", async () => {
+  withDesign(); open();
+  const map = await screen.findByRole("img", { name: /Map of the system/ });
+  expect(within(map).getByRole("button", { name: "Key check: 1 files" })).toBeInTheDocument();
+  expect(within(map).getByLabelText("Provider APIs, unchanged")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: "Check the key with one live call before saving" }));
+  expect(screen.getByRole("button", { name: "Check the key with one live call before saving" })).toHaveAttribute("aria-pressed", "true");
+  fireEvent.click(within(map).getByRole("button", { name: "Key check: 1 files" }));
+  expect(screen.getByRole("tab", { name: /Files/ })).toHaveAttribute("aria-selected", "true");
+  expect(await screen.findByText("Key check", { selector: ".rv2-filter span" })).toBeInTheDocument();
+  expect(screen.getByText("backend/entourage/services/ai_connection.py", { selector: ".rv2-fname" })).toBeInTheDocument();
+});
+
+it("lists changes as problem and solution under their category, without file names", async () => {
+  withDesign(); open();
+  fireEvent.click(await screen.findByRole("tab", { name: /Changes/ }));
+  const created = screen.getByRole("region", { name: "New capability" });
+  expect(created).toHaveTextContent("ProblemA wrong key was saved anyway.");
+  expect(created).toHaveTextContent("SolutionCheck the key with one live call before saving");
+  expect(created).not.toHaveTextContent("ai_connection.py");
+  expect(screen.getByRole("region", { name: "Side effects" })).toHaveTextContent("Not stated in the PR");
+  fireEvent.click(within(created).getByRole("button"));
+  expect(screen.getByRole("tab", { name: /Files/ })).toHaveAttribute("aria-selected", "true");
+});
+
+it("groups files by change and says which changes touch the open file", async () => {
+  withDesign(); open();
+  fireEvent.click(await screen.findByRole("tab", { name: /Files/ }));
+  await screen.findByRole("navigation", { name: "Changed files" });
+  fireEvent.click(screen.getByRole("button", { name: "Changes" }));
+  const tree = screen.getByRole("navigation", { name: "Changed files" });
+  expect([...tree.querySelectorAll(".rv2-dir.static .nm")].map(el => el.textContent)).toEqual(["Check the key with one live call before saving", "Claude's default model changes for every caller"]);
+  fireEvent.click(within(tree).getByRole("button", { name: /auth\.proto/ }));
+  expect(screen.getByText(/Changes here/)).toHaveTextContent("Changes here: Claude's default model changes for every caller");
+});
+
+it("shows the design before and after the PR, and the delta", async () => {
+  withDesign(); open();
+  fireEvent.click(await screen.findByRole("tab", { name: "History" }));
+  const after = screen.getByRole("img", { name: "Design after this PR" });
+  expect(after).toHaveTextContent("+ check_api_key");
+  expect(after).toHaveTextContent("~ SetApiKey: live check");
+  expect(screen.getByText("Added · 1")).toBeInTheDocument();
+  expect(screen.getByText("AuthService: SetApiKey: format check → SetApiKey: live check")).toBeInTheDocument();
+  fireEvent.click(screen.getByRole("button", { name: /Before/ }));
+  const before = screen.getByRole("img", { name: "Design before this PR" });
+  expect(before).toHaveTextContent("SetApiKey: format check");
+  expect(before).toHaveTextContent("_validate_provider_key");
+  expect(before).not.toHaveTextContent("Key check");
+});
+
+it("collects line notes in the chat's My notes view", async () => {
+  open();
+  fireEvent.click(await screen.findByRole("tab", { name: /Files/ }));
+  await screen.findByRole("navigation", { name: "Changed files" });
+  fireEvent.click(screen.getAllByRole("button", { name: "Line 114" })[0]);
+  fireEvent.click(screen.getByRole("button", { name: "Note for the author" }));
+  const note = screen.getByRole("textbox", { name: "Note for the author" });
+  fireEvent.change(note, { target: { value: "cap the key length" } });
+  fireEvent.submit(note.closest("form")!);
+  fireEvent.click(screen.getByRole("button", { name: /Chat · notes 1/ }));
+  fireEvent.click(screen.getByRole("button", { name: "My notes · 1" }));
+  const rail = screen.getByRole("complementary", { name: "Review chat" });
+  expect(within(rail).getByText("cap the key length")).toBeInTheDocument();
+  expect(within(rail).getByRole("button", { name: "backend/entourage/services/ai_connection.py:114" })).toBeInTheDocument();
+  fireEvent.click(within(rail).getByRole("button", { name: "Remove" }));
+  expect(within(rail).queryByText("cap the key length")).toBeNull();
+  expect(screen.getByRole("button", { name: "My notes" })).toBeInTheDocument();
 });

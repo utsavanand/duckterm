@@ -1,4 +1,5 @@
 import type { ReviewCard, ReviewHeader } from "../../api";
+import { TEST } from "./tree";
 import type { BlastData, GuardrailsData, QuestionsData, ReleaseCheck, ReleaseData, TestsData } from "../cardModel";
 
 export type ReadyStatus = "block" | "part" | "ok" | "wait";
@@ -55,10 +56,15 @@ export function readinessRows(header: ReviewHeader, cards: ReviewCard[]): ReadyR
   const rows: ReadyRow[] = [];
 
   const conflict = header.row?.status === "conflict" || check(release, "Conflict with base")?.status === "fail";
+  const moved = release?.base_moved;
+  const drift: ReadyLine[] = moved && moved.commits > 0
+    ? [{ text: `${header.base} has ${moved.commits} ${moved.commits === 1 ? "commit" : "commits"} since the branch point${moved.overlap.length ? `, changing ${moved.overlap.length} of this PR's files` : ""}`, where: "git log" },
+      ...moved.overlap.slice(0, 8).map(path => ({ text: `Also changed on ${header.base}: ${path}` }))]
+    : [];
   rows.push(conflict
-    ? { id: "merge", name: "Merge", sub: "git", status: "block", card: "release", lines: [{ text: `Conflicts with ${header.base}`, where: "merge-tree" }],
-      ask: `${pr} conflicts with ${header.base}. Rebase ${header.branch} onto ${header.base}, regenerate any generated files, rerun the tests and push.` }
-    : { id: "merge", name: "Merge", sub: "git", status: "ok", card: "release", lines: [{ text: `Merges cleanly into ${header.base}`, where: "merge-tree" }], ask: null });
+    ? { id: "merge", name: "Merge", sub: "git", status: "block", card: "release", lines: [{ text: `Conflicts with ${header.base}`, where: "merge-tree" }, ...drift],
+      ask: `${pr} conflicts with ${header.base}. Rebase ${header.branch} onto ${header.base}, regenerate any generated files, rerun the tests and push.${moved?.overlap.length ? ` Files changed on both sides: ${moved.overlap.join(", ")}.` : ""}` }
+    : { id: "merge", name: "Merge", sub: "git", status: "ok", card: "release", lines: [{ text: `Merges cleanly into ${header.base}`, where: "merge-tree" }, ...drift], ask: null });
 
   if (!tests) rows.push(waiting("tests", "Unit tests", "changed code", "tests", cards));
   else {
@@ -70,6 +76,17 @@ export function readinessRows(header: ReviewHeader, cards: ReviewCard[]): ReadyR
       ...tests.slop.map(item => ({ text: `Test with ${item.kind}`, where: `${item.path}:${item.line}` })),
     ];
     const fix = [...lines];
+    if (blast?.symbols.some(symbol => !TEST.test(symbol.path))) {
+      // Tests and test fixtures are not code that needs a test of its own.
+      const live = blast.symbols.filter(symbol => symbol.change !== "removed" && !TEST.test(symbol.path));
+      const reached = live.filter(symbol => symbol.tested);
+      const missed = live.filter(symbol => !symbol.tested);
+      lines.unshift({ text: `${reached.length} of ${live.length} changed functions have a test that reaches them`, where: "symbol index" });
+      if (missed.length) {
+        const named = { text: `No test: ${missed.slice(0, 6).map(symbol => symbol.symbol).join(", ")}${missed.length > 6 ? ` and ${missed.length - 6} more` : ""}` };
+        lines.splice(1, 0, named); fix.unshift(named);
+      }
+    }
     const ci = ciResult(header, release);
     const gate = tests.gate ? (tests.gate.passed ? "pass" : "fail") : "none";
     const failed = ci.result === "fail" || gate === "fail";
@@ -128,18 +145,27 @@ export function readinessRows(header: ReviewHeader, cards: ReviewCard[]): ReadyR
       ask: findings.length ? request(pr, "fix these guardrail findings.", lines.slice(0, -1)) : null });
   }
 
-  if (!release) rows.push(waiting("rollback", "Rollback", "how to undo it", "release", cards));
-  else {
+  if (!release) {
+    rows.push(waiting("rollback", "Rollback", "how to undo it", "release", cards));
+    rows.push(waiting("data", "Data and schema", "stored data", "release", cards));
+    rows.push(waiting("deploy", "Config and deploy", "installer, updater, build", "release", cards));
+  } else {
     const schema = check(release, "Schema or data path");
     const installer = check(release, "Installer, updater or build path");
     const dataTouched = schema?.status === "fail" || schema?.status === "conditional";
     const installTouched = installer?.status === "fail" || installer?.status === "conditional";
     const lines: ReadyLine[] = [];
-    if (dataTouched) lines.push({ text: `Changes stored data: ${schema!.hits.slice(0, 3).join(", ")}. Reverting the code does not undo it`, where: "rule: schema" });
-    if (installTouched) lines.push({ text: `Changes the installer, updater or build: ${installer!.hits.slice(0, 3).join(", ")}`, where: "rule: installer" });
-    if (!lines.length) lines.push({ text: "Code only: reverting the merge commit undoes it", where: "rules" });
+    if (dataTouched) lines.push({ text: "Stored data changes: reverting the merge commit does not undo it", where: "rule: schema" });
+    if (installTouched) lines.push({ text: "Installer, updater or build changes: a revert reaches installed copies only through a new release", where: "rule: installer" });
+    if (!lines.length) lines.push({ text: "Code only: no stored data, installer or build change", where: "rules" }, { text: "Revert the merge commit to roll back", where: "git" });
     rows.push({ id: "rollback", name: "Rollback", sub: "how to undo it", status: dataTouched ? "block" : installTouched ? "part" : "ok", lines, card: "release",
       ask: dataTouched || installTouched ? request(pr, "write the rollback plan for these changes: what a revert leaves behind and how to undo it.", lines) : null });
+    const dataLines = dataTouched ? schema!.hits.slice(0, 8).map(path => ({ text: `Changes ${path}`, where: "rule: schema" })) : [{ text: "No schema, migration or stored-data path changed", where: "rules" }];
+    rows.push({ id: "data", name: "Data and schema", sub: "stored data", status: dataTouched ? "block" : "ok", lines: dataLines, card: "release",
+      ask: dataTouched ? request(pr, "changes stored data. Say what each change does to existing rows, whether old builds can still read them, and test the upgrade on a copy.", dataLines) : null });
+    const deployLines = installTouched ? installer!.hits.slice(0, 8).map(path => ({ text: `Changes ${path}`, where: "rule: installer" })) : [{ text: "No installer, updater, build or workflow changed", where: "rules" }];
+    rows.push({ id: "deploy", name: "Config and deploy", sub: "installer, updater, build", status: installTouched ? "part" : "ok", lines: deployLines, card: "release",
+      ask: installTouched ? request(pr, "changes how DuckTerm is built or installed. Build the package from a fresh worktree and install it on a clean machine, then post what you saw.", deployLines) : null });
   }
   return rows;
 }

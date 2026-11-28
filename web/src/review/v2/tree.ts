@@ -53,7 +53,7 @@ export function treeOrder(nodes: TreeNode[], collapsed: ReadonlySet<string> = ne
 }
 
 const GENERATED = /(_pb2\.py|\.pb\.go|_pb2_grpc\.py|\.lock|package-lock\.json|\.min\.(js|css)|\.generated\.\w+)$/;
-const TEST = /(^|\/)(tests?|__tests__|e2e|spec)\/|(_test\.(go|py)|\.test\.\w+|\.spec\.\w+|^test_[^/]+\.py|\/test_[^/]+\.py)$/;
+export const TEST = /(^|\/)(tests?|__tests__|e2e|spec)\/|(_test\.(go|py)|\.test\.\w+|\.spec\.\w+|^test_[^/]+\.py|\/test_[^/]+\.py)$/;
 
 export type FileKind = "gen" | "test" | "new" | "";
 

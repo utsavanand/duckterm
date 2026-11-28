@@ -23,7 +23,9 @@ export function CardsPane({ header, active, openFile, ask }: { header: ReviewHea
   }, [repo, ref]);
   useEffect(() => { void load(); }, [load]);
   // Cards render as they arrive: poll while any is still being written.
-  const busy = !!cards && (cards.running || cards.cards.some(card => card.status === "pending" || card.status === "stale"));
+  // The design card feeds only the review_v2 boards and is not written without them.
+  const shown = cards?.cards.filter(card => card.id !== "design") ?? [];
+  const busy = !!cards && (cards.running || shown.some(card => card.status === "pending" || card.status === "stale"));
   useEffect(() => {
     if (!active || !busy) return;
     const timer = setInterval(() => void load(), POLL_MS);
@@ -40,7 +42,7 @@ export function CardsPane({ header, active, openFile, ask }: { header: ReviewHea
     await load();
   }
   const actions: CardActions = { openFile, ask, send, header };
-  const list = cards?.cards ?? [];
+  const list = shown;
   const card = list[current] ?? null;
   function step(delta: number) { setCurrent(index => (index + delta + list.length) % Math.max(list.length, 1)); }
 

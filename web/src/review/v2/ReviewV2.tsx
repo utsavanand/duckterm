@@ -2,12 +2,17 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, type DiffFile, type ReviewCards, type ReviewDiff, type ReviewHeader } from "../../api";
 import { Modal } from "../../ui";
 import { ApproveDialog } from "../ApproveDialog";
-import { ChatPanel } from "../ChatPanel";
-import { HistoryPane } from "../HistoryPane";
+import type { DesignData } from "../cardModel";
 import { shortSha } from "../diffModel";
-import { ChangesTab, MapTab, ReadinessTab } from "./Boards";
+import { cardData, ChangesTab, HistoryTab, MapTab, ReadinessTab } from "./Boards";
+import { ChatRail } from "./ChatRail";
 import { FilesTab, type FileFilter, type LineNote } from "./FilesTab";
-import { overall, readinessRows } from "./readiness";
+import { overall, readinessRows, type ReadyRow } from "./readiness";
+import "@fontsource/geist-sans/latin-400.css";
+import "@fontsource/geist-sans/latin-500.css";
+import "@fontsource/geist-sans/latin-600.css";
+import "@fontsource/geist-mono/latin-400.css";
+import "@fontsource/geist-mono/latin-500.css";
 import "./v2.css";
 
 type Tab = "map" | "changes" | "files" | "ready" | "history";
@@ -31,6 +36,8 @@ export function ReviewV2({ repo, target, from, onBack }: { repo: string; target:
   const [focus, setFocus] = useState<{ path: string; line?: number; nonce: number } | null>(null);
   const [notes, setNotes] = useState<LineNote[]>(() => loadNotes(repo, target));
   const [requesting, setRequesting] = useState<string | null>(null);
+  const [draft, setDraft] = useState<ReadyRow | null>(null);
+  const [sent, setSent] = useState<Record<string, string>>({});
   const [approving, setApproving] = useState(false);
   const [status, setStatus] = useState("");
   const alive = useRef(true);
@@ -80,6 +87,7 @@ export function ReviewV2({ repo, target, from, onBack }: { repo: string; target:
     setDiff(previous => previous && { ...previous, files: previous.files.map(f => f.path === file.path ? { ...f, viewed, stale: false } : f), counts: { ...previous.counts, viewed: previous.counts.viewed + (viewed ? 1 : -1) } });
     try { await api.markViewed(repo, ref, { path: file.path, hash: file.hash, viewed }); } catch (cause) { setStatus((cause as Error).message); }
   }
+  const showFiles = useCallback((next: FileFilter) => { setFilter(next); setTab("files"); }, []);
   const openFile = useCallback((path: string, line?: number) => { setFocus({ path, line, nonce: Date.now() }); setFilter(null); setTab("files"); }, []);
   async function postRequest(body: string) {
     if (!ref) return;
@@ -92,10 +100,11 @@ export function ReviewV2({ repo, target, from, onBack }: { repo: string; target:
   const pr = header?.pr ?? null;
   const row = header?.row ?? null;
   const list = cards?.cards ?? [];
+  const design = cardData<DesignData>(list, "design");
   const ready = header ? overall(readinessRows(header, list)) : null;
   const canReview = !!(pr && header?.github && pr.state === "open");
   const tabs: { id: Tab; label: string; extra?: string; tone?: string }[] = [
-    { id: "map", label: "Map" }, { id: "changes", label: "Changes" },
+    { id: "map", label: "Map", extra: "whole PR" }, { id: "changes", label: "Changes", extra: design ? String(design.changes.length) : undefined },
     { id: "files", label: "Files", extra: diff ? `${diff.counts.viewed}/${diff.files.length}` : undefined },
     { id: "ready", label: "Release readiness", extra: ready && ready.status !== "wait" ? (ready.status === "block" ? "not ready" : ready.status === "part" ? "open items" : "ready") : undefined, tone: ready?.status },
     { id: "history", label: "History" },
@@ -134,25 +143,27 @@ export function ReviewV2({ repo, target, from, onBack }: { repo: string; target:
         {!header && !error && <p className="rv2-empty" role="status">Loading {target}…</p>}
         {header && <>
           <div id="rv2-map" role="tabpanel" aria-labelledby="rv2-map-tab" hidden={tab !== "map"} className="rv2-panel scroll">
-            <MapTab header={header} diff={diff} cards={list} onGenerate={() => void generate()} generating={generating} onArea={next => { setFilter(next); setTab("files"); }} />
+            <MapTab header={header} diff={diff} cards={list} onGenerate={() => void generate()} generating={generating} onFiles={showFiles} />
           </div>
-          <div id="rv2-changes" role="tabpanel" aria-labelledby="rv2-changes-tab" hidden={tab !== "changes"} className="rv2-panel scroll"><ChangesTab cards={list} /></div>
+          <div id="rv2-changes" role="tabpanel" aria-labelledby="rv2-changes-tab" hidden={tab !== "changes"} className="rv2-panel scroll">
+            <ChangesTab cards={list} generating={generating} onGenerate={() => void generate()} onFiles={showFiles} />
+          </div>
           <div id="rv2-files" role="tabpanel" aria-labelledby="rv2-files-tab" hidden={tab !== "files"} className="rv2-panel">
-            <FilesTab header={header} diff={diff} error={diffError} whitespace={whitespace} onWhitespace={setWhitespace} focus={focus}
+            <FilesTab header={header} diff={diff} changes={design?.changes ?? []} error={diffError} whitespace={whitespace} onWhitespace={setWhitespace} focus={focus}
               filter={filter} onClearFilter={() => setFilter(null)} onMark={(file, viewed) => void mark(file, viewed)} onNote={note => setNotes(previous => [...previous, note])} />
           </div>
           <div id="rv2-ready" role="tabpanel" aria-labelledby="rv2-ready-tab" hidden={tab !== "ready"} className="rv2-panel scroll">
-            <ReadinessTab header={header} cards={list} onGenerate={() => void generate()} generating={generating} onSent={() => void loadCards()} />
+            <ReadinessTab header={header} cards={list} onGenerate={() => void generate()} generating={generating} sent={sent} onDraft={row => { setDraft(row); setChat(true); }} />
           </div>
           <div id="rv2-history" role="tabpanel" aria-labelledby="rv2-history-tab" hidden={tab !== "history"} className="rv2-panel scroll">
-            {tab === "history" && <HistoryPane header={header} active />}
+            <HistoryTab header={header} cards={list} generating={generating} onGenerate={() => void generate()} />
           </div>
         </>}
       </div>
-      {chat && header ? <aside className="rv2-chat" aria-label="Review chat">
-        <ChatPanel header={header} quote="" onClearQuote={() => undefined} onOpenFile={openFile} onDraft={body => setRequesting(body)}
-          onCollapse={() => setChat(false)} pendingQuestion="" onQuestionTaken={() => undefined} />
-      </aside> : <button className="rv2-chatrail" onClick={() => setChat(true)} title="Open chat (c)">Chat · <kbd>c</kbd></button>}
+      {chat && header ? <ChatRail header={header} notes={notes} draft={draft} onOpenFile={openFile} onRequest={body => setRequesting(body)}
+        onRemoveNote={index => setNotes(previous => previous.filter((_, i) => i !== index))} onClose={() => setChat(false)}
+        onDraftDone={(row, label) => { setDraft(null); if (label) { setSent(previous => ({ ...previous, [row.id]: label })); void loadCards(); } }} />
+        : <button className="rv2-chatrail" onClick={() => setChat(true)} title="Open chat (c)">Chat · notes{notes.length ? ` ${notes.length}` : ""} · <kbd>c</kbd></button>}
     </div>
     {approving && pr && <ApproveDialog repo={repo} target={target} prNumber={pr.number} onClose={() => setApproving(false)} onApproved={() => void loadHeader(true)} />}
     {requesting !== null && <Modal title="Request changes on GitHub" onClose={() => setRequesting(null)}>
