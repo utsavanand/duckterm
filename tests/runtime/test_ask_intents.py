@@ -817,7 +817,16 @@ def test_prs_are_grouped_from_a_copy_built_once(fleet, monkeypatch, github):
     server._pr_list_copy = (at - 6 * 60_000, result)
     stale = listed(server, owner, monkeypatch, intent, "Which PRs need me?")
     assert "A newer copy is being fetched." in stale
-    assert len(github) == 2
+
+    # Each test request runs its own event loop, which cancels the rebuild it
+    # started when it closes; the server's loop doesn't. Wait for one here.
+    async def rebuilt():
+        server._pr_list_copy = (at - 6 * 60_000, result)
+        assert (await server._pr_copy())[2]
+        await server._pr_list_refresh
+
+    asyncio.run(rebuilt())
+    assert len(github) >= 2 and server._pr_list_copy[0] >= at
 
 
 def test_a_pr_question_reads_its_row_and_what_agents_said(fleet, monkeypatch, github):
