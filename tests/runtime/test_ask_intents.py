@@ -756,8 +756,9 @@ def test_sent_lists_terminal_prompts_with_who_sent_them(fleet, monkeypatch):
 
 def pr_row(number, status, label, needs_you, key, name, failed=0):
     return {
+        "repo": "/work/duckterm",
         "branch": f"b{number}",
-        "pr": {"number": number, "title": f"Change {number}", "state": "open"},
+        "pr": {"number": number, "title": f"Change {number}", "state": "open", "head_sha": "abc"},
         "status": status,
         "label": label,
         "needs_you": needs_you,
@@ -917,3 +918,137 @@ def test_a_pr_question_reads_its_row_and_what_agents_said(fleet, monkeypatch, gi
     assert "): Ready; branch b500 by release-dev;" in answer
     assert "[agent message · release-dev (duckterm-leadership)" in answer
     assert "answer from main-qa-2: PASS within isolated scope" in answer
+
+
+# ── Step 5: actions are plans the owner confirms ──
+
+
+def act(server, owner, monkeypatch, intent, question):
+    answers = model(monkeypatch, {"text": None, **intent})
+    status, body = ask(server, owner, question, request_key="k-act")
+    assert status == 200, body
+    return body, answers
+
+
+def test_stop_needs_one_certain_agent_and_shows_what_it_is_doing(fleet, monkeypatch):
+    server, owner = fleet
+    with server.history._conn as conn:
+        conn.execute(
+            "UPDATE sessions SET state = 'busy', updated_at = ? WHERE session_key = 'agent'",
+            (int(time.time() * 1000) - 4 * 60_000,),
+        )
+    body, _ = act(
+        server,
+        owner,
+        monkeypatch,
+        {"intent": "act.stop", "entities": [agent("release-dev", ["agent"], 0.95)]},
+        "Stop release-dev",
+    )
+    assert body == {
+        "action": {
+            "kind": "stop",
+            "agent": {"id": "agent", "name": "release-dev", "folder": "duckterm-leadership"},
+            "doing": "busy · Merging #496, then #485 · for 4 min",
+        }
+    }
+    # Two plausible agents, or a sure one under 0.9, ask which; nothing is planned.
+    for ids, confidence in ((["peer", "main-b"], 0.95), (["peer"], 0.8)):
+        body, _ = act(
+            server,
+            owner,
+            monkeypatch,
+            {"intent": "act.stop", "entities": [agent("main", ids, confidence)]},
+            "Stop main",
+        )
+        assert "action" not in body and body["answer"].endswith("Nothing was done.")
+    assert server.history.session("agent")["state"] == "busy"
+
+
+def test_answer_must_match_an_open_question_from_that_agent(fleet, monkeypatch):
+    server, owner = fleet
+    body, _ = act(
+        server,
+        owner,
+        monkeypatch,
+        {"intent": "act.answer", "entities": [agent("main-qa", ["qa1"], 0.95)], "text": "yes"},
+        "Tell main-qa yes",
+    )
+    note = body["action"]["note"]
+    assert body["action"]["kind"] == "answer" and body["action"]["text"] == "yes"
+    assert note["question"] == "Approve QA on Ducky PRs outside the batch?"
+    assert server.relay.get(note["id"])["status"] == "open"
+    # main-qa-2's only note is an offer, which doesn't wait on the owner.
+    body, _ = act(
+        server,
+        owner,
+        monkeypatch,
+        {"intent": "act.answer", "entities": [agent("main-qa-2", ["qa2"], 0.95)], "text": "yes"},
+        "Tell main-qa-2 yes",
+    )
+    assert (
+        body["answer"]
+        == "main-qa-2 (duckterm-core) has no open question for you. Nothing was sent."
+    )
+
+
+def test_approve_opens_the_approve_screen_for_an_open_pr_only(fleet, monkeypatch, github):
+    server, owner = fleet
+    pr = {"type": "pr", "said": "#500", "id": None, "confidence": 0.99}
+    body, _ = act(
+        server, owner, monkeypatch, {"intent": "act.approve", "entities": [pr]}, "Merge #500"
+    )
+    assert body["action"]["kind"] == "approve"
+    assert body["action"]["pr"] == {
+        "repo": "/work/duckterm",
+        "number": 500,
+        "title": "Change 500",
+        "label": "Ready",
+        "head_sha": "abc",
+    }
+    missing = {**pr, "said": "#999"}
+    body, _ = act(
+        server, owner, monkeypatch, {"intent": "act.approve", "entities": [missing]}, "Merge #999"
+    )
+    assert body["answer"].startswith("#999 isn't an open pull request in the PR list")
+    # A cold copy that isn't ready in time offers no card.
+    server._pr_list_copy = None
+    github.delay = 0.3
+    monkeypatch.setattr("duckterm.core.ask_intents.PR_WAIT_S", 0.05)
+    body, _ = act(server, owner, monkeypatch, {"intent": "act.approve", "entities": [pr]}, "Merge")
+    assert body["answer"] == ask_intents.PR_NOT_READY and "action" not in body
+
+
+def test_a_question_for_an_agent_shows_what_the_records_already_say(fleet, monkeypatch):
+    server, owner = fleet
+    chunk(server.history, "agent", "Fleet chat fix #536 merged.", int(time.time() * 1000))
+    intent = {
+        "intent": "act.message",
+        "entities": [agent("release-dev", ["agent"], 0.95), topic("fleet chat fix", "#536")],
+        "text": "Is the fleet chat fix done?",
+    }
+    answers = model(monkeypatch, intent)
+    status, body = ask(
+        server, owner, "Ask release-dev if the fleet chat fix is done", request_key="k"
+    )
+    assert status == 200
+    assert body["plan"]["records"] == "The answer."
+    assert "Fleet chat fix #536 merged." in answers[-1]
+    assert answers[-1].startswith("The owner is about to ask an agent the question below.")
+    # A statement isn't checked against records.
+    model(monkeypatch, {**intent, "text": "rebase #446"})
+    status, body = ask(server, owner, "Tell release-dev to rebase #446", request_key="k2")
+    assert "records" not in body["plan"]
+
+
+def test_actions_need_oracle_messages(fleet, monkeypatch):
+    server, owner = fleet
+    server.edition = EditionConfig(
+        server.edition.name, server.edition.features - {"oracle_messages"}
+    )
+    answers = model(
+        monkeypatch,
+        {"intent": "act.stop", "entities": [agent("release-dev", ["agent"], 0.95)], "text": None},
+    )
+    status, body = ask(server, owner, "Stop release-dev", request_key="k")
+    assert status == 200 and "action" not in body
+    assert answers[-1].startswith("You oversee a fleet")

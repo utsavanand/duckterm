@@ -3250,3 +3250,6 @@ select {
 .rd-oracle-picker b { white-space: nowrap; }
 .rd-oracle-picker small { min-width: 0; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rd-oracle-send .rd-relay-quote { margin: 0; }
+/* What the records already say, above an "Ask anyway" send (ask_intents). */
+.rd-oracle-records { display: grid; gap: 4px; padding-bottom: 8px; border-bottom: 1px solid var(--border); }
+.rd-oracle-records .rd-msg-text { font-size: inherit; line-height: 1.45; }

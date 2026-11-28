@@ -181,10 +181,18 @@ export interface FleetAnswer { answer: string; exchange: OracleExchange; session
 
 // Ask Oracle reading a message as a send to one agent (flag oracle_messages).
 export interface OracleAgent { id: string; name: string; folder: string }
+// An Ask DuckTerm action (flag ask_intents) the owner confirms. Approve only
+// opens the Approve screen; the merge itself needs Touch ID.
+export type OracleAction =
+  | { kind: "answer"; agent: OracleAgent; doing: string; note: { id: string; question: string }; text: string }
+  | { kind: "checkpoint" | "stop" | "restart"; agent: OracleAgent; doing: string }
+  | { kind: "approve"; pr: { repo: string; number: number; title: string; label: string; head_sha?: string } };
 export type OracleRouted =
   | FleetAnswer
-  | { plan: OracleAgent & { text: string } }
-  | { clarify: { text: string; candidates: OracleAgent[] } };
+  // records: what DuckTerm's records already say, when the text asks a question.
+  | { plan: OracleAgent & { text: string; records?: string } }
+  | { clarify: { text: string; candidates: OracleAgent[] } }
+  | { action: OracleAction };
 
 export interface FolderRecipients {
   identity: string;

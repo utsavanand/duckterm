@@ -1,15 +1,18 @@
 import { useEffect, useRef, useState } from "react";
-import { api, OracleAgent, OracleExchange, RelayNote, RelayRule, RelayState } from "./api";
+import { api, OracleAction, OracleAgent, OracleExchange, RelayNote, RelayRule, RelayState } from "./api";
 import { useEdition } from "./edition";
 import { modelHtml } from "./render";
 import { NoteCard, ProposalCard, RuleFields } from "./RelayNotes";
+import { ApproveDialog } from "./review/ApproveDialog";
 
 // Chat-only entries: rule proposals and short replies to rule commands.
 type Local =
   | { at: number; kind: "proposal"; rule: RelayRule; state: "open" | "created" | "cancelled"; id?: string }
   | { at: number; kind: "info"; text: string; rules?: RelayRule[] }
   // A message Oracle will send only after the owner confirms it.
-  | { at: number; kind: "send"; agent: OracleAgent; text: string; question: string; key: string; state: "open" | "sending" | "logged" | "cancelled"; error?: string }
+  | { at: number; kind: "send"; agent: OracleAgent; text: string; question: string; key: string; state: "open" | "sending" | "logged" | "cancelled"; error?: string; records?: string }
+  // An action Oracle runs only after the owner confirms it (ask_intents).
+  | { at: number; kind: "action"; action: OracleAction; state: "open" | "running" | "done" | "cancelled"; result?: string; error?: string }
   | { at: number; kind: "clarify"; question: string; text: string; candidates: OracleAgent[]; state: "open" | "done" };
 
 const requestKey = () => crypto.randomUUID().replace(/-/g, "");
@@ -58,6 +61,7 @@ export function OracleChat({
   const [q, setQ] = useState("");
   const [pending, setPending] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [approving, setApproving] = useState<Extract<OracleAction, { kind: "approve" }>["pr"] | null>(null);
   const logRef = useRef<HTMLDivElement>(null);
   const input = useRef<HTMLTextAreaElement>(null);
 
@@ -146,6 +150,35 @@ export function OracleChat({
     }
   }
 
+  // The owner's click is the action. Restart reads the agent's current
+  // harness and model at click time, so a chat restart never changes either.
+  async function run(index: number, action: OracleAction) {
+    if (action.kind === "approve") return setApproving(action.pr);
+    setLocal(index, { state: "running", error: undefined });
+    try {
+      const key = action.agent.id;
+      let result = "";
+      if (action.kind === "answer") {
+        await api.relayAnswer(action.note.id, action.text);
+        onRelayChange();
+        result = `Answered ${action.agent.name}.`;
+      } else if (action.kind === "checkpoint") {
+        await api.checkpoint(key, "From Oracle chat");
+        result = `Checkpoint saved for ${action.agent.name}.`;
+      } else if (action.kind === "stop") {
+        await api.stop(key);
+        result = `Stopped ${action.agent.name}. Its worktree, branch and conversation are kept for Resume.`;
+      } else {
+        const { current } = await api.restartOptions(key);
+        await api.restart(key, current.model, current.harness);
+        result = `Restarting ${action.agent.name} with ${current.harness} · ${current.model}.`;
+      }
+      setLocal(index, { state: "done", result });
+    } catch (e) {
+      setLocal(index, { state: "open", error: (e as Error).message });
+    }
+  }
+
   // Picking the agent isn't approving the text: the model chose the words, so
   // they wait on a Send card like any other plan.
   function pick(index: number, local: Extract<Local, { kind: "clarify" }>, agent: OracleAgent) {
@@ -177,8 +210,10 @@ export function OracleChat({
       }
       const r = await api.fleetAsk(question, undefined, requestKey());
       if ("plan" in r) {
-        const { text, ...agent } = r.plan;
-        addLocal({ at: Date.now(), kind: "send", agent, text, question, key: requestKey(), state: "open" });
+        const { text, records, ...agent } = r.plan;
+        addLocal({ at: Date.now(), kind: "send", agent, text, question, key: requestKey(), state: "open", records });
+      } else if ("action" in r) {
+        addLocal({ at: Date.now(), kind: "action", action: r.action, state: "open" });
       } else if ("clarify" in r) {
         addLocal({ at: Date.now(), kind: "clarify", question, ...r.clarify, state: "open" });
       } else {
@@ -271,6 +306,13 @@ export function OracleChat({
               onSend={(l) => void deliver(e.index, l.agent, l.text, l.key, l.question)}
               onCancel={() => setLocal(e.index, { state: "cancelled" })}
             />
+          ) : e.local.kind === "action" ? (
+            <ActionCard
+              key={`l-${e.index}`}
+              local={e.local}
+              onRun={(l) => void run(e.index, l.action)}
+              onCancel={() => setLocal(e.index, { state: "cancelled" })}
+            />
           ) : e.local.kind === "clarify" ? (
             <div key={`l-${e.index}`} className="rd-relay-info rd-oracle-clarify" role="group" aria-label="Which agent did you mean?">
               <p>{e.local.candidates.length ? "Which agent did you mean? Nothing was sent." : "I couldn't tell which agent you mean. Nothing was sent. Pick one with @."}</p>
@@ -349,23 +391,82 @@ export function OracleChat({
           Send
         </button>
       </div>
+      {approving && (
+        <ApproveDialog
+          repo={approving.repo}
+          target={String(approving.number)}
+          prNumber={approving.number}
+          ratedHead={approving.head_sha}
+          onClose={() => setApproving(null)}
+          onApproved={() => setApproving(null)}
+        />
+      )}
     </aside>
   );
 }
 
 function SendCard({ local, onSend, onCancel }: { local: Extract<Local, { kind: "send" }>; onSend: (l: Extract<Local, { kind: "send" }>) => void; onCancel: () => void }) {
-  const { agent, text, state, error } = local;
+  const { agent, text, state, error, records } = local;
   if (state === "logged") return null;
   return (
     <div className={`rd-relay-note rd-oracle-send${state === "open" ? " open" : ""}`} role="group" aria-label={`Message to ${agent.name}`}>
+      {records && (
+        <div className="rd-oracle-records">
+          <span className="rd-relay-meta">The records may already answer this</span>
+          <div className="rd-msg-text" dangerouslySetInnerHTML={{ __html: modelHtml(records) }} />
+        </div>
+      )}
       <span className="rd-relay-meta">{state === "cancelled" ? "Not sent to" : "Send to"} <b>{agent.name}</b>{agent.folder ? ` · ${agent.folder}` : ""}</span>
       <blockquote className="rd-relay-quote">{text}</blockquote>
       {(state === "open" || state === "sending") && (
         <div className="rd-relay-actions">
-          <button className="rd-btn rd-btn-primary rd-btn-sm" disabled={state === "sending"} onClick={() => onSend(local)}>Send</button>
+          <button className="rd-btn rd-btn-primary rd-btn-sm" disabled={state === "sending"} onClick={() => onSend(local)}>{records ? "Ask anyway" : "Send"}</button>
           <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={state === "sending"} onClick={onCancel}>Cancel</button>
         </div>
       )}
+      {error && <span className="rd-oracle-error" role="alert">{error}</span>}
+    </div>
+  );
+}
+
+const ACTION_VERB = { answer: "Answer", checkpoint: "Checkpoint", stop: "Stop", restart: "Restart", approve: "Approve" } as const;
+
+// A write Oracle proposes. The card shows what the agent is doing now:
+// Stop cuts off a turn in progress, so the owner sees that before clicking.
+function ActionCard({ local, onRun, onCancel }: { local: Extract<Local, { kind: "action" }>; onRun: (l: Extract<Local, { kind: "action" }>) => void; onCancel: () => void }) {
+  const { action, state, error, result } = local;
+  if (state === "done") return <p className="rd-relay-status">{result}</p>;
+  if (state === "cancelled") return <p className="rd-relay-status">Cancelled. Nothing was done.</p>;
+  const verb = ACTION_VERB[action.kind];
+  return (
+    <div className="rd-relay-note rd-oracle-send open" role="group" aria-label={`${verb} confirmation`}>
+      {action.kind === "approve" ? (
+        <>
+          <span className="rd-relay-meta">Approve <b>#{action.pr.number}</b> · {action.pr.label}</span>
+          <blockquote className="rd-relay-quote">{action.pr.title}</blockquote>
+          <span className="rd-relay-meta">Opens the Approve screen. The merge happens only after Touch ID.</span>
+        </>
+      ) : (
+        <>
+          <span className="rd-relay-meta">{verb} <b>{action.agent.name}</b>{action.agent.folder ? ` · ${action.agent.folder}` : ""}</span>
+          <span className="rd-relay-meta">Now: {action.doing}</span>
+          {action.kind === "answer" && (
+            <>
+              <blockquote className="rd-relay-quote">{action.note.question}</blockquote>
+              <span className="rd-relay-meta">Your answer</span>
+              <blockquote className="rd-relay-quote">{action.text}</blockquote>
+            </>
+          )}
+          {action.kind === "stop" && <span className="rd-relay-meta">Stopping cuts off a turn in progress. The worktree, branch and conversation are kept for Resume.</span>}
+          {action.kind === "restart" && <span className="rd-relay-meta">Restarts with the same harness and model.</span>}
+        </>
+      )}
+      <div className="rd-relay-actions">
+        <button className="rd-btn rd-btn-primary rd-btn-sm" disabled={state === "running"} onClick={() => onRun(local)}>
+          {action.kind === "approve" ? "Open Approve" : action.kind === "answer" ? "Send answer" : verb}
+        </button>
+        <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={state === "running"} onClick={onCancel}>Cancel</button>
+      </div>
       {error && <span className="rd-oracle-error" role="alert">{error}</span>}
     </div>
   );
