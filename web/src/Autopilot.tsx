@@ -34,7 +34,7 @@ export function useAutopilotSummary(enabled: boolean): AutopilotSummary | null {
 }
 
 const TRIGGERS: Record<TriggerType, { name: string; glyph: string; hint: string }> = {
-  "github-issue": { name: "GitHub issues", glyph: "GH", hint: "From people with write access to the repository." },
+  "github-issue": { name: "GitHub issues", glyph: "GH", hint: "From people with write access to the issue repository." },
   "github-pr": { name: "GitHub pull requests", glyph: "GH", hint: "Opened or updated. Drafts are skipped." },
   "github-ci": { name: "Failed CI runs", glyph: "GH", hint: "GitHub Actions on the branch you pick." },
   "jira-issue": { name: "Jira issues", glyph: "J", hint: "When an issue reaches the status you pick." },
@@ -179,7 +179,7 @@ function AutopilotRow({ entry, flowsById, workspace, children }: {
   return <div className="ap-item">
     <div className="ap-item-main">
       <h3>{entry.name} <span className={entry.on ? "ap-on" : "ap-paused"}>{entry.on ? "On" : "Paused"}</span></h3>
-      <div className="ap-meta">{flowTitle(flowsById.get(entry.flow)?.name ?? entry.flow)} · <b>{entry.repo}</b>{where} · {status}</div>
+      <div className="ap-meta">{flowTitle(flowsById.get(entry.flow)?.name ?? entry.flow)} · <b>{entry.repo}</b>{issueRepo(entry) !== entry.repo && <> · issues from <b>{issueRepo(entry)}</b></>}{where} · {status}</div>
       <TriggerChips entry={entry} />
     </div>
     {children && <div className="ap-acts">{children}</div>}
@@ -394,7 +394,7 @@ function RunOnceDialog({ entry, onClose, onStarted }: { entry: AutopilotEntry; o
     }
   }
   return <Modal title={`Run ${entry.name} once`} onClose={onClose}>
-    <label className="ap-field"><span>Issue number in {entry.repo}</span>
+    <label className="ap-field"><span>Issue number in {issueRepo(entry)}</span>
       <input style={inputStyle} value={issue} onChange={e => setIssue(e.target.value)} placeholder="#42" autoFocus
         onKeyDown={e => { if (e.key === "Enter" && issue.trim()) void start(); }} /></label>
     {error && <p className="ap-error-text">{error}</p>}
@@ -405,10 +405,24 @@ function RunOnceDialog({ entry, onClose, onStarted }: { entry: AutopilotEntry; o
   </Modal>;
 }
 
+const issueRepo = (entry: AutopilotEntry) => entry.issue_repo || entry.repo;
+
+// Another autopilot that would pick up the same issue: same issue repository
+// and a shared label (no labels means every issue).
+function labelClash(others: AutopilotEntry[], self: string | undefined, repo: string, labels: string[]) {
+  for (const other of others) {
+    const theirs = other.triggers["github-issue"]?.labels;
+    if (other.id === self || !theirs || issueRepo(other) !== repo) continue;
+    const shared = !labels.length || !theirs.length ? labels[0] ?? theirs[0] ?? "every issue" : labels.find(l => theirs.includes(l));
+    if (shared) return { name: other.name, repo, label: shared };
+  }
+  return null;
+}
+
 const emptyDraft = (flow: AutopilotFlow, overview: AutopilotOverview): AutopilotDraft => {
   const first = flow.triggers.find(k => overview.triggers[k]?.available);
   return {
-    flow: flow.id, name: "", workspace: "", repo: "",
+    flow: flow.id, name: "", workspace: "", repo: "", issue_repo: "",
     triggers: first ? { [first]: { labels: first === "github-issue" ? ["autopilot"] : [] } } : {},
     approvals: { spec_on_visible: false, keep_merge_approval: false }, budget_m: 5, max_runs: 2,
   };
@@ -419,7 +433,8 @@ function SetupDialog({ overview, flow, editing, onClose, onSaved }: {
 }) {
   const [step, setStep] = useState<"triggers" | "confirm">("triggers");
   const [draft, setDraft] = useState<AutopilotDraft>(editing ? {
-    flow: editing.flow, name: editing.name, workspace: editing.workspace ?? "", repo: editing.repo, triggers: editing.triggers,
+    flow: editing.flow, name: editing.name, workspace: editing.workspace ?? "", repo: editing.repo,
+    issue_repo: issueRepo(editing) === editing.repo ? "" : issueRepo(editing), triggers: editing.triggers,
     approvals: editing.approvals, budget_m: editing.budget_m, max_runs: editing.max_runs,
   } : emptyDraft(flow, overview));
   const [repos, setRepos] = useState<string[] | null>(null);
@@ -441,6 +456,7 @@ function SetupDialog({ overview, flow, editing, onClose, onSaved }: {
 
   const anyOn = Object.keys(draft.triggers).length > 0;
   const labels = () => labelsText.split(",").map(s => s.trim()).filter(Boolean);
+  const clash = draft.triggers["github-issue"] ? labelClash(overview.autopilots, editing?.id, draft.issue_repo || draft.repo, labels()) : null;
   const finished = (): AutopilotDraft => {
     const triggers = { ...draft.triggers };
     if (triggers["github-issue"]) triggers["github-issue"] = { labels: labels() };
@@ -491,7 +507,7 @@ function SetupDialog({ overview, flow, editing, onClose, onSaved }: {
           {workspaces.map(w => <option key={w} value={w}>{w}</option>)}
         </select>
       </label>
-      <label className="ap-field"><span>Repository</span>
+      <label className="ap-field"><span>Code repository</span>
         {repos && repos.length > 0
           ? <select style={inputStyle} value={draft.repo} onChange={e => setDraft({ ...draft, repo: e.target.value })}>
             {!repos.includes(draft.repo) && <option value={draft.repo}>{draft.repo || "Choose a repository"}</option>}
@@ -513,9 +529,20 @@ function SetupDialog({ overview, flow, editing, onClose, onSaved }: {
               <span className="ap-trig-name">{TRIGGERS[kind].name}<small>{available ? TRIGGERS[kind].hint : "Coming soon"}</small></span>
             </label>
             {checked && kind === "github-issue" && <div className="ap-trig-fields">
+              <label className="ap-field"><span>Issues from</span>
+                {repos && repos.length > 0
+                  ? <select style={inputStyle} value={draft.issue_repo} onChange={e => setDraft({ ...draft, issue_repo: e.target.value })}>
+                    <option value="">The code repository</option>
+                    {draft.issue_repo && !repos.includes(draft.issue_repo) && <option value={draft.issue_repo}>{draft.issue_repo}</option>}
+                    {repos.filter(r => r !== draft.repo).map(r => <option key={r} value={r}>{r}</option>)}
+                  </select>
+                  : <input style={inputStyle} value={draft.issue_repo} placeholder="Leave empty for the code repository"
+                    onChange={e => setDraft({ ...draft, issue_repo: e.target.value.trim() })} />}
+              </label>
               <label className="ap-field"><span>Labels</span>
                 <input style={inputStyle} value={labelsText} onChange={e => setLabelsText(e.target.value)} placeholder="Leave empty for every new issue" /></label>
               <p className="ap-muted ap-small">Issues with any of these labels, labelled from now on.</p>
+              {clash && <p className="ap-warn">{clash.name} also watches {clash.repo} for “{clash.label}”, so both would start a run for the same issue.</p>}
             </div>}
           </div>;
         })}
@@ -526,7 +553,7 @@ function SetupDialog({ overview, flow, editing, onClose, onSaved }: {
       <label className="ap-field"><span>Name</span>
         <input style={inputStyle} value={draft.name} placeholder={finished().name} onChange={e => setDraft({ ...draft, name: e.target.value })} /></label>
       <div className="ap-recap">
-        {draft.repo}{draft.workspace ? <span className="ap-muted"> · in {draft.workspace}</span> : null}
+        {draft.repo}{draft.issue_repo && draft.issue_repo !== draft.repo ? <span className="ap-muted"> · issues from {draft.issue_repo}</span> : null}{draft.workspace ? <span className="ap-muted"> · in {draft.workspace}</span> : null}
         <ul>{(Object.keys(finished().triggers) as TriggerType[]).map(k => <li key={k}>{triggerLine(k, finished().triggers[k])}</li>)}</ul>
         <div className="ap-small ap-muted">Each run ends in a draft pull request. Nothing is merged.</div>
         <div className="ap-small ap-muted">Runs in Docker on this Mac, on your Claude subscription. Keep the Mac awake.</div>

@@ -2,8 +2,8 @@
 
 Polled by the server (spec: every 2 minutes; a webhook needs a public
 endpoint). An issue starts a run once. The first poll after a flow is put on
-autopilot, or after its labels change, only records what is already there,
-so turning a flow on never starts runs for old issues.
+autopilot, or after its labels or issue repository change, only records what
+is already there, so turning a flow on never starts runs for old issues.
 
 Only people with write access start runs: with labels, whoever added the
 matching label; without labels, the issue's author. Issues that fail that
@@ -49,8 +49,8 @@ def poll(
     started. The rest wait for a later poll."""
     state = _read(seen_path)
     found = _open_issues(get, repo, labels)
-    if state.get("labels") != labels:
-        _write(seen_path, {"labels": labels, "started": sorted(found)})
+    if state.get("labels") != labels or state.get("repo", repo) != repo:
+        _write(seen_path, {"repo": repo, "labels": labels, "started": sorted(found)})
         return []
     started = set(state.get("started") or [])
     ready: list[dict[str, Any]] = []
@@ -64,7 +64,7 @@ def poll(
             ready.append(_summary(issue, who))
             started.add(number)
     if ready:
-        _write(seen_path, {"labels": labels, "started": sorted(started)})
+        _write(seen_path, {"repo": repo, "labels": labels, "started": sorted(started)})
     return ready
 
 

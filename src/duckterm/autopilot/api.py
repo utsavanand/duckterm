@@ -62,7 +62,7 @@ def run_once(autopilot_id: str, body: dict[str, Any]) -> dict[str, Any]:
     if number <= 0:
         raise ValueError("Give an issue number")
     token, _ = github_projects.local_token()
-    item = github_watch.issue(github_watch.api(token), entry["repo"], number)
+    item = github_watch.issue(github_watch.api(token), store.issue_repo(entry), number)
     return {"run_id": runs.start(entry, "github-issue", item)}
 
 
@@ -95,7 +95,7 @@ def tick() -> None:
         try:
             ready = github_watch.poll(
                 get,
-                entry["repo"],
+                store.issue_repo(entry),
                 entry["triggers"]["github-issue"]["labels"],
                 store.root() / "seen" / f"{entry['id']}.json",
                 max(0, room),

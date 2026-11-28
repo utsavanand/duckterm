@@ -1,3 +1,19 @@
+## 2026-11-27 — An autopilot assumed issues live next to the code
+
+Kaho's "Report a Bug" button files issues in utsavanand/kaho-reports, a repository
+with no code; the app is utsavanand/kaho. The autopilot had one `repo` field and
+used it for the watch, the clone, the push and the pull request, so a run for a
+report would have cloned an empty repository. Nobody noticed because every
+autopilot until then watched its own code repository.
+
+An autopilot now has an issue repository (defaulting to the code repository) and
+a code repository. The label check runs against the issue repository, the run
+clones and opens its draft PR on the code repository, and the PR names the
+report as `owner/reports#7` so GitHub links and closes it across repositories.
+Changing the issue repository starts the watch over, since issue numbers from the
+old one mean nothing in the new one. Lesson: a field used for four jobs is four
+assumptions; ask which of them a new user breaks before calling it one setting.
+
 ## 2026-11-27 — A path check that passed "." crashed the run page
 
 The run detail reader refused absolute paths and `..`, then opened the last
