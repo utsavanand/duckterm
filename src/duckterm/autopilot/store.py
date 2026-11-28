@@ -51,7 +51,7 @@ def get(autopilot_id: str) -> dict[str, Any]:
 
 def create(body: dict[str, Any]) -> dict[str, Any]:
     base = {"id": "ap-" + uuid.uuid4().hex[:8], "on": True, "created_at": int(time.time() * 1000)}
-    entry = _validated(body, base)
+    entry = validated(body, base)
     with _LOCK:
         entries = load()
         entries.append(entry)
@@ -65,7 +65,7 @@ def update(autopilot_id: str, body: dict[str, Any]) -> dict[str, Any]:
         for i, entry in enumerate(entries):
             if entry["id"] == autopilot_id:
                 merged = {**entry, **body}
-                updated = _validated(merged, entry)
+                updated = validated(merged, entry)
                 if "on" in body:
                     updated["on"] = bool(body["on"])
                 entries[i] = updated
@@ -83,7 +83,13 @@ def delete(autopilot_id: str) -> None:
         _save(kept)
 
 
-def _validated(body: dict[str, Any], base: dict[str, Any]) -> dict[str, Any]:
+def issue_repo(entry: dict[str, Any]) -> str:
+    """Where the autopilot watches issues; records saved before issue_repo
+    existed watch their code repository."""
+    return str(entry.get("issue_repo") or entry["repo"])
+
+
+def validated(body: dict[str, Any], base: dict[str, Any]) -> dict[str, Any]:
     """The saved shape, from an untrusted request body. Raises ValueError with
     a message the app can show."""
     try:
@@ -91,6 +97,9 @@ def _validated(body: dict[str, Any], base: dict[str, Any]) -> dict[str, Any]:
     except KeyError:
         raise ValueError("Choose a flow") from None
     repo = repository_name(str(body.get("repo") or ""))
+    # Issues may live apart from the code, as Kaho's reports do in their own
+    # repository; the run still clones, pushes and opens its PR on `repo`.
+    issue_repo = repository_name(str(body.get("issue_repo") or repo))
     raw = body.get("triggers")
     if not isinstance(raw, dict) or not raw:
         raise ValueError("Turn on at least one trigger")
@@ -119,6 +128,7 @@ def _validated(body: dict[str, Any], base: dict[str, Any]) -> dict[str, Any]:
         "name": name,
         "workspace": workspace,
         "repo": repo,
+        "issue_repo": issue_repo,
         "triggers": triggers,
         "approvals": {
             "spec_on_visible": bool(approvals.get("spec_on_visible")),

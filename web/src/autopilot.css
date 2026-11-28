@@ -146,6 +146,11 @@
 .ap-recap ul { margin: 6px 0 8px; padding: 0; list-style: none; color: var(--text-soft); display: flex; flex-direction: column; gap: 3px; }
 .ap-recap .ap-small + .ap-small { margin-top: 6px; }
 .ap-secrets code { font-size: 0.6875rem; }
+.ap-backlog { border: 1px solid var(--amber-border); border-radius: 10px; padding: 10px 14px 12px; margin: 0 0 14px; display: flex; flex-direction: column; gap: 8px; font-size: 0.8125rem; }
+.ap-backlog legend { padding: 0 4px; font-weight: 500; }
+.ap-backlog label { display: grid; grid-template-columns: auto 1fr; column-gap: 8px; align-items: baseline; cursor: pointer; }
+.ap-backlog input { accent-color: var(--brand-green); }
+.ap-backlog small { grid-column: 2; color: var(--text-soft); font-size: 0.75rem; overflow-wrap: anywhere; }
 .ap-limits summary { cursor: pointer; font-size: 0.8125rem; color: var(--text-soft); display: flex; gap: 8px; list-style: none; }
 .ap-limits summary::-webkit-details-marker { display: none; }
 .ap-limits summary::before { content: "▸"; }

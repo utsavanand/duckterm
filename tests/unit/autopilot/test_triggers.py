@@ -72,6 +72,16 @@ def test_saving_normalises_labels_and_names_the_autopilot(home: Path) -> None:
     assert store.load() == [entry]
 
 
+def test_issues_come_from_the_code_repository_unless_another_is_given(home: Path) -> None:
+    assert store.create(_body())["issue_repo"] == "o/r"
+    entry = store.create(_body(issue_repo="o/reports"))
+    assert (entry["repo"], entry["issue_repo"]) == ("o/r", "o/reports")
+    # a record saved before issue_repo existed watches its code repository
+    assert store.issue_repo({"repo": "o/r"}) == "o/r"
+    with pytest.raises(ValueError, match="owner/name"):
+        store.create(_body(issue_repo="not a repo"))
+
+
 @pytest.mark.parametrize(
     ("over", "error"),
     [
@@ -106,6 +116,7 @@ class FakeGitHub:
         self.issues: dict[int, dict[str, Any]] = {}
         self.labeled_by: dict[int, str] = {}
         self.writers = {"maintainer"}
+        self.repos: dict[str, Any] = {"/repos/o/r": {"permissions": {"push": True}}}
 
     def add(self, number: int, labels: list[str], by: str = "maintainer", pr: bool = False) -> None:
         item: dict[str, Any] = {
@@ -136,6 +147,8 @@ class FakeGitHub:
         if "/collaborators/" in path:
             login = path.split("/")[5]
             return {"permission": "write" if login in self.writers else "read"}
+        if path.count("/") == 3:
+            return self.repos.get(path)
         raise AssertionError(path)
 
 
@@ -181,11 +194,74 @@ def test_runs_beyond_the_limit_wait_for_the_next_poll(tmp_path: Path) -> None:
     assert _poll(gh, tmp_path, ["autopilot"], limit=2) == [9]
 
 
-def test_changing_the_labels_starts_over_from_what_is_there(tmp_path: Path) -> None:
+@pytest.mark.parametrize(("answer", "runs"), [(None, [4]), ("new", [4]), ("run", [3, 4])])
+def test_a_label_change_keeps_what_started_and_asks_about_what_now_matches(
+    home: Path, monkeypatch: pytest.MonkeyPatch, answer: str | None, runs: list[int]
+) -> None:
+    from duckterm.autopilot import api
+
     gh = FakeGitHub()
-    _poll(gh, tmp_path, ["autopilot"])
-    gh.add(10, ["bug"])
-    assert _poll(gh, tmp_path, ["bug"]) == []
+    monkeypatch.setattr(api, "_github", lambda: gh)
+    entry = store.create(_body(triggers={"github-issue": {"labels": ["autopilot"]}}))
+    seen = api._seen(entry["id"])
+    gh.add(1, ["autopilot"])
+    github_watch.poll(gh, "o/r", ["autopilot"], seen, 5)
+    gh.add(2, ["autopilot"])
+    assert [i["number"] for i in github_watch.poll(gh, "o/r", ["autopilot"], seen, 5)] == [2]
+    gh.add(3, ["bug"])
+    edit: dict[str, Any] = {"triggers": {"github-issue": {"labels": ["autopilot", "bug"]}}}
+    assert api.backlog(entry["id"], edit) == {"issues": [3]}
+    api.update(entry["id"], {**edit, "backlog": answer} if answer else edit)
+    gh.add(4, ["bug"])
+    polled = github_watch.poll(gh, "o/r", ["autopilot", "bug"], seen, 5)
+    assert [i["number"] for i in polled] == runs
+
+
+def test_watching_another_issue_repository_starts_over_from_what_is_there(
+    tmp_path: Path,
+) -> None:
+    # issue numbers from the old repository mean nothing in the new one
+    gh = FakeGitHub()
+    seen = tmp_path / "seen.json"
+    github_watch.poll(gh, "o/r", ["autopilot"], seen, 5)
+    gh.add(11, ["autopilot"])
+    other = lambda path: gh(path.replace("/repos/o/reports/", "/repos/o/r/"))  # noqa: E731
+    assert github_watch.poll(other, "o/reports", ["autopilot"], seen, 5) == []
+    gh.add(12, ["autopilot"])
+    assert [i["number"] for i in github_watch.poll(other, "o/reports", ["autopilot"], seen, 5)] == [
+        12
+    ]
+
+
+@pytest.mark.parametrize(
+    ("repos", "error"),
+    [
+        ({"/repos/o/r": {"permissions": {"push": False}}}, "can't push to o/r"),
+        ({"/repos/o/r": {"permissions": {"push": True}}}, "can't reach o/reports"),
+        ({}, "can't reach o/r"),
+    ],
+)
+def test_a_setup_the_token_cannot_carry_out_is_refused(
+    home: Path, monkeypatch: pytest.MonkeyPatch, repos: dict[str, Any], error: str
+) -> None:
+    from duckterm.autopilot import api
+
+    gh = FakeGitHub()
+    monkeypatch.setattr(api, "_github", lambda: gh)
+    gh.repos = repos
+    with pytest.raises(ValueError, match=error):
+        api.create(_body(issue_repo="o/reports"))
+    assert store.load() == []
+    gh.repos = {
+        "/repos/o/r": {"permissions": {"push": True}},
+        "/repos/o/reports": {"full_name": "o/reports"},
+    }
+    entry = api.create(_body(issue_repo="o/reports"))
+    gh.repos = repos
+    with pytest.raises(ValueError, match=error):
+        api.update(entry["id"], {"repo": "o/r"})
+    # pausing touches no repository, so it works without GitHub
+    assert api.update(entry["id"], {"on": False})["on"] is False
 
 
 def test_autopilot_routes_belong_to_the_autopilot_flag() -> None:
