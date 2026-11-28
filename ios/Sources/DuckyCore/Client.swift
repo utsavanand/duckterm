@@ -40,6 +40,14 @@ public final class DuckyClient {
         guard status.hostID == host.hostID else { throw DuckyError.invalidResponse }
         return status
     }
+    /// Asks a Mac on the signed-in account to list this iPhone as pending; the owner still approves it there.
+    public func claimAccount(ticket: String) async throws -> PairStatus {
+        guard AccountPairing.validTicket(ticket) else { throw DuckyError.invalidResponse }
+        let body = try JSONSerialization.data(withJSONObject: ["ticket": ticket, "token": host.token])
+        let status: PairStatus = try await request(path: "/v1/pair/account", body: body)
+        guard status.hostID == host.hostID else { throw DuckyError.invalidResponse }
+        return status
+    }
     public func pairingStatus() async throws -> PairStatus {
         let status: PairStatus = try await request(path: "/v1/pair/status")
         guard status.hostID == host.hostID else { throw DuckyError.invalidResponse }

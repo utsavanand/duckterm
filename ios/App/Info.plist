@@ -29,6 +29,8 @@
 			</array>
 		</dict>
 	</array>
+	<key>DuckyCloudURL</key>
+	<string>$(DUCKY_CLOUD_URL)</string>
 	<key>CFBundleVersion</key>
 	<string>$(CURRENT_PROJECT_VERSION)</string>
 	<key>LSRequiresIPhoneOS</key>

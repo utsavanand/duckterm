@@ -4,7 +4,7 @@ import CoreImage
 /// Unattached views can be rendered for review without creating or ordering a window.
 @MainActor
 final class DuckyPairingView: NSView {
-    enum Action: String { case copy, cancel, approve, deny, restart, done }
+    enum Action: String { case copy, cancel, approve, deny, restart, done, signIn }
     var onAction: ((Action) -> Void)?
     var onConversationsChanged: ((Bool) -> Void)?
     var onFolderQuestionsChanged: ((Bool) -> Void)?
@@ -19,7 +19,8 @@ final class DuckyPairingView: NSView {
 
     init(state: DuckyPairingModel.State, busy: Bool = false, allowsConversations: Bool = false,
          allowsFolderQuestions: Bool = false, allowsOracleQuestions: Bool = false,
-         availability: DuckyPairingAvailability = .init(edition: nil), icon: NSImage?, now: Date = Date()) {
+         availability: DuckyPairingAvailability = .init(edition: nil), account: DuckyAccountStatus? = nil,
+         claim: Bool = false, icon: NSImage?, now: Date = Date()) {
         super.init(frame: .zero)
         let column = width - inset * 2
         let iconView = NSImageView(frame: NSRect(x: (width - 64) / 2, y: 21, width: 64, height: 64))
@@ -36,6 +37,7 @@ final class DuckyPairingView: NSView {
         case .pending(let pending):
             title = "\(pending.name) wants to \(pending.rePair == true ? "pair again" : "connect")"
             body = "View your folders and session status."; device = pending; expires = pending.expiresAt
+            if let login = pending.login { body = "Signed in to GitHub as \(login). " + body }
             if pending.rePair == true {
                 body = "It can already view status\(pending.grantedCapabilities.isDisjoint(with: ["conversation:read", "session:send"]) ? "" : " and use conversations"). Approving replaces these permissions."
             }
@@ -45,11 +47,12 @@ final class DuckyPairingView: NSView {
             buttons = [("Done", .done, true)]
         case .denied:
             title = "Request denied"; body = "This iPhone cannot view your agents."
-            buttons = [("New invitation", .restart, true), ("Done", .done, false)]
+            buttons = claim ? [("Done", .done, true)] : [("New invitation", .restart, true), ("Done", .done, false)]
         case .expired(let pending):
             title = pending ? "Request expired" : "Invitation expired"
             body = pending ? "Create a new invitation to try again." : "Create a new invitation to pair your iPhone."
             buttons = [("New invitation", .restart, true), ("Close", .done, false)]
+            if claim { body = "Ask again from Ducky on your iPhone."; buttons = [("Close", .done, true)] }
         case .error(let code):
             title = "Pairing is unavailable"
             switch code {
@@ -58,6 +61,7 @@ final class DuckyPairingView: NSView {
             default: body = "Couldn’t connect to DuckTerm. Try again."
             }
             buttons = [("Try again", .restart, true), ("Close", .done, false)]
+            if claim { buttons = [("Close", .done, true)] }
         case .closed: break
         }
         var y = addLabel(title, y: 95, font: .systemFont(ofSize: 13, weight: .bold), color: PairingColors.text) + 8
@@ -68,8 +72,13 @@ final class DuckyPairingView: NSView {
         }
         if let device {
             y += 16; addSeparator(y: y); y += 12
-            y = addLabel("Match the device ID on your iPhone.", y: y, font: .systemFont(ofSize: 11), color: PairingColors.body) + 7
-            y = addLabel(device.id, y: y, font: .monospacedSystemFont(ofSize: 11, weight: .regular), color: PairingColors.text, selectable: true) + 12
+            if let code = device.code {
+                y = addLabel("Check that your iPhone shows the same code.", y: y, font: .systemFont(ofSize: 11), color: PairingColors.body) + 7
+                y = addLabel(code, y: y, font: .monospacedDigitSystemFont(ofSize: 28, weight: .semibold), color: PairingColors.text) + 12
+            } else {
+                y = addLabel("Match the device ID on your iPhone.", y: y, font: .systemFont(ofSize: 11), color: PairingColors.body) + 7
+                y = addLabel(device.id, y: y, font: .monospacedSystemFont(ofSize: 11, weight: .regular), color: PairingColors.text, selectable: true) + 12
+            }
             addSeparator(y: y)
         }
         var scopeControls: [NSButton] = []
@@ -140,6 +149,21 @@ final class DuckyPairingView: NSView {
                          font: .monospacedDigitSystemFont(ofSize: 11, weight: .regular), color: PairingColors.body)
             countdown = subviews.last as? NSTextField; expiresAt = expires; pendingExpiry = device != nil
         }
+        if case .invitation = state, let account {
+            y += 14; addSeparator(y: y); y += 12
+            switch account {
+            case .signedOut:
+                y = addLabel("Or let your iPhone find this Mac by itself.", y: y, font: .systemFont(ofSize: 11), color: PairingColors.body) + 10
+                let button = PairingButton(title: "Sign in with GitHub", target: self, action: #selector(performAction(_:)))
+                button.identifier = NSUserInterfaceItemIdentifier(Action.signIn.rawValue)
+                button.setAccessibilityLabel("Sign in with GitHub")
+                button.frame = NSRect(x: inset, y: y, width: column, height: 28)
+                addSubview(button); scopeControls.append(button); y = button.frame.maxY
+            case .signedIn(let login):
+                y = addLabel("Signed in to GitHub as \(login). iPhones on this account find this Mac without the QR code.",
+                             y: y, font: .systemFont(ofSize: 11), color: PairingColors.body)
+            }
+        }
         y += 14
         var controls: [NSButton] = scopeControls
         for (index, entry) in buttons.enumerated() {
@@ -159,6 +183,56 @@ final class DuckyPairingView: NSView {
         if device != nil { y += 28 } else if !buttons.isEmpty { y -= 8 }
         for (index, button) in controls.enumerated() { button.nextKeyView = controls[(index + 1) % controls.count] }
         frame = NSRect(x: 0, y: 0, width: width, height: y + 17)
+        setAccessibilityRole(.group)
+    }
+    /// GitHub sign-in, shown in the Pair iPhone window in place of the QR code.
+    init(signIn state: DuckySignInModel.State, icon: NSImage?) {
+        super.init(frame: .zero)
+        let column = width - inset * 2
+        let iconView = NSImageView(frame: NSRect(x: (width - 64) / 2, y: 21, width: 64, height: 64))
+        iconView.image = icon; iconView.imageScaling = .scaleProportionallyUpOrDown
+        addSubview(iconView)
+        var title = "Sign in with GitHub", body = "", code: String?, buttons: [(String, Action, Bool)] = []
+        switch state {
+        case .opening, .closed:
+            body = "Contacting GitHub…"; buttons = [("Cancel", .cancel, false)]
+        case .code(let value, _):
+            body = "Enter this code on the GitHub page that just opened."; code = value
+            buttons = [("Copy code", .copy, true), ("Cancel", .cancel, false)]
+        case .signedIn(let login):
+            title = "Signed in as \(login)"
+            body = "iPhones on this account can now find this Mac. You still allow each new iPhone here."
+            buttons = [("Done", .done, true)]
+        case .error(let reason):
+            title = "Sign-in didn’t finish"
+            switch reason {
+            case "signin_expired": body = "The code expired or GitHub sign-in was cancelled. Try again."
+            case "signin_unavailable": body = "Sign-in isn’t available in this build yet."
+            case "setup_unavailable": body = "Turn on Ducky by pairing an iPhone first."
+            default: body = "Couldn’t reach the sign-in service. Try again."
+            }
+            buttons = [("Try again", .restart, true), ("Close", .done, false)]
+        }
+        var y = addLabel(title, y: 95, font: .systemFont(ofSize: 13, weight: .bold), color: PairingColors.text) + 8
+        y = addLabel(body, y: y, font: .systemFont(ofSize: 11), color: PairingColors.body)
+        if let code {
+            y = addLabel(code, y: y + 14, font: .monospacedSystemFont(ofSize: 28, weight: .semibold), color: PairingColors.text, selectable: true)
+            y = addLabel("github.com/login/device · DuckTerm asks GitHub only who you are, not for your code.",
+                         y: y + 10, font: .systemFont(ofSize: 11), color: PairingColors.body)
+        }
+        y += 22
+        var controls: [NSButton] = []
+        for (index, entry) in buttons.enumerated() {
+            let button = PairingButton(title: entry.0, target: self, action: #selector(performAction(_:)))
+            button.identifier = NSUserInterfaceItemIdentifier(entry.1.rawValue); button.primary = entry.2
+            button.setAccessibilityLabel(entry.0)
+            button.frame = NSRect(x: inset, y: y, width: column, height: 28)
+            if index == 0 { button.keyEquivalent = "\r"; preferredFocus = button }
+            if entry.1 == .cancel || entry.1 == .done && index > 0 { button.keyEquivalent = "\u{1b}" }
+            addSubview(button); controls.append(button); y += 36
+        }
+        for (index, button) in controls.enumerated() { button.nextKeyView = controls[(index + 1) % controls.count] }
+        frame = NSRect(x: 0, y: 0, width: width, height: y - 8 + 17)
         setAccessibilityRole(.group)
     }
     func updateCountdown(now: Date = Date()) {

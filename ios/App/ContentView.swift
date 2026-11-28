@@ -2,7 +2,7 @@ import DuckyCore
 import SwiftUI
 import UIKit
 
-private enum Palette {
+enum Palette {
     static let background = Color(red: 0.047, green: 0.059, blue: 0.075)
     static let panel = Color(red: 0.078, green: 0.090, blue: 0.114)
     static let border = Color(red: 0.15, green: 0.17, blue: 0.20)
@@ -12,7 +12,7 @@ private enum Palette {
     static let blue = Color(red: 0.42, green: 0.46, blue: 1)
 }
 
-private extension View {
+extension View {
     func panel() -> some View {
         padding(14).frame(maxWidth: .infinity, alignment: .leading)
             .background(Palette.panel)
@@ -23,11 +23,14 @@ private extension View {
 @MainActor
 struct ContentView: View {
     @ObservedObject var model: SessionModel
+    @ObservedObject var account: AccountModel
     @StateObject private var analysis: AnalysisModel
     @Environment(\.scenePhase) private var scenePhase
     @State private var analysisPositions: [AnalysisScope: ConversationReadingPosition] = [:]
-    init(model: SessionModel) {
+    @State private var gitHub = GitHubSignIn()
+    init(model: SessionModel, account: AccountModel) {
         self.model = model
+        self.account = account
         _analysis = StateObject(wrappedValue: model.makeAnalysisModel())
     }
     @State private var settings = false
@@ -163,7 +166,15 @@ struct ContentView: View {
 
     @ViewBuilder private var agentView: some View {
         if model.phase == .unpaired {
-            inviteView
+            switch account.phase {
+            case .unavailable: inviteView
+            case .signedOut, .signingIn: AccountSignInView(account: account, signIn: gitHub) { pasteButton }
+            case .signedIn: AccountMacsView(account: account) { pasteButton }
+            }
+        } else if model.phase == .awaitingApproval, let host = model.host, host.accountLogin != nil {
+            AccountWaitingView(model: model, host: host)
+        } else if model.phase == .denied, let host = model.host, host.accountLogin != nil {
+            AccountDeniedView(model: model, account: account, host: host)
         } else if model.phase == .awaitingApproval {
             pairingView
         } else if model.phase == .denied {
@@ -359,6 +370,7 @@ struct ContentView: View {
             if let id = model.deviceID { Text("This iPhone: \(id)").font(.system(.footnote, design: .monospaced)).textSelection(.enabled) }
             Text(connectionLabel).font(.subheadline).foregroundStyle(Palette.muted)
         }.panel()
+        AccountSettingsSection(account: account)
         Text("NOTIFICATIONS").font(.caption.bold()).tracking(1).foregroundStyle(Palette.muted)
         Text("Ducky checks when you open or refresh the app. This pilot cannot alert you in the background yet.")
             .foregroundStyle(Palette.muted).panel()

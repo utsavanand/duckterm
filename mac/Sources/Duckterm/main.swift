@@ -28,6 +28,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var window: DashboardWindow?
     private var bugReport: BugReportController?
     private var duckyPairing: DuckyPairingPresenting?
+    private var duckyClaim: DuckyPairingController?
+    private lazy var duckyAccount = DuckyAccountWatcher(makeTransport: {
+        DuckyPairingProcess(command: { try await DuckyPairingProcess.bundledCommand(["ducky", "claims", "--json"]) }, unbounded: true)
+    })
+    /// Waiting phones already announced, so each gets one notification.
+    private var announcedClaims: Set<String> = []
     private var capturingReport = false
     private var notified: [String: Set<String>] = [:]
     private var edition: DesktopEdition?
@@ -35,17 +41,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private let launchAdmission: WorkspaceLaunchAdmission
     private let editionRequest: ((URL) async throws -> Any)?
     private let localServerReadiness: (() async -> Bool)?
-    private let makePairing: (@escaping () -> DesktopEdition?, @escaping () async throws -> Void) -> DuckyPairingPresenting
+    private let makePairing: (@escaping () -> DesktopEdition?, @escaping () -> DuckyAccountStatus?,
+                              @escaping () async throws -> Void) -> DuckyPairingPresenting
 
     override convenience init() {
         self.init(launchAdmission: WorkspaceLaunchAdmission(), editionRequest: nil,
-                  makePairing: { DuckyPairingController(verifiedEdition: $0, prepare: $1) })
+                  makePairing: { DuckyPairingController(verifiedEdition: $0, account: $1, prepare: $2) })
     }
 
     init(launchAdmission: WorkspaceLaunchAdmission,
          editionRequest: ((URL) async throws -> Any)?,
          localServerReadiness: (() async -> Bool)? = nil,
-         makePairing: @escaping (@escaping () -> DesktopEdition?, @escaping () async throws -> Void) -> DuckyPairingPresenting) {
+         makePairing: @escaping (@escaping () -> DesktopEdition?, @escaping () -> DuckyAccountStatus?,
+                                 @escaping () async throws -> Void) -> DuckyPairingPresenting) {
         self.launchAdmission = launchAdmission
         self.editionRequest = editionRequest
         self.localServerReadiness = localServerReadiness
@@ -65,6 +73,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // creates its home, so a failed first startup can resume setup.
         runtimeSetup.prepare()
         UNUserNotificationCenter.current().requestAuthorization(options: [.alert, .sound]) { _, _ in }
+        UNUserNotificationCenter.current().delegate = self
+        duckyAccount.onChange = { [weak self] in self?.duckyAccountChanged() }
 
         AppDiagnostics.shared.record("Application launched")
         Task.detached(priority: .utility) {
@@ -108,7 +118,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             return try await self.runtimeSetup.perform(operation: operation, params: params)
         }
         window?.onReportBug = { [weak self] in self?.reportBug(nil) }
-        window?.onClose = { [weak self] in self?.duckyPairing?.close() }
+        window?.onClose = { [weak self] in self?.duckyPairing?.close(); self?.duckyClaim?.close() }
         window?.desktopHosts = []
         sessionTransport.onTerminal = { [weak self] event in self?.window?.dispatch(name: "remote-terminal", detail: event) }
         sessionTransport.onTerminalData = { [weak self] event in await self?.window?.dispatchAndWait(name: "remote-terminal", detail: event) }
@@ -318,6 +328,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationWillTerminate(_ note: Notification) {
         runtimeSetup.reset()
         duckyPairing?.close()
+        duckyClaim?.close()
+        duckyAccount.stop()
         pollers.values.forEach { $0.stop() }
         sessionTransport.close()
         launchConnections.values.forEach { $0.stop() }
@@ -409,13 +421,57 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Preparation below validates the current edition before creating an invite.
         guard launchAdmission.canStart else { return }
         if let duckyPairing { duckyPairing.show(); return }
-        let controller = makePairing({ [weak self] in self?.edition }) { [weak self] in
+        let controller = makePairing({ [weak self] in self?.edition }, { [weak self] in self?.duckyAccount.status }) { [weak self] in
             guard let self, await self.ensureLocalServer() else { throw DuckyPairingEvent.Failure.invalid }
             let current = try await self.refreshEdition()
             guard current.includes("folders"), current.includes("session_status") else { throw DuckyPairingEvent.Failure.invalid }
         }
         duckyPairing = controller
         controller.onClose = { [weak self] in self?.duckyPairing = nil }
+        controller.show()
+    }
+
+    private func duckyAccountChanged() {
+        duckyPairing?.refresh()
+        // A stopped watcher knows nothing; keep what was announced until it reports again.
+        guard duckyAccount.status != nil else { return }
+        let waiting = Set(duckyAccount.waiting.map(\.id))
+        UNUserNotificationCenter.current().removeDeliveredNotifications(
+            withIdentifiers: announcedClaims.subtracting(waiting).map { "ducky-claim-\($0)" })
+        for device in duckyAccount.waiting where !announcedClaims.contains(device.id) { announce(claim: device) }
+        announcedClaims = waiting
+    }
+
+    private func announce(claim device: DuckyPairingDevice) {
+        let content = UNMutableNotificationContent()
+        content.title = "\(device.name) wants to connect"
+        content.body = "Signed in to GitHub as \(device.login ?? "you"). Click to review."
+        content.sound = .default
+        content.userInfo = ["ducky_claim": device.id]
+        let request = UNNotificationRequest(identifier: "ducky-claim-\(device.id)", content: content, trigger: nil)
+        UNUserNotificationCenter.current().getNotificationSettings { settings in
+            let allowed = settings.authorizationStatus == .authorized
+            Task { @MainActor [weak self] in
+                // With notifications off, the request would go unseen: ask straight away.
+                if allowed { try? await UNUserNotificationCenter.current().add(request) } else { self?.openClaim(device.id) }
+            }
+        }
+    }
+
+    func openClaim(_ id: String) {
+        guard edition?.includes(DuckyAccount.feature) == true, duckyAccount.waiting.contains(where: { $0.id == id }) else { return }
+        if let duckyClaim {
+            if duckyClaim.claimID == id { duckyClaim.show(); return }
+            duckyClaim.close()
+        }
+        let controller = DuckyPairingController(verifiedEdition: { [weak self] in self?.edition }, claim: id) { [weak self] in
+            guard let self, try await self.refreshEdition().includes(DuckyAccount.feature) else { throw DuckyPairingEvent.Failure.invalid }
+        }
+        duckyClaim = controller
+        controller.onClose = { [weak self, weak controller] in
+            if self?.duckyClaim === controller { self?.duckyClaim = nil }
+        }
+        NSApp.activate(ignoringOtherApps: true)
         controller.show()
     }
 
@@ -539,6 +595,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func applyEdition(_ current: DesktopEdition?) {
         guard edition != current else { return }
         edition = current
+        if current?.includes(DuckyAccount.feature) == true { duckyAccount.start() } else { duckyAccount.stop() }
         remoteSettings.update(allowed: current?.includes("remote_workspaces") == true)
         if current?.includes("harness_management") != true { runtimeSetup.reset() }
         window?.canSetUpAgents = current?.includes("harness_management") == true
@@ -758,4 +815,21 @@ app.delegate = delegate
 app.setActivationPolicy(.regular)  // a normal app: Dock icon + windows
 app.mainMenu = buildMainMenu(remoteSettings: delegate.remoteSettings)
 app.run()
+}
+
+extension AppDelegate: UNUserNotificationCenterDelegate {
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, willPresent notification: UNNotification,
+                                            withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void) {
+        // Only a phone asking to connect shows while DuckTerm is in front; session alerts keep their old behaviour.
+        completionHandler(notification.request.identifier.hasPrefix("ducky-claim-") ? [.banner, .sound] : [])
+    }
+
+    nonisolated func userNotificationCenter(_ center: UNUserNotificationCenter, didReceive response: UNNotificationResponse,
+                                            withCompletionHandler completionHandler: @escaping () -> Void) {
+        let claim = response.notification.request.content.userInfo["ducky_claim"] as? String
+        Task { @MainActor [weak self] in
+            if let claim { self?.openClaim(claim) }
+            completionHandler()
+        }
+    }
 }
