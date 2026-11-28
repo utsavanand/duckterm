@@ -79,6 +79,18 @@ BEGIN DELETE FROM artifact_metadata WHERE session_key = OLD.session_key; END;
 FIELDS = "id, session_key, title, source_path, media_type, size, sha256, created_at, updated_at"
 
 
+def match_words(column: str, word_sets: list[list[str]]) -> tuple[str, list[str]]:
+    """SQL that is true when the column holds every word of any one set,
+    case-insensitively (LIKE ignores ASCII case), with its parameters."""
+    clauses, params = [], []
+    for words in word_sets:
+        clauses.append("(" + " AND ".join(f"{column} LIKE ? ESCAPE '\\'" for _ in words) + ")")
+        for word in words:
+            escaped = word.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            params.append(f"%{escaped}%")
+    return " OR ".join(clauses), params
+
+
 class ArtifactError(ValueError):
     def __init__(self, status: int, message: str) -> None:
         self.status = status
@@ -258,23 +270,12 @@ class ArtifactStore:
         artifact isn't hidden behind newer ones the way list_folder's 500 rows
         hide it (1,186 artifacts on the owner's machine)."""
 
-        def where(column: str) -> tuple[str, builtins.list[str]]:
-            clauses, params = [], []
-            for words in word_sets:
-                clauses.append(
-                    "(" + " AND ".join(f"{column} LIKE ? ESCAPE '\\'" for _ in words) + ")"
-                )
-                for word in words:
-                    escaped = word.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
-                    params.append(f"%{escaped}%")
-            return " OR ".join(clauses), params
-
         # Bounded under SQLite's parameter limit whatever the caller passes.
         word_sets = [w[:6] for w in word_sets if w][:24]
         if not word_sets:
             return []
         fields = ", ".join("a." + field.strip() for field in FIELDS.split(","))
-        live, params = where("a.title")
+        live, params = match_words("a.title", word_sets)
         rows = [
             self.describe(dict(row))
             for row in self.conn.execute(
@@ -285,7 +286,7 @@ class ArtifactStore:
                 (*params, limit),
             )
         ]
-        removed, params = where("json_extract(m.snapshot_json, '$.title')")
+        removed, params = match_words("json_extract(m.snapshot_json, '$.title')", word_sets)
         for row in self.conn.execute(
             "SELECT m.snapshot_json, m.removed_at, COALESCE(NULLIF(s.name, ''), s.session_key) "
             "AS session_name, s.state AS session_state, s.grp AS folder FROM artifact_metadata m "

@@ -4443,6 +4443,16 @@ class Server:
             answer = await self._ask_list(kind, intent, by_id)
             exchange = oracle.append_chat(chat_path, question, answer, int(time.time() * 1000))
             return {"answer": answer, "exchange": exchange, "sessions": [], "intent": kind}
+        types = {e["type"] for e in intent["entities"]}
+        if kind == "ask.agent" and "agent" not in types and "topic" in types:
+            # "Which agent worked on X" names a topic, not an agent: find the agents.
+            kind = "ask.history"
+        if kind == "ask.history":
+            answer, read = await self._ask_history(question, intent, by_id, prior)
+            if not answer:
+                return None
+            exchange = oracle.append_chat(chat_path, question, answer, int(time.time() * 1000))
+            return {"answer": answer, "exchange": exchange, "sessions": read, "intent": kind}
         if kind not in ("ask.agent", "ask.fleet"):
             return None
         reading = agents
@@ -4458,7 +4468,10 @@ class Server:
         else:
             context = ask_intents.fleet_context(self, agents)
         prompt = ask_intents.answer_prompt(
-            question, fleet_questions.clip(context, fleet_questions.MAX_PROMPT_BYTES), prior, kind
+            question,
+            fleet_questions.clip(context, fleet_questions.MAX_PROMPT_BYTES - 32 * 1024),
+            prior,
+            kind,
         )
         prepared = fleet_questions.Prepared(prompt, tuple(a["id"] for a in reading))
         answered = await asyncio.to_thread(fleet_questions.generate, prepared, summarize)
@@ -4473,6 +4486,113 @@ class Server:
             "intent": kind,
         }
 
+    def _read_only(self) -> contextlib.closing[sqlite3.Connection]:
+        """A read-only connection for a worker: history searches scan tens of
+        MB of summaries and must not run on the loop's connection."""
+        conn = sqlite3.connect(
+            self.history.path.resolve().as_uri() + "?mode=ro", uri=True, timeout=5
+        )
+        return contextlib.closing(conn)
+
+    async def _ask_history(
+        self,
+        question: str,
+        intent: dict[str, Any],
+        by_id: dict[str, dict[str, Any]],
+        prior: list[dict[str, Any]],
+    ) -> tuple[str, list[str]]:
+        """The cascade for questions about the past: word recall over every
+        stage, a fast rerank, then one answer. A question with no topic ("what
+        did the fleet do this week") reads every summary chunk in the span,
+        per workspace first when it is too much for one answer."""
+        now = int(time.time() * 1000)
+        span = ask_intents.time_range(intent)
+        words = ask_intents.word_sets(intent)
+        keys, _ = ask_intents.agents_named(intent, ask_intents.ASK_THRESHOLD)
+        sessions = self.history.sessions()
+        names = {
+            str(r["session_key"]): (
+                str(r.get("name") or r["session_key"][:8]),
+                str(r.get("grp") or ""),
+            )
+            for r in sessions
+        }
+        owners = {branch: key for (_, branch), key in (await self._branch_owners(False)).items()}
+        repo_span = span or (now - 7 * 86_400_000, now)
+        events, commits = await asyncio.to_thread(
+            ask_intents.repo_history, sessions, words, repo_span, owners
+        )
+        sections = [("Merges and releases in the local clones", ask_intents.repo_lines(events))]
+        read = sorted({k for k in keys})
+        note = ""
+        if not words:
+
+            def chunks() -> dict[str, list[str]]:
+                with self._read_only() as conn:
+                    return ask_intents.chunks_by_workspace(conn, repo_span, names)
+
+            grouped = await asyncio.to_thread(chunks)
+            total = sum(len(c.encode()) for group in grouped.values() for c in group)
+            if total > ask_intents.WIDE_BYTES:
+
+                async def one(workspace: str, group: list[str]) -> tuple[str, str]:
+                    text = fleet_questions.clip("\n".join(group), fleet_questions.MAX_PROMPT_BYTES)
+                    result = await asyncio.to_thread(
+                        summarize,
+                        ask_intents.workspace_pass_prompt(question, workspace, [text]),
+                        tier="deep",
+                    )
+                    return workspace, result.text
+
+                passes = await asyncio.gather(*(one(w, g) for w, g in grouped.items()))
+                sections += [(f"Workspace {w} (summarised first)", t) for w, t in passes]
+                note = (
+                    f"The {sum(len(g) for g in grouped.values())} summary chunks in this period "
+                    f"were too many to read at once, so each workspace was summarised first. "
+                    "Say so in the answer."
+                )
+            else:
+                sections += [
+                    (f"Summary chunks, workspace {w}", "\n".join(g)) for w, g in grouped.items()
+                ]
+        else:
+
+            def search() -> list[dict[str, Any]]:
+                with self._read_only() as conn:
+                    return ask_intents.recall(
+                        conn, words, ask_intents.phrases(intent), names, span, keys, now
+                    )
+
+            hits = await asyncio.to_thread(search)
+            pool = hits[: ask_intents.RERANK_POOL]
+            if pool:
+                ranked = await asyncio.to_thread(
+                    summarize, ask_intents.rerank_prompt(question, pool), tier="fast"
+                )
+                keep = ask_intents.parse_rerank(ranked.text, len(pool))
+                pool = [pool[i] for i in keep] if keep is not None else pool[:15]
+            read = sorted({h["key"] for h in pool} | set(keys))
+            searched = " or ".join("“" + " ".join(w) + "”" for w in words)
+            note = (
+                f"Searched for {searched} in memory items, summary chunks, tasks, agent "
+                f"messages, prompts and replies from the last {ask_intents.PROMPT_DAYS} days, "
+                "digests from before Oct 12, and commit messages"
+                + (
+                    f", for {', '.join(ask_intents.label(by_id[k]) for k in keys if k in by_id)}"
+                    if keys
+                    else ""
+                )
+                + f"; {len(hits)} matched by words and {len(pool)} were kept as on topic."
+            )
+            sections += [
+                ("Records", "\n".join(ask_intents.hit_line(h) for h in pool)),
+                ("Commits", "\n".join(commits)),
+            ]
+        prompt = ask_intents.history_prompt(question, sections, prior, note)
+        prepared = fleet_questions.Prepared(prompt, tuple(read))
+        answered = await asyncio.to_thread(fleet_questions.generate, prepared, summarize)
+        return answered.text, read
+
     async def _ask_list(
         self, kind: str, intent: dict[str, Any], by_id: dict[str, dict[str, Any]]
     ) -> str:
@@ -4482,7 +4602,7 @@ class Server:
         if kind == "ask.needs_you":
             return ask_intents.needs_you_list(self.relay.needs_you(), now)
         if kind == "ask.artifacts":
-            words = ask_intents.artifact_words(intent)
+            words = ask_intents.word_sets(intent)
             rows = self.history.artifacts.find_titles(words)
             _, mentioned = ask_intents.agents_named(intent, 0)
             return ask_intents.artifacts_list(rows, words, [by_id[k] for k in mentioned])
@@ -4534,7 +4654,17 @@ class Server:
             if span is None
             else f"between {ask_intents._when(start)} and {ask_intents._when(end)}"
         )
-        return ask_intents.sent_list(rows, names, now, label)
+        sent = ask_intents.sent_list(rows, names, now, label)
+        # A read-only list: every agent the classifier offered, however sure.
+        _, keys = ask_intents.agents_named(intent, 0)
+        if not keys and span is None:
+            return sent
+
+        def prompts() -> list[tuple[str, int, str, bool]]:
+            with self._read_only() as conn:
+                return ask_intents.owner_prompts(conn, keys, (start, end))
+
+        return sent + "\n\n" + ask_intents.prompt_lines(await asyncio.to_thread(prompts), names)
 
     @staticmethod
     def _oracle_agent(agent: dict[str, Any]) -> dict[str, str]:
