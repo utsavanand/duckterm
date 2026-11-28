@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import sys
 import time
 from collections import OrderedDict
 from collections.abc import Callable, Iterable
@@ -17,6 +18,25 @@ STAMP_WINDOW_NS = 2_000_000_000
 READ_CHUNK = 1024 * 1024
 
 
+def _retained_size(value: object) -> int:
+    """Conservative size of JSON-shaped parsed data, including container overhead.
+
+    Count shared values again rather than underestimating retained memory. Only
+    newly parsed records are measured; unchanged polls do not walk old trees.
+    """
+    size = 0
+    pending = [value]
+    while pending:
+        item = pending.pop()
+        size += sys.getsizeof(item)
+        if isinstance(item, dict):
+            pending.extend(item.keys())
+            pending.extend(item.values())
+        elif isinstance(item, list | tuple):
+            pending.extend(item)
+    return size
+
+
 @dataclass
 class _State:
     identity: tuple[int, int]
@@ -28,12 +48,23 @@ class _State:
     lines: int = 0
     records: list[dict[str, object]] = field(default_factory=list)
     trailing: list[dict[str, object]] = field(default_factory=list)
+    records_bytes: int = 0
+    trailing_bytes: int = 0
     response: bytes | None = None
     response_scope: tuple[str, str | None] | None = None
 
+    @property
+    def retained_bytes(self) -> int:
+        return (
+            self.records_bytes
+            + sys.getsizeof(self.records)
+            + self.trailing_bytes
+            + sys.getsizeof(self.response)
+        )
+
 
 class MessageCache:
-    """Keep at most eight transcripts / 128 MiB of source per runtime.
+    """Keep at most eight transcripts / 128 MiB of parsed data per runtime.
 
     Settled unchanged files require only stat. Recent files verify their bytes
     until a read occurs beyond the timestamp collision window. Appends parse
@@ -41,6 +72,8 @@ class MessageCache:
     Changed files verify the committed prefix before parsing the new suffix;
     a growing rewrite must not retain stale message contents or pin identities.
     Returned records are deeply detached, including nested tool input and blocks.
+    Ignored source records do not consume the retained-data budget. Cached JSON
+    responses and parsed Python containers do; an oversized response is not kept.
     Raw input is buffered by chunk plus the longest unfinished line, rather than
     the whole transcript. Parsed records and complete responses remain in memory.
     """
@@ -59,8 +92,9 @@ class MessageCache:
 
     def response(self, path: Path, runtime: str, session_id: str | None) -> bytes:
         """Immutable JSON HTTP payload; unchanged polls never copy message trees."""
+        path = path.resolve()
         with self._lock:
-            state = self._state(path.resolve())
+            state = self._state(path)
             if state is None:
                 return b'{"messages": []}'
             scope = (runtime, session_id)
@@ -73,19 +107,25 @@ class MessageCache:
                     messages.append({**record, "message_key": hashlib.sha256(identity).hexdigest()})
                 state.response = json.dumps({"messages": messages}).encode()
                 state.response_scope = scope
+                self._trim(path, state)
             return state.response
 
     def _make_room(self, path: Path, size: int) -> None:
         """Free unrelated LRU records before allocating the incoming transcript."""
-        other_bytes = sum(item.stamp[0] for key, item in self._states.items() if key != path)
+        other_bytes = sum(item.retained_bytes for key, item in self._states.items() if key != path)
         other_files = len(self._states) - int(path in self._states)
         for key in tuple(self._states):
             if other_files + 1 <= self._max_files and other_bytes + size <= self._max_bytes:
                 break
             if key != path:
-                other_bytes -= self._states[key].stamp[0]
+                other_bytes -= self._states[key].retained_bytes
                 other_files -= 1
                 del self._states[key]
+
+    def _trim(self, path: Path, state: _State) -> None:
+        self._make_room(path, state.retained_bytes)
+        if state.retained_bytes > self._max_bytes:
+            self._states.pop(path, None)
 
     def _state(self, path: Path) -> _State | None:
         try:
@@ -104,7 +144,11 @@ class MessageCache:
             if state is None or state.identity != identity or stat.st_size < state.stamp[0]:
                 self._states.pop(path, None)
                 state = _State(identity)
-            self._make_room(path, stat.st_size)
+            # Reserve space for new parsed content before allocating it. Source
+            # bytes already scanned are not resident and must not evict this
+            # entry (large Codex compaction records are mostly not messages).
+            incoming = max(0, stat.st_size - state.offset)
+            self._make_room(path, state.retained_bytes + min(incoming, READ_CHUNK) * 4)
             verified_at = time.time_ns()
             with path.open("rb") as source:
                 # Size growth alone does not establish an append: transcript
@@ -152,6 +196,7 @@ class MessageCache:
                 state.stamp = stamp
                 self._states.move_to_end(path)
                 return state
+            state.records_bytes += sum(_retained_size(record) for record in records)
             state.records.extend(records)
             state.lines = line_count
             state.offset = offset
@@ -160,16 +205,13 @@ class MessageCache:
             # Preserve the full parser's support for a valid final record
             # without a newline, but do not commit that potentially partial line.
             state.trailing = self._parser(tail.decode(errors="replace").splitlines(), state.lines)
+            state.trailing_bytes = _retained_size(state.trailing)
             state.stamp = stamp
             state.response = None
             state.response_scope = None
             self._states[path] = state
             self._states.move_to_end(path)
-            while (
-                len(self._states) > self._max_files
-                or sum(item.stamp[0] for item in self._states.values()) > self._max_bytes
-            ):
-                self._states.popitem(last=False)
+            self._trim(path, state)
             return state
         except OSError:
             self._states.pop(path, None)

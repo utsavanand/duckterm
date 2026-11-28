@@ -1,5 +1,9 @@
 ## 2026-11-27 — An autopilot assumed issues live next to the code
 
+## 2026-11-27 — Messages cache charged discarded provider history as resident memory
+
+Main-dev and ui-dev had 1.63 GB and 1.75 GB Codex transcripts. Most source bytes were provider records that Messages discarded, but the cache charged the entire source file against its 128 MiB limit. It evicted these entries after every read, reparsed unchanged history on every poll, and serialized overlapping reads behind the runtime lock. Three main-dev reads took 6.8, 13.6 and 20.2 seconds. Count the parsed containers and cached response actually retained instead; keep the memory cap and original-source rewrite checks. Regression coverage must exceed the configured source-size threshold, exercise overlapping reads, and prove genuinely oversized retained data is still evicted. Read-only measurements of the fix retained about 23.5 MB for main-dev and served settled cached reads in about 2 ms; first reads still take 6–7 seconds. No live data was changed.
+
 Kaho's "Report a Bug" button files issues in utsavanand/kaho-reports, a repository
 with no code; the app is utsavanand/kaho. The autopilot had one `repo` field and
 used it for the watch, the clone, the push and the pull request, so a run for a
