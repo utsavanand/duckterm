@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useMemo, useRef, useState } from "react";
 import { useArtifactExpansion } from "./useArtifactExpansion";
 import { locateFileQuote } from "./locateFileQuote";
 import DOMPurify from "dompurify";
@@ -8,6 +8,8 @@ import "./artifacts.css";
 import { ARTIFACT_KINDS } from "./artifactKinds";
 import "./folderDetails.css";
 import { ArtifactFeedback, ArtifactSelection, FeedbackTarget } from "./ArtifactFeedback";
+
+const PdfArtifactPreview = lazy(() => import("./PdfArtifactPreview"));
 
 const POLICY = `<meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data: blob:; style-src 'unsafe-inline'; font-src data:; form-action 'none'; base-uri 'none'; connect-src 'none'; frame-src 'none'; worker-src 'none'; object-src 'none'">`;
 const PAPER = `<style>html{color-scheme:light}body{margin:0;padding:32px 38px;background:#fafbf8;color:#27352c;font:15px/1.65 -apple-system,BlinkMacSystemFont,sans-serif;overflow-wrap:anywhere}h1{font-size:27px;line-height:1.25}h2{font-size:19px;margin-top:28px}pre{white-space:pre-wrap;background:#edf0e9;padding:14px;border-radius:6px}code{font-size:13px}img{max-width:100%}table{border-collapse:collapse;width:100%}td,th{border:1px solid #d8dfd5;padding:8px}blockquote{border-left:3px solid #a8b9aa;margin-left:0;padding-left:16px;color:#536758}</style>`;
@@ -70,7 +72,7 @@ function size(bytes: number): string {
   return bytes < 1024 ? `${bytes} B` : bytes < 1024 * 1024 ? `${(bytes / 1024).toFixed(1)} KB` : `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-export function ArtifactPreview({ artifact, onSelect, onEscape, source = false, interactive = false, locate, onLocate }: { artifact: Pick<ArtifactContent, "media_type" | "content_base64" | "title">; onSelect: (selection: ArtifactSelection) => void; onEscape: () => void; source?: boolean; interactive?: boolean; locate?: { quote: string; request: number }; onLocate?: (status: string) => void }) {
+export function ArtifactPreview({ artifact, onSelect, onEscape, source = false, interactive = false, locate, onLocate }: { artifact: Pick<ArtifactContent, "media_type" | "content_base64" | "title">; onSelect: (selection: ArtifactSelection) => void; onEscape: () => void; source?: boolean; interactive?: boolean; locate?: { quote: string; request: number; page?: number }; onLocate?: (status: string) => void }) {
   const textElement = useRef<HTMLPreElement>(null);
   const frame = useRef<HTMLIFrameElement>(null);
   const [nonce] = useState(() => Array.from(crypto.getRandomValues(new Uint8Array(24)), b => b.toString(16).padStart(2, "0")).join(""));
@@ -111,6 +113,7 @@ export function ArtifactPreview({ artifact, onSelect, onEscape, source = false, 
     if (source || !["text/html", "text/markdown"].includes(artifact.media_type)) return text;
     return previewDocument(text, artifact.media_type === "text/markdown", { nonce, origin: window.location.origin }, interactive);
   }, [artifact.media_type, artifact.content_base64, source, nonce, interactive]);
+  if (artifact.media_type === "application/pdf") return <Suspense fallback={<p role="status">Loading PDF viewer…</p>}><PdfArtifactPreview data={artifact.content_base64} title={artifact.title} onSelect={onSelect} locate={locate} onLocate={onLocate} /></Suspense>;
   if (imageFailed) return <div className="rd-artifact-empty"><h3>Image preview unavailable</h3><p>Download the saved file to open it in another app.</p></div>;
   if (artifact.media_type.startsWith("image/")) {
     return <div className="rd-artifact-image"><img src={`data:${artifact.media_type};base64,${artifact.content_base64}`} alt={artifact.title} onError={() => setImageFailed(true)} /></div>;

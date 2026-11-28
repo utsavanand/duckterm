@@ -36,7 +36,7 @@ const plan: KitPlan = {
   findings: [], conflicts: [{ path: ".claude/agents/reviewer.md", kind: "file-exists", detail: "exists and is not from a kit", choices: ["keep", "replace"], component: "sample-kit/agent/reviewer" }],
   rows: [
     { component: "sample-kit/skill/review-diff", kind: "skill", harnesses: { "claude-code": "installed", codex: "installed", copilot: "installed", opencode: "installed" }, notes: [] },
-    { component: "sample-kit/hook/stop-remind-tests", kind: "hook", harnesses: { "claude-code": "installed", codex: "installed, needs trust", copilot: "installed", opencode: "not supported" }, notes: [] },
+    { component: "sample-kit/hook/stop-remind-tests", kind: "hook", harnesses: { "claude-code": "installed", codex: "installed, needs trust", copilot: "installed", opencode: "installed, not yet verified" }, notes: [] },
   ],
   files: [{ path: ".claude/skills/review-diff", op: "copy-tree", harness: "shared", component: "sample-kit/skill/review-diff" }],
 };
@@ -113,7 +113,8 @@ it("enables a kit for chosen workspaces: one matrix in sections, what each harne
   expect(await screen.findByText(/payments · every harness/)).toBeVisible();
   expect(screen.getByText("Knowledge")).toBeVisible();
   expect(screen.getByText("Hooks")).toBeVisible();
-  expect(screen.getByText("opencode: 1 not supported")).toBeVisible();
+  expect(screen.getByText("codex: needs trust")).toBeVisible();
+  expect(screen.queryByText(/opencode: \d+ not supported/)).toBeNull(); // hooks reach OpenCode through a generated plugin
   expect(screen.getByText("api-conventions: no path scope on codex, opencode")).toBeVisible();
   expect(screen.getAllByRole("heading", { name: /Review: sample-kit/ })).toHaveLength(1);
   fireEvent.click(screen.getByRole("button", { name: "Fix · load it always on codex, opencode" }));

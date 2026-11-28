@@ -18,6 +18,7 @@ import fcntl
 import hashlib
 import json
 import os
+import re
 import subprocess
 import tempfile
 import time
@@ -414,6 +415,7 @@ def start(
         "harness": harness,
         "inputs": inputs,
         "isolated": False,
+        "base": _start_commit(project),
         "state": "running",
         "started_at": int(time.time()),
         "updated_at": int(time.time()),
@@ -875,7 +877,16 @@ def _workspace(run: Run, folder: Path) -> tuple[str, str]:
     exact state. `git diff HEAD` alone leaves untracked files out, so a gate
     showing it hid a new workflow file that a later `git add -A` would ship;
     a temporary index takes `git add -A` (the runs folder excluded) and gives
-    both the diff and `write-tree`. ("", "") when this is not a git checkout."""
+    both the diff and `write-tree`. ("", "") when this is not a git checkout.
+
+    The diff is against the commit the run started from, not HEAD: an
+    executor that commits after each step (autopilot) moves HEAD past the
+    work, and a review then saw an empty diff. The base comes from run.json,
+    which the sandbox can write, so only a full object id is used, and never
+    where git could read it as an option such as --index-output."""
+    base = run.state.get("base")
+    if not (isinstance(base, str) and re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", base)):
+        base = "HEAD"
     index = folder / ".index"
     env = {**os.environ, "GIT_INDEX_FILE": str(index)}
 
@@ -892,10 +903,10 @@ def _workspace(run: Run, folder: Path) -> tuple[str, str]:
         )
 
     try:
-        if git("read-tree", "HEAD").returncode != 0:
+        if git("read-tree", "--end-of-options", base).returncode != 0:
             return "", ""
         git("add", "-A", "--", ".", f":(exclude){RUNS}")
-        diff = git("diff", "--no-ext-diff", "--no-textconv", "--cached", "HEAD")
+        diff = git("diff", "--no-ext-diff", "--no-textconv", "--cached", "--end-of-options", base)
         tree = git("write-tree")
     except (OSError, subprocess.TimeoutExpired):
         return "", ""
@@ -905,6 +916,21 @@ def _workspace(run: Run, folder: Path) -> tuple[str, str]:
         diff.stdout if diff.returncode == 0 else "",
         tree.stdout.strip() if tree.returncode == 0 else "",
     )
+
+
+def _start_commit(project: Path) -> str | None:
+    """The commit a run starts from; None outside a git checkout."""
+    try:
+        proc = subprocess.run(
+            ["git", "-c", "core.fsmonitor=false", "rev-parse", "--verify", "-q", "HEAD^{commit}"],
+            cwd=project,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    return proc.stdout.strip() if proc.returncode == 0 else None
 
 
 def _diff(run: Run) -> dict[str, Any]:

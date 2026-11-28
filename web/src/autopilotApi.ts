@@ -54,6 +54,43 @@ export interface AutopilotRun {
   pr_skipped?: string;
 }
 
+// One step attempt from the kit runner's receipt. Times are Unix seconds.
+export interface AutopilotAttempt {
+  step: string;
+  attempt: number;
+  kind: string | null;
+  status: string | null;
+  exit: number | null;
+  choice: string | null;
+  reason: string | null;
+  started_at: number | null;
+  finished_at: number | null;
+}
+
+export interface AutopilotGate {
+  step: string;
+  question: string | null;
+  choices: string[];
+  asked_at: number;
+  response: { choice?: string } | null;
+}
+
+export interface AutopilotChanges {
+  files: { path: string; added: number; removed: number; binary: boolean }[];
+  patch: string;
+  cut: boolean;
+}
+
+export interface AutopilotRunDetail extends AutopilotRun {
+  attempts: AutopilotAttempt[];
+  gates: AutopilotGate[];
+  loops: Record<string, number>;
+  issue_body: string;
+  spec: string | null;
+  changes: AutopilotChanges | null;
+  sandbox?: string;
+}
+
 export interface AutopilotSummary {
   available: boolean;
   active: number;
@@ -107,6 +144,7 @@ export const autopilotApi = {
   update: (id: string, patch: Partial<AutopilotDraft> & { on?: boolean }) =>
     call<AutopilotEntry>("PATCH", `/api/autopilot/autopilots/${encodeURIComponent(id)}`, patch),
   remove: (id: string) => call<{ ok: boolean }>("DELETE", `/api/autopilot/autopilots/${encodeURIComponent(id)}`),
+  run: (id: string) => call<AutopilotRunDetail>("GET", `/api/autopilot/runs/${encodeURIComponent(id)}`),
   runOnce: (id: string, issue: number) =>
     call<{ run_id: string }>("POST", `/api/autopilot/autopilots/${encodeURIComponent(id)}/run`, { issue }),
 };

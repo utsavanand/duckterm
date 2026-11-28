@@ -30,7 +30,7 @@ export function HeaderMenus({ theme, onTheme, density, onDensity, notifyOn, onNo
     onInstall: () => void;
     onRemove: () => void;
   };
-  onAction: (action: "launch" | "folder" | "harnesses" | "backup" | "bugreport" | "collaboration" | "checkpointing" | "aimodels" | "appearance" | "agentsetup" | "featureflags") => void;
+  onAction: (action: "launch" | "folder" | "team" | "harnesses" | "backup" | "bugreport" | "collaboration" | "checkpointing" | "aimodels" | "appearance" | "agentsetup" | "featureflags") => void;
 }) {
   const [open, setOpen] = useState<Menu | null>(null);
   const root = useRef<HTMLDivElement>(null);
@@ -61,7 +61,7 @@ export function HeaderMenus({ theme, onTheme, density, onDensity, notifyOn, onNo
     };
   }, [open]);
 
-  const action = (value: "launch" | "folder" | "harnesses" | "backup" | "bugreport" | "collaboration" | "checkpointing" | "aimodels" | "appearance" | "agentsetup" | "featureflags") => {
+  const action = (value: "launch" | "folder" | "team" | "harnesses" | "backup" | "bugreport" | "collaboration" | "checkpointing" | "aimodels" | "appearance" | "agentsetup" | "featureflags") => {
     setOpen(null);
     onAction(value);
   };
@@ -121,6 +121,7 @@ export function HeaderMenus({ theme, onTheme, density, onDensity, notifyOn, onNo
       }}>
         <button className="rd-header-menu-item" onClick={() => action("launch")}>New session</button>
         <button className="rd-header-menu-item" onClick={() => action("folder")}>New workspace</button>
+        {has("skill_kits") && <button className="rd-header-menu-item" title="A workspace with a procedure, from a MetaHarness's team template" onClick={() => action("team")}>New team</button>}
       </section>}
     </div>
   </div>;

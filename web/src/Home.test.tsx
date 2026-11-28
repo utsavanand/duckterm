@@ -6,7 +6,7 @@ import { homeDefaults } from "./homeGrid";
 import { TowerAgent } from "./tower";
 import { edition, CODE, FULL } from "./test/editions";
 import { WidgetInstance } from "./Widgets";
-vi.mock("./api", () => ({ authHeaders: () => ({}), api: { controlTower: vi.fn(), folderPrs: vi.fn(), oracleChat: vi.fn(), fleetAsk: vi.fn(), messageSession: vi.fn(), clearOracleChat: vi.fn(), relay: vi.fn(), relayAnswer: vi.fn(), reviewDiff: vi.fn(), approvalState: vi.fn(), approvalKey: vi.fn() } }));
+vi.mock("./api", () => ({ authHeaders: () => ({}), api: { controlTower: vi.fn(), folderPrs: vi.fn(), oracleChat: vi.fn(), fleetAsk: vi.fn(), messageSession: vi.fn(), clearOracleChat: vi.fn(), relay: vi.fn(), relayAnswer: vi.fn(), reviewDiff: vi.fn(), approvalState: vi.fn(), approvalKey: vi.fn(), homePulse: vi.fn() } }));
 
 const NOW = 10_000_000_000;
 const insights: TowerInsights = { tokens: { days: 7, by_agent: {} }, mail: { sent: 0, answered: 0, nudges: 0 }, backup: { destination: null, status: null, finished_at: null }, remote: { available: false, count: 0 } };
@@ -31,6 +31,7 @@ beforeEach(() => {
   vi.mocked(api.relay).mockResolvedValue({ notes: [], rules: [], open: 0 });
   vi.mocked(api.oracleChat).mockResolvedValue({ messages: [] });
   vi.mocked(api.folderPrs).mockResolvedValue({ rows: [], repos: [] });
+  vi.mocked(api.homePulse).mockResolvedValue({ events: [] });
 });
 afterEach(() => { cleanup(); vi.resetAllMocks(); vi.unstubAllGlobals(); });
 
@@ -74,15 +75,78 @@ it("leaves out the chat and pull requests when the edition lacks Oracle and PR r
   expect(screen.getByRole("article", { name: "Teams" })).toBeVisible();
 });
 
-it("lists open pull requests once across top-level folders, needs-you first", async () => {
+it("lists open pull requests once across top-level folders, grouped as Needs attention and Open", async () => {
+  // Merged and closed PRs are left out: merges show in Pulse.
   vi.mocked(api.folderPrs).mockImplementation(async folder => ({ repos: [], rows: folder === "Duckterm"
-    ? [pr(1), pr(2, { needs_you: true, label: "Needs your approval" }), pr(3, { status: "merged", pr: { number: 3, title: "PR 3", url: "", state: "merged" } as PrRow["pr"] })]
-    : [pr(1), pr(4)] }));
+    ? [pr(1), pr(2, { status: "conflict", label: "Conflict with base" }), pr(3, { status: "merged", pr: { number: 3, title: "PR 3", url: "", state: "merged" } as PrRow["pr"] }),
+      pr(7, { status: "closed", pr: { number: 7, title: "PR 7", url: "", state: "closed" } as PrRow["pr"] })]
+    : [pr(1), pr(4, { unpushed_commits: 2 })] }));
   await show();
   expect(vi.mocked(api.folderPrs).mock.calls.map(call => call[0])).toEqual(["Duckterm", "Nourish"]);
-  const rows = within(screen.getByRole("article", { name: "Pull requests" })).getAllByRole("listitem");
-  expect(rows.map(row => row.querySelector(".rd-home-pr-title")?.textContent)).toEqual(["PR 2", "PR 4", "PR 1"]);
-  expect(rows[0]).toHaveTextContent("Needs your approval");
+  const widget = within(screen.getByRole("article", { name: "Pull requests" }));
+  const titles = (group: string) => within(widget.getByRole("region", { name: group })).getAllByRole("listitem").map(row => row.querySelector(".rd-home-pr-title")?.textContent);
+  expect(widget.getAllByRole("region").map(r => r.querySelector("h3")?.textContent)).toEqual(["Needs attention 2", "Open 1"]);
+  expect(titles("Needs attention")).toEqual(["PR 4", "PR 2"]);
+  expect(within(widget.getByRole("region", { name: "Needs attention" })).getAllByRole("listitem")[0]).toHaveTextContent("#4 · 2 commits not pushed");
+  expect(titles("Open")).toEqual(["PR 1"]);
+});
+
+it("leaves out pull request groups with nothing in them", async () => {
+  vi.mocked(api.folderPrs).mockResolvedValue({ repos: [], rows: [pr(1)] });
+  await show();
+  expect(within(screen.getByRole("article", { name: "Pull requests" })).getAllByRole("region").map(r => r.querySelector("h3")?.textContent)).toEqual(["Open 1"]);
+});
+
+it("sums up the fleet in the header, with the need-you count in amber only when someone waits", async () => {
+  await show();
+  const line = screen.getByText(/sessions in/);
+  expect(line).toHaveTextContent("3 sessions in 2 folders · 1 need you · 1 working");
+  expect(within(line).getByText("1 need you")).toHaveClass("wait");
+  cleanup();
+  await show(undefined, { agents: [agent({ key: "solo" })] });
+  const solo = screen.getByText(/session in/);
+  expect(solo).toHaveTextContent("1 session in 1 folder · 0 need you · 0 working");
+  expect(within(solo).getByText("0 need you")).not.toHaveClass("wait");
+});
+
+it("focuses Ask DuckTerm on /, but not while the owner types elsewhere", async () => {
+  await show();
+  const box = screen.getByRole("textbox", { name: "Ask DuckTerm" });
+  const other = document.body.appendChild(document.createElement("textarea"));
+  other.focus();
+  fireEvent.keyDown(other, { key: "/" });
+  expect(other).toHaveFocus();
+  other.remove();
+  fireEvent.keyDown(document.body, { key: "/" });
+  expect(box).toHaveFocus();
+});
+
+it("shows the Pulse feed without needs-you items, and a session's name opens its terminal", async () => {
+  vi.mocked(api.homePulse).mockResolvedValue({ events: [
+    { kind: "release", at: NOW - 60_000, title: "v0.4.222", repo: "duckterm", detail: "10 merged PRs" },
+    { kind: "needs", at: NOW - 90_000, title: "Merge #520?", name: "oracle-dev", session_key: "k-oracle" },
+    { kind: "pr", at: NOW - 120_000, title: "#505 Home in Mono lab", name: "home-dev", session_key: "k-home", repo: "duckterm" },
+    { kind: "artifact", at: NOW - 3_600_000, title: "Pulse preview", name: "home-dev", session_key: "k-home", count: 3 },
+  ] });
+  const onOpenTerminal = vi.fn();
+  await show(undefined, { onOpenTerminal });
+  const pulse = within(screen.getByRole("article", { name: "Pulse · 7 days" }));
+  expect(pulse.getAllByRole("listitem").map(row => row.textContent)).toEqual([
+    "Releaseduckterm v0.4.22210 merged PRs1 min",
+    "Merged#505 Home in Mono labhome-dev · duckterm2 min",
+    "Made3 artifactshome-dev1 h",
+  ]);
+  fireEvent.click(pulse.getAllByRole("button", { name: "home-dev" })[0]);
+  expect(onOpenTerminal).toHaveBeenCalledWith("k-home");
+});
+
+it("says when the Pulse has nothing for the week, and when it could not load", async () => {
+  await show();
+  expect(within(screen.getByRole("article", { name: "Pulse · 7 days" })).getByText("Nothing merged, released or made in the last 7 days.")).toBeVisible();
+  cleanup();
+  vi.mocked(api.homePulse).mockRejectedValue(new Error("feature not enabled"));
+  await show();
+  expect(within(screen.getByRole("article", { name: "Pulse · 7 days" })).getByText("feature not enabled")).toBeVisible();
 });
 
 it("says why there are no pull requests when GitHub is not connected", async () => {
@@ -96,11 +160,11 @@ it("moves a widget with the keyboard, pushes its neighbour down, and saves posit
   fireEvent.click(screen.getByRole("button", { name: "Edit layout" }));
   await act(async () => { fireEvent.keyDown(screen.getByRole("button", { name: "Move Teams" }), { key: "ArrowDown" }); });
   const box = (type: string) => puts.at(-1)!.find(item => item.type === type)!.params;
-  expect(box("teams")).toEqual({ x: 0, y: 1, w: 3, h: 2 });
-  expect(box("autopilot")).toEqual({ x: 0, y: 3, w: 3, h: 2 });
+  expect(box("teams")).toEqual({ x: 0, y: 1, w: 3, h: 1 });
+  expect(box("autopilot")).toEqual({ x: 0, y: 2, w: 3, h: 1 });
   expect(puts.at(-1)!.map(item => item.position)).toEqual(puts.at(-1)!.map((_, i) => i));
   await act(async () => { fireEvent.keyDown(screen.getByRole("button", { name: "Move Teams" }), { key: "ArrowRight", shiftKey: true }); });
-  expect(box("teams")).toEqual({ x: 0, y: 1, w: 4, h: 2 });
+  expect(box("teams")).toEqual({ x: 0, y: 1, w: 4, h: 1 });
 });
 
 it("removes and adds widgets, and the layout request carries the latest revision", async () => {
@@ -159,6 +223,14 @@ it("sends nothing to an @ name that is no session, and treats @ as text without 
   expect(api.messageSession).not.toHaveBeenCalled();
 });
 
+it("leaves ended sessions out of the @ list, since they would never answer", async () => {
+  const ended = ["terminated", "stopped", "interrupted", "archived", "merged"].map(state => agent({ key: `old-${state}`, label: `dev ${state}`, shownState: state as TowerAgent["shownState"] }));
+  await show([...FULL, "home", "oracle_messages"], { agents: [agent({ key: "live", label: "dev live" }), ...ended] });
+  const chat = within(screen.getByRole("article", { name: "Ask DuckTerm" }));
+  fireEvent.change(chat.getByRole("textbox", { name: "Ask DuckTerm" }), { target: { value: "@dev" } });
+  expect(within(chat.getByRole("listbox", { name: "Ask a session" })).getAllByRole("option").map(o => o.textContent)).toEqual(["dev live Duckterm · idle"]);
+});
+
 it("answers in the Home chat from the shared fleet conversation, without the agents' notes", async () => {
   vi.mocked(api.relay).mockResolvedValue({ notes: [{ id: "n1", session_key: "qa", name: "qa", folder: "Nourish/app", runtime: "claude-code", kind: "question", status: "open", created_at: NOW - 3_600_000, question: "Deploy now?" }], rules: [], open: 1 });
   vi.mocked(api.fleetAsk).mockResolvedValue({ exchange: { q: "Who is stuck?", a: "Nobody is stuck.", at: 1 } } as never);
@@ -184,6 +256,25 @@ it("totals seven days of tokens and splits them by agent", async () => {
   expect(usage).toHaveTextContent("Claude Code 3k");
   expect(usage).toHaveTextContent("Codex 1k");
   expect(usage).toHaveTextContent("Today 3k");
+});
+
+it("loads the week of tokens once for Spend and Usage, so one can't fail while the other loads", async () => {
+  saved = { instances: [...homeDefaults(), { id: "usage", type: "usage", slot: "home", position: 6, params: { x: 0, y: 8, w: 3, h: 3 } as never }], revision: "default" };
+  let calls = 0;
+  const layoutFetch = vi.mocked(fetch).getMockImplementation()!;
+  vi.mocked(fetch).mockImplementation(async (path, init) => {
+    // Only the first request succeeds, as when the owner's Usage showed "Load failed".
+    if (String(path).startsWith("/analytics/tokens")) return ++calls === 1 ? new Response(JSON.stringify(tokens)) : Promise.reject(new TypeError("Load failed"));
+    return layoutFetch(path, init);
+  });
+  // Past the minute an earlier test's week of tokens is kept for.
+  const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 3_600_000);
+  try {
+    await show();
+    expect(calls).toBe(1);
+    expect(screen.getByRole("button", { name: "Open token analytics" })).toHaveTextContent("4ktokens");
+    expect(within(screen.getByRole("article", { name: "Spend" })).getByText("today")).toBeVisible();
+  } finally { clock.mockRestore(); }
 });
 
 it("turns a session named in an answer into a chip that opens it", async () => {

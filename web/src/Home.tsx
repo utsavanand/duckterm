@@ -1,7 +1,7 @@
 import { createContext, PointerEvent as ReactPointerEvent, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnalyticsTab, fillDays, groupTokens, loadAnalytics, sumValues, TokenAnalytics, windowStart } from "./analyticsData";
-import { api, DiffFile, PrRow, RelayNote, ReviewDiff } from "./api";
+import { api, DiffFile, PrRow, PulseEvent, RelayNote, ReviewDiff } from "./api";
 import { AutopilotSummary } from "./autopilotApi";
 import { useEdition } from "./edition";
 import { adjust, appended, Box, boxOf, COLUMNS, homeDefaults, inReadingOrder, MIN_ROW, ROWS } from "./homeGrid";
@@ -13,6 +13,7 @@ import { ApproveDialog } from "./review/ApproveDialog";
 import { ReviewWorkspace } from "./review/ReviewWorkspace";
 import { useRelay } from "./relay";
 import { ago, compact, TowerAgent, teams } from "./tower";
+import { SessionState } from "./types";
 import { Layout, requestLayout, WidgetContent, WidgetInstance, WidgetType } from "./Widgets";
 import { WidgetStreams } from "./widgetStreams";
 import "./oracleWidgets.css";
@@ -31,6 +32,7 @@ const CATALOG: Record<string, { group: string; description: string }> = {
   prs: { group: "Pulse", description: "Open pull requests with a risk level, GitHub and DuckTerm review links, and Merge for safe ones." },
   spend: { group: "Pulse", description: "Today, the last 7 days, and the split between Teams and Autopilot." },
   "needs-you": { group: "Pulse", description: "Approvals and questions waiting on you." },
+  pulse: { group: "Pulse", description: "What your teams merged, released and made in the last 7 days." },
   usage: { group: "Pulse", description: "Tokens over the last 7 days, by harness." },
   agents: { group: "Teams", description: "Every session by state, across teams." },
   mail: { group: "Teams", description: "Messages agents sent each other in the last day." },
@@ -86,6 +88,7 @@ function homeWidgets({ oracle, remote, prs, onAnalytics }: { oracle: boolean; re
     ...(oracle ? [
       { type: "chat", title: "Ask DuckTerm", slots: ["home" as const], streams: [], render: ChatWidget },
       { type: "needs-you", title: "Needs you", slots: ["home" as const], streams: [], render: NeedsYouList },
+      { type: "pulse", title: "Pulse · 7 days", slots: ["home" as const], streams: [], render: PulseWidget },
     ] : []),
     ...(prs ? [{ type: "prs", title: "Pull requests", slots: ["home" as const], streams: [], render: PrsWidget }] : []),
     { type: "spend", title: "Spend", slots: ["home"], streams: [], render: SpendWidget },
@@ -108,6 +111,17 @@ function TeamsTile({ agents }: { agents: TowerAgent[] }) {
       <span className="rd-home-chip">{count("idle")} idle</span>
     </span>
   </button>;
+}
+
+// The fleet in one line, counted like the Teams tile.
+function Summary() {
+  const { agents } = useContext(HomeActions);
+  const folders = teams(agents).filter(team => team.name !== "No folder").length;
+  const waiting = agents.filter(a => a.shownState === "waiting").length, busy = agents.filter(a => a.shownState === "busy").length;
+  return <p className="rd-home-summary">
+    {agents.length} {agents.length === 1 ? "session" : "sessions"} in {folders} {folders === 1 ? "folder" : "folders"}
+    {" · "}<span className={waiting ? "wait" : undefined}>{waiting} need you</span>{" · "}{busy} working
+  </p>;
 }
 
 function AutopilotTile() {
@@ -133,9 +147,14 @@ function AutopilotTile() {
   </button>;
 }
 
+const LIVE = new Set<SessionState>(["idle", "busy", "waiting", "unknown"]);
+
 function ChatWidget() {
   const { agents, onOpenTerminal } = useContext(HomeActions);
-  const sessions = useMemo(() => agents.map(a => ({ key: a.key, name: a.label, folder: a.group, state: a.shownState })), [agents]);
+  // Only sessions that can still answer: a message to an ended session would
+  // wait under the question forever.
+  const sessions = useMemo(() => agents.filter(a => LIVE.has(a.shownState))
+    .map(a => ({ key: a.key, name: a.label, folder: a.group, state: a.shownState })), [agents]);
   return <HomeChat sessions={sessions} onOpenTerminal={onOpenTerminal} />;
 }
 
@@ -216,13 +235,28 @@ function NeedDialog({ note, rules, onChange, onClose, onOpenTerminal }: {
 const AGENT_NAMES: Record<string, string> = { "claude-code": "Claude Code", codex: "Codex" };
 const AGENT_COLORS = ["var(--brand-green)", "var(--busy)", "var(--wait)"];
 
+// Spend and Usage read the same slow week of tokens. They share one request,
+// so they can't disagree (one loaded, the other "Load failed"). Usage mounts
+// only after the saved layout loads, so a result is kept for a minute; a
+// failure is not kept, so the next mount tries again.
+const WEEK_KEPT_MS = 60_000;
+let week: { load: Promise<TokenAnalytics>; at: number } | null = null;
+function loadWeekOfTokens() {
+  if (!week || Date.now() - week.at > WEEK_KEPT_MS) {
+    const load = loadAnalytics<TokenAnalytics>("tokens", new URLSearchParams({ days: "7" }), new AbortController().signal);
+    const entry = { load, at: Date.now() };
+    load.catch(() => { if (week === entry) week = null; });
+    week = entry;
+  }
+  return week.load;
+}
+
 function useWeekOfTokens() {
   const [data, setData] = useState<TokenAnalytics | null>(null), [error, setError] = useState("");
   useEffect(() => {
-    const controller = new AbortController();
-    loadAnalytics<TokenAnalytics>("tokens", new URLSearchParams({ days: "7" }), controller.signal)
-      .then(setData, (e: Error) => { if (!controller.signal.aborted) setError(e.message); });
-    return () => controller.abort();
+    let stale = false;
+    loadWeekOfTokens().then(d => { if (!stale) setData(d); }, (e: Error) => { if (!stale) setError(e.message); });
+    return () => { stale = true; };
   }, []);
   return { data, error };
 }
@@ -332,7 +366,21 @@ export function prRisk(row: PrRow, counts: Counts | undefined): Risk | null {
 }
 const RISK_LABEL = { safe: "Safe", medium: "Medium", high: "High" };
 
-// Open and waiting PRs across every top-level folder, needs-you first.
+// Needs attention is what the author must fix before anyone reviews: the
+// server's needs_you is true for every open PR, so it can't tell these apart.
+const BLOCKED = ["conflict", "ci_failing", "changes_requested"];
+// Commits the PR doesn't have yet, said only when nothing worse is wrong.
+const unpushed = (r: PrRow) => !BLOCKED.includes(r.status) && r.unpushed_commits > 0
+  ? `${r.unpushed_commits} ${r.unpushed_commits === 1 ? "commit" : "commits"} not pushed` : null;
+
+export function prGroups(rows: PrRow[]): [string, PrRow[]][] {
+  const attention = (r: PrRow) => BLOCKED.includes(r.status) || r.unpushed_commits > 0;
+  const open = rows.filter(r => r.pr?.state === "open");
+  const groups: [string, PrRow[]][] = [["Needs attention", open.filter(attention)], ["Open", open.filter(r => !attention(r))]];
+  return groups.filter(([, list]) => list.length > 0);
+}
+
+// Pull requests across every top-level folder, in prGroups' groups.
 function PrsWidget() {
   const { agents, onReview } = useContext(HomeActions);
   const folders = useMemo(() => [...new Set(agents.map(a => a.group?.split("/")[0]).filter((f): f is string => !!f))].sort(), [agents]);
@@ -357,8 +405,7 @@ function PrsWidget() {
       setNotice(problems[0] ?? "");
       const failed = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
       setError(failed && !merged.length ? (failed.reason as Error).message : "");
-      const open = merged.filter(r => r.needs_you || r.pr?.state === "open")
-        .sort((a, b) => Number(b.needs_you) - Number(a.needs_you) || (b.updated_at ?? 0) - (a.updated_at ?? 0));
+      const open = merged.filter(r => r.pr?.state === "open").sort((a, b) => (b.updated_at ?? 0) - (a.updated_at ?? 0));
       setRows(open);
       // One diff at a time: each runs git on the owner's machine.
       for (const row of open) {
@@ -378,9 +425,12 @@ function PrsWidget() {
   if (error) return <div className="rd-widget-unavailable"><strong>Unavailable</strong><p>{error}</p></div>;
   if (!folders.length) return <p className="rd-home-empty">No sessions in folders yet.</p>;
   if (!rows) return <div className="rd-widget-unavailable" role="status">Loading…</div>;
-  if (!rows.length) return <p className="rd-home-empty">{notice || "No open pull requests."}</p>;
+  const groups = prGroups(rows);
+  if (!groups.length) return <p className="rd-home-empty">{notice || "No open pull requests."}</p>;
   return <>
-    <ul className="rd-home-rows rd-home-prs">{rows.map(row => {
+    {groups.map(([name, list]) => <section key={name} className="rd-home-pr-group" aria-label={name}>
+    <h3>{name} <span>{list.length}</span></h3>
+    <ul className="rd-home-rows rd-home-prs">{list.map(row => {
       const risk = row.pr ? prRisk(row, riskCache.get(riskKey(row))) : null;
       return <li key={`${row.repo}\n${row.branch}`}>
         <span className="rd-home-pr">
@@ -389,7 +439,7 @@ function PrsWidget() {
               : row.pr && <span className="rd-home-risk" title="Reading the diff">Checking</span>}
             <span className="rd-home-pr-title" title={row.pr?.title ?? row.branch}>{row.pr?.title ?? row.branch}</span>
           </span>
-          <small>{[row.pr && `#${row.pr.number}`, row.needs_you ? row.label : risk?.why ?? row.label, row.repo_name].filter(Boolean).join(" · ")}</small>
+          <small>{[row.pr && `#${row.pr.number}`, unpushed(row) ?? (row.needs_you ? row.label : risk?.why ?? row.label), row.repo_name].filter(Boolean).join(" · ")}</small>
           <span className="rd-home-pr-acts">
             {row.pr && <a href={row.pr.url} target="_blank" rel="noreferrer">GitHub</a>}
             <button className="rd-home-link" onClick={() => onReview(row)}>Review in DuckTerm</button>
@@ -399,12 +449,45 @@ function PrsWidget() {
           </span>
         </span>
       </li>;
-    })}</ul>
+    })}</ul></section>)}
     {/* Merge is the Touch ID approval: it confirms, then hands the PR to the release session. */}
     {approving?.pr && <ApproveDialog repo={approving.repo} target={String(approving.pr.number)} prNumber={approving.pr.number}
       ratedHead={riskCache.get(riskKey(approving))?.head}
       onClose={() => setApproving(null)} onApproved={() => setReload(n => n + 1)} />}
   </>;
+}
+
+const PULSE_POLL_MS = 30_000;
+const PULSE_KIND = { pr: "Merged", release: "Release", artifact: "Made", needs: "" };
+
+// The Fleet monitor's Pulse feed (served to Home as /home/pulse), minus its
+// needs-you items: Home has its own Needs you widget. Merges show here, not
+// in Pull requests.
+function PulseWidget() {
+  const { now, onOpenTerminal } = useContext(HomeActions);
+  const [events, setEvents] = useState<PulseEvent[] | null>(null), [error, setError] = useState("");
+  useEffect(() => {
+    let live = true;
+    const load = () => api.homePulse().then(r => r.events.filter(e => e.kind !== "needs"))
+      .then(shown => { if (live) { setEvents(shown); setError(""); } }, (e: Error) => { if (live) setError(e.message); });
+    void load();
+    const timer = setInterval(load, PULSE_POLL_MS);
+    return () => { live = false; clearInterval(timer); };
+  }, []);
+  if (error && !events) return <div className="rd-widget-unavailable"><strong>Unavailable</strong><p>{error}</p></div>;
+  if (!events) return <div className="rd-widget-unavailable" role="status">Loading…</div>;
+  if (!events.length) return <p className="rd-home-empty">Nothing merged, released or made in the last 7 days.</p>;
+  return <ol className="rd-home-rows rd-home-pulse">{events.map((e, i) => {
+    const who = e.session_key ? <button className="rd-home-row-link" title={`Open ${e.name}'s terminal`} onClick={() => onOpenTerminal(e.session_key!)}>{e.name}</button> : <span>{e.name ?? e.repo}</span>;
+    return <li key={`${e.kind}-${e.at}-${i}`} className={e.kind}>
+      <span className="rd-home-pulse-kind">{PULSE_KIND[e.kind]}</span>
+      <span className="rd-home-pulse-what">
+        <span className="rd-home-pulse-title" title={e.title}>{e.kind === "release" ? `${e.repo} ${e.title}` : e.kind === "artifact" && (e.count ?? 1) > 1 ? `${e.count} artifacts` : e.title}</span>
+        <small>{e.kind === "release" ? e.detail || "Tagged" : <>{who}{e.kind === "pr" && e.repo && e.name ? ` · ${e.repo}` : null}</>}</small>
+      </span>
+      <span className="rd-home-pulse-age">{ago(now - e.at)}</span>
+    </li>;
+  })}</ol>;
 }
 
 // origin is the layout when the drag began, so passing over a widget and back leaves it in place.
@@ -488,8 +571,7 @@ function HomeGrid({ registry, source }: { registry: WidgetType[]; source: Widget
   const missing = registry.filter(type => !layout.instances.some(item => item.type === type.type));
   return <section className="rd-home-wrap" aria-label="Home">
     <header className="rd-home-bar">
-      <h1>Home</h1>
-      <span className="rd-spacer" />
+      <Summary />
       {editing && <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled={loading} onClick={() => commit(defaults)}>Reset layout</button>}
       <button className="rd-btn rd-btn-ghost rd-btn-sm" disabled title="Coming soon: ask DuckTerm to build a view, widget or shortcut">Create <span className="rd-home-soon">Soon</span></button>
       <>
@@ -516,7 +598,7 @@ function HomeGrid({ registry, source }: { registry: WidgetType[]; source: Widget
     <div ref={grid} className={`rd-home-grid${editing ? " editing" : ""}`} onPointerMove={move} onPointerUp={end} onPointerCancel={end}>
       {shown.map(item => {
         const type = registry.find(t => t.type === item.type)!, b = boxOf(item);
-        return <article key={item.id} aria-label={type.title} className={`rd-home-widget rd-home-${item.type}${dragging === item.id ? " dragging" : ""}`}
+        return <article key={item.id} aria-label={type.title} className={`rd-home-widget rd-home-w-${item.type}${dragging === item.id ? " dragging" : ""}`}
           style={{ gridColumn: `${b.x + 1} / span ${b.w}`, gridRow: `${b.y + 1} / span ${b.h}` }}>
           {(editing || !NAV.has(item.type)) && <header onPointerDown={event => start(event, item.id, "move")}>
             {!NAV.has(item.type) && <h3>{type.title}</h3>}

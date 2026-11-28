@@ -22,6 +22,18 @@ export function teams(agents: TowerAgent[]): { name: string; agents: TowerAgent[
     .sort((x, y) => y.agents.length - x.agents.length || x.name.localeCompare(y.name));
 }
 
+// A team's pods: its agents grouped by subfolder, the team's own folder first.
+export function pods(agents: TowerAgent[]): { name: string; agents: TowerAgent[] }[] {
+  const byPod = new Map<string, TowerAgent[]>();
+  for (const a of agents) {
+    const name = (a.group ?? "").split("/").slice(1).join("/");
+    byPod.set(name, [...(byPod.get(name) ?? []), a]);
+  }
+  return [...byPod.entries()]
+    .map(([name, members]) => ({ name, agents: members }))
+    .sort((x, y) => (x.name === "" ? -1 : y.name === "" ? 1 : x.name.localeCompare(y.name)));
+}
+
 export function runningSubagents(a: SessionView): number {
   return (a.subagents ?? []).filter((s) => s.state === "running").length;
 }

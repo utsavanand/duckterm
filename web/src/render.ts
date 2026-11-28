@@ -68,3 +68,22 @@ export const highlighter = hljs;
 export function html(md: string): string {
   return DOMPurify.sanitize(marked.parse(md, { async: false }) as string);
 }
+
+// Text a model wrote about content someone else controls (a PR diff can carry
+// a prompt injection), or that someone else wrote (an issue body). Rendering it
+// must not fetch anything: a remote image, an <input type="image"> or a style
+// url() would carry what the model was told to leak in its URL. An allowlist,
+// because a list of forbidden tags missed <input type="image">.
+const MODEL_TAGS = [
+  "p", "br", "hr", "h1", "h2", "h3", "h4", "h5", "h6", "strong", "em", "b", "i", "del", "s",
+  "code", "pre", "kbd", "sup", "sub", "blockquote", "ul", "ol", "li", "a", "span", "div",
+  "table", "thead", "tbody", "tr", "th", "td",
+];
+const MODEL_ATTRS = ["href", "title", "class", "start", "align", "colspan", "rowspan"];
+
+export function modelHtml(md: string): string {
+  return DOMPurify.sanitize(marked.parse(md, { async: false }) as string, {
+    ALLOWED_TAGS: MODEL_TAGS,
+    ALLOWED_ATTR: MODEL_ATTRS,
+  });
+}

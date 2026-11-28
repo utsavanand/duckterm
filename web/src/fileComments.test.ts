@@ -10,3 +10,11 @@ it("scopes comments by identity and version, never by a coincidentally matching 
   expect(isFileComment(rows[0].quote)).toBe(true);
   expect(isFileComment("Ordinary message quote")).toBe(false);
 });
+
+it("keeps page locations version-scoped and ignores malformed page metadata", () => {
+  const values = [2, true, 0, -1, 1.5, "2", 100001, undefined];
+  const rows = values.map((pdf_page, i) => ({ id: String(i), quote: JSON.stringify({artifact_id:"a",sha256:i ? "old" : "current",selected_text:"",pdf_page}), note:"Diagram", created_at:1 }));
+  const comments = fileComments(rows, {artifactId:"a",sha256:"current"});
+  expect(comments.map(row=>row.page)).toEqual([2,undefined,undefined,undefined,undefined,undefined,undefined,undefined]);
+  expect(comments.map(row=>row.current)).toEqual([true,false,false,false,false,false,false,false]);
+});

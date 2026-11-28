@@ -2,6 +2,7 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { api, KitCatalog, KitDetail, KitEnableResult, KitEntry, KitFix, KitPlanRow, KitProcedure, KitReview, KitWorkspace } from "./api";
 import { DirBrowser } from "./DirBrowser";
 import { Button, useToast } from "./ui";
+import { teamRequest } from "./teams";
 import "./skillKits.css";
 
 // The MetaHarnesses page (Settings › MetaHarnesses): the MetaHarnesses added to DuckTerm,
@@ -228,8 +229,7 @@ export function SkillKitsPage({
   async function createTeam(kit: KitEntry, team: string, name: string) {
     setBusy(true);
     try {
-      const project = kit.installed_in[0]?.project ?? null;
-      const out = await api.kitsCreateTeam({ project, kit_path: kit.path, kit: kit.name, team, name }, sessionKey);
+      const out = await api.kitsCreateTeam(teamRequest(kit, team, name), sessionKey);
       toast(`Team ${out.team.team}: workspace "${out.team.folder}" created with ${Object.keys(out.team.roles).length} roles`, "ok");
       onTeamCreated?.(out.team.folder);
     } catch (e) {
@@ -766,7 +766,6 @@ function MatrixSection({ kind, rows, harnesses, fixes, trustAbove, busy, onFix }
           {fixes.map((f) => <span key={f.component} className="rd-kits-pills"><Pill tone="warn">{f.component.split("/")[2]}: no path scope on {f.harnesses.join(", ")}</Pill><button type="button" className="rd-kits-fix" disabled={busy} onClick={(e) => { e.preventDefault(); onFix(f); }}>{describeFix(f)}</button></span>)}
           {needsTrust.map((h) => <Pill key={h} tone="warn">{h}: needs trust{trustAbove ? " · fix above" : ""}</Pill>)}
           {unfixable.map((u) => <Pill key={u.harness} tone="bad">{u.harness}: {u.count} not supported</Pill>)}
-          {unfixable.some((u) => u.harness === "opencode" && kind === "hook") && <Pill tone="mute">no fix yet · plugin planned</Pill>}
           {fixes.length === 0 && unfixable.length === 0 && needsTrust.length === 0 && (kind === "settings" || kind === "team" || (notApplicable && only && only.length < harnesses.length)
             ? <Pill tone="mute">{kind === "team" ? "offered · New team instantiates it" : `${(only || []).join(", ")} only`}</Pill>
             : <Pill tone="ok">installed everywhere</Pill>)}
