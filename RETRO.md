@@ -1,3 +1,49 @@
+## 2026-11-27 — Autopilot's spec gate stopped every run, or none
+
+The first spec gate (feat/autopilot-gates, never pushed) asked for approval on
+every run. The design (docs/specs/autopilot-issue-flow.md §3) asks only where
+risk calls for it, and never lets the model decide where. The branch sat
+unpushed for three days while main moved 300 commits, so it had to be ported.
+
+The spec step now writes a classification, a kit script (not a model) turns it
+into gate or skip, and the card says which rule asked. Unknown or unreadable
+values gate. A rejected spec goes back with the person's note. The runner's
+"output unchanged" check had to change: it failed a rewritten spec whose
+classification rightly stayed the same, so only all outputs unchanged fails.
+Lesson: a finished branch nobody pushes is not finished; ask the owner to push
+or park it the day it is done.
+
+## 2026-11-27 — Changing an autopilot's labels quietly skipped every issue it matched
+
+The issue watcher treated any change of labels as a fresh start: the next poll
+recorded every open issue that matched and never ran them. Someone adding a
+label to an autopilot so that waiting issues would run got nothing, with no
+sign why. Found while working out why Kaho's reports were never picked up.
+
+Only an autopilot's first poll records what is already there now. An edit that
+changes the labels or the issue repository keeps the issues already started
+and asks, when open issues newly match, "Only new ones" or "Run them"; the
+answer is kept in the watcher's record. Saving also checks that the GitHub
+token can push to the code repository and read the issue repository, so a
+setup that could never run is refused when it is made. Lesson: a reset that
+runs silently on an edit is a decision made for the person; ask them.
+
+## 2026-11-27 — An autopilot assumed issues live next to the code
+
+Kaho's "Report a Bug" button files issues in utsavanand/kaho-reports, a repository
+with no code; the app is utsavanand/kaho. The autopilot had one `repo` field and
+used it for the watch, the clone, the push and the pull request, so a run for a
+report would have cloned an empty repository. Nobody noticed because every
+autopilot until then watched its own code repository.
+
+An autopilot now has an issue repository (defaulting to the code repository) and
+a code repository. The label check runs against the issue repository, the run
+clones and opens its draft PR on the code repository, and the PR names the
+report as `owner/reports#7` so GitHub links and closes it across repositories.
+Changing the issue repository starts the watch over, since issue numbers from the
+old one mean nothing in the new one. Lesson: a field used for four jobs is four
+assumptions; ask which of them a new user breaks before calling it one setting.
+
 ## 2026-11-27 — A run record that only the list reads hides what the run did
 
 Autopilot's runs list read the runner's receipt down to step names and exit

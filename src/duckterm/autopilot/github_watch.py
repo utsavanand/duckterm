@@ -2,8 +2,10 @@
 
 Polled by the server (spec: every 2 minutes; a webhook needs a public
 endpoint). An issue starts a run once. The first poll after a flow is put on
-autopilot, or after its labels change, only records what is already there,
-so turning a flow on never starts runs for old issues.
+autopilot only records what is already there, so turning a flow on never
+starts runs for old issues. Changing the labels or the issue repository keeps
+that record; the person editing chooses whether open issues that now match
+should run (`waiting`, `relabel`).
 
 Only people with write access start runs: with labels, whoever added the
 matching label; without labels, the issue's author. Issues that fail that
@@ -49,8 +51,10 @@ def poll(
     started. The rest wait for a later poll."""
     state = _read(seen_path)
     found = _open_issues(get, repo, labels)
-    if state.get("labels") != labels:
-        _write(seen_path, {"labels": labels, "started": sorted(found)})
+    # No record for this repository: an edit writes one (relabel), so this is
+    # a first poll, or a seen file from before issue repositories existed.
+    if not state or state.get("repo", repo) != repo:
+        _write(seen_path, {"repo": repo, "labels": labels, "started": sorted(found)})
         return []
     started = set(state.get("started") or [])
     ready: list[dict[str, Any]] = []
@@ -63,9 +67,47 @@ def poll(
         if who and _can_write(get, repo, who):
             ready.append(_summary(issue, who))
             started.add(number)
-    if ready:
-        _write(seen_path, {"labels": labels, "started": sorted(started)})
+    if ready or state.get("labels") != labels:
+        _write(seen_path, {**state, "repo": repo, "labels": labels, "started": sorted(started)})
     return ready
+
+
+def waiting(get: Get, repo: str, labels: list[str], seen_path: Path) -> list[int]:
+    """Open issues in repo with any of labels that have not started a run:
+    what watching them would pick up, before the labeller check."""
+    state = _read(seen_path)
+    started = set(state.get("started") or []) if state.get("repo", repo) == repo else set()
+    return sorted(set(_open_issues(get, repo, labels)) - started)
+
+
+def relabel(seen_path: Path, repo: str, labels: list[str], skip: list[int], answer: str) -> None:
+    """Record a change of labels or issue repository. Issues already started
+    stay started; those in skip are marked started too, so only issues
+    labelled from now on run. answer is what the person chose, kept for the
+    record."""
+    state = _read(seen_path)
+    started = set(state.get("started") or []) if state.get("repo", repo) == repo else set()
+    _write(
+        seen_path,
+        {
+            "repo": repo,
+            "labels": labels,
+            "started": sorted(started | set(skip)),
+            "on_change": answer,
+        },
+    )
+
+
+def check_access(get: Get, repo: str, issue_repo: str) -> None:
+    """Raises ValueError unless the token can push to repo and read issues in
+    issue_repo, so a setup that cannot work is refused when it is saved."""
+    code = get(f"/repos/{repo}")
+    if not code:
+        raise ValueError(f"The GitHub token can't reach {repo}")
+    if not (code.get("permissions") or {}).get("push"):
+        raise ValueError(f"The GitHub token can't push to {repo}")
+    if issue_repo != repo and not get(f"/repos/{issue_repo}"):
+        raise ValueError(f"The GitHub token can't reach {issue_repo}")
 
 
 def issue(get: Get, repo: str, number: int) -> dict[str, Any]:

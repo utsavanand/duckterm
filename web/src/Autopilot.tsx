@@ -34,7 +34,7 @@ export function useAutopilotSummary(enabled: boolean): AutopilotSummary | null {
 }
 
 const TRIGGERS: Record<TriggerType, { name: string; glyph: string; hint: string }> = {
-  "github-issue": { name: "GitHub issues", glyph: "GH", hint: "From people with write access to the repository." },
+  "github-issue": { name: "GitHub issues", glyph: "GH", hint: "From people with write access to the issue repository." },
   "github-pr": { name: "GitHub pull requests", glyph: "GH", hint: "Opened or updated. Drafts are skipped." },
   "github-ci": { name: "Failed CI runs", glyph: "GH", hint: "GitHub Actions on the branch you pick." },
   "jira-issue": { name: "Jira issues", glyph: "J", hint: "When an issue reaches the status you pick." },
@@ -44,7 +44,7 @@ const TRIGGERS: Record<TriggerType, { name: string; glyph: string; hint: string 
 
 const STATE_LABEL: Record<AutopilotRun["state"], string> = {
   starting: "Starting", running: "Running", waiting_gate: "Needs you", succeeded: "Done",
-  failed: "Failed", cancelled: "Cancelled", interrupted: "Interrupted",
+  rejected: "Rejected", failed: "Failed", cancelled: "Cancelled", interrupted: "Interrupted",
 };
 
 const flowTitle = (name: string) => name.charAt(0).toUpperCase() + name.slice(1).replace(/-/g, " ");
@@ -77,7 +77,7 @@ export function AutopilotPage() {
   const [error, setError] = useState("");
   const [setup, setSetup] = useState<{ flow: AutopilotFlow; editing: AutopilotEntry | null } | null>(null);
   const [runOnce, setRunOnce] = useState<AutopilotEntry | null>(null);
-  const [openRun, setOpenRun] = useState<string | null>(null);
+  const [openRun, setOpenRun] = useState<OpenRun | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -110,7 +110,7 @@ export function AutopilotPage() {
 
   if (!data) return <div className="ap-page"><div className="ap-col"><h1>Autopilot</h1><p className="ap-muted">{error || "Loading…"}</p></div></div>;
   if (openRun) return <div className="ap-page"><div className="ap-col">
-    <RunDetail id={openRun} back="Autopilot" onBack={() => setOpenRun(null)} />
+    <RunDetail id={openRun.id} tab={openRun.tab} back="Autopilot" onBack={() => setOpenRun(null)} />
   </div></div>;
   const on = data.autopilots.filter(a => a.on).length;
   const paused = data.autopilots.length - on;
@@ -128,6 +128,7 @@ export function AutopilotPage() {
       <span className="ap-pill"><b>{done_today}</b> done today</span>
       <span className={`ap-pill${failed_today ? " ap-pill-bad" : ""}`}><b>{failed_today}</b> failed today</span>
     </div>}
+    <Waiting runs={data.runs} onAnswered={load} onOpen={setOpenRun} />
 
     {data.autopilots.length > 0 && <section className="ap-sec">
       <h2>On autopilot <small>{on} on{paused ? ` · ${paused} paused` : ""}</small></h2>
@@ -160,7 +161,7 @@ export function AutopilotPage() {
       <h2>Runs</h2>
       {data.runs.length === 0
         ? <p className="ap-muted">No runs yet.</p>
-        : <RunTable runs={data.runs} onOpen={setOpenRun} />}
+        : <RunTable runs={data.runs} onOpen={id => setOpenRun({ id })} />}
     </section>}
 
     {setup && <SetupDialog overview={data} flow={setup.flow} editing={setup.editing} onClose={() => setSetup(null)}
@@ -179,7 +180,7 @@ function AutopilotRow({ entry, flowsById, workspace, children }: {
   return <div className="ap-item">
     <div className="ap-item-main">
       <h3>{entry.name} <span className={entry.on ? "ap-on" : "ap-paused"}>{entry.on ? "On" : "Paused"}</span></h3>
-      <div className="ap-meta">{flowTitle(flowsById.get(entry.flow)?.name ?? entry.flow)} · <b>{entry.repo}</b>{where} · {status}</div>
+      <div className="ap-meta">{flowTitle(flowsById.get(entry.flow)?.name ?? entry.flow)} · <b>{entry.repo}</b>{issueRepo(entry) !== entry.repo && <> · issues from <b>{issueRepo(entry)}</b></>}{where} · {status}</div>
       <TriggerChips entry={entry} />
     </div>
     {children && <div className="ap-acts">{children}</div>}
@@ -193,12 +194,118 @@ function RunTable({ runs, onOpen }: { runs: AutopilotRun[]; onOpen: (id: string)
   </table></div>;
 }
 
+type OpenRun = { id: string; tab?: RunTab };
+
+// Runs stopped at a gate, each with why the policy asked and what it asks
+// about. The spec itself is read on the run's Spec tab.
+function Waiting({ runs, onAnswered, onOpen }: {
+  runs: AutopilotRun[]; onAnswered: () => void | Promise<void>; onOpen: (open: OpenRun) => void;
+}) {
+  const waiting = runs.filter(r => r.state === "waiting_gate" && r.gate);
+  if (waiting.length === 0) return null;
+  return <section className="ap-sec">
+    <h2>Needs you <small>{waiting.length}</small></h2>
+    <div className="ap-gates">{waiting.map(run => <GateCard key={run.id} run={run} onAnswered={onAnswered} onOpen={onOpen} />)}</div>
+  </section>;
+}
+
+function GateCard({ run, onAnswered, onOpen }: {
+  run: AutopilotRun; onAnswered: () => void | Promise<void>; onOpen: (open: OpenRun) => void;
+}) {
+  const gate = run.gate!;
+  const spec = gate.step === "spec-gate";
+  return <article className="ap-gate">
+    <div className="ap-gate-kind">{spec ? "Spec approval" : gate.question || gate.step}</div>
+    <h3><button type="button" className="ap-gate-title" onClick={() => onOpen({ id: run.id })}>
+      {run.item.number ? <span className="ap-num">#{run.item.number}</span> : null} {run.item.title ?? run.id}
+    </button></h3>
+    <RiskChips c={run.classification} />
+    <Why gate={gate} />
+    <GateActions run={run} onAnswered={onAnswered} onRead={spec ? () => onOpen({ id: run.id, tab: "spec" }) : undefined} />
+  </article>;
+}
+
+function Why({ gate }: { gate: NonNullable<AutopilotRun["gate"]> }) {
+  return <p className="ap-why">
+    {gate.why ? <>Required because: <b>{gate.why}</b>. </> : null}
+    {gate.step === "spec-gate" ? "No code written yet; the sandbox is stopped." : null}
+  </p>;
+}
+
+// The answers a waiting gate takes. A spec sent back carries a note.
+function GateActions({ run, onAnswered, onRead }: {
+  run: AutopilotRun; onAnswered: () => void | Promise<void>; onRead?: () => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const [rejecting, setRejecting] = useState(false);
+  const gate = run.gate!;
+  async function answer(choice: string, note?: string) {
+    setBusy(true);
+    setError("");
+    try {
+      await autopilotApi.answer(run.id, gate.step, choice, note);
+      setRejecting(false);
+      await onAnswered();
+    } catch (e) {
+      setError((e as Error).message);
+      setBusy(false);
+    }
+  }
+  const minutes = gate.asked_at ? Math.max(0, Math.round((Date.now() - gate.asked_at) / 60000)) : null;
+  return <>
+    {error && <p className="ap-error-text">{error}</p>}
+    <div className="ap-gate-foot">
+      {onRead && <Button size="sm" variant="ghost" onClick={onRead}>Read spec</Button>}
+      {gate.choices.includes("revise")
+        ? <Button size="sm" variant="ghost" disabled={busy} onClick={() => setRejecting(true)}>Reject with note</Button>
+        : gate.choices.includes("reject") && <Button size="sm" variant="ghost" disabled={busy} onClick={() => void answer("reject")}>Reject</Button>}
+      {gate.choices.includes("approve") && <Button size="sm" disabled={busy} onClick={() => void answer("approve")}>Approve</Button>}
+      {minutes != null && <span className="ap-age">waiting {minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h`}</span>}
+    </div>
+    {rejecting && <RejectDialog busy={busy} error={error} canEnd={gate.choices.includes("reject")} onClose={() => setRejecting(false)}
+      onRevise={note => void answer("revise", note)} onEnd={() => void answer("reject")} />}
+  </>;
+}
+
+function RejectDialog({ busy, error, canEnd, onClose, onRevise, onEnd }: {
+  busy: boolean; error: string; canEnd: boolean; onClose: () => void; onRevise: (note: string) => void; onEnd: () => void;
+}) {
+  const [note, setNote] = useState("");
+  return <Modal title="Reject the spec" onClose={onClose}>
+    <p className="ap-muted ap-lead">The spec step runs again with your note, at most 2 more times.</p>
+    <label className="ap-field"><span>Note for the spec step</span>
+      <textarea style={{ ...inputStyle, fontFamily: "inherit", minHeight: 96, resize: "vertical" }} value={note} onChange={e => setNote(e.target.value)}
+        placeholder="What the spec should change" /></label>
+    {error && <p className="ap-error-text">{error}</p>}
+    <div className="ap-foot">
+      {canEnd && <span className="ap-foot-left"><Button variant="danger" size="sm" disabled={busy} onClick={onEnd}>End the run instead</Button></span>}
+      <Button variant="ghost" onClick={onClose}>Cancel</Button>
+      <Button disabled={busy || !note.trim()} onClick={() => onRevise(note.trim())}>Send back</Button>
+    </div>
+  </Modal>;
+}
+
+// The classification as chips: what the fix touches, with risk in colour.
+function RiskChips({ c }: { c?: AutopilotRun["classification"] }) {
+  if (!c) return null;
+  const chips: [string, string][] = (c.surfaces ?? []).map(s => [s, ""]);
+  if (c.user_visible) chips.push(["user visible", ""]);
+  if (c.security?.level && c.security.level !== "none") chips.push(["security", "ap-risk-sec"]);
+  if (c.ai && c.ai !== "deterministic") chips.push(["AI behaviour", "ap-risk-ai"]);
+  if (c.data && c.data !== "none") chips.push([`data: ${c.data}`, "ap-risk-amber"]);
+  if (c.regression?.level && c.regression.level !== "none") chips.push([`regression: ${c.regression.level}`, "ap-risk-amber"]);
+  if (chips.length === (c.surfaces ?? []).length) chips.push(["routine", ""]);
+  return <div className="ap-chips">{chips.map(([label, cls]) => <span key={label} className={`ap-chip ${cls}`}>{label}</span>)}</div>;
+}
+
 function RunRow({ run, onOpen }: { run: AutopilotRun; onOpen: () => void }) {
   const live = run.state === "running" || run.state === "starting";
   const step = live ? run.current ?? "starting" : "—";
   return <tr className="ap-row" onClick={onOpen} tabIndex={0}
     onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(); } }}>
-    <td>{run.item.number ? <span className="ap-num">#{run.item.number}</span> : null} {run.item.title ?? run.id}</td>
+    <td>{run.item.number ? <span className="ap-num">#{run.item.number}</span> : null} {run.item.title ?? run.id}
+      <RiskChips c={run.classification} /></td>
     <td className="ap-muted">{run.autopilot_name}{run.workspace ? <span className="ap-small"> · {run.workspace}</span> : null}</td>
     <td>{step}</td>
     <td><RunState run={run} /></td>
@@ -232,10 +339,11 @@ type RunTab = "steps" | "spec" | "changes" | "issue";
 
 // A run opened from the runs list: what each step did, the spec it wrote,
 // the change on its branch and the issue it started from.
-function RunDetail({ id, back, onBack }: { id: string; back: string; onBack: () => void }) {
+function RunDetail({ id, tab: firstTab, back, onBack }: { id: string; tab?: RunTab; back: string; onBack: () => void }) {
   const [run, setRun] = useState<AutopilotRunDetail | null>(null);
   const [error, setError] = useState("");
-  const [tab, setTab] = useState<RunTab>("steps");
+  const [tab, setTab] = useState<RunTab>(firstTab ?? "steps");
+  const [reload, setReload] = useState(0);
   const [picked, setPicked] = useState<number | null>(null);
 
   useEffect(() => {
@@ -254,7 +362,7 @@ function RunDetail({ id, back, onBack }: { id: string; back: string; onBack: () 
     };
     void tick();
     return () => { stopped = true; clearTimeout(timer); };
-  }, [id]);
+  }, [id, reload]);
 
   const crumb = <button type="button" className="ap-link ap-back" onClick={onBack}>← {back}</button>;
   if (!run) return <div className="ap-run">{crumb}<p className={error ? "ap-error" : "ap-muted"}>{error || "Loading…"}</p></div>;
@@ -278,12 +386,19 @@ function RunDetail({ id, back, onBack }: { id: string; back: string; onBack: () 
         {run.item.url && <><a href={run.item.url} target="_blank" rel="noreferrer">Issue{run.item.number ? ` #${run.item.number}` : ""}</a> · </>}
         Branch <code>{run.branch}</code> {run.pushed ? "on GitHub" : "on this Mac"}
       </div>
+      <RiskChips c={run.classification} />
     </header>
 
     {run.error && <p className="ap-error" role="alert">{run.error}</p>}
     {run.pr_error && <p className="ap-error">Could not open the pull request: {run.pr_error}</p>}
     {run.pr_skipped && <p className="ap-warn">No pull request: {run.pr_skipped}.</p>}
-    {waiting.map(g => <p key={`${g.step}-${g.asked_at}`} className="ap-warn">Waiting for you at {g.step}{g.question ? `: ${g.question}` : ""}</p>)}
+    {run.gate && <section className="ap-gate">
+      <div className="ap-gate-kind">{run.gate.step === "spec-gate" ? "Spec approval" : "Waiting for you"}</div>
+      <h3>{run.gate.question || run.gate.step}</h3>
+      <Why gate={run.gate} />
+      <GateActions run={run} onAnswered={() => setReload(n => n + 1)}
+        onRead={run.gate.step === "spec-gate" && tab !== "spec" ? () => setTab("spec") : undefined} />
+    </section>}
 
     <dl className="ap-facts">
       <div><dt>Duration</dt><dd>{duration((ended - run.started_at) / 1000)}</dd></div>
@@ -394,7 +509,7 @@ function RunOnceDialog({ entry, onClose, onStarted }: { entry: AutopilotEntry; o
     }
   }
   return <Modal title={`Run ${entry.name} once`} onClose={onClose}>
-    <label className="ap-field"><span>Issue number in {entry.repo}</span>
+    <label className="ap-field"><span>Issue number in {issueRepo(entry)}</span>
       <input style={inputStyle} value={issue} onChange={e => setIssue(e.target.value)} placeholder="#42" autoFocus
         onKeyDown={e => { if (e.key === "Enter" && issue.trim()) void start(); }} /></label>
     {error && <p className="ap-error-text">{error}</p>}
@@ -405,10 +520,24 @@ function RunOnceDialog({ entry, onClose, onStarted }: { entry: AutopilotEntry; o
   </Modal>;
 }
 
+const issueRepo = (entry: AutopilotEntry) => entry.issue_repo || entry.repo;
+
+// Another autopilot that would pick up the same issue: same issue repository
+// and a shared label (no labels means every issue).
+function labelClash(others: AutopilotEntry[], self: string | undefined, repo: string, labels: string[]) {
+  for (const other of others) {
+    const theirs = other.triggers["github-issue"]?.labels;
+    if (other.id === self || !theirs || issueRepo(other) !== repo) continue;
+    const shared = !labels.length || !theirs.length ? labels[0] ?? theirs[0] ?? "every issue" : labels.find(l => theirs.includes(l));
+    if (shared) return { name: other.name, repo, label: shared };
+  }
+  return null;
+}
+
 const emptyDraft = (flow: AutopilotFlow, overview: AutopilotOverview): AutopilotDraft => {
   const first = flow.triggers.find(k => overview.triggers[k]?.available);
   return {
-    flow: flow.id, name: "", workspace: "", repo: "",
+    flow: flow.id, name: "", workspace: "", repo: "", issue_repo: "",
     triggers: first ? { [first]: { labels: first === "github-issue" ? ["autopilot"] : [] } } : {},
     approvals: { spec_on_visible: false, keep_merge_approval: false }, budget_m: 5, max_runs: 2,
   };
@@ -419,7 +548,8 @@ function SetupDialog({ overview, flow, editing, onClose, onSaved }: {
 }) {
   const [step, setStep] = useState<"triggers" | "confirm">("triggers");
   const [draft, setDraft] = useState<AutopilotDraft>(editing ? {
-    flow: editing.flow, name: editing.name, workspace: editing.workspace ?? "", repo: editing.repo, triggers: editing.triggers,
+    flow: editing.flow, name: editing.name, workspace: editing.workspace ?? "", repo: editing.repo,
+    issue_repo: issueRepo(editing) === editing.repo ? "" : issueRepo(editing), triggers: editing.triggers,
     approvals: editing.approvals, budget_m: editing.budget_m, max_runs: editing.max_runs,
   } : emptyDraft(flow, overview));
   const [repos, setRepos] = useState<string[] | null>(null);
@@ -427,6 +557,9 @@ function SetupDialog({ overview, flow, editing, onClose, onSaved }: {
   const [labelsText, setLabelsText] = useState((editing?.triggers["github-issue"]?.labels ?? ["autopilot"]).join(", "));
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  // Open issues that the edited labels or issue repository newly match.
+  const [backlog, setBacklog] = useState<number[]>([]);
+  const [runBacklog, setRunBacklog] = useState(false);
 
   useEffect(() => {
     let stopped = false;
@@ -441,6 +574,7 @@ function SetupDialog({ overview, flow, editing, onClose, onSaved }: {
 
   const anyOn = Object.keys(draft.triggers).length > 0;
   const labels = () => labelsText.split(",").map(s => s.trim()).filter(Boolean);
+  const clash = draft.triggers["github-issue"] ? labelClash(overview.autopilots, editing?.id, draft.issue_repo || draft.repo, labels()) : null;
   const finished = (): AutopilotDraft => {
     const triggers = { ...draft.triggers };
     if (triggers["github-issue"]) triggers["github-issue"] = { labels: labels() };
@@ -454,11 +588,32 @@ function SetupDialog({ overview, flow, editing, onClose, onSaved }: {
     setDraft({ ...draft, triggers });
   }
 
+  async function next() {
+    const watched = finished().triggers["github-issue"];
+    const before = editing?.triggers["github-issue"];
+    const moved = editing && watched && (!before || issueRepo(editing) !== (draft.issue_repo || draft.repo)
+      || before.labels.join("\n") !== watched.labels.join("\n"));
+    setError("");
+    if (moved) {
+      setBusy(true);
+      try {
+        setBacklog((await autopilotApi.backlog(editing.id, finished())).issues);
+      } catch (e) {
+        setError((e as Error).message);
+        setBusy(false);
+        return;
+      }
+      setBusy(false);
+    } else setBacklog([]);
+    setRunBacklog(false);
+    setStep("confirm");
+  }
+
   async function save() {
     setBusy(true);
     setError("");
     try {
-      if (editing) await autopilotApi.update(editing.id, finished());
+      if (editing) await autopilotApi.update(editing.id, { ...finished(), backlog: runBacklog ? "run" : "new" });
       else await autopilotApi.create(finished());
       onSaved();
     } catch (e) {
@@ -491,7 +646,7 @@ function SetupDialog({ overview, flow, editing, onClose, onSaved }: {
           {workspaces.map(w => <option key={w} value={w}>{w}</option>)}
         </select>
       </label>
-      <label className="ap-field"><span>Repository</span>
+      <label className="ap-field"><span>Code repository</span>
         {repos && repos.length > 0
           ? <select style={inputStyle} value={draft.repo} onChange={e => setDraft({ ...draft, repo: e.target.value })}>
             {!repos.includes(draft.repo) && <option value={draft.repo}>{draft.repo || "Choose a repository"}</option>}
@@ -513,9 +668,20 @@ function SetupDialog({ overview, flow, editing, onClose, onSaved }: {
               <span className="ap-trig-name">{TRIGGERS[kind].name}<small>{available ? TRIGGERS[kind].hint : "Coming soon"}</small></span>
             </label>
             {checked && kind === "github-issue" && <div className="ap-trig-fields">
+              <label className="ap-field"><span>Issues from</span>
+                {repos && repos.length > 0
+                  ? <select style={inputStyle} value={draft.issue_repo} onChange={e => setDraft({ ...draft, issue_repo: e.target.value })}>
+                    <option value="">The code repository</option>
+                    {draft.issue_repo && !repos.includes(draft.issue_repo) && <option value={draft.issue_repo}>{draft.issue_repo}</option>}
+                    {repos.filter(r => r !== draft.repo).map(r => <option key={r} value={r}>{r}</option>)}
+                  </select>
+                  : <input style={inputStyle} value={draft.issue_repo} placeholder="Leave empty for the code repository"
+                    onChange={e => setDraft({ ...draft, issue_repo: e.target.value.trim() })} />}
+              </label>
               <label className="ap-field"><span>Labels</span>
                 <input style={inputStyle} value={labelsText} onChange={e => setLabelsText(e.target.value)} placeholder="Leave empty for every new issue" /></label>
               <p className="ap-muted ap-small">Issues with any of these labels, labelled from now on.</p>
+              {clash && <p className="ap-warn">{clash.name} also watches {clash.repo} for “{clash.label}”, so both would start a run for the same issue.</p>}
             </div>}
           </div>;
         })}
@@ -526,12 +692,17 @@ function SetupDialog({ overview, flow, editing, onClose, onSaved }: {
       <label className="ap-field"><span>Name</span>
         <input style={inputStyle} value={draft.name} placeholder={finished().name} onChange={e => setDraft({ ...draft, name: e.target.value })} /></label>
       <div className="ap-recap">
-        {draft.repo}{draft.workspace ? <span className="ap-muted"> · in {draft.workspace}</span> : null}
+        {draft.repo}{draft.issue_repo && draft.issue_repo !== draft.repo ? <span className="ap-muted"> · issues from {draft.issue_repo}</span> : null}{draft.workspace ? <span className="ap-muted"> · in {draft.workspace}</span> : null}
         <ul>{(Object.keys(finished().triggers) as TriggerType[]).map(k => <li key={k}>{triggerLine(k, finished().triggers[k])}</li>)}</ul>
         <div className="ap-small ap-muted">Each run ends in a draft pull request. Nothing is merged.</div>
         <div className="ap-small ap-muted">Runs in Docker on this Mac, on your Claude subscription. Keep the Mac awake.</div>
         <div className="ap-small ap-muted ap-secrets">Issue text can steer what a run pushes, so keep secrets and write permissions out of {draft.repo || "repository"} workflows that run on <code>autopilot/**</code> branches.</div>
       </div>
+      {backlog.length > 0 && <fieldset className="ap-backlog">
+        <legend>{backlog.length === 1 ? "1 open issue" : `${backlog.length} open issues`} in {draft.issue_repo || draft.repo} {backlog.length === 1 ? "matches" : "match"} the new settings</legend>
+        <label><input type="radio" name="ap-backlog" checked={!runBacklog} onChange={() => setRunBacklog(false)} /> Only new ones<small>Run issues labelled from now on</small></label>
+        <label><input type="radio" name="ap-backlog" checked={runBacklog} onChange={() => setRunBacklog(true)} /> Run them<small>{backlog.map(n => `#${n}`).join(", ")}, {draft.max_runs} at a time, if a person with write access labelled them</small></label>
+      </fieldset>}
       <details className="ap-limits">
         <summary>Limits <span>{draft.budget_m}M tokens a run · {draft.max_runs} at once</span></summary>
         <div className="ap-row2">
@@ -552,7 +723,7 @@ function SetupDialog({ overview, flow, editing, onClose, onSaved }: {
       {step === "confirm"
         ? <Button variant="ghost" onClick={() => setStep("triggers")}>Back</Button>
         : <Button variant="ghost" onClick={onClose}>Cancel</Button>}
-      {step === "triggers" && <Button onClick={() => setStep("confirm")} disabled={!anyOn || !draft.repo}>Next</Button>}
+      {step === "triggers" && <Button onClick={() => void next()} disabled={!anyOn || !draft.repo || busy}>Next</Button>}
       {step === "confirm" && <Button onClick={() => void save()} disabled={busy}>{editing ? "Save" : "Turn on"}</Button>}
     </div>
   </Modal>;
@@ -563,7 +734,7 @@ function SetupDialog({ overview, flow, editing, onClose, onSaved }: {
 export function WorkspaceFlows({ workspace }: { workspace: string }) {
   const [data, setData] = useState<AutopilotOverview | null>(null);
   const [error, setError] = useState("");
-  const [openRun, setOpenRun] = useState<string | null>(null);
+  const [openRun, setOpenRun] = useState<OpenRun | null>(null);
   useEffect(() => {
     let stopped = false;
     let timer: ReturnType<typeof setTimeout>;
@@ -581,11 +752,12 @@ export function WorkspaceFlows({ workspace }: { workspace: string }) {
   }, [workspace]);
   if (!data) return <div className="ap-page ap-embedded"><div className="ap-col"><p className="ap-muted">{error || "Loading…"}</p></div></div>;
   if (openRun) return <div className="ap-page ap-embedded"><div className="ap-col">
-    <RunDetail id={openRun} back="Flows" onBack={() => setOpenRun(null)} />
+    <RunDetail id={openRun.id} tab={openRun.tab} back="Flows" onBack={() => setOpenRun(null)} />
   </div></div>;
   const flowsById = new Map(data.flows.map(f => [f.id, f]));
   return <div className="ap-page ap-embedded"><div className="ap-col">
     {error && <p className="ap-error" role="alert">{error}</p>}
+    <Waiting runs={data.runs} onAnswered={async () => setData(await autopilotApi.overview(workspace))} onOpen={setOpenRun} />
     <section className="ap-sec">
       <h2>On autopilot</h2>
       {data.autopilots.length === 0
@@ -596,7 +768,7 @@ export function WorkspaceFlows({ workspace }: { workspace: string }) {
       <h2>Runs</h2>
       {data.runs.length === 0
         ? <p className="ap-muted">No runs in this workspace yet.</p>
-        : <RunTable runs={data.runs} onOpen={setOpenRun} />}
+        : <RunTable runs={data.runs} onOpen={id => setOpenRun({ id })} />}
     </section>
   </div></div>;
 }

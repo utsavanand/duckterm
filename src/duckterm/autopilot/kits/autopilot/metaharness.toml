@@ -21,8 +21,8 @@ description = "The DANGER-ZONES.md format and the inline @danger annotations the
 kind = "skill"
 path = "skills/spec"
 effects = "workspace"
-inputs = { issue = "text?" }
-outputs = { spec = { file = "spec.md" } }
+inputs = { issue = "text?", feedback = "text?" }
+outputs = { spec = { file = "spec.md" }, classification = { file = "classification.json" } }
 
 [[components]]
 kind = "skill"

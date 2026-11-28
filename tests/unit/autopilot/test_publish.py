@@ -70,7 +70,20 @@ def test_the_body_carries_the_spec_and_closes_the_issue_but_skips_a_linked_spec(
     assert body.startswith("# Spec\nFix it.") and "Closes #315." in body and "draft" in body
     linked = {"attempts": [{"step": "spec", "outputs": {"spec": {"path": "linked.md"}}}]}
     assert "host file" not in runs.pr_body(meta, item, tmp_path, linked)
-    assert runs.pr_title(item) == "Fix #315: Row cannot be collapsed"
+    assert runs.pr_title(meta, item) == "Fix #315: Row cannot be collapsed"
+
+
+def test_a_pull_request_for_an_issue_in_another_repository_names_that_repository(
+    tmp_path: Path,
+) -> None:
+    # Kaho's reports are filed in their own repository; the fix lands in the
+    # app's. A bare #7 would point at the app repository's own #7.
+    meta = {"id": "r1", "flow": "f", "repo": "o/kaho", "issue_repo": "o/kaho-reports"}
+    item = {"number": 7, "title": "Card is blank"}
+    assert runs.pr_title(meta, item) == "Fix o/kaho-reports#7: Card is blank"
+    assert "Closes o/kaho-reports#7." in runs.pr_body(meta, item, tmp_path, {})
+    same = {**meta, "issue_repo": "o/kaho"}
+    assert runs.pr_title(same, item) == "Fix #7: Card is blank"
 
 
 def test_a_run_that_changed_nothing_opens_no_pull_request(
@@ -96,7 +109,7 @@ def test_a_run_that_changed_nothing_opens_no_pull_request(
     root = tmp_path / "run"
     runs._write_meta(root, {"id": "r1"})
     monkeypatch.setattr(github_push, "push", lambda *a: pytest.fail("pushed"))
-    runs._publish(root, {"repo": "o/r"}, {"id": "r1", "branch": BRANCH}, {}, repo, head, {})
+    runs._publish(root, {"id": "r1", "repo": "o/r", "branch": BRANCH, "item": {}}, repo, head, {})
     assert "changed no files" in (root / "autopilot.json").read_text()
 
 
@@ -165,7 +178,7 @@ def test_a_run_that_changed_ci_configuration_is_never_pushed(
     monkeypatch.setattr(github_push, "open_pull_request", lambda *a: pytest.fail("opened a PR"))
     root = tmp_path / "run"
     runs._write_meta(root, {"id": "r1"})
-    runs._publish(root, {"repo": "o/r"}, {"id": "r1", "branch": BRANCH}, {}, repo, base, {})
+    runs._publish(root, {"id": "r1", "repo": "o/r", "branch": BRANCH, "item": {}}, repo, base, {})
     meta = json.loads((root / "autopilot.json").read_text())
     assert meta["pushed"] is False and "CI configuration" in meta["pr_skipped"]
     assert sent == []
@@ -183,7 +196,7 @@ def test_an_ordinary_push_failure_is_recorded_and_the_run_stays_succeeded(
     monkeypatch.setattr(github_push, "push", fail)
     root = tmp_path / "run"
     runs._write_meta(root, {"id": "r1", "state": "succeeded"})
-    runs._publish(root, {"repo": "o/r"}, {"id": "r1", "branch": BRANCH}, {}, repo, base, {})
+    runs._publish(root, {"id": "r1", "repo": "o/r", "branch": BRANCH, "item": {}}, repo, base, {})
     meta = json.loads((root / "autopilot.json").read_text())
     assert meta["state"] == "succeeded" and "network" in meta["pr_error"]
 

@@ -3,6 +3,8 @@ function is blocking (files, docker, GitHub) and runs on a worker thread.
 ValueError means a bad request, KeyError an unknown id."""
 
 import time
+import urllib.error
+from pathlib import Path
 from typing import Any
 
 from duckterm import github_projects
@@ -39,12 +41,68 @@ def overview(workspace: str | None = None) -> dict[str, Any]:
     }
 
 
+BACKLOG_ANSWERS = ("run", "new")
+
+
 def create(body: dict[str, Any]) -> dict[str, Any]:
+    proposed = store.validated(body, {"id": "", "created_at": 0})
+    github_watch.check_access(_github(), proposed["repo"], store.issue_repo(proposed))
     return store.create(body)
 
 
 def update(autopilot_id: str, body: dict[str, Any]) -> dict[str, Any]:
-    return store.update(autopilot_id, body)
+    """Save an edit. When it changes which issues are watched, body's
+    `backlog` says what happens to open issues that now match: "run" starts
+    them, "new" (the default) runs only issues labelled from now on."""
+    entry = store.get(autopilot_id)
+    proposed = store.validated({**entry, **body}, entry)
+    if "repo" in body or "issue_repo" in body:
+        github_watch.check_access(_github(), proposed["repo"], store.issue_repo(proposed))
+    answer = str(body.get("backlog")) if body.get("backlog") in BACKLOG_ANSWERS else "new"
+    watch = _watched(proposed)
+    skip: list[int] | None = None
+    # Asked before saving, so a GitHub failure leaves the old settings in place.
+    if watch is not None and watch != _watched(entry):
+        skip = (
+            [] if answer == "run" else github_watch.waiting(_github(), *watch, _seen(autopilot_id))
+        )
+    updated = store.update(autopilot_id, {k: v for k, v in body.items() if k != "backlog"})
+    if watch is not None and skip is not None:
+        github_watch.relabel(_seen(autopilot_id), *watch, skip, answer)
+    return updated
+
+
+def backlog(autopilot_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    """Open issues that an edit's labels and issue repository would match and
+    that have not started a run, for the edit dialog to ask about."""
+    entry = store.get(autopilot_id)
+    watch = _watched(store.validated({**entry, **body}, entry))
+    if watch is None:
+        return {"issues": []}
+    return {"issues": github_watch.waiting(_github(), *watch, _seen(autopilot_id))}
+
+
+def _watched(entry: dict[str, Any]) -> tuple[str, list[str]] | None:
+    trigger = entry["triggers"].get("github-issue")
+    return None if trigger is None else (store.issue_repo(entry), trigger["labels"])
+
+
+def _seen(autopilot_id: str) -> Path:
+    return store.root() / "seen" / f"{autopilot_id}.json"
+
+
+def _github() -> github_watch.Get:
+    """GitHub for a request from the app: a failure is a message to show."""
+    token, _ = github_projects.local_token()
+    get = github_watch.api(token)
+
+    def shown(path: str) -> Any:
+        try:
+            return get(path)
+        except urllib.error.URLError as exc:
+            raise ValueError(f"Couldn't reach GitHub: {exc}") from None
+
+    return shown
 
 
 def delete(autopilot_id: str) -> None:
@@ -62,7 +120,7 @@ def run_once(autopilot_id: str, body: dict[str, Any]) -> dict[str, Any]:
     if number <= 0:
         raise ValueError("Give an issue number")
     token, _ = github_projects.local_token()
-    item = github_watch.issue(github_watch.api(token), entry["repo"], number)
+    item = github_watch.issue(github_watch.api(token), store.issue_repo(entry), number)
     return {"run_id": runs.start(entry, "github-issue", item)}
 
 
@@ -72,6 +130,10 @@ def recover() -> None:
 
 def run(run_id: str) -> dict[str, Any]:
     return runs.detail(run_id)
+
+
+def answer(run_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    return runs.answer(run_id, body)
 
 
 def summary() -> dict[str, Any]:
@@ -95,9 +157,9 @@ def tick() -> None:
         try:
             ready = github_watch.poll(
                 get,
-                entry["repo"],
+                store.issue_repo(entry),
                 entry["triggers"]["github-issue"]["labels"],
-                store.root() / "seen" / f"{entry['id']}.json",
+                _seen(entry["id"]),
                 max(0, room),
             )
             for item in ready:

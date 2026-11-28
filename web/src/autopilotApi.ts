@@ -22,6 +22,7 @@ export interface AutopilotEntry {
   name: string;
   workspace: string;
   repo: string;
+  issue_repo?: string;
   triggers: Partial<Record<TriggerType, { labels: string[] }>>;
   approvals: { spec_on_visible: boolean; keep_merge_approval: boolean };
   budget_m: number;
@@ -40,7 +41,7 @@ export interface AutopilotRun {
   trigger: TriggerType;
   item: { number?: number; title?: string; url?: string; started_by?: string | null };
   branch: string;
-  state: "starting" | "running" | "waiting_gate" | "succeeded" | "failed" | "cancelled" | "interrupted";
+  state: "starting" | "running" | "waiting_gate" | "succeeded" | "rejected" | "failed" | "cancelled" | "interrupted";
   started_at: number;
   ended_at?: number;
   tokens?: number;
@@ -52,6 +53,23 @@ export interface AutopilotRun {
   pr?: { number: number; url: string; base: string };
   pr_error?: string;
   pr_skipped?: string;
+  // Set while state is waiting_gate. `shown` is the step output the gate
+  // asks about (the spec), as text written by the model; `why` is the policy
+  // step's reason for asking.
+  gate?: { step: string; question: string; choices: string[]; shown: string; why: string; asked_at: number } | null;
+  answers?: { step: string; answer: string; note?: string | null; by: string; at: number }[];
+  // What the spec step judged the fix to touch; the policy reads it.
+  classification?: Classification | null;
+}
+
+export interface Classification {
+  surfaces?: string[];
+  user_visible?: boolean;
+  regression?: { level?: string; features?: string[] };
+  security?: { level?: string; areas?: string[] };
+  ai?: string;
+  data?: string;
+  size?: string;
 }
 
 // One step attempt from the kit runner's receipt. Times are Unix seconds.
@@ -113,6 +131,8 @@ export interface AutopilotDraft {
   name: string;
   workspace: string;
   repo: string;
+  // "" when issues come from repo itself
+  issue_repo: string;
   triggers: Partial<Record<TriggerType, { labels: string[] }>>;
   approvals: { spec_on_visible: boolean; keep_merge_approval: boolean };
   budget_m: number;
@@ -141,10 +161,16 @@ export const autopilotApi = {
   summary: () => call<AutopilotSummary>("GET", "/api/autopilot/summary"),
   repositories: () => call<string[]>("GET", "/api/autopilot/repositories"),
   create: (draft: AutopilotDraft) => call<AutopilotEntry>("POST", "/api/autopilot/autopilots", draft),
-  update: (id: string, patch: Partial<AutopilotDraft> & { on?: boolean }) =>
+  // backlog: what happens to open issues an edit's new labels match ("new" by default).
+  update: (id: string, patch: Partial<AutopilotDraft> & { on?: boolean; backlog?: "run" | "new" }) =>
     call<AutopilotEntry>("PATCH", `/api/autopilot/autopilots/${encodeURIComponent(id)}`, patch),
+  // Open issues an edit's labels and issue repository would match that have not run.
+  backlog: (id: string, patch: Partial<AutopilotDraft>) =>
+    call<{ issues: number[] }>("POST", `/api/autopilot/autopilots/${encodeURIComponent(id)}/backlog`, patch),
   remove: (id: string) => call<{ ok: boolean }>("DELETE", `/api/autopilot/autopilots/${encodeURIComponent(id)}`),
   run: (id: string) => call<AutopilotRunDetail>("GET", `/api/autopilot/runs/${encodeURIComponent(id)}`),
   runOnce: (id: string, issue: number) =>
     call<{ run_id: string }>("POST", `/api/autopilot/autopilots/${encodeURIComponent(id)}/run`, { issue }),
+  answer: (runId: string, step: string, answer: string, note?: string) =>
+    call<{ ok: boolean }>("POST", `/api/autopilot/runs/${encodeURIComponent(runId)}/gate`, { step, answer, note }),
 };

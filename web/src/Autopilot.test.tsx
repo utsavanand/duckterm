@@ -55,6 +55,7 @@ beforeEach(() => {
       : path === "/folders" ? { folders: ["Team", "Docs"] }
       : method === "POST" && path === "/api/autopilot/autopilots" ? { id: "ap-2" }
       : path.startsWith("/api/autopilot/runs/") ? detail(path.split("/").pop()!)
+      : path.endsWith("/backlog") ? { issues: [7, 8] }
       : {};
     return new Response(JSON.stringify(body), { status: 200 });
   }));
@@ -74,7 +75,7 @@ it("sets up a listed flow with only the triggers that exist, and labels as a lis
   expect(screen.getByRole("checkbox", { name: /Jira issues/ })).toBeDisabled();
   expect(screen.getByRole("checkbox", { name: /Slack messages/ })).toBeDisabled();
   expect(screen.queryByText(/by hand/i)).toBeNull();
-  fireEvent.change(screen.getByLabelText("Repository"), { target: { value: "o/uv-suite" } });
+  fireEvent.change(screen.getByLabelText("Code repository"), { target: { value: "o/uv-suite" } });
   fireEvent.change(screen.getByLabelText("Workspace"), { target: { value: "Team" } });
   fireEvent.change(screen.getByLabelText("Labels"), { target: { value: "autopilot, bug ," } });
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Next" })); });
@@ -82,10 +83,49 @@ it("sets up a listed flow with only the triggers that exist, and labels as a lis
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Turn on" })); });
   const create = sent.find(r => r.method === "POST");
   expect(create?.body).toEqual({
-    flow: "autopilot/issue-to-merge", name: "uv-suite issue to merge", workspace: "Team", repo: "o/uv-suite",
+    flow: "autopilot/issue-to-merge", name: "uv-suite issue to merge", workspace: "Team", repo: "o/uv-suite", issue_repo: "",
     triggers: { "github-issue": { labels: ["autopilot", "bug"] } },
     approvals: { spec_on_visible: false, keep_merge_approval: false }, budget_m: 5, max_runs: 2,
   });
+});
+
+it("takes issues from another repository and warns when another autopilot would pick up the same issue", async () => {
+  overview.autopilots = [{ id: "ap-1", on: true, created_at: 0, flow: "autopilot/issue-to-merge", name: "duckterm issues", repo: "o/duckterm",
+    workspace: "", triggers: { "github-issue": { labels: ["autopilot"] } }, approvals: { spec_on_visible: false, keep_merge_approval: false },
+    budget_m: 5, max_runs: 2, active: 0, watch: {} }];
+  await mount();
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Set up" })); });
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
+  fireEvent.change(screen.getByLabelText("Code repository"), { target: { value: "o/uv-suite" } });
+  fireEvent.change(screen.getByLabelText("Issues from"), { target: { value: "o/duckterm" } });
+  expect(screen.getByText(/duckterm issues also watches o\/duckterm for “autopilot”/)).toBeInTheDocument();
+  fireEvent.change(screen.getByLabelText("Labels"), { target: { value: "uv" } });
+  expect(screen.queryByText(/also watches/)).toBeNull();
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Next" })); });
+  expect(screen.getByText("· issues from o/duckterm")).toBeInTheDocument();
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Turn on" })); });
+  expect(sent.find(r => r.method === "POST")?.body).toMatchObject({ repo: "o/uv-suite", issue_repo: "o/duckterm" });
+});
+
+it("an edit that changes the labels asks whether open issues that now match should run", async () => {
+  overview.autopilots = [{ id: "ap-1", on: true, created_at: 0, flow: "autopilot/issue-to-merge", name: "kaho reports", repo: "o/duckterm",
+    workspace: "", triggers: { "github-issue": { labels: ["autopilot"] } }, approvals: { spec_on_visible: false, keep_merge_approval: false },
+    budget_m: 5, max_runs: 2, active: 0, watch: {} }];
+  await mount();
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Edit" })); });
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Next" })); });
+  expect(sent.some(r => r.path.endsWith("/backlog"))).toBe(false);
+  expect(screen.queryByText(/open issues/)).toBeNull();
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Back" })); });
+  fireEvent.change(screen.getByLabelText("Labels"), { target: { value: "autopilot, bug" } });
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Next" })); });
+  expect(sent.find(r => r.path.endsWith("/backlog"))?.body).toMatchObject({ triggers: { "github-issue": { labels: ["autopilot", "bug"] } } });
+  expect(screen.getByText("2 open issues in o/duckterm match the new settings")).toBeInTheDocument();
+  expect(screen.getByRole("radio", { name: /Only new ones/ })).toBeChecked();
+  fireEvent.click(screen.getByRole("radio", { name: /Run them/ }));
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Save" })); });
+  expect(sent.find(r => r.method === "PATCH")?.body).toMatchObject({ backlog: "run", triggers: { "github-issue": { labels: ["autopilot", "bug"] } } });
 });
 
 it("cannot go past triggers with none turned on", async () => {
@@ -176,4 +216,49 @@ it("a page in use leads with counts, the waiting count marked, and lists each au
   expect(within(row).getAllByRole("button").map(b => b.textContent)).toEqual(["Run once…", "Pause", "Edit"]);
   await act(async () => { fireEvent.click(within(row).getByRole("button", { name: "Pause" })); });
   expect(sent.find(r => r.method === "PATCH")).toMatchObject({ path: "/api/autopilot/autopilots/ap-1", body: { on: false } });
+});
+
+function waitingRun() {
+  overview.runs.unshift({ id: "r3", autopilot: "ap-1", autopilot_name: "duckterm issues", workspace: "Team", flow: "autopilot/issue-to-merge",
+    repo: "o/duckterm", trigger: "github-issue", item: { number: 43, title: "Row stuck" }, branch: "autopilot/r3", state: "waiting_gate",
+    started_at: Date.now(), classification: { surfaces: ["server"], security: { level: "touches", areas: ["auth"] }, ai: "deterministic", data: "none" },
+    gate: { step: "spec-gate", question: "Approve the fix spec?", choices: ["approve", "revise", "reject"], shown: "# Fix",
+      why: "security touches auth", asked_at: Date.now() - 12 * 60_000 } });
+}
+
+it("a spec waiting for approval says why the policy asked, and approving answers that gate", async () => {
+  waitingRun();
+  await mount();
+  const card = screen.getByText("Spec approval").closest("article")!;
+  expect(within(card).getByRole("button", { name: "#43 Row stuck" })).toBeInTheDocument();
+  expect(card).toHaveTextContent("Required because: security touches auth. No code written yet; the sandbox is stopped.");
+  expect(within(card).getByText("security")).toHaveClass("ap-risk-sec");
+  expect(within(card).getByText("waiting 12 min")).toBeInTheDocument();
+  await act(async () => { fireEvent.click(within(card).getByRole("button", { name: "Approve" })); });
+  expect(sent.find(r => r.method === "POST")).toEqual({ method: "POST", path: "/api/autopilot/runs/r3/gate", body: { step: "spec-gate", answer: "approve" } });
+});
+
+it("rejecting a spec sends it back with the note, or ends the run", async () => {
+  waitingRun();
+  await mount();
+  const card = screen.getByText("Spec approval").closest("article")!;
+  fireEvent.click(within(card).getByRole("button", { name: "Reject with note" }));
+  const send = screen.getByRole("button", { name: "Send back" });
+  expect(send).toBeDisabled();
+  fireEvent.change(screen.getByLabelText("Note for the spec step"), { target: { value: "Keep the cap." } });
+  await act(async () => { fireEvent.click(send); });
+  expect(sent.filter(r => r.method === "POST").map(r => r.body)).toEqual([{ step: "spec-gate", answer: "revise", note: "Keep the cap." }]);
+});
+
+it("Read spec opens the run on its Spec tab", async () => {
+  waitingRun();
+  await mount();
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Read spec" })); });
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
+  expect(screen.getByRole("tab", { name: "Spec" })).toHaveAttribute("aria-selected", "true");
+});
+
+it("shows no Needs you section when nothing waits", async () => {
+  await mount();
+  expect(screen.queryByRole("heading", { name: /Needs you/ })).toBeNull();
 });
