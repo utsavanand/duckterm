@@ -6,8 +6,10 @@ runner's own receipt is `repo/.duckterm/runs/<runner-id>/run.json`. The list
 reads those files; there is no table (spec §7.3).
 """
 
+import contextlib
 import json
 import os
+import re
 import stat
 import subprocess
 import threading
@@ -18,7 +20,15 @@ from pathlib import Path
 from typing import Any
 
 from duckterm import github_projects
-from duckterm.autopilot import catalog, delivery, executor, github_push, sandbox, store
+from duckterm.autopilot import (
+    catalog,
+    delivery,
+    executor,
+    github_push,
+    issue_status,
+    sandbox,
+    store,
+)
 from duckterm.autopilot.executor import AutopilotExecutor, RunDirs, prepare_github
 from duckterm.autopilot.sandbox import Gateway, Sandbox
 from duckterm.kits import install, plan, runner
@@ -109,6 +119,7 @@ def start(autopilot: dict[str, Any], trigger: str, item: dict[str, Any]) -> str:
 
 def _execute(meta: dict[str, Any], item: dict[str, Any]) -> None:
     root = runs_root() / meta["id"]
+    _announce(root, "started")
     try:
         problems = readiness()
         if problems:
@@ -194,11 +205,13 @@ def answer(run_id: str, body: dict[str, Any]) -> dict[str, Any]:
                 outcome="Merge rejected; the pull request stays open",
                 ended_at=int(time.time() * 1000),
             )
-            _write_meta(root, meta)
-            delivery.count_shadow(meta["autopilot"], approved=False)
-            return {"ok": True}
-        meta["state"] = "running"
+        else:
+            meta["state"] = "running"
         _write_meta(root, meta)
+    if step == "merge-gate":
+        delivery.count_shadow(meta["autopilot"], approved=False)
+        _settle(root)
+        return {"ok": True}
     threading.Thread(
         target=_continue, args=(meta, step, choice, note), name=f"autopilot-{run_id}", daemon=True
     ).start()
@@ -300,9 +313,43 @@ def _triage(state: dict[str, Any]) -> tuple[str, str] | None:
 
 
 def _settle(root: Path) -> None:
-    """A run waiting at a gate has not ended; anything else has."""
-    if json.loads((root / "autopilot.json").read_text())["state"] != "waiting_gate":
+    """A run waiting at a gate has not ended; anything else has. Either way
+    the issue hears where the run stands."""
+    meta = json.loads((root / "autopilot.json").read_text())
+    if meta["state"] == "waiting_gate":
+        gate = meta.get("merge_gate") or pending_gate(root) or {}
+        _announce(root, str(gate.get("step") or "spec-gate"), str(gate.get("why") or ""))
+        return
+    if not meta.get("ended_at"):
         _update(root, ended_at=int(time.time() * 1000))
+    detail = str(meta.get("outcome") or meta.get("cancel_reason") or "")
+    if meta["state"] == "needs_info":
+        questions = _newest_output(
+            root / "repo", _receipt(root) or {}, "questions", SPEC_CAP, step="triage"
+        )
+        detail = questions.decode(errors="replace") if questions else detail
+    if meta["state"] in ("failed", "needs_info", "declined", "rejected", "ended", "cancelled"):
+        _announce(root, meta["state"], detail)
+
+
+def _announce(root: Path, kind: str, detail: str = "") -> None:
+    """Post a status comment on the run's issue, once per kind. A failure to
+    comment is recorded and never fails the run."""
+    meta = json.loads((root / "autopilot.json").read_text())
+    number = (meta.get("item") or {}).get("number")
+    posted = meta.get("comments") or {}
+    if meta.get("trigger") != "github-issue" or not number or kind in posted:
+        return
+    body = issue_status.message(meta, kind, detail)
+    if body is None:
+        return
+    try:
+        token, _ = github_projects.local_token()
+        cid = github_push.comment(meta.get("issue_repo") or meta["repo"], int(number), body, token)
+    except Exception as exc:  # noqa: BLE001 — a status comment must not end the run
+        _update(root, comment_error=str(exc)[:200])
+        return
+    _update(root, comments={**posted, kind: cid})
 
 
 def _publish(
@@ -326,10 +373,181 @@ def _publish(
             token,
         )
         _update(root, pr=pr)
+        _announce(root, "pr")
     except github_push.PushRefused as exc:
         _update(root, pushed=False, pr_skipped=str(exc))
     except Exception as exc:  # noqa: BLE001 — the run succeeded; record why publishing did not
         _update(root, pr_error=str(exc)[:300])
+
+
+def cancel(run_id: str, reason: str = "") -> dict[str, Any]:
+    """Stop a run: its sandbox is removed, which ends the step running in it,
+    and a CI wait stops at its next look. The branch and any pull request stay.
+    A merge already under way is not stopped."""
+    root = runs_root() / run_id
+    if "/" in run_id or not (root / "autopilot.json").is_file():
+        raise KeyError(run_id)
+    with _META_LOCK:
+        meta = json.loads((root / "autopilot.json").read_text())
+        if meta["state"] not in (*ACTIVE, "waiting_gate"):
+            raise ValueError("This run has already ended")
+        if meta.get("stage") == "merging":
+            raise ValueError("The pull request is being merged; it cannot be cancelled now")
+        meta.update(
+            state="cancelled", stage=None, cancel_reason=reason, ended_at=int(time.time() * 1000)
+        )
+        _write_meta(root, meta)
+    Sandbox(run_id, "runc").destroy()
+    _settle(root)
+    return {"ok": True}
+
+
+def cancel_unlabelled(autopilot_id: str, labelled: set[int]) -> None:
+    """Removing the label cancels that issue's run (issue-flow spec §1), for
+    runs the label started; a run started by hand is not the label's."""
+    for meta in list_runs():
+        if (
+            meta["autopilot"] == autopilot_id
+            and meta["state"] in (*ACTIVE, "waiting_gate")
+            and meta.get("stage") != "merging"
+            and meta["item"].get("started_by")
+            and meta["item"].get("number") not in labelled
+        ):
+            with contextlib.suppress(ValueError):  # it ended while we looked
+                cancel(meta["id"], "the label was removed")
+
+
+def rerun(run_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    """Run a run that ended (or waits at a gate) again from one of its flow's
+    steps, in a new sandbox on its branch as it stands. Steps before it keep
+    their outputs."""
+    root = runs_root() / run_id
+    if "/" in run_id or not (root / "autopilot.json").is_file():
+        raise KeyError(run_id)
+    step = str(body.get("step") or "")
+    with _META_LOCK:
+        meta = json.loads((root / "autopilot.json").read_text())
+        if meta["state"] in ACTIVE or meta["state"] == "merged":
+            raise ValueError("Only a run that ended or waits for you can run again")
+        if not meta.get("runner_run"):
+            raise ValueError("This run never started its flow; start a new run instead")
+        if step not in _rerun_steps(root):
+            raise ValueError(f"The run never reached {step!r}")
+        for field in ("error", "outcome", "stage", "merge_gate", "ended_at", "cancel_reason"):
+            meta.pop(field, None)
+        # the issue hears again how this attempt ends
+        meta["comments"] = {
+            k: v for k, v in (meta.get("comments") or {}).items() if k in ("started", "pr")
+        }
+        meta.update(state="running", rerun_from=step)
+        _write_meta(root, meta)
+    threading.Thread(
+        target=_rerun, args=(root, meta, step), name=f"autopilot-{run_id}", daemon=True
+    ).start()
+    return {"ok": True}
+
+
+def _rerun_steps(root: Path) -> list[str]:
+    """Steps of the run's own flow that it reached, in order; steps of a flow
+    run on the side (fixing CI) are not the run's to rerun."""
+    found = sorted((root / "repo" / runner.RUNS).glob("*/run.json"))
+    main = _one_receipt(root, found[0]) if found else None
+    return list(dict.fromkeys(str(a.get("step")) for a in (main or {}).get("attempts") or []))
+
+
+def _rerun(root: Path, meta: dict[str, Any], step: str) -> None:
+    dirs = RunDirs(root)
+    try:
+        _in_sandbox(
+            root,
+            dirs,
+            lambda ex: runner.rerun(
+                dirs.project, meta["runner_run"], step, executor=ex, limits=LIMITS
+            ),
+        )
+        _deliver(root)
+    except Exception as exc:  # noqa: BLE001 — any failure ends the run with its reason
+        _update(root, state="failed", error=str(exc)[:500])
+    _settle(root)
+
+
+TRANSCRIPT_CAP = 4_000_000
+EVENTS = 400
+EVENT_CHARS = 2000
+
+
+def transcript(run_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    """What one step attempt did, from its harness's event stream: messages,
+    tool calls and their results, in order. Text is the model's and the
+    tools', so the app shows it as plain text."""
+    root = runs_root() / run_id
+    if "/" in run_id or not (root / "autopilot.json").is_file():
+        raise KeyError(run_id)
+    step, attempt = str(body.get("step") or ""), body.get("attempt")
+    if not re.fullmatch(r"[A-Za-z0-9_-]{1,64}", step) or not isinstance(attempt, int):
+        raise ValueError("Name a step and an attempt number")
+    found = sorted((root / "repo" / runner.RUNS).glob(f"*/{step}/{attempt}/{runner.TRANSCRIPT}"))
+    raw = _read_capped(root, str(found[-1].relative_to(root)), TRANSCRIPT_CAP) if found else None
+    if raw is None:
+        return {"events": [], "kept": False}
+    events: list[dict[str, Any]] = []
+    for line in raw.decode(errors="replace").splitlines():
+        try:
+            event = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(event, dict):
+            events.extend(_events(event))
+    return {"events": events[-EVENTS:], "kept": True, "cut": len(events) > EVENTS}
+
+
+def _events(e: dict[str, Any]) -> list[dict[str, Any]]:
+    """One harness event as transcript lines: Claude Code's stream-json, or
+    Codex's exec --json."""
+    out: list[dict[str, Any]] = []
+
+    def add(kind: str, text: Any, name: str = "", error: bool = False) -> None:
+        out.append(
+            {"kind": kind, "name": name, "text": str(text or "")[:EVENT_CHARS], "error": error}
+        )
+
+    if e.get("type") in ("assistant", "user"):
+        for part in (e.get("message") or {}).get("content") or []:
+            if not isinstance(part, dict):
+                continue
+            if part.get("type") == "text":
+                add("message", part.get("text"))
+            elif part.get("type") == "tool_use":
+                args = part.get("input") or {}
+                shown = next(
+                    (args[k] for k in ("command", "file_path", "pattern", "path") if args.get(k)),
+                    json.dumps(args)[:300],
+                )
+                add("tool", shown, str(part.get("name") or ""))
+            elif part.get("type") == "tool_result":
+                content = part.get("content")
+                if isinstance(content, list):
+                    content = " ".join(
+                        str(c.get("text") or "") for c in content if isinstance(c, dict)
+                    )
+                add("result", content, error=bool(part.get("is_error")))
+    elif e.get("type") == "item.completed":
+        item = e.get("item") or {}
+        if item.get("type") == "agent_message":
+            add("message", item.get("text"))
+        elif item.get("type") == "command_execution":
+            add("tool", item.get("command"), "shell", error=bool(item.get("exit_code")))
+            add("result", item.get("aggregated_output"), error=bool(item.get("exit_code")))
+        elif item.get("type") == "error":
+            add("message", item.get("message"), error=True)
+        elif item.get("type") == "file_change":
+            paths = ", ".join(str(c.get("path")) for c in item.get("changes") or [])
+            add("tool", paths, "edit")
+    return out
+
+
+def _cancelled(root: Path) -> bool:
+    return bool(json.loads((root / "autopilot.json").read_text())["state"] == "cancelled")
 
 
 def _deliver(root: Path) -> None:
@@ -347,7 +565,9 @@ def _deliver(root: Path) -> None:
     while True:
         head = _git_out(project, "rev-parse", "HEAD")
         _update(root, state="running", stage="ci", ci_head=head)
-        result, log = delivery.wait_ci(meta["repo"], head, token)
+        result, log = delivery.wait_ci(meta["repo"], head, token, stop=lambda: _cancelled(root))
+        if result == "stopped":
+            return
         _update(root, ci=result)
         if result in ("pass", "none"):
             break
@@ -419,6 +639,8 @@ def _merge(root: Path, approved: str) -> None:
     approved, and only if it is still the pull request's head: a push after
     either stops the merge (issue-flow spec §5)."""
     meta = json.loads((root / "autopilot.json").read_text())
+    if meta["state"] == "cancelled":
+        return
     pr = meta["pr"]
     token, _ = github_projects.local_token()
     _update(root, state="running", stage="merging")
@@ -434,6 +656,7 @@ def _merge(root: Path, approved: str) -> None:
     except github_push.MergeRefused as exc:
         raise RuntimeError(f"GitHub would not merge: {exc}") from None
     _update(root, state="merged", stage=None, merged_sha=merged)
+    _announce(root, "merged")
 
 
 def merge_challenge(run_id: str) -> dict[str, Any]:
@@ -760,6 +983,7 @@ def detail(run_id: str) -> dict[str, Any]:
         for a in receipt.get("attempts") or []
     ]
     meta["gates"] = receipt.get("gates") or []
+    meta["rerun_steps"] = _rerun_steps(root)
     meta["loops"] = receipt.get("loops") or {}
     try:
         issue = json.loads(next(iter((receipt.get("inputs") or {}).values()), "") or "{}")
@@ -865,5 +1089,9 @@ def _write_meta(root: Path, meta: dict[str, Any]) -> None:
 def _update(root: Path, **fields: Any) -> None:
     with _META_LOCK:
         meta = json.loads((root / "autopilot.json").read_text())
+        if meta.get("state") == "cancelled":
+            # a thread still finishing a cancelled run must not revive it
+            fields.pop("state", None)
+            fields.pop("stage", None)
         meta.update(fields)
         _write_meta(root, meta)

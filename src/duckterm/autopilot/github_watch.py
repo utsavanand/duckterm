@@ -110,6 +110,11 @@ def check_access(get: Get, repo: str, issue_repo: str) -> None:
         raise ValueError(f"The GitHub token can't reach {issue_repo}")
 
 
+def labelled(get: Get, repo: str, labels: list[str]) -> set[int]:
+    """Open issues that carry any of the labels now."""
+    return set(_open_issues(get, repo, labels))
+
+
 def issue(get: Get, repo: str, number: int) -> dict[str, Any]:
     """One issue, for a run started by hand from the app."""
     found = get(f"/repos/{repo}/issues/{number}")

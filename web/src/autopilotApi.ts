@@ -53,6 +53,11 @@ export interface AutopilotRun {
   ci_head?: string;
   ci_fixes?: number;
   merged_sha?: string;
+  cancel_reason?: string;
+  rerun_from?: string;
+  // status comments posted on the issue: kind -> comment id
+  comments?: Record<string, number>;
+  issue_repo?: string;
   merge_reasons?: string[];
   path_hits?: { field: string; path: string }[];
   spec_class?: Classification | null;
@@ -81,6 +86,13 @@ export interface AutopilotRun {
   answers?: { step: string; answer: string; note?: string | null; by: string; at: number }[];
   // What the spec step judged the fix to touch; the policy reads it.
   classification?: Classification | null;
+}
+
+// What one step attempt did, read from its harness's event stream.
+export interface AutopilotTranscript {
+  kept: boolean;
+  cut?: boolean;
+  events: { kind: "message" | "tool" | "result"; name: string; text: string; error: boolean }[];
 }
 
 export interface Classification {
@@ -122,6 +134,8 @@ export interface AutopilotChanges {
 }
 
 export interface AutopilotRunDetail extends AutopilotRun {
+  // steps of the run's own flow it reached, which Rerun can start from
+  rerun_steps?: string[];
   attempts: AutopilotAttempt[];
   gates: AutopilotGate[];
   loops: Record<string, number>;
@@ -202,6 +216,12 @@ export const autopilotApi = {
   run: (id: string) => call<AutopilotRunDetail>("GET", `/api/autopilot/runs/${encodeURIComponent(id)}`),
   runOnce: (id: string, issue: number) =>
     call<{ run_id: string }>("POST", `/api/autopilot/autopilots/${encodeURIComponent(id)}/run`, { issue }),
+  cancel: (runId: string) => call<{ ok: boolean }>("POST", `/api/autopilot/runs/${encodeURIComponent(runId)}/cancel`, {}),
+  // Run an ended run again from one of its steps; steps before it keep their outputs.
+  rerun: (runId: string, step: string) =>
+    call<{ ok: boolean }>("POST", `/api/autopilot/runs/${encodeURIComponent(runId)}/rerun`, { step }),
+  transcript: (runId: string, step: string, attempt: number) =>
+    call<AutopilotTranscript>("POST", `/api/autopilot/runs/${encodeURIComponent(runId)}/transcript`, { step, attempt }),
   // Touch ID: the Mac app signs the server's challenge for this merge.
   mergeChallenge: (runId: string) =>
     call<{ payload: string }>("POST", `/api/autopilot/runs/${encodeURIComponent(runId)}/merge/challenge`, {}),

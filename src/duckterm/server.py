@@ -455,6 +455,12 @@ _ROUTES: list[Route] = [
           prefix="/api/autopilot/autopilots/"),
     Route("POST", "", lambda s, r, w, h, b, seg: s._autopilot(w, ap_api.answer, seg, body=b),
           **_mid("/api/autopilot/runs/", "/gate")),
+    Route("POST", "", lambda s, r, w, h, b, seg: s._autopilot(w, ap_api.cancel, seg, body=b),
+          **_mid("/api/autopilot/runs/", "/cancel")),
+    Route("POST", "", lambda s, r, w, h, b, seg: s._autopilot(w, ap_api.rerun, seg, body=b),
+          **_mid("/api/autopilot/runs/", "/rerun")),
+    Route("POST", "", lambda s, r, w, h, b, seg: s._autopilot(w, ap_api.transcript, seg, body=b),
+          **_mid("/api/autopilot/runs/", "/transcript")),
     # A merge is approved only with a Touch ID signature from the Mac app.
     Route("POST", "",
           lambda s, r, w, h, b, seg: s._autopilot(w, ap_api.merge_challenge, seg, body=b),
