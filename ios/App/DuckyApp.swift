@@ -29,6 +29,12 @@ struct DuckyApp: App {
             _account = StateObject(wrappedValue: AccountModel(cloudURL: nil, devices: fixture))
             return
         }
+        if ProcessInfo.processInfo.arguments.contains("--ducky-account-ui-fixture") {
+            let (fixture, account) = AccountUIFixture.models()
+            _model = StateObject(wrappedValue: fixture)
+            _account = StateObject(wrappedValue: account)
+            return
+        }
         #endif
         let devices = SessionModel()
         _model = StateObject(wrappedValue: devices)
@@ -208,9 +214,62 @@ private enum ChatUIFixture {
     }
 }
 
+/// Account screens with a synthetic service and Macs: signed out, the Mac list,
+/// waiting for the Mac, and denied (`--ducky-account-mode=`). No network or Keychain.
+private enum AccountUIFixture {
+    static let mode = ProcessInfo.processInfo.arguments.first(where: { $0.hasPrefix("--ducky-account-mode=") })?.components(separatedBy: "=").last ?? "signin"
+    static let studio = AccountMac(id: "d1", name: "Studio Mac", lastSeenAt: Int(Date().timeIntervalSince1970) - 120,
+        hostID: String(repeating: "4", count: 32), certificateSHA256: String(repeating: "c", count: 64),
+        tlsName: nil, url: URL(string: "https://192.168.1.24:4430")!)
+    static let air = AccountMac(id: "d2", name: "MacBook Air", lastSeenAt: Int(Date().timeIntervalSince1970) - 7200,
+        hostID: String(repeating: "5", count: 32), certificateSHA256: String(repeating: "d", count: 64),
+        tlsName: nil, url: URL(string: "https://192.168.1.25:4430")!)
+
+    @MainActor static func models() -> (SessionModel, AccountModel) {
+        let paired = ["waiting", "denied"].contains(mode)
+            ? PairedHost(mac: studio, token: String(repeating: "t", count: 43), login: "octo") : nil
+        let domain = "com.rubberduckhq.ducky.account-ui-fixture"
+        let defaults = UserDefaults(suiteName: domain)!
+        defaults.removePersistentDomain(forName: domain)
+        let devices = SessionModel(credentials: ChatUIFixtureStore(paired), makeTransport: { _ in AccountUIFixtureMac() },
+            pause: { try await Task.sleep(nanoseconds: 60_000_000_000) }, onLocalNetwork: { true },
+            expansionStore: FolderExpansionStore(defaults: defaults))
+        let session = mode == "signin" ? nil : AccountSession(accountID: String(repeating: "e", count: 32), login: "octo",
+            deviceID: String(repeating: "f", count: 32), sessionToken: String(repeating: "s", count: 43))
+        let account = AccountModel(cloudURL: URL(string: "https://duckterm.utsava.xyz"), devices: devices,
+            store: AccountUIFixtureStore(session), makeTransport: { _ in AccountUIFixtureCloud() })
+        return (devices, account)
+    }
+}
+
+private final class AccountUIFixtureStore: AccountStoring {
+    private var session: AccountSession?
+    init(_ session: AccountSession?) { self.session = session }
+    func save(_ session: AccountSession) { self.session = session }
+    func load() -> AccountSession? { session }
+    func forget() { session = nil }
+}
+
+private final class AccountUIFixtureCloud: AccountTransport {
+    func redeem(code: String, verifier: String, name: String) async throws -> AccountSession { throw AccountError.github }
+    func macs(token: String) async throws -> [AccountMac] { [AccountUIFixture.studio, AccountUIFixture.air] }
+    func ticket(hostID: String, token: String) async throws -> String { throw AccountError.service }
+    func signOut(token: String) async throws {}
+}
+
+private final class AccountUIFixtureMac: DuckyTransport {
+    func claim(_ invitation: Invitation, name: String) async throws -> PairStatus { throw DuckyError.unavailable(403) }
+    func pairingStatus() async throws -> PairStatus {
+        if AccountUIFixture.mode == "denied" { throw DuckyError.unavailable(403) }
+        return try ChatUIFixture.decode(["id": "account-fixture-device", "status": "pending", "host_id": AccountUIFixture.studio.hostID])
+    }
+    func snapshot(cursor: String?) async throws -> HostSnapshot { throw DuckyError.unavailable(403) }
+    func close() {}
+}
+
 private final class ChatUIFixtureStore: CredentialStoring {
     private var host: PairedHost?
-    init(_ host: PairedHost) { self.host = host }
+    init(_ host: PairedHost?) { self.host = host }
     func save(_ host: PairedHost) { self.host = host }
     func load() -> PairedHost? { host }
     func forget() { host = nil }
