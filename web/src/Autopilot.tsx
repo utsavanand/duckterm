@@ -335,6 +335,7 @@ const HARNESS_LABEL: Record<string, string> = { "claude-code": "Claude Code", co
 function kindLabel(a: AutopilotAttempt): string {
   if (a.kind === "gate") return "your approval";
   if (a.kind === "exec") return "script";
+  if (a.kind === "parallel") return "runs the reviews together";
   const who = HARNESS_LABEL[a.harness ?? ""] ?? a.harness ?? "Claude Code";
   return a.kind === "decide" ? `${who} · decides` : who;
 }
@@ -474,7 +475,8 @@ function RunDetail({ id, tab: firstTab, back, onBack }: { id: string; tab?: RunT
 function firstLine(a: AutopilotAttempt): string {
   if (a.status === "started") return "running…";
   const line = (a.reason ?? "").split("\n").find(l => l.trim()) ?? "";
-  return line.replace(/[*`_#]/g, "").trim() || (a.choice ? `chose ${a.choice}` : "");
+  // markdown marks only: underscores inside names (CLOSE_TIMEOUT) are text
+  return line.replace(/[*`#]|(^|\s)_+|_+(?=\s|$)/g, "$1").trim() || (a.choice ? `chose ${a.choice}` : "");
 }
 
 function Changes({ changes }: { changes: AutopilotChanges | null }) {

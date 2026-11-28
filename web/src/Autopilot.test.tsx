@@ -256,17 +256,19 @@ it("a run's steps name what ran each one: Claude Code, Codex, a script or you", 
   const base = detail("r1");
   const at = { status: "completed", exit: 0, choice: null, reason: "", started_at: 1, finished_at: 2 };
   const attempts = [
-    { ...at, step: "spec", attempt: 1, kind: "run", harness: "claude-code" },
+    { ...at, step: "spec", attempt: 1, kind: "run", harness: "claude-code", reason: "Raised `CLOSE_TIMEOUT` in **audio_capture.py**." },
     { ...at, step: "tests", attempt: 1, kind: "exec", harness: null },
     { ...at, step: "qa", attempt: 1, kind: "decide", harness: "codex" },
     { ...at, step: "spec-gate", attempt: 1, kind: "gate", harness: null },
+    { ...at, step: "checks", attempt: 1, kind: "parallel", harness: null },
   ];
   vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => new Response(JSON.stringify(
     String(input).startsWith("/api/autopilot/runs/") ? { ...base, attempts } : overview), { status: 200 }));
   await act(async () => { fireEvent.click(screen.getAllByRole("row")[1]); });
   await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
   const labels = Array.from(document.querySelectorAll(".ap-attempts .ap-att-kind")).map(e => e.textContent);
-  expect(labels).toEqual(["Claude Code", "script", "Codex · decides", "your approval"]);
+  expect(labels).toEqual(["Claude Code", "script", "Codex · decides", "your approval", "runs the reviews together"]);
+  expect(screen.getByText("Raised CLOSE_TIMEOUT in audio_capture.py.")).toBeInTheDocument();
 });
 
 it("Read spec opens the run on its Spec tab", async () => {

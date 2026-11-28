@@ -21,6 +21,7 @@ import os
 import re
 import subprocess
 import tempfile
+import threading
 import time
 import uuid
 from collections.abc import Callable, Iterator
@@ -937,13 +938,20 @@ def _start_commit(project: Path) -> str | None:
     return proc.stdout.strip() if proc.returncode == 0 else None
 
 
+# Members of a parallel step resolve workspace.diff into the same folder,
+# through the same temporary index; unserialised, one of them hashed an empty
+# diff while the other wrote the real one (autopilot run on kaho#8, 2026-11-27).
+_DIFF_LOCK = threading.Lock()
+
+
 def _diff(run: Run) -> dict[str, Any]:
     cur = run.state["current"]
     folder = run.attempt_dir(cur["step"], cur["attempt"])
     folder.mkdir(parents=True, exist_ok=True)
-    text, tree = _workspace(run, folder)
     path = folder / "workspace.diff"
-    path.write_text(text)
+    with _DIFF_LOCK:
+        text, tree = _workspace(run, folder)
+        path.write_text(text)
     return {
         "path": str(path.relative_to(run.project)),
         "sha256": sha256(text.encode()),
@@ -1233,18 +1241,20 @@ def _collect(
     if kind == "run" and structured.get("status") == "failed":
         return f"the skill reported failure: {structured.get('reason') or ''}"
     previous = run.last_receipt(step["id"])
-    for name, filename in _file_outputs(skill).items():
+    files = _file_outputs(skill)
+    for name, filename in files.items():
         f = outdir / filename
         if not f.is_file() or f.stat().st_size == 0:
             return f"file output {name!r} missing or empty at {f.relative_to(run.project)}"
         outputs[name] = {"path": str(f.relative_to(run.project)), "sha256": sha256(f.read_bytes())}
     # A rerun that wrote nothing new did no work. One output may rightly stay
     # the same (a rewritten spec keeps its classification), so only all of
-    # them unchanged counts.
-    if previous and outputs and not skill.get("idempotent"):
-        old = {n: (previous["outputs"].get(n) or {}).get("sha256") for n in outputs}
-        if all(old[n] == o["sha256"] for n, o in outputs.items()):
-            names = ", ".join(repr(n) for n in outputs)
+    # them unchanged counts. A decide step is exempt: a second review of new
+    # code may rightly find what the first one did.
+    if previous and files and kind == "run" and not skill.get("idempotent"):
+        old = {n: (previous["outputs"].get(n) or {}).get("sha256") for n in files}
+        if all(old[n] == outputs[n]["sha256"] for n in files):
+            names = ", ".join(repr(n) for n in files)
             return f"file output {names} is unchanged from the previous attempt"
     attempt["reason"] = str(structured.get("reason") or "")
     attempt["outputs"] = outputs

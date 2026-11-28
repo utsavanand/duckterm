@@ -76,6 +76,13 @@ End with exactly one of these choices and a one-line reason:
 
 A single `critical` or `high` finding means `fail`.
 
+A check that cannot run here (a missing tool, a dependency that is not
+installed, no network) is not a failure of the change. List it under "Not
+run", with the error, and judge the change on the checks that did run and on
+reading the code against the success criteria. Compare with the base commit
+when unsure: a test that fails the same way without the change is not this
+change's failure.
+
 ## Output
 
 Write the report to the path the runner names, or to `.autopilot/qa.md` when

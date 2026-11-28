@@ -3,6 +3,7 @@ spec policy asks for one, and carries on from the owner's answer in a new one.
 The kit runner and the kit's policy script are real; the sandbox, gateway and
 model steps are fakes."""
 
+import hashlib
 import json
 import subprocess
 import threading
@@ -36,6 +37,8 @@ class _Steps(runner.Executor):
     classification: dict[str, Any] = {}
     vary = True  # each spec attempt writes a different spec
     triage = "ready"
+    qa_fail_once = False
+    diffs: list[bool] = []  # per review: the diff file matches its stated hash
 
     def __init__(self, box: Any, dirs: executor.RunDirs, token: str, branch: str) -> None:
         self.box = box
@@ -68,16 +71,26 @@ class _Steps(runner.Executor):
             (Path(cwd) / "fix.txt").write_text("fixed\n")
         if step == "qa":
             (out / "qa.md").write_text("Pass.\n")
-            structured["verdict"] = "pass"
+            failing = self.qa_fail_once and self.calls.count("qa") == 1
+            structured["verdict"] = "fail" if failing else "pass"
         if step == "security":
             (out / "security.md").write_text("No findings.\n")
             (out / "classification.json").write_text(json.dumps(self.classification))
             structured["verdict"] = "approve"
+        if step in ("qa", "security"):
+            self.diffs.append(_diff_matches(argv[-1], Path(cwd)))
         if argv[0] == "codex":  # Codex writes its last message to the -o file
             Path(argv[argv.index("-o") + 1]).write_text(json.dumps(structured))
             return runner.ProcessResult(0, "", "")
         body = {"type": "result", "subtype": "success", "structured_output": structured}
         return runner.ProcessResult(0, json.dumps(body), "")
+
+
+def _diff_matches(prompt: str, project: Path) -> bool:
+    inputs = json.loads(prompt.split("root):\n", 1)[1].split("\nWrite each file", 1)[0])
+    diff = inputs["diff"]
+    data = (project / diff["path"]).read_bytes()
+    return bool(data) and hashlib.sha256(data).hexdigest() == diff["sha256"]
 
 
 class _Gateway:
@@ -154,7 +167,8 @@ def published(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[str]:
         runs, "threading", SimpleNamespace(Thread=_NowThread, Timer=threading.Timer)
     )
     _Steps.calls, _Steps.prompts, _Gateway.minted, _Box.live = [], [], [], 0
-    _Steps.vary, _Steps.triage = True, "ready"
+    _Steps.vary, _Steps.triage, _Steps.qa_fail_once = True, "ready", False
+    _Steps.diffs = []
     _Steps.classification = {**ROUTINE, "security": {"level": "touches", "areas": ["auth"]}}
     out: list[str] = []
     monkeypatch.setattr(runs, "_publish", lambda root, meta, *_: out.append(meta["id"]))
@@ -201,6 +215,8 @@ def test_approving_builds_in_a_new_sandbox_on_what_is_left_of_the_budget(
     assert _Steps.calls[:3] == ["triage", "spec", "build"]
     assert sorted(_Steps.calls[3:]) == ["qa", "security"]  # in parallel, on Codex
     assert sum(p.startswith("codex exec") for p in _Steps.prompts) == 2
+    # both reviewers read the same diff the hash names (they raced for it)
+    assert _Steps.diffs == [True, True]
     assert _Gateway.minted == [5_000_000, 3_999_999]
     assert run["tokens"] == 2_000_001
     assert [(a["answer"], a["by"]) for a in run["answers"]] == [("approve", "owner")]
@@ -279,3 +295,15 @@ def test_an_issue_triage_cannot_act_on_ends_before_any_spec(
     assert run["state"] == state
     assert _Steps.calls == ["triage"]
     assert published == []
+
+
+def test_a_review_that_sends_the_work_back_runs_again_on_the_new_build(
+    published: list[str],
+) -> None:
+    # the second review wrote the same files as the first and was failed for
+    # doing no work, after comparing its verdict, a word, as if it were a file
+    _Steps.classification, _Steps.qa_fail_once = ROUTINE, True
+    run = runs.get(_start())
+    assert run["state"] == "succeeded"
+    assert _Steps.calls.count("build") == 2 and _Steps.calls.count("qa") == 2
+    assert published == [run["id"]]

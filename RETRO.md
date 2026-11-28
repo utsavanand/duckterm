@@ -1,3 +1,17 @@
+## 2026-11-27 — Parallel reviewers raced for one diff file
+
+The first real run of the review stage (kaho-reports#8) failed after three
+rounds: both Codex reviewers kept asking for a revision because the diff's
+SHA-256 did not match the one they were given, e3b0c442…, the hash of an empty
+file. QA and security run in parallel and both resolved workspace.diff into
+the same folder through the same temporary git index, so one hashed an empty
+diff while the other wrote the real one. The runner now builds that diff under
+a lock. The same run showed two more: the "output unchanged" check compared a
+review's verdict word as a file and failed a second review that agreed with
+the first, and QA failed changes for tools the sandbox does not have. Unit
+tests with fake steps passed all along. Lesson: run parallel steps for real
+before calling a flow done; a fake that answers instantly never races.
+
 ## 2026-11-27 — Codex can review on the owner's ChatGPT plan, through the gateway
 
 The approved Autopilot mock has Codex review what Claude Code builds. I first
