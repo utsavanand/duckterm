@@ -4449,6 +4449,10 @@ class Server:
             kind = "ask.history"
         if kind in ("ask.prs", "ask.pr"):
             copy, as_of, refreshing = await self._pr_copy()
+            if copy is None:
+                answer = ask_intents.PR_NOT_READY
+                exchange = oracle.append_chat(chat_path, question, answer, int(time.time() * 1000))
+                return {"answer": answer, "exchange": exchange, "sessions": [], "intent": kind}
             names = {
                 str(r["session_key"]): (str(r.get("name") or ""), str(r.get("grp") or ""))
                 for r in self.history.sessions()
@@ -4635,10 +4639,11 @@ class Server:
         await self._pr_copy()
         return copy
 
-    async def _pr_copy(self) -> tuple[dict[str, Any], int, bool]:
+    async def _pr_copy(self) -> tuple[dict[str, Any] | None, int, bool]:
         """The PR list for every agent, as last built, with its time and
         whether a newer one is being built. GitHub takes 12-30 s per call, so
-        the chat answers from this copy; only the first question waits."""
+        the chat answers from this copy; only the first question waits, for at
+        most PR_WAIT_S (None after that, with the build still running)."""
         from duckterm.review import lists as review_lists
 
         now = int(time.time() * 1000)
@@ -4647,16 +4652,29 @@ class Server:
         idle = task is None or task.done()
         if idle and (copy is None or now - copy[0] >= ask_intents.PR_COPY_MS):
             members = [r for r in self.history.sessions() if not r.get("test")]
-            owners = await self._branch_owners(False)
 
+            # Assigned before its first await, so concurrent questions share
+            # one build (six cold callers once started six).
             async def rebuild() -> None:
-                result = await asyncio.to_thread(review_lists.build, members, owners=owners)
+                deadline = time.monotonic() + ask_intents.PR_BUILD_S
+                try:
+                    owners = await self._branch_owners(False)
+                    result = await asyncio.to_thread(
+                        review_lists.build, members, owners=owners, deadline=deadline
+                    )
+                except Exception as error:  # git, GitHub and the filesystem
+                    # Kept as the copy, so questions say what failed and the
+                    # next build waits PR_COPY_MS instead of running per question.
+                    result = {"rows": [], "repos": [], "error": f"{type(error).__name__}: {error}"}
                 self._pr_list_copy = (int(time.time() * 1000), result)
 
             task = self._pr_list_refresh = asyncio.ensure_future(rebuild())
         if copy is None:
             assert task is not None
-            await asyncio.shield(task)
+            try:
+                await asyncio.wait_for(asyncio.shield(task), ask_intents.PR_WAIT_S)
+            except TimeoutError:
+                return None, now, True
             copy = self._pr_list_copy
         return copy[1], copy[0], task is not None and not task.done()
 

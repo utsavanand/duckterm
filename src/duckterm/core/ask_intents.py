@@ -961,6 +961,9 @@ def prompt_lines(
 def pr_health(copy: tuple[int, dict[str, Any]] | None) -> str:
     if copy is None:
         return "- Pull requests: not read yet; the PR list is being fetched."
+    if copy[1].get("error"):
+        error = clip(copy[1]["error"], 120)
+        return f"- Pull requests: couldn't build the PR list at {_when(copy[0])}: {error}"
     rows = [r for r in copy[1]["rows"] if r.get("pr") and r["pr"].get("state") == "open"]
     conflict = sum(1 for r in rows if r["status"] == "conflict")
     failing = sum(1 for r in rows if r["status"] == "ci_failing")
@@ -971,6 +974,15 @@ def pr_health(copy: tuple[int, dict[str, Any]] | None) -> str:
 
 
 PR_COPY_MS = 5 * 60_000
+# The first question waits this long for a cold copy, and a build stops
+# reading repositories after PR_BUILD_S (review_lists.build reads them one
+# after another, up to 25 s each).
+PR_WAIT_S = 45
+PR_BUILD_S = 120
+PR_NOT_READY = (
+    "The PR list is still being read from GitHub (it reads every repository your agents "
+    "use). Ask again in a minute."
+)
 PR_NUMBER = re.compile(r"#?(\d{1,6})\b")
 
 
@@ -1000,6 +1012,11 @@ def prs_list(
 ) -> str:
     """Open pull requests grouped the way the PR list flags them. GitHub takes
     12-30 s per workspace, so this is a copy with its time."""
+    if copy.get("error"):
+        return (
+            f"Couldn't build the PR list at {_when(as_of)}: {clip(copy['error'], 120)}. "
+            "It's tried again 5 minutes after that."
+        )
     rows = [r for r in copy["rows"] if r.get("pr") and r["pr"].get("state") == "open"]
     groups = [
         ("Merge conflicts", [r for r in rows if r["status"] == "conflict"]),

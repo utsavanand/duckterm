@@ -14,6 +14,7 @@ from test_maintained_progress import provider
 from test_memory import memory_rig, transcript
 from test_session_api import call, dispatch, enroll
 
+from duckterm.core import ask_intents
 from duckterm.core.tokens import TokenLedger
 from duckterm.editions import EditionConfig
 from duckterm.llm.summarizer import Summary
@@ -770,10 +771,13 @@ def pr_row(number, status, label, needs_you, key, name, failed=0):
 @pytest.fixture
 def github(monkeypatch):
     """review_lists.build reads git and GitHub; the copy around it is real."""
-    builds = []
+    builds = Builds()
 
-    def build(members, *, owners=None, refresh=False):
+    def build(members, *, owners=None, refresh=False, deadline=None):
         builds.append([m["session_key"] for m in members])
+        time.sleep(builds.delay)
+        if builds.error:
+            raise builds.error
         return {
             "rows": [
                 pr_row(531, "conflict", "Conflicts", True, "peer", "main"),
@@ -790,6 +794,11 @@ def github(monkeypatch):
 
     monkeypatch.setattr("duckterm.review.lists.build", build)
     return builds
+
+
+class Builds(list):
+    delay = 0.0
+    error: Exception | None = None
 
 
 def test_prs_are_grouped_from_a_copy_built_once(fleet, monkeypatch, github):
@@ -827,6 +836,65 @@ def test_prs_are_grouped_from_a_copy_built_once(fleet, monkeypatch, github):
 
     asyncio.run(rebuilt())
     assert len(github) >= 2 and server._pr_list_copy[0] >= at
+
+
+def test_concurrent_cold_questions_share_one_build(fleet, github):
+    server, _ = fleet
+    github.delay = 0.2
+
+    async def six():
+        return await asyncio.gather(*(server._pr_copy() for _ in range(6)))
+
+    copies = asyncio.run(six())
+    assert len(github) == 1
+    assert all(c[0] is copies[0][0] and c[0]["rows"] for c in copies)
+
+
+def test_a_slow_cold_copy_answers_not_ready_and_keeps_its_one_build(fleet, monkeypatch, github):
+    server, owner = fleet
+    github.delay = 0.3
+    monkeypatch.setattr("duckterm.core.ask_intents.PR_WAIT_S", 0.05)
+
+    async def question_then_wait():
+        first = await server._pr_copy()
+        await server._pr_list_refresh
+        return first, await server._pr_copy()
+
+    (copy, _, refreshing), (later, _, _) = asyncio.run(question_then_wait())
+    assert copy is None and refreshing
+    assert len(github) == 1 and later["rows"]
+    server._pr_list_copy = None
+    server._pr_list_refresh = None
+    github.delay = 0.3
+    answer = listed(server, owner, monkeypatch, {"intent": "ask.prs", "entities": []}, "PRs?")
+    assert answer == ask_intents.PR_NOT_READY
+
+
+def test_a_failed_build_is_answered_and_not_retried_per_question(fleet, monkeypatch, github):
+    server, owner = fleet
+    github.error = RuntimeError("git: not a repository")
+    intent = {"intent": "ask.prs", "entities": []}
+    answer = listed(server, owner, monkeypatch, intent, "Which PRs need me?")
+    assert answer.startswith("Couldn't build the PR list at ")
+    assert "RuntimeError: git: not a repository. It's tried again 5 minutes after that." in answer
+    listed(server, owner, monkeypatch, intent, "Which PRs need me?")
+    assert len(github) == 1
+    health = listed(server, owner, monkeypatch, {"intent": "ask.health", "entities": []}, "?")
+    assert "- Pull requests: couldn't build the PR list at " in health
+
+
+def test_the_pr_list_build_stops_reading_repositories_at_its_deadline(tmp_path):
+    from duckterm.review import lists as review_lists
+
+    repo = tmp_path / "late"
+    repo.mkdir()
+    subprocess.run(["git", "init", "-q", "-b", "feat", str(repo)], check=True)
+    row = {"session_key": "k", "name": "dev", "cwd": str(repo)}
+    result = review_lists.build([row], deadline=time.monotonic() - 1)
+    assert result["rows"] == []
+    assert [(r["name"], r["error"]) for r in result["repos"]] == [
+        ("late", "the PR list ran out of time before reaching it")
+    ]
 
 
 def test_a_pr_question_reads_its_row_and_what_agents_said(fleet, monkeypatch, github):
