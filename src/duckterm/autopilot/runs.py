@@ -220,6 +220,8 @@ def _read_capped(root: Path, rel: str, cap: int) -> bytes | None:
     and only a regular file is read, since a FIFO would block the reading
     thread for good."""
     parts = Path(rel).parts
+    if not parts:
+        return None
     try:
         fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
     except OSError:

@@ -1,3 +1,12 @@
+## 2026-11-27 — A path check that passed "." crashed the run page
+
+The run detail reader refused absolute paths and `..`, then opened the last
+part of the spec path. A receipt naming "." or "./" has no parts at all, so
+`parts[-1]` raised IndexError, which the reader's `except OSError` did not
+catch, and that run's page failed to load. Release-dev's security review found
+it. The reader now returns None for a path with no parts. Lesson: when a check
+lists what a path may not be, also ask what happens when it is empty.
+
 ## 2026-11-27 — The pause check covered one trigger, and a long turn looked quiet
 
 After #507, 3 of 65 automatic checkpoints still failed mid-turn. #507 made the
