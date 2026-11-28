@@ -22,6 +22,7 @@ export interface AutopilotEntry {
   name: string;
   workspace: string;
   repo: string;
+  issue_repo?: string;
   triggers: Partial<Record<TriggerType, { labels: string[] }>>;
   approvals: { spec_on_visible: boolean; keep_merge_approval: boolean };
   budget_m: number;
@@ -113,6 +114,8 @@ export interface AutopilotDraft {
   name: string;
   workspace: string;
   repo: string;
+  // "" when issues come from repo itself
+  issue_repo: string;
   triggers: Partial<Record<TriggerType, { labels: string[] }>>;
   approvals: { spec_on_visible: boolean; keep_merge_approval: boolean };
   budget_m: number;

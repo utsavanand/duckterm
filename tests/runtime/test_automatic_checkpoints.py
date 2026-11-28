@@ -192,6 +192,29 @@ def test_fifty_messages_wait_for_a_pause(memory_rig):
     assert auto.due(conn, NOW + 1, set()) == ["working"]
 
 
+def test_a_long_turn_of_tool_calls_is_not_quiet(memory_rig):
+    # Quiet counts prompts and turn ends only; a turn of tool calls running past
+    # 15 minutes was checkpointed mid-turn and failed (2026-11-27, 3 of 65).
+    from duckterm.core import auto_checkpoints as auto
+
+    server = memory_rig[0]
+    agents(server, "long-turn")
+    server.history.record(
+        {
+            "_id": "prompt",
+            "_ts": NOW - auto.QUIET_MS - 1000,
+            "session_key": "long-turn",
+            "event_type": "UserPromptSubmit",
+        }
+    )
+    server.history.record(
+        {"_id": "tool", "_ts": NOW - 30_000, "session_key": "long-turn", "event_type": "PreToolUse"}
+    )
+    conn = server.history._conn
+    assert auto.due(conn, NOW, set()) == []
+    assert auto.due(conn, NOW - 30_000 + auto.SETTLED_MS, set()) == ["long-turn"]
+
+
 def test_a_stale_saved_copy_is_not_checkpointed_as_current(memory_rig, monkeypatch):
     # When the live conversation can't be read, memory falls back to an older
     # saved copy. A checkpoint of it would present old work as current, and an

@@ -22,6 +22,40 @@ read. Closing it needs a config snapshot git can't re-read, which git
 doesn't offer. Worktree creation still runs checkout hooks and filters,
 which git-lfs needs.
 
+## 2026-11-27 — An autopilot assumed issues live next to the code
+
+Kaho's "Report a Bug" button files issues in utsavanand/kaho-reports, a repository
+with no code; the app is utsavanand/kaho. The autopilot had one `repo` field and
+used it for the watch, the clone, the push and the pull request, so a run for a
+report would have cloned an empty repository. Nobody noticed because every
+autopilot until then watched its own code repository.
+
+An autopilot now has an issue repository (defaulting to the code repository) and
+a code repository. The label check runs against the issue repository, the run
+clones and opens its draft PR on the code repository, and the PR names the
+report as `owner/reports#7` so GitHub links and closes it across repositories.
+Changing the issue repository starts the watch over, since issue numbers from the
+old one mean nothing in the new one. Lesson: a field used for four jobs is four
+assumptions; ask which of them a new user breaks before calling it one setting.
+
+## 2026-11-27 — A path check that passed "." crashed the run page
+
+The run detail reader refused absolute paths and `..`, then opened the last
+part of the spec path. A receipt naming "." or "./" has no parts at all, so
+`parts[-1]` raised IndexError, which the reader's `except OSError` did not
+catch, and that run's page failed to load. Release-dev's security review found
+it. The reader now returns None for a path with no parts. Lesson: when a check
+lists what a path may not be, also ask what happens when it is empty.
+
+## 2026-11-27 — The pause check covered one trigger, and a long turn looked quiet
+
+After #507, 3 of 65 automatic checkpoints still failed mid-turn. #507 made the
+50-message trigger wait for a pause, but the 15-quiet-minute trigger measures
+quiet by prompts and turn ends only, so a turn of tool calls running past 15
+minutes counted as quiet. Both triggers now wait for a turn end or a minute with
+no events. Lesson: when a fix guards one entry point, list every path into the
+same step; the failures came back through the other door.
+
 ## 2026-11-27 — A run record that only the list reads hides what the run did
 
 Autopilot's runs list read the runner's receipt down to step names and exit
@@ -145,6 +179,57 @@ and passed only because the reviewer looked at HEAD on its own. A diff that
 stands for "what this run changed" needs the run's starting commit, recorded
 at start, not whatever HEAD is when the diff is taken.
 
+## 2026-11-26 — A green gate cannot see a CSS class collision
+
+The connector panel rebuild introduced `.rd-card`. That class already existed,
+1300 lines further down the same stylesheet, as the session card. CSS later-wins,
+so the session card's rule overrode the connector card's own padding and radius:
+16px/18px and 12px instead of the intended 12px/0 and 10px. The 18px horizontal
+padding was the damaging one, because the card's footer is designed to run
+full-bleed to the card edge -- forced inset, its top rule stopped spanning the
+card and read as a seam.
+
+The full gate passed on this. 989 vitest tests and 189 playwright tests, green,
+with the defect shipped. Proved it afterwards by breaking the class name
+outright: vitest still reported 989 passed. No unit test asserts on the card
+container at all, so no unit test could have noticed the container was styled by
+someone else's rule. The e2e suite did catch it (5 failures) because it locates
+by `.rd-ccard`.
+
+Two lessons. First: before adding a CSS class, grep the whole stylesheet set for
+the name -- not just the file being edited, and not just the block being
+replaced. `rd-card-*` turned out to be an established namespace spanning
+inbox.css and review/review.css. Second: a passing gate is evidence about what
+the tests assert, not about what the user sees. The thing to verify after a
+visual change is the computed style, which is one `getComputedStyle` call and
+settles in seconds what reading the cascade cannot.
+
+## 2026-11-26 — A derived boolean cannot drive a control that states intent
+
+The connector panel's "share with agents" button became a switch. Wiring its
+`aria-checked` to `agents_use` looked obviously right and was wrong:
+`agents_use` is the AND of two doors -- the owner's choice and whether every
+chosen harness still has an entry. A missing Codex entry therefore rendered a
+switch in exactly the position the owner would have left it by turning agents
+off, under the deliberate-withdrawal wording. That is the conflation the
+two-door split exists to prevent, reintroduced through the new control.
+
+A switch states intent, so it must read the field that records intent
+(`agents_off_by_choice`). Breakage belongs in an alert beside it, not in the
+control's position. Before binding a control to a status field, ask whether
+that field is a cause or a consequence; a consequence cannot be toggled back.
+
+Found by rendering the state, not by reading the diff. Both fixtures pass the
+same `agents_use: false`, so no amount of re-reading the component showed it --
+the screenshots did.
+
+Second lesson from the same change. Replacing the editor's "Close" button with
+"Cancel" silently dropped its accessible name, and the sidebar-fit e2e test
+located that control by name, so it timed out rather than failing an assertion.
+A renamed control is an API change for anything that queries by role and name.
+Keep the accessible name when the visible word changes, with aria-label.
+
+
 ## 2026-11-26 — Automatic checkpoints failed on busy agents, and one fallback checkpointed old work
 
 The first night of automatic checkpoints: 86 succeeded, 8 failed, every
@@ -166,6 +251,7 @@ forever, and each saved answer was copied whole (up to 256 KB, 200 kept). When
 the UI waits on someone, list only who can answer, have the server refuse the
 rest, and bound what is copied into a history by bytes, not just by count.
 
+
 ## 2026-11-26 — Verify hardening advice against the pinned dependency
 
 Serve static assets with nosniff alongside correct MIME types, including PDF
@@ -183,6 +269,7 @@ probe the actual native engine. Verify worker/resource URLs and MIME
 types through the packaged server, not just Vite. Page comments need both a
 content hash and a page number: identical text on different pages must not make
 feedback jump to the wrong occurrence. Scanned pages still need page comments.
+
 
 ## 2026-11-26 — The narrow-strip rule never hid Oracle's subtitle
 

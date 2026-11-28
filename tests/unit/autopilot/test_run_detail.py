@@ -149,6 +149,16 @@ def test_the_clones_diff_driver_does_not_run(
     assert not ran.exists()
 
 
+@pytest.mark.parametrize("path", [".", "./"])
+def test_a_spec_path_naming_the_clone_itself_still_opens_the_run(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, path: str
+) -> None:
+    _run(tmp_path, monkeypatch, path)
+    d = runs.detail("r1")
+    assert d["spec"] is None
+    assert d["attempts"][0]["step"] == "spec"
+
+
 @pytest.mark.parametrize("kind", ["fifo", "directory", "linked folder"])
 def test_a_spec_that_is_not_a_regular_file_is_not_read(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str

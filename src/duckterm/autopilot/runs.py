@@ -73,6 +73,7 @@ def start(autopilot: dict[str, Any], trigger: str, item: dict[str, Any]) -> str:
         "workspace": autopilot.get("workspace") or "",
         "flow": autopilot["flow"],
         "repo": autopilot["repo"],
+        "issue_repo": store.issue_repo(autopilot),
         "trigger": trigger,
         "item": {k: item.get(k) for k in ("number", "title", "url", "started_by")},
         "branch": f"autopilot/{run_id}",
@@ -160,7 +161,7 @@ def _publish(
         pr = github_push.open_pull_request(
             autopilot["repo"],
             meta["branch"],
-            pr_title(item),
+            pr_title(meta, item),
             pr_body(meta, item, project, state),
             token,
         )
@@ -171,9 +172,17 @@ def _publish(
         _update(root, pr_error=str(exc)[:300])
 
 
-def pr_title(item: dict[str, Any]) -> str:
+def issue_ref(meta: dict[str, Any], item: dict[str, Any]) -> str:
+    """`#7`, or `owner/reports#7` when the issue is in another repository
+    than the pull request; GitHub links and closes that form across repos."""
+    other = meta.get("issue_repo")
+    prefix = other if other and other != meta.get("repo") else ""
+    return f"{prefix}#{item['number']}"
+
+
+def pr_title(meta: dict[str, Any], item: dict[str, Any]) -> str:
     number, title = item.get("number"), str(item.get("title") or "").strip()
-    head = f"Fix #{number}: " if number else ""
+    head = f"Fix {issue_ref(meta, item)}: " if number else ""
     return (head + title)[:120] or "Autopilot change"
 
 
@@ -185,7 +194,7 @@ def pr_body(
     spec = spec_text(project, state)
     parts = [spec[:20000].strip()] if spec else []
     if item.get("number"):
-        parts.append(f"Closes #{item['number']}.")
+        parts.append(f"Closes {issue_ref(meta, item)}.")
     parts.append(
         f"Opened as a draft by DuckTerm autopilot ({meta['flow']}, run {meta['id']}). "
         "Review it before merging."
@@ -220,6 +229,8 @@ def _read_capped(root: Path, rel: str, cap: int) -> bytes | None:
     and only a regular file is read, since a FIFO would block the reading
     thread for good."""
     parts = Path(rel).parts
+    if not parts:
+        return None
     try:
         fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
     except OSError:

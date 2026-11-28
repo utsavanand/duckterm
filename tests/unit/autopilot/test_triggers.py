@@ -72,6 +72,16 @@ def test_saving_normalises_labels_and_names_the_autopilot(home: Path) -> None:
     assert store.load() == [entry]
 
 
+def test_issues_come_from_the_code_repository_unless_another_is_given(home: Path) -> None:
+    assert store.create(_body())["issue_repo"] == "o/r"
+    entry = store.create(_body(issue_repo="o/reports"))
+    assert (entry["repo"], entry["issue_repo"]) == ("o/r", "o/reports")
+    # a record saved before issue_repo existed watches its code repository
+    assert store.issue_repo({"repo": "o/r"}) == "o/r"
+    with pytest.raises(ValueError, match="owner/name"):
+        store.create(_body(issue_repo="not a repo"))
+
+
 @pytest.mark.parametrize(
     ("over", "error"),
     [
@@ -186,6 +196,22 @@ def test_changing_the_labels_starts_over_from_what_is_there(tmp_path: Path) -> N
     _poll(gh, tmp_path, ["autopilot"])
     gh.add(10, ["bug"])
     assert _poll(gh, tmp_path, ["bug"]) == []
+
+
+def test_watching_another_issue_repository_starts_over_from_what_is_there(
+    tmp_path: Path,
+) -> None:
+    # issue numbers from the old repository mean nothing in the new one
+    gh = FakeGitHub()
+    seen = tmp_path / "seen.json"
+    github_watch.poll(gh, "o/r", ["autopilot"], seen, 5)
+    gh.add(11, ["autopilot"])
+    other = lambda path: gh(path.replace("/repos/o/reports/", "/repos/o/r/"))  # noqa: E731
+    assert github_watch.poll(other, "o/reports", ["autopilot"], seen, 5) == []
+    gh.add(12, ["autopilot"])
+    assert [i["number"] for i in github_watch.poll(other, "o/reports", ["autopilot"], seen, 5)] == [
+        12
+    ]
 
 
 def test_autopilot_routes_belong_to_the_autopilot_flag() -> None:
