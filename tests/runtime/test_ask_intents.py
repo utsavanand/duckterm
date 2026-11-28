@@ -103,6 +103,9 @@ def fleet(memory_rig, monkeypatch):
             "options": [],
         }
     )
+    # The rig flags its sessions as tests; here they stand in for real agents,
+    # and Ask DuckTerm leaves test sessions out.
+    history._conn.execute("UPDATE sessions SET test = 0")
     history._conn.commit()
     return server, {"x-duckterm-token": server.token}
 
@@ -588,6 +591,45 @@ def test_history_finds_agent_messages_and_survives_a_bad_rerank(fleet, monkeypat
     answer = answers[-1]
     assert "[agent message · release-dev (duckterm-leadership)" in answer
     assert "answer from main-qa-2: #500 PASS within isolated scope" in answer
+
+
+def test_probe_sessions_and_test_events_never_reach_a_history_answer(fleet, monkeypatch):
+    server, owner = fleet
+    history = server.history
+    now = int(time.time() * 1000)
+    with history._conn as conn:
+        conn.execute("UPDATE sessions SET test = 1 WHERE session_key = 'qa2'")
+    chunk(history, "peer", "Real: shipped bug reporting.", now - DAY)
+    chunk(history, "qa2", "Probe: bug reporting summary.", now - DAY)
+    memory(history, "qa2", [{"id": "m", "kind": "decision", "text": "Probe bug reporting"}], now)
+    history.folder_tasks.start("duckterm-core", "qa2", "Probe bug reporting task")
+    history._conn.commit()
+    with history._conn as conn:
+        conn.execute(
+            "INSERT INTO session_questions (id, sender, recipient, sender_name, root, question, "
+            "status, created_at, expires_at, idempotency_key, content_hash, kind) "
+            "VALUES ('q1', 'peer', 'qa2', 'main', 'duckterm-core', 'Probe bug reporting ask', "
+            "'queued', ?, 0, 'k', 'h', 'question')",
+            (now,),
+        )
+    history.record(
+        {
+            "_id": "probe-prompt",
+            "_ts": now - 1000,
+            "event_type": "UserPromptSubmit",
+            "session_key": "qa2",
+            "prompt": "Probe bug reporting prompt",
+            "test": True,
+        }
+    )
+    intent = {"intent": "ask.history", "entities": [topic("bug reporting")], "text": None}
+    answers = model(monkeypatch, intent, keep="not json")
+    status, _ = ask(server, owner, "Who built bug reporting?")
+    assert status == 200
+    records = answers[-1].split("Records:", 1)[1]
+    assert "Real: shipped bug reporting." in records
+    assert "Probe" not in records
+    assert "qa2" not in {a["id"] for a in ask_intents.roster(server)}
 
 
 def test_legacy_digests_are_read_only_for_spans_before_they_froze(fleet, monkeypatch):

@@ -79,7 +79,7 @@ def roster(server: Server) -> list[dict[str, Any]]:
         for r in server.history.sessions()
         if r.get("state") not in AT_REST_STATES or (r.get("updated_at") or 0) >= cutoff
     ]
-    rows = [r for r in rows if r.get("state") not in ("archived", "merged")]
+    rows = [r for r in rows if r.get("state") not in ("archived", "merged") and not r.get("test")]
     members = {
         row["session_key"]: row
         for row in server.history._conn.execute(
@@ -654,6 +654,12 @@ def recall(
     if not words:
         return []
     start, end = span or (0, now)
+
+    # Probe sessions and test events never reach an answer (AGENTS.md: test
+    # data carries test:true). Filtered in SQL so they can't use up a limit.
+    def real(column: str) -> str:
+        return f" AND {column} NOT IN (SELECT session_key FROM sessions WHERE test)"
+
     agent = ""
     agent_params: list[str] = []
     if keys:
@@ -666,7 +672,8 @@ def recall(
     for key, prose, at in conn.execute(
         f"SELECT session_key, {summary}, COALESCE(json_extract(text, '$.source_at'), "
         f"created_at) AS at FROM digest_items WHERE bucket = 'summary_revision_v1' "
-        f"AND ({where}){agent} AND at BETWEEN ? AND ? ORDER BY at DESC LIMIT ?",
+        f"AND ({where}){agent}{real('session_key')} AND at BETWEEN ? AND ? "
+        "ORDER BY at DESC LIMIT ?",
         (*params, *agent_params, start, end, CHUNK_RECALL),
     ):
         hits.append(_hit("summary", key, at, prose, names))
@@ -681,7 +688,8 @@ def recall(
         "SELECT d.session_key, d.text FROM digest_items d WHERE d.bucket = 'memory_items_v1' "
         "AND d.created_at = (SELECT max(created_at) FROM digest_items e "
         "WHERE e.session_key = d.session_key AND e.bucket = 'memory_items_v1')"
-        + agent.replace("session_key", "d.session_key"),
+        + agent.replace("session_key", "d.session_key")
+        + real("d.session_key"),
         agent_params,
     ):
         for item in json.loads(text).get("items", []):
@@ -705,6 +713,7 @@ def recall(
     for key, title, status, at in conn.execute(
         f"SELECT owner_session, title, status, updated_at FROM folder_tasks WHERE ({where})"
         + agent.replace("session_key", "owner_session")
+        + real("owner_session")
         + " ORDER BY updated_at DESC LIMIT ?",
         (*params, *agent_params, RECALL_PER_SOURCE),
     ):
@@ -716,8 +725,8 @@ def recall(
         agent_q = f" AND (sender IN ({marks}) OR recipient IN ({marks}))"
     for sender, recipient, question, answer, at in conn.execute(
         "SELECT sender, recipient, question, answer, created_at FROM session_questions "
-        f"WHERE ({where}){agent_q} AND created_at BETWEEN ? AND ? "
-        "ORDER BY created_at DESC LIMIT ?",
+        f"WHERE ({where}){agent_q}{real('sender')}{real('recipient')} "
+        "AND created_at BETWEEN ? AND ? ORDER BY created_at DESC LIMIT ?",
         (*params, *agent_params, *agent_params, start, end, RECALL_PER_SOURCE),
     ):
         to = names.get(recipient, (recipient[:8], ""))[0]
@@ -729,7 +738,8 @@ def recall(
         "SELECT session_key, event_type, ts, json_extract(payload_json, '$.prompt'), "
         "json_extract(payload_json, '$.last_assistant_message') FROM events "
         f"WHERE event_type IN ('UserPromptSubmit', 'Stop') AND ts BETWEEN ? AND ? "
-        f"AND ({where}){agent} ORDER BY ts DESC LIMIT ?",
+        f"AND ({where}){agent}{real('session_key')} "
+        "AND NOT COALESCE(json_extract(payload_json, '$.test'), 0) ORDER BY ts DESC LIMIT ?",
         (recent, end, *params, *agent_params, RECALL_PER_SOURCE),
     ):
         text = prompt if kind == "UserPromptSubmit" else reply
@@ -739,7 +749,7 @@ def recall(
         where, params = match_words("text", words)
         for key, bucket, text, at in conn.execute(
             "SELECT session_key, bucket, text, created_at FROM digest_items WHERE bucket IN "
-            f"({','.join('?' * len(LEGACY_BUCKETS))}) AND ({where}){agent} "
+            f"({','.join('?' * len(LEGACY_BUCKETS))}) AND ({where}){agent}{real('session_key')} "
             "AND created_at BETWEEN ? AND ? ORDER BY created_at DESC LIMIT ?",
             (*LEGACY_BUCKETS, *params, *agent_params, start, end, RECALL_PER_SOURCE),
         ):
