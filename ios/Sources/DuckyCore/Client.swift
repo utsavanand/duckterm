@@ -8,6 +8,9 @@ public final class DuckyClient {
     private let resolver: LocalEndpoint.Resolver
     private let lock = NSLock()
     private var sessions: [UUID: URLSession] = [:]
+    // Reads share one kept-alive connection per address instead of a TLS handshake each.
+    // Sends never ride a kept connection, so a stale one can't fail a message mid-delivery.
+    private var readSessions: [String: URLSession] = [:]
     private var closed = false
     private var lastAddress: String?
     private struct AnalysisRejection: Decodable { let error: String }
@@ -51,6 +54,14 @@ public final class DuckyClient {
         try result.validate(hostID: host.hostID)
         return result
     }
+    /// Waits until the Mac has something newer than `cursor`, or about 25 s.
+    public func events(cursor: String) async throws -> EventsResult {
+        let result: EventsResult = try await request(path: "/v2/events", query: [URLQueryItem(name: "cursor", value: cursor)],
+                                                     deadline: Self.eventsDeadline)
+        try result.validate(hostID: host.hostID)
+        return result
+    }
+    static let eventsDeadline: TimeInterval = 35
     public func conversation(sessionID: String) async throws -> ConversationSnapshot {
         let result: ConversationSnapshot = try await request(path: "/v2/conversation", query: [URLQueryItem(name: "session_id", value: sessionID)])
         try result.validate(hostID: host.hostID, sessionID: sessionID)
@@ -93,8 +104,8 @@ public final class DuckyClient {
     public func close() {
         lock.lock()
         closed = true
-        let active = Array(sessions.values)
-        sessions.removeAll()
+        let active = Array(sessions.values) + Array(readSessions.values)
+        sessions.removeAll(); readSessions.removeAll()
         lock.unlock()
         active.forEach { $0.invalidateAndCancel() }
     }
@@ -112,11 +123,35 @@ public final class DuckyClient {
         guard !closed else { throw CancellationError() }
         sessions[id] = session
     }
+    private func readSession(address: String, delegate: PinnedConnection) throws -> URLSession {
+        lock.lock(); defer { lock.unlock() }
+        guard !closed else { throw CancellationError() }
+        if let session = readSessions[address] { return session }
+        let config = Self.configuration()
+        config.timeoutIntervalForRequest = Self.eventsDeadline
+        config.timeoutIntervalForResource = Self.eventsDeadline + 5
+        let session = URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
+        readSessions[address] = session
+        return session
+    }
+    private static func configuration() -> URLSessionConfiguration {
+        let config = URLSessionConfiguration.ephemeral
+        config.httpShouldSetCookies = false
+        config.urlCache = nil
+        config.urlCredentialStorage = nil
+        config.waitsForConnectivity = false
+        // An explicit empty dictionary selects a direct connection. Proxy-disable
+        // keys such as HTTPSEnable are macOS-only; nil would instead inherit the
+        // device's proxy settings.
+        config.connectionProxyDictionary = [:]
+        return config
+    }
     private func remove(_ id: UUID) {
         lock.lock(); defer { lock.unlock() }
         sessions.removeValue(forKey: id)
     }
-    private func request<T: Decodable>(path: String, body: Data? = nil, query: [URLQueryItem] = []) async throws -> T {
+    private func request<T: Decodable>(path: String, body: Data? = nil, query: [URLQueryItem] = [],
+                                       deadline budget: TimeInterval = 10) async throws -> T {
         try Task.checkCancellation()
         let addresses: [String]
         do {
@@ -127,7 +162,7 @@ public final class DuckyClient {
             guard let last = lock.withLock({ lastAddress }) else { throw error }
             addresses = [last]
         }
-        let deadline = ProcessInfo.processInfo.systemUptime + 10
+        let deadline = ProcessInfo.processInfo.systemUptime + budget
         for (index, address) in addresses.enumerated() {
             try Task.checkCancellation()
             let remaining = deadline - ProcessInfo.processInfo.systemUptime
@@ -157,24 +192,22 @@ public final class DuckyClient {
         request.httpBody = body
         request.setValue("Ducky " + host.token, forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = path == "/v2/events" ? timeout : min(8, timeout)
         let delegate = PinnedConnection(address: address, port: host.url.port!,
                                         tlsName: host.tlsName ?? LocalEndpoint.hostname(host.url),
                                         certificateSHA256: host.certificateSHA256)
-        let config = URLSessionConfiguration.ephemeral
-        config.httpShouldSetCookies = false
-        config.urlCache = nil
-        config.urlCredentialStorage = nil
-        config.waitsForConnectivity = false
-        // An explicit empty dictionary selects a direct connection. Proxy-disable
-        // keys such as HTTPSEnable are macOS-only; nil would instead inherit the
-        // device's proxy settings.
-        config.connectionProxyDictionary = [:]
-        config.timeoutIntervalForRequest = min(8, timeout)
-        config.timeoutIntervalForResource = timeout
-        let session = URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
+        let session: URLSession
         let id = UUID()
-        defer { session.invalidateAndCancel(); remove(id) }
-        try register(session, id: id)
+        if body == nil {
+            session = try readSession(address: address, delegate: delegate)
+        } else {
+            let config = Self.configuration()
+            config.timeoutIntervalForRequest = min(8, timeout)
+            config.timeoutIntervalForResource = timeout
+            session = URLSession(configuration: config, delegate: delegate, delegateQueue: nil)
+            try register(session, id: id)
+        }
+        defer { if body != nil { session.invalidateAndCancel(); remove(id) } }
         let (bytes, response) = try await session.bytes(for: request, delegate: delegate)
         defer { bytes.task.cancel() }
         guard let http = response as? HTTPURLResponse else { throw DuckyError.invalidResponse }

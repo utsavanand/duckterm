@@ -1,6 +1,7 @@
 """Real private tmux terminals and TLS exercise the phone message boundary."""
 
 import asyncio
+import contextlib
 import json
 import secrets
 import shlex
@@ -178,10 +179,16 @@ async def with_bridge(app, exercise):
         try:
             writer.write(headers.encode() + data)
             await writer.drain()
-            raw = await asyncio.wait_for(reader.read(), 4)
+            try:
+                raw = await asyncio.wait_for(reader.read(), 4)
+            except ConnectionError:
+                raw = b""
         finally:
             writer.close()
-            await writer.wait_closed()
+            with contextlib.suppress(ConnectionError, ssl.SSLError):
+                await writer.wait_closed()
+        if not raw:
+            return 0, {}  # closed without an answer
         header, body = raw.split(b"\r\n\r\n", 1)
         assert b"Cache-Control: no-store" in header
         return int(header.split()[1]), json.loads(body)
@@ -390,7 +397,9 @@ def test_revocation_during_real_transcript_read_returns_no_conversation(app, mon
             await asyncio.to_thread(app["service"].grants.revoke, app["device"]["id"])
             release.set()
             code, response = await task
-            assert code == 403 and "messages" not in response
+            # The recheck answers 403, unless the bridge's revocation watcher
+            # closes the connection first; neither carries the conversation.
+            assert code in (0, 403) and "messages" not in response
             assert "PRIVATE_FIXTURE_REPLY" not in json.dumps(response)
             assert (await request("GET", "/v1/snapshot"))[0] == 403
             assert app["capture"].read_bytes() == b""
