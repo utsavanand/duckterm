@@ -109,8 +109,8 @@ def roster(server: Server) -> list[dict[str, Any]]:
         member = members.get(key)
         entry: dict[str, Any] = {
             "id": key,
-            "name": str(r.get("name") or key[:8]),
-            "workspace": str(r.get("grp") or ""),
+            "name": clip(str(r.get("name") or key[:8]), 80),
+            "workspace": clip(str(r.get("grp") or ""), 120),
             "state": str(r.get("state") or "unknown"),
         }
         if member and member["purpose"]:
@@ -121,9 +121,10 @@ def roster(server: Server) -> list[dict[str, Any]]:
             entry["tasks"] = [clip(t, 120) for t in tasks[key][:TASKS_PER_AGENT]]
         if key in asks:
             entry["asks_owner"] = clip(asks[key], 160)
-        used += len(json.dumps(entry))
-        if used > ROSTER_BYTES:
-            break
+        size = len(json.dumps(entry))
+        if used + size > ROSTER_BYTES:
+            continue
+        used += size
         out.append(entry)
     return out
 
@@ -258,7 +259,7 @@ def agents_named(intent: dict[str, Any], threshold: float) -> tuple[list[str], l
 
 
 def label(agent: dict[str, Any]) -> str:
-    return f"{agent['name']} ({agent['workspace'] or 'no workspace'})"
+    return f"{plain(agent['name'], 80)} ({plain(agent['workspace'], 120) or 'no workspace'})"
 
 
 def clarify_answer(said: str, candidates: list[dict[str, Any]]) -> str:
@@ -398,17 +399,22 @@ def _when(ms: int) -> str:
 
 
 def _who(name: object, workspace: object) -> str:
-    return f"**{name}** ({workspace or 'no workspace'})"
+    return f"**{plain(name, 80)}** ({plain(workspace, 120) or 'no workspace'})"
 
 
-MARKDOWN = re.compile(r"([\\`*_\[\]<>!~])")
+MARKDOWN = re.compile(r"([\\`*_\[\]<>!~@])")
+# GFM turns bare URLs into links too: break the scheme's "://", "mailto:"
+# and "www." (an escaped character renders as itself).
+AUTOLINK = re.compile(r"(?i):(?=//)|(?<=mailto):|(?<=xmpp):|(?<=\bwww)\.")
 
 
 def plain(text: object, limit: int) -> str:
-    """Agent-written text for a list answer, cut and with Markdown escaped: a
-    title can't become a link, image or tag in the chat, which renders these
-    answers and replays them from oracle-chat.json."""
-    return MARKDOWN.sub(r"\\\1", clip(" ".join(str(text or "").split()), limit))
+    """Agent-written text for a chat answer, cut and with Markdown escaped: a
+    title can't become a link (written or a bare URL), an image or a tag in
+    the chat, which renders these answers and replays them from
+    oracle-chat.json."""
+    escaped = MARKDOWN.sub(r"\\\1", clip(" ".join(str(text or "").split()), limit))
+    return AUTOLINK.sub(lambda m: "\\" + m.group(0), escaped)
 
 
 def time_range(intent: dict[str, Any]) -> tuple[int, int] | None:
@@ -947,7 +953,9 @@ def chunks_by_workspace(
     rows = conn.execute(
         "SELECT session_key, json_extract(text, '$.summary'), COALESCE(json_extract(text, "
         "'$.source_at'), created_at) AS at FROM digest_items WHERE bucket = "
-        "'summary_revision_v1' AND at BETWEEN ? AND ? ORDER BY at DESC LIMIT ?",
+        "'summary_revision_v1' AND at BETWEEN ? AND ? "
+        "AND session_key NOT IN (SELECT session_key FROM sessions WHERE test) "
+        "ORDER BY at DESC LIMIT ?",
         (*span, WIDE_CHUNKS),
     ).fetchall()
     for key, prose, at in reversed(rows):

@@ -694,6 +694,10 @@ def test_probe_sessions_and_test_events_never_reach_a_history_answer(fleet, monk
     assert "Real: shipped bug reporting." in records
     assert "Probe" not in records
     assert "qa2" not in {a["id"] for a in ask_intents.roster(server)}
+    with server._read_only() as conn:
+        grouped = ask_intents.chunks_by_workspace(conn, (0, now), {})
+    assert [c for g in grouped.values() for c in g if "Probe" in c] == []
+    assert any("Real: shipped bug reporting." in c for g in grouped.values() for c in g)
 
 
 def test_legacy_digests_are_read_only_for_spans_before_they_froze(fleet, monkeypatch):
@@ -984,8 +988,38 @@ def test_the_pr_list_reads_recent_agents_and_shows_their_text_inert(fleet, githu
         "repos": [{"name": "sotto", "error": "fatal: bad token\nAuthorization: Bearer ghp_x"}],
     }
     answer = ask_intents.prs_list(copy, now, {"peer": ("main", "duckterm-core")}, False)
-    assert "Fix \\!\\[p\\](https://evil.example/p.png) \\[docs\\](https://evil.example)" in answer
+    assert (
+        "Fix \\!\\[p\\](https\\://evil.example/p.png) \\[docs\\](https\\://evil.example)" in answer
+    )
     assert answer.endswith("Couldn't read GitHub for sotto: fatal: bad token")
+
+
+@pytest.mark.parametrize(
+    "text, shown",
+    [
+        ("Re-auth at https://evil.example/login", "Re-auth at https\\://evil.example/login"),
+        ("see www.evil.example now", "see www\\.evil.example now"),
+        ("mail a@evil.example or mailto:b", "mail a\\@evil.example or mailto\\:b"),
+        ("Merge at 14:03, v0.4.224", "Merge at 14:03, v0.4.224"),
+    ],
+)
+def test_record_text_cannot_autolink(text, shown):
+    assert ask_intents.plain(text, 200) == shown
+
+
+def test_agent_names_are_escaped_and_cut(fleet):
+    server, _ = fleet
+    with server.history._conn as conn:
+        conn.execute(
+            "UPDATE sessions SET name = ? WHERE session_key = 'qa2'",
+            ("[x](https://evil.example) " + "n" * 48_000,),
+        )
+    agents = ask_intents.roster(server)
+    # A 48 KB name is cut, so the agents after it are still in the roster.
+    assert len(agents) == 5 and max(len(a["name"]) for a in agents) <= 80
+    named = next(a for a in agents if a["id"] == "qa2")
+    assert ask_intents.label(named).startswith("\\[x\\](https\\://evil.example) nnn")
+    assert ask_intents._who(named["name"], "w_1").endswith("** (w\\_1)")
 
 
 def test_concurrent_cold_questions_share_one_build(fleet, github):
