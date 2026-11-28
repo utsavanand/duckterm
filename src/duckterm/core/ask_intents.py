@@ -396,6 +396,12 @@ def needs_you_list(notes: list[dict[str, Any]], now: int) -> str:
     return "\n".join(lines)
 
 
+# A classifier answer is bounded only by the model's output, and each word is
+# one SQL parameter per searched column.
+WORD_SETS = 24
+WORDS_PER_SET = 6
+
+
 def artifact_words(intent: dict[str, Any]) -> list[list[str]]:
     """One word set per thing said: the artifact's own words, then each topic
     term. A title matches a set when it has every word of it."""
@@ -407,8 +413,8 @@ def artifact_words(intent: dict[str, Any]) -> list[list[str]]:
     for phrase in phrases:
         words = [w for w in phrase.lower().split() if len(w) > 2 and w not in GENERIC_WORDS]
         if words and words not in sets:
-            sets.append(words)
-    return sets
+            sets.append(words[:WORDS_PER_SET])
+    return sets[:WORD_SETS]
 
 
 def artifacts_list(

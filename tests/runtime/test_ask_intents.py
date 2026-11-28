@@ -358,6 +358,29 @@ def test_artifacts_match_titles_behind_the_500_row_limit_and_removed_ones(fleet,
     assert lines[3].startswith("- “PR review platform spec (private)” by **main** (duckterm-core)")
 
 
+def test_thousands_of_classifier_terms_stay_under_the_sql_parameter_limit(fleet, monkeypatch):
+    server, owner = fleet
+    content = base64.b64encode(b"# spec").decode()
+    server.history.artifacts.register(
+        "peer",
+        {
+            "title": "Mono lab spec",
+            "source_path": "/w/m.md",
+            "content_base64": content,
+            "kind": "spec",
+        },
+    )
+    terms = ["mono lab spec", *(f"term{i} word{i} part{i} more{i}" for i in range(5000))]
+    intent = {
+        "intent": "ask.artifacts",
+        "entities": [{"type": "topic", "said": "spec", "terms": terms, "confidence": 0.9}],
+    }
+    answer = listed(server, owner, monkeypatch, intent, "Where's the Mono lab spec?")
+    assert "“Mono lab spec” by **main** (duckterm-core)" in answer
+    many = [[f"w{i}-{j}" for j in range(40)] for i in range(2000)]
+    assert server.history.artifacts.find_titles(many) == []
+
+
 def test_work_counts_in_progress_with_stale_ones_apart(fleet, monkeypatch):
     server, owner = fleet
     tasks = server.history.folder_tasks

@@ -269,7 +269,8 @@ class ArtifactStore:
                     params.append(f"%{escaped}%")
             return " OR ".join(clauses), params
 
-        word_sets = [w for w in word_sets if w]
+        # Bounded under SQLite's parameter limit whatever the caller passes.
+        word_sets = [w[:6] for w in word_sets if w][:24]
         if not word_sets:
             return []
         fields = ", ".join("a." + field.strip() for field in FIELDS.split(","))
