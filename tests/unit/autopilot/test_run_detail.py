@@ -47,6 +47,7 @@ def _run(tmp_path: Path, monkeypatch: pytest.MonkeyPatch, spec_path: str) -> Pat
                         "reason": "Wrote the spec.",
                         "started_at": 100,
                         "finished_at": 147,
+                        "harness": "claude-code",
                         "outputs": {"spec": {"path": spec_path}},
                         "inputs_sha256": {"issue": "x"},
                     }
@@ -80,6 +81,7 @@ def test_a_run_detail_has_each_attempt_the_issue_the_spec_and_the_change(
             "reason": "Wrote the spec.",
             "started_at": 100,
             "finished_at": 147,
+            "harness": "claude-code",
         }
     ]
     assert d["loops"] == {"check": 1}

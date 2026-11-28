@@ -27,6 +27,7 @@ export interface AutopilotEntry {
   approvals: { spec_on_visible: boolean; keep_merge_approval: boolean };
   budget_m: number;
   max_runs: number;
+  test_command?: string;
   active: number;
   watch: { checked_at?: number; error?: string };
 }
@@ -41,7 +42,9 @@ export interface AutopilotRun {
   trigger: TriggerType;
   item: { number?: number; title?: string; url?: string; started_by?: string | null };
   branch: string;
-  state: "starting" | "running" | "waiting_gate" | "succeeded" | "rejected" | "failed" | "cancelled" | "interrupted";
+  state: "starting" | "running" | "waiting_gate" | "succeeded" | "rejected" | "needs_info" | "declined" | "failed" | "cancelled" | "interrupted";
+  // Why a run ended at triage (needs_info, declined).
+  outcome?: string;
   started_at: number;
   ended_at?: number;
   tokens?: number;
@@ -81,6 +84,7 @@ export interface AutopilotAttempt {
   exit: number | null;
   choice: string | null;
   reason: string | null;
+  harness?: string | null;
   started_at: number | null;
   finished_at: number | null;
 }
@@ -137,6 +141,7 @@ export interface AutopilotDraft {
   approvals: { spec_on_visible: boolean; keep_merge_approval: boolean };
   budget_m: number;
   max_runs: number;
+  test_command: string;
 }
 
 async function call<T>(method: string, path: string, body?: unknown): Promise<T> {

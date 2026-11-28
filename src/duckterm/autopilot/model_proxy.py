@@ -30,6 +30,10 @@ ANTHROPIC = "https://api.anthropic.com"
 # API key; the API refuses OAuth bearer tokens without it.
 OAUTH_BETA = "oauth-2025-04-20"
 OPENAI = "https://api.openai.com"
+# Codex signed in with ChatGPT: its subscription answers the same Responses
+# calls at this path, with the account named in a header.
+CHATGPT = "https://chatgpt.com"
+CHATGPT_RESPONSES = "/backend-api/codex/responses"
 UPSTREAM_TIMEOUT = 600
 # Cache reads cost a tenth of uncached input at both providers. Charging them
 # in full would spend a budget on Claude Code re-reading its own context.
@@ -54,6 +58,7 @@ _DROP_REQUEST = frozenset(
         "transfer-encoding",
         "upgrade",
         "x-duckterm-step",
+        "chatgpt-account-id",
     }
 )
 _DROP_RESPONSE = frozenset(
@@ -208,13 +213,22 @@ class ModelProxy:
         anthropic_url: str = ANTHROPIC,
         openai_url: str = OPENAI,
         anthropic_oauth_token: str | None = None,
+        chatgpt: tuple[str, str] | None = None,
+        chatgpt_url: str = CHATGPT,
     ) -> None:
         """`anthropic_oauth_token` is a Claude subscription token from `claude
-        setup-token`, used when there is no API key. Like a key, it stays in
-        the proxy: the sandbox only ever holds its run token."""
+        setup-token`, used when there is no API key. `chatgpt` is Codex's
+        ChatGPT sign-in (access token, account id), used for Codex calls when
+        there is no OpenAI key. Like a key, both stay in the proxy: the sandbox
+        only ever holds its run token."""
         self._keys = {"anthropic": anthropic_key, "openai": openai_key}
         self._oauth = anthropic_oauth_token
-        self._upstreams = {"anthropic": urlsplit(anthropic_url), "openai": urlsplit(openai_url)}
+        self._chatgpt = chatgpt
+        self._upstreams = {
+            "anthropic": urlsplit(anthropic_url),
+            "openai": urlsplit(openai_url),
+            "chatgpt": urlsplit(chatgpt_url),
+        }
         self._log_path = log_path
         self._runs: dict[str, Run] = {}
         self._lock = threading.Lock()
@@ -257,19 +271,30 @@ class ModelProxy:
             run.reserved -= reserved
             run.used += usage.charge()
 
-    def upstream(self, provider: str) -> tuple[http.client.HTTPConnection, dict[str, str]]:
+    def upstream(
+        self, provider: str, path: str
+    ) -> tuple[http.client.HTTPConnection, dict[str, str], str]:
+        """A connection to the provider, the credential headers for it and the
+        path to call there."""
         key = self._keys[provider]
+        upstream = provider
         if provider == "openai" and key:
             auth = {"authorization": f"Bearer {key}"}
+        elif provider == "openai" and self._chatgpt:
+            token, account = self._chatgpt
+            auth = {"authorization": f"Bearer {token}", "chatgpt-account-id": account}
+            upstream, path = "chatgpt", CHATGPT_RESPONSES
         elif provider == "anthropic" and key:
             auth = {"x-api-key": key}
         elif provider == "anthropic" and self._oauth:
             auth = {"authorization": f"Bearer {self._oauth}", "anthropic-beta": OAUTH_BETA}
+        elif provider == "openai":
+            raise LookupError("no OpenAI key and no Codex ChatGPT sign-in on the run host")
         else:
             raise LookupError(f"no {provider} credential configured")
-        url = self._upstreams[provider]
+        url = self._upstreams[upstream]
         cls = http.client.HTTPSConnection if url.scheme == "https" else http.client.HTTPConnection
-        return cls(url.netloc, timeout=UPSTREAM_TIMEOUT), auth
+        return cls(url.netloc, timeout=UPSTREAM_TIMEOUT), auth, path
 
     def log(self, **fields: Any) -> None:
         line = json.dumps({"ts": round(time.time(), 3), **fields})
@@ -341,7 +366,7 @@ class _Handler(BaseHTTPRequestHandler):
         if refusal or run is None:
             return self._refuse(refusal or "unknown_token", run)
         try:
-            conn, auth = self.proxy.upstream(provider)
+            conn, auth, path = self.proxy.upstream(provider, self.path)
         except LookupError as exc:
             self.proxy.charge(run, Usage(), reserve)
             return self._refuse(str(exc), run)
@@ -354,7 +379,7 @@ class _Handler(BaseHTTPRequestHandler):
         status = None
         try:
             try:
-                conn.request(self.command, self.path, body=body, headers=headers)
+                conn.request(self.command, path, body=body, headers=headers)
                 resp = conn.getresponse()
             except OSError:
                 # 502 is retried by both harnesses, which suits a network blip.
@@ -485,6 +510,10 @@ def main() -> None:
         anthropic_url=os.environ.get("DUCKTERM_ANTHROPIC_URL", ANTHROPIC),
         openai_url=os.environ.get("DUCKTERM_OPENAI_URL", OPENAI),
         anthropic_oauth_token=creds.get("CLAUDE_CODE_OAUTH_TOKEN"),
+        chatgpt=(creds["CHATGPT_ACCESS_TOKEN"], creds["CHATGPT_ACCOUNT_ID"])
+        if creds.get("CHATGPT_ACCESS_TOKEN") and creds.get("CHATGPT_ACCOUNT_ID")
+        else None,
+        chatgpt_url=os.environ.get("DUCKTERM_CHATGPT_URL", CHATGPT),
     )
     host, port = args.control.rsplit(":", 1)
     control = proxy.control_server(host, int(port), creds["DUCKTERM_PROXY_CONTROL_SECRET"])

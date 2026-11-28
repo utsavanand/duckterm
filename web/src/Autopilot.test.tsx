@@ -85,7 +85,7 @@ it("sets up a listed flow with only the triggers that exist, and labels as a lis
   expect(create?.body).toEqual({
     flow: "autopilot/issue-to-merge", name: "uv-suite issue to merge", workspace: "Team", repo: "o/uv-suite", issue_repo: "",
     triggers: { "github-issue": { labels: ["autopilot", "bug"] } },
-    approvals: { spec_on_visible: false, keep_merge_approval: false }, budget_m: 5, max_runs: 2,
+    approvals: { spec_on_visible: false, keep_merge_approval: false }, budget_m: 5, max_runs: 2, test_command: "",
   });
 });
 
@@ -248,6 +248,25 @@ it("rejecting a spec sends it back with the note, or ends the run", async () => 
   fireEvent.change(screen.getByLabelText("Note for the spec step"), { target: { value: "Keep the cap." } });
   await act(async () => { fireEvent.click(send); });
   expect(sent.filter(r => r.method === "POST").map(r => r.body)).toEqual([{ step: "spec-gate", answer: "revise", note: "Keep the cap." }]);
+});
+
+it("a run's steps name what ran each one: Claude Code, Codex, a script or you", async () => {
+  await mount();
+  overview.runs[0].state = "succeeded";
+  const base = detail("r1");
+  const at = { status: "completed", exit: 0, choice: null, reason: "", started_at: 1, finished_at: 2 };
+  const attempts = [
+    { ...at, step: "spec", attempt: 1, kind: "run", harness: "claude-code" },
+    { ...at, step: "tests", attempt: 1, kind: "exec", harness: null },
+    { ...at, step: "qa", attempt: 1, kind: "decide", harness: "codex" },
+    { ...at, step: "spec-gate", attempt: 1, kind: "gate", harness: null },
+  ];
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL) => new Response(JSON.stringify(
+    String(input).startsWith("/api/autopilot/runs/") ? { ...base, attempts } : overview), { status: 200 }));
+  await act(async () => { fireEvent.click(screen.getAllByRole("row")[1]); });
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
+  const labels = Array.from(document.querySelectorAll(".ap-attempts .ap-att-kind")).map(e => e.textContent);
+  expect(labels).toEqual(["Claude Code", "script", "Codex · decides", "your approval"]);
 });
 
 it("Read spec opens the run on its Spec tab", async () => {

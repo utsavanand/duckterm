@@ -5,7 +5,9 @@ model steps are fakes."""
 
 import json
 import subprocess
+import threading
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -33,6 +35,7 @@ class _Steps(runner.Executor):
     prompts: list[str] = []
     classification: dict[str, Any] = {}
     vary = True  # each spec attempt writes a different spec
+    triage = "ready"
 
     def __init__(self, box: Any, dirs: executor.RunDirs, token: str, branch: str) -> None:
         self.box = box
@@ -53,6 +56,9 @@ class _Steps(runner.Executor):
         self.prompts.append(" ".join(argv))
         out = Path(cwd) / env["SKILL_KIT_OUTPUT_DIR"]
         structured: dict[str, Any] = {"status": "done"}
+        if step == "triage":
+            (out / "questions.md").write_text("Ready: the row and its toggle are named.\n")
+            structured["verdict"] = self.triage
         if step == "spec":
             (out / "spec.md").write_text(
                 SPEC + "\n" * (self.calls.count("spec") if self.vary else 1)
@@ -60,9 +66,16 @@ class _Steps(runner.Executor):
             (out / "classification.json").write_text(json.dumps(self.classification))
         if step == "build":
             (Path(cwd) / "fix.txt").write_text("fixed\n")
-        if step == "check":
-            (out / "review.md").write_text("No findings.\n")
+        if step == "qa":
+            (out / "qa.md").write_text("Pass.\n")
+            structured["verdict"] = "pass"
+        if step == "security":
+            (out / "security.md").write_text("No findings.\n")
+            (out / "classification.json").write_text(json.dumps(self.classification))
             structured["verdict"] = "approve"
+        if argv[0] == "codex":  # Codex writes its last message to the -o file
+            Path(argv[argv.index("-o") + 1]).write_text(json.dumps(structured))
+            return runner.ProcessResult(0, "", "")
         body = {"type": "result", "subtype": "success", "structured_output": structured}
         return runner.ProcessResult(0, json.dumps(body), "")
 
@@ -135,9 +148,13 @@ def published(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[str]:
     monkeypatch.setattr(runs, "Gateway", _Gateway)
     monkeypatch.setattr(runs, "Sandbox", _Box)
     monkeypatch.setattr(runs, "AutopilotExecutor", _Steps)
-    monkeypatch.setattr(runs.threading, "Thread", _NowThread)
+    # only runs.py's own threads run inline; the runner's pool for parallel
+    # steps needs real ones
+    monkeypatch.setattr(
+        runs, "threading", SimpleNamespace(Thread=_NowThread, Timer=threading.Timer)
+    )
     _Steps.calls, _Steps.prompts, _Gateway.minted, _Box.live = [], [], [], 0
-    _Steps.vary = True
+    _Steps.vary, _Steps.triage = True, "ready"
     _Steps.classification = {**ROUTINE, "security": {"level": "touches", "areas": ["auth"]}}
     out: list[str] = []
     monkeypatch.setattr(runs, "_publish", lambda root, meta, *_: out.append(meta["id"]))
@@ -168,7 +185,7 @@ def test_a_run_waits_at_the_spec_with_no_sandbox_and_shows_the_spec(published: l
         "why": "security touches auth",
     }
     assert run["classification"]["security"] == {"level": "touches", "areas": ["auth"]}
-    assert _Steps.calls == ["spec"]
+    assert _Steps.calls == ["triage", "spec"]
     assert _Box.live == 0
     assert published == []
     assert runs.summary()["waiting_gate"] == 1
@@ -181,7 +198,9 @@ def test_approving_builds_in_a_new_sandbox_on_what_is_left_of_the_budget(
     runs.answer(run_id, {"step": "spec-gate", "answer": "approve"})
     run = runs.get(run_id)
     assert run["state"] == "succeeded"
-    assert _Steps.calls == ["spec", "build", "check"]
+    assert _Steps.calls[:3] == ["triage", "spec", "build"]
+    assert sorted(_Steps.calls[3:]) == ["qa", "security"]  # in parallel, on Codex
+    assert sum(p.startswith("codex exec") for p in _Steps.prompts) == 2
     assert _Gateway.minted == [5_000_000, 3_999_999]
     assert run["tokens"] == 2_000_001
     assert [(a["answer"], a["by"]) for a in run["answers"]] == [("approve", "owner")]
@@ -195,7 +214,7 @@ def test_rejecting_ends_the_run_without_building_or_publishing(published: list[s
     run = runs.get(run_id)
     assert run["state"] == "rejected"
     assert run["ended_at"]
-    assert _Steps.calls == ["spec"]
+    assert _Steps.calls == ["triage", "spec"]
     assert published == []
 
 
@@ -225,7 +244,7 @@ def test_a_routine_fix_needs_no_spec_approval(published: list[str]) -> None:
     _Steps.classification = ROUTINE
     run = runs.get(_start())
     assert run["state"] == "succeeded"
-    assert _Steps.calls == ["spec", "build", "check"]
+    assert _Steps.calls[:3] == ["triage", "spec", "build"]
     assert published == [run["id"]]
 
 
@@ -235,8 +254,8 @@ def test_a_spec_sent_back_is_rewritten_with_the_note(published: list[str]) -> No
     runs.answer(run_id, {"step": "spec-gate", "answer": "revise", "note": note})
     run = runs.get(run_id)
     assert run["state"] == "waiting_gate"
-    assert _Steps.calls == ["spec", "spec"]
-    assert note not in _Steps.prompts[0] and note in _Steps.prompts[1]
+    assert _Steps.calls == ["triage", "spec", "spec"]
+    assert note not in _Steps.prompts[1] and note in _Steps.prompts[2]
     assert run["answers"][0]["note"] == note
 
 
@@ -247,3 +266,16 @@ def test_a_rewrite_that_changes_nothing_fails_the_run(published: list[str]) -> N
     receipt = runs._receipt(runs.runs_root() / run_id) or {}
     assert runs.get(run_id)["state"] == "failed"
     assert "unchanged from the previous attempt" in receipt["failure"]["reason"]
+
+
+@pytest.mark.parametrize(
+    ("choice", "state"), [("needs_info", "needs_info"), ("decline", "declined")]
+)
+def test_an_issue_triage_cannot_act_on_ends_before_any_spec(
+    published: list[str], choice: str, state: str
+) -> None:
+    _Steps.triage = choice
+    run = runs.get(_start())
+    assert run["state"] == state
+    assert _Steps.calls == ["triage"]
+    assert published == []

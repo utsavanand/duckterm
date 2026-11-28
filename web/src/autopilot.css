@@ -125,7 +125,7 @@
   .ap-facts > div:nth-child(3) { border-left: 0; }
   .ap-facts > div:nth-child(n+3) { border-top: 1px solid var(--border); }
 }
-.ap-state-rejected { color: var(--text-soft); }
+.ap-state-rejected, .ap-state-needs_info, .ap-state-declined { color: var(--text-soft); }
 
 .ap-gates { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); gap: 12px; }
 .ap-gate { border: 1px solid var(--amber-border); background: var(--amber-bg); border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; min-width: 0; font-size: 0.8125rem; }

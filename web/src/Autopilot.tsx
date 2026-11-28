@@ -44,7 +44,8 @@ const TRIGGERS: Record<TriggerType, { name: string; glyph: string; hint: string 
 
 const STATE_LABEL: Record<AutopilotRun["state"], string> = {
   starting: "Starting", running: "Running", waiting_gate: "Needs you", succeeded: "Done",
-  rejected: "Rejected", failed: "Failed", cancelled: "Cancelled", interrupted: "Interrupted",
+  rejected: "Rejected", needs_info: "Needs info", declined: "Declined", failed: "Failed",
+  cancelled: "Cancelled", interrupted: "Interrupted",
 };
 
 const flowTitle = (name: string) => name.charAt(0).toUpperCase() + name.slice(1).replace(/-/g, " ");
@@ -328,7 +329,15 @@ function duration(seconds: number): string {
   return `${Math.floor(m / 60)} h ${m % 60} min`;
 }
 
-const KIND_LABEL: Record<string, string> = { run: "Claude Code", decide: "Claude Code · decides", gate: "your approval" };
+const HARNESS_LABEL: Record<string, string> = { "claude-code": "Claude Code", codex: "Codex" };
+
+// What ran a step: the harness for model steps, a script, or the owner.
+function kindLabel(a: AutopilotAttempt): string {
+  if (a.kind === "gate") return "your approval";
+  if (a.kind === "exec") return "script";
+  const who = HARNESS_LABEL[a.harness ?? ""] ?? a.harness ?? "Claude Code";
+  return a.kind === "decide" ? `${who} · decides` : who;
+}
 
 function attemptStatus(a: AutopilotAttempt): "done" | "now" | "fail" {
   if (a.status === "started") return "now";
@@ -390,6 +399,7 @@ function RunDetail({ id, tab: firstTab, back, onBack }: { id: string; tab?: RunT
     </header>
 
     {run.error && <p className="ap-error" role="alert">{run.error}</p>}
+    {run.outcome && <p className="ap-warn">{run.state === "declined" ? "Declined at triage" : "The issue needs more information"}: {run.outcome}</p>}
     {run.pr_error && <p className="ap-error">Could not open the pull request: {run.pr_error}</p>}
     {run.pr_skipped && <p className="ap-warn">No pull request: {run.pr_skipped}.</p>}
     {run.gate && <section className="ap-gate">
@@ -423,7 +433,7 @@ function RunDetail({ id, tab: firstTab, back, onBack }: { id: string; tab?: RunT
             <i className={`ap-ic ap-ic-${attemptStatus(a)}`} />
             <span className="ap-att-main">
               <span className="ap-att-name">{a.step}{a.attempt > 1 ? <span className="ap-att-n">attempt {a.attempt}</span> : null}
-                <span className="ap-att-kind">{KIND_LABEL[a.kind ?? ""] ?? a.kind}</span></span>
+                <span className="ap-att-kind">{kindLabel(a)}</span></span>
               <span className={`ap-att-out${a.exit ? " ap-att-bad" : ""}`}>{firstLine(a)}</span>
             </span>
             <span className="ap-att-time">{a.started_at ? duration((a.finished_at ?? Date.now() / 1000) - a.started_at) : ""}</span>
@@ -432,7 +442,7 @@ function RunDetail({ id, tab: firstTab, back, onBack }: { id: string; tab?: RunT
         {attempt && <section className="ap-panel">
           <h3>{attempt.step}{attempt.attempt > 1 ? ` · attempt ${attempt.attempt}` : ""}</h3>
           <div className="ap-meta">
-            {KIND_LABEL[attempt.kind ?? ""] ?? attempt.kind}
+            {kindLabel(attempt)}
             {attempt.started_at ? ` · ${new Date(attempt.started_at * 1000).toLocaleTimeString()}` : ""}
             {attempt.started_at ? ` · ${duration((attempt.finished_at ?? Date.now() / 1000) - attempt.started_at)}` : ""}
             {attempt.choice ? ` · chose ${attempt.choice}` : ""}
@@ -539,7 +549,7 @@ const emptyDraft = (flow: AutopilotFlow, overview: AutopilotOverview): Autopilot
   return {
     flow: flow.id, name: "", workspace: "", repo: "", issue_repo: "",
     triggers: first ? { [first]: { labels: first === "github-issue" ? ["autopilot"] : [] } } : {},
-    approvals: { spec_on_visible: false, keep_merge_approval: false }, budget_m: 5, max_runs: 2,
+    approvals: { spec_on_visible: false, keep_merge_approval: false }, budget_m: 5, max_runs: 2, test_command: "",
   };
 };
 
@@ -551,6 +561,7 @@ function SetupDialog({ overview, flow, editing, onClose, onSaved }: {
     flow: editing.flow, name: editing.name, workspace: editing.workspace ?? "", repo: editing.repo,
     issue_repo: issueRepo(editing) === editing.repo ? "" : issueRepo(editing), triggers: editing.triggers,
     approvals: editing.approvals, budget_m: editing.budget_m, max_runs: editing.max_runs,
+    test_command: editing.test_command ?? "",
   } : emptyDraft(flow, overview));
   const [repos, setRepos] = useState<string[] | null>(null);
   const [workspaces, setWorkspaces] = useState<string[]>([]);
@@ -713,6 +724,10 @@ function SetupDialog({ overview, flow, editing, onClose, onSaved }: {
             <select style={inputStyle} value={draft.max_runs} onChange={e => setDraft({ ...draft, max_runs: Number(e.target.value) })}>
               {[1, 2, 3, 4].map(n => <option key={n} value={n}>{n}</option>)}</select></label>
         </div>
+        <label className="ap-field"><span>Test command</span>
+          <input style={inputStyle} value={draft.test_command} placeholder="e.g. pytest -q tests/unit"
+            onChange={e => setDraft({ ...draft, test_command: e.target.value })} /></label>
+        <p className="ap-muted ap-small">Run after each build; its exit code decides whether tests passed. Leave empty to let QA run the tests.</p>
       </details>
     </>}
 

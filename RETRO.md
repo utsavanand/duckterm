@@ -1,3 +1,17 @@
+## 2026-11-27 — Codex can review on the owner's ChatGPT plan, through the gateway
+
+The approved Autopilot mock has Codex review what Claude Code builds. I first
+told the owner Codex needed an OpenAI API key; it does not. Codex on the Mac is
+signed in with ChatGPT, and a probe through a local relay showed Codex's
+Responses calls answered by chatgpt.com/backend-api/codex with that sign-in and
+the account header. The gateway now forwards Codex's calls there when there is
+no API key, and the sandbox still holds only its run token.
+
+The gateway kept whatever credentials it started with, for days: a refreshed
+sign-in or a new proxy version never reached it. It now carries a stamp of its
+credentials and code, and is replaced when either changes. Lesson: before
+asking the owner for a credential, check what they are already signed in with.
+
 ## 2026-11-27 — Autopilot's spec gate stopped every run, or none
 
 The first spec gate (feat/autopilot-gates, never pushed) asked for approval on

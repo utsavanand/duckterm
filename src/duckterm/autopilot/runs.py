@@ -55,6 +55,19 @@ def subscription_token() -> str | None:
     return proc.stdout.strip() or None if proc.returncode == 0 else None
 
 
+def chatgpt_login() -> tuple[str, str] | None:
+    """Codex's ChatGPT sign-in on this Mac (access token, account id), which
+    the gateway uses for Codex steps. Codex refreshes it whenever it runs
+    here; None when Codex is not signed in with ChatGPT."""
+    path = Path(os.environ.get("CODEX_HOME") or Path.home() / ".codex") / "auth.json"
+    try:
+        tokens = json.loads(path.read_text()).get("tokens") or {}
+    except (OSError, ValueError, AttributeError):
+        return None
+    token, account = tokens.get("access_token"), tokens.get("account_id")
+    return (str(token), str(account)) if token and account else None
+
+
 def readiness() -> list[str]:
     """What stops a run from starting on this Mac, in words for the app."""
     problems = []
@@ -80,6 +93,7 @@ def start(autopilot: dict[str, Any], trigger: str, item: dict[str, Any]) -> str:
         "issue_repo": store.issue_repo(autopilot),
         "budget_m": autopilot["budget_m"],
         "approvals": autopilot.get("approvals") or {},
+        "test_command": autopilot.get("test_command") or "",
         "trigger": trigger,
         "item": {k: item.get(k) for k in ("number", "title", "url", "started_by")},
         "branch": f"autopilot/{run_id}",
@@ -103,7 +117,8 @@ def _execute(meta: dict[str, Any], item: dict[str, Any]) -> None:
         dirs = prepare_github(meta["repo"], "", meta["branch"], root)
         _update(root, base_sha=_git_out(dirs.project, "rev-parse", "HEAD"))
         kit = kit_manifest.load(flow.kit_path)
-        install.apply(plan.build(kit, dirs.project, [HARNESS]))
+        # Codex reviews what Claude Code builds, so the kit goes in for both.
+        install.apply(plan.build(kit, dirs.project, [HARNESS, "codex"]))
         executor.hide_install(dirs)
         inputs = (
             {flow.triggers[meta["trigger"]]: json.dumps(item)}
@@ -113,7 +128,10 @@ def _execute(meta: dict[str, Any], item: dict[str, Any]) -> None:
         if "settings" in flow.inputs:
             approvals = meta.get("approvals") or {}
             inputs["settings"] = json.dumps(
-                {"spec_on_visible": bool(approvals.get("spec_on_visible"))}
+                {
+                    "spec_on_visible": bool(approvals.get("spec_on_visible")),
+                    "test_command": meta.get("test_command") or "",
+                }
             )
         _in_sandbox(
             root,
@@ -220,7 +238,10 @@ def _in_sandbox(
     token = None
     try:
         gateway.ensure(
-            anthropic_key=None, openai_key=None, anthropic_oauth_token=subscription_token()
+            anthropic_key=None,
+            openai_key=None,
+            anthropic_oauth_token=subscription_token(),
+            chatgpt=chatgpt_login(),
         )
         box = Sandbox.create(meta["id"], gateway=gateway.name, mounts=dirs.mounts())
         box.trust(str(dirs.project))
@@ -228,7 +249,11 @@ def _in_sandbox(
         _update(root, state="running", sandbox=box.name)
         run = drive(AutopilotExecutor(box, dirs, token, meta["branch"]))
         _update(root, state=run.state["state"], runner_run=run.id)
-        if publish and run.state["state"] == "succeeded":
+        triaged = _triage(run.state)
+        if triaged:
+            # the issue cannot be fixed as written: nothing was built to publish
+            _update(root, state=triaged[0], outcome=triaged[1])
+        elif publish and run.state["state"] == "succeeded":
             _publish(root, meta, dirs.project, meta["base_sha"], run.state)
         return run
     finally:
@@ -239,6 +264,19 @@ def _in_sandbox(
             _update(root, tokens=used)
         if box:
             box.destroy()
+
+
+def _triage(state: dict[str, Any]) -> tuple[str, str] | None:
+    """("needs_info" | "declined", why) when a finished run stopped at
+    triage, else None."""
+    if state.get("state") != "succeeded":
+        return None
+    triage = [a for a in state.get("attempts") or [] if a.get("step") == "triage"]
+    choice = triage[-1].get("choice") if triage else None
+    if choice in ("needs_info", "decline"):
+        named = "needs_info" if choice == "needs_info" else "declined"
+        return named, str(triage[-1].get("reason") or "")
+    return None
 
 
 def _settle(root: Path) -> None:
@@ -491,6 +529,7 @@ def detail(run_id: str) -> dict[str, Any]:
                 "reason",
                 "started_at",
                 "finished_at",
+                "harness",
             )
         }
         for a in receipt.get("attempts") or []

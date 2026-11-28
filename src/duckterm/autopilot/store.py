@@ -4,6 +4,7 @@ handful of entries, edited from one server."""
 
 import json
 import os
+import shlex
 import threading
 import time
 import uuid
@@ -118,6 +119,15 @@ def validated(body: dict[str, Any], base: dict[str, Any]) -> dict[str, Any]:
     workspace = str(body.get("workspace") or "").strip().strip("/")
     if len(workspace) > 200:
         raise ValueError("Workspace name is too long")
+    # run by the flow's tests step, split like a shell would but never through
+    # one; empty leaves testing to QA
+    test_command = str(body.get("test_command") or "").strip()
+    try:
+        shlex.split(test_command)
+    except ValueError:
+        raise ValueError("The test command has an unclosed quote") from None
+    if len(test_command) > 300:
+        raise ValueError("The test command is too long")
     raw_approvals = body.get("approvals")
     approvals = raw_approvals if isinstance(raw_approvals, dict) else {}
     return {
@@ -134,6 +144,7 @@ def validated(body: dict[str, Any], base: dict[str, Any]) -> dict[str, Any]:
             "spec_on_visible": bool(approvals.get("spec_on_visible")),
             "keep_merge_approval": bool(approvals.get("keep_merge_approval")),
         },
+        "test_command": test_command,
         "budget_m": max(1, min(50, int(body.get("budget_m") or 5))),
         "max_runs": max(1, min(4, int(body.get("max_runs") or 2))),
     }

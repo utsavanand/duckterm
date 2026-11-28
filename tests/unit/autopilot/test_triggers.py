@@ -297,3 +297,10 @@ def test_a_workspace_sees_its_own_and_its_subfolders_flows_and_runs(home: Path) 
     entries = [e for e in store.load() if api.in_workspace(e, "Team")]
     assert sorted(e["workspace"] for e in entries) == ["Team", "Team/web"]
     assert [r["id"] for r in runs.list_runs() if api.in_workspace(r, "Team")] == ["r1"]
+
+
+def test_a_test_command_is_kept_and_one_that_cannot_be_split_is_refused(home: Path) -> None:
+    entry = store.create(_body(test_command=" pytest -q tests/unit "))
+    assert entry["test_command"] == "pytest -q tests/unit"
+    with pytest.raises(ValueError, match="unclosed quote"):
+        store.create(_body(test_command="pytest -k 'broken"))

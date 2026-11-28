@@ -28,8 +28,9 @@ allowed-tools:
 $ARGUMENTS
 
 When a flow runs this skill, the Inputs JSON carries `plan` (a file), or
-`spec` alone for a small fix, and may carry `findings` from a review that sent
-the work back. Invoked directly, an Act number builds every task of that Act
+`spec` alone for a small fix, and may carry what sent the work back: `findings`
+from a security review, `qa` (a QA report) or `log` (the tail of a failed test
+run). Invoked directly, an Act number builds every task of that Act
 in dependency order, a task id builds that task alone, and no argument takes
 the first Act whose exit criteria are not met.
 
@@ -40,7 +41,8 @@ the first Act whose exit criteria are not met.
   per file, the spec's test as the check. Without either, stop and say that
   `/spec` has to run first; do not invent the work.
 - The spec the plan was made from.
-- `findings`, when given: each finding is a task to do before anything else.
+- `findings`, `qa` and `log`, when given: each finding, failed check or failing
+  test is a task to do before anything else.
 - `AGENTS.md` or `CLAUDE.md` at the project root, if present.
 - `DANGER-ZONES.md` at the project root, if present.
 - The working rules this MetaHarness installs, for the Stuck format.

@@ -11,6 +11,7 @@ so development runs there use `runc` and record it (autopilot spec §5; owner
 chose Docker on the Mac first, 2026-11-22).
 """
 
+import hashlib
 import http.client
 import json
 import secrets
@@ -107,13 +108,18 @@ def harness_env(token: str) -> dict[str, str]:
 
 
 CREDS_MOUNT = "/run/duckterm/credentials.json"
+STAMP_LABEL = "duckterm.gateway"
 
 
-def gateway_args(name: str, src: Path, creds: Path, env: dict[str, str]) -> list[str]:
+def gateway_args(
+    name: str, src: Path, creds: Path, env: dict[str, str], stamp: str = ""
+) -> list[str]:
     """`docker run` arguments for the gateway. Kept separate so the absence of
-    credentials in them can be checked without docker."""
+    credentials in them can be checked without docker. `stamp` labels what the
+    gateway was started with (see Gateway.ensure)."""
     args = [
         "run", "-d", "--name", name, "--restart", "unless-stopped",
+        "--label", f"{STAMP_LABEL}={stamp}",
         "-p", "127.0.0.1::8081",
         "-v", f"{src}:/src:ro",
         "--mount", f"type=bind,source={creds},target={CREDS_MOUNT},readonly",
@@ -151,17 +157,15 @@ class Gateway:
         openai_key: str | None,
         upstreams: dict[str, str] | None = None,
         anthropic_oauth_token: str | None = None,
+        chatgpt: tuple[str, str] | None = None,
     ) -> None:
-        """Start the gateway unless it is running. `upstreams` overrides the
-        model API base URLs (DUCKTERM_ANTHROPIC_URL / DUCKTERM_OPENAI_URL)."""
-        state = docker("inspect", "-f", "{{.State.Running}}", self.name, check=False)
-        if state.stdout.strip() == "true":
-            self._read_port()
-            return
-        docker("rm", "-f", self.name, check=False)
-        # The proxy is stdlib-only, so the gateway runs this checkout's
-        # package from a read-only mount rather than a built image.
-        src = Path(duckterm.__file__).resolve().parent.parent
+        """Start the gateway unless it is running with these credentials and
+        this proxy code. A subscription sign-in is refreshed every few days,
+        and the proxy holds what it was started with, so a gateway started
+        with an older sign-in or older code is replaced. Replacing it ends
+        the run tokens it issued, so a run in flight elsewhere loses its
+        model access. `upstreams` overrides the model API base URLs
+        (DUCKTERM_ANTHROPIC_URL / DUCKTERM_OPENAI_URL / DUCKTERM_CHATGPT_URL)."""
         creds = {"DUCKTERM_PROXY_CONTROL_SECRET": self._secret()}
         if anthropic_key:
             creds["ANTHROPIC_API_KEY"] = anthropic_key
@@ -169,11 +173,28 @@ class Gateway:
             creds["OPENAI_API_KEY"] = openai_key
         if anthropic_oauth_token:
             creds["CLAUDE_CODE_OAUTH_TOKEN"] = anthropic_oauth_token
+        if chatgpt:
+            creds["CHATGPT_ACCESS_TOKEN"], creds["CHATGPT_ACCOUNT_ID"] = chatgpt
+        # The proxy is stdlib-only, so the gateway runs this checkout's
+        # package from a read-only mount rather than a built image.
+        src = Path(duckterm.__file__).resolve().parent.parent
+        env = {"PYTHONPATH": "/src", "DUCKTERM_PROXY_SECRETS": CREDS_MOUNT, **(upstreams or {})}
+        code = (src / "duckterm/autopilot/model_proxy.py").read_bytes()
+        stamp = hashlib.sha256(
+            json.dumps([creds, env, str(src)], sort_keys=True).encode() + code
+        ).hexdigest()[:32]
+        state = docker(
+            "inspect", "-f", f'{{{{.State.Running}}}} {{{{index .Config.Labels "{STAMP_LABEL}"}}}}',
+            self.name, check=False,
+        )  # fmt: skip
+        if state.stdout.split() == ["true", stamp]:
+            self._read_port()
+            return
+        docker("rm", "-f", self.name, check=False)
         # Credentials go in a 0600 file mounted read-only, never `-e`: env
         # values show in the host's process list and in `docker inspect`.
         private_write(self.creds_path, json.dumps(creds))
-        env = {"PYTHONPATH": "/src", "DUCKTERM_PROXY_SECRETS": CREDS_MOUNT, **(upstreams or {})}
-        args = gateway_args(self.name, src, self.creds_path, env)
+        args = gateway_args(self.name, src, self.creds_path, env, stamp)
         docker(*args, GATEWAY_IMAGE, "python", "-m", "duckterm.autopilot.model_proxy")
         self._read_port()
         for _ in range(50):
