@@ -1,0 +1,32 @@
+[Unit]
+Description=Ducky account service (GitHub sign-in, Mac list, phone tickets)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ducky-cloud
+Group=ducky-cloud
+# DUCKY_CLOUD_DB, DUCKY_CLOUD_URL, GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET,
+# DUCKY_CLOUD_CERT, DUCKY_CLOUD_KEY and DUCKY_CLOUD_PORT; root-owned, mode 0600.
+EnvironmentFile=/etc/ducky-cloud/env
+ExecStart=/opt/duckterm/venv/bin/python -I -m duckterm.cloud
+Restart=on-failure
+RestartSec=3
+# The service caps itself at 512 connections; leave room for the database,
+# the certificate files and GitHub calls rather than the 1024 default.
+LimitNOFILE=4096
+UMask=0077
+NoNewPrivileges=true
+ProtectSystem=strict
+StateDirectory=ducky-cloud
+ProtectHome=true
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LimitCORE=0
+
+[Install]
+WantedBy=multi-user.target
