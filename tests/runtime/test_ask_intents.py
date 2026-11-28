@@ -803,6 +803,28 @@ def test_a_wide_question_is_summarised_per_workspace_first(fleet, monkeypatch):
     assert "too many to read at once" in answers[-1]
 
 
+def test_a_wide_question_reads_only_the_largest_workspaces_and_newest_chunks(fleet, monkeypatch):
+    server, owner = fleet
+    now = int(time.time() * 1000)
+    chunk(server.history, "peer", "Old core " + "o" * 300, now - 3 * DAY)
+    chunk(server.history, "peer", "New core " + "n" * 300, now - DAY)
+    chunk(server.history, "main-b", "Bodh " + "y" * 50, now - DAY)
+    monkeypatch.setattr("duckterm.core.ask_intents.WIDE_BYTES", 100)
+    monkeypatch.setattr("duckterm.core.ask_intents.WIDE_PASSES", 2)
+    monkeypatch.setattr("duckterm.core.ask_intents.WIDE_PASS_BYTES", 400)
+    answers = model(monkeypatch, {"intent": "ask.history", "entities": [], "text": None})
+    ask(server, owner, "What did the fleet do this week?")
+    passes = {
+        a.split("'")[1]: a
+        for a in answers
+        if a.startswith("Summarise what agents in the workspace")
+    }
+    assert len(passes) == 2 and "duckterm-core" in passes
+    assert "New core" in passes["duckterm-core"] and "Old core" not in passes["duckterm-core"]
+    (left,) = {"BodhBytes", "duckterm-core", "duckterm-leadership"} - set(passes)
+    assert f"say that these were not: {left}." in answers[-1]
+
+
 def test_a_topic_without_an_agent_is_a_history_search(fleet, monkeypatch):
     server, owner = fleet
     intent = {"intent": "ask.agent", "entities": [topic("bug reporting")], "text": None}

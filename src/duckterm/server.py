@@ -4560,7 +4560,15 @@ class Server:
         span = ask_intents.time_range(intent)
         words = ask_intents.word_sets(intent)
         keys, _ = ask_intents.agents_named(intent, ask_intents.ASK_THRESHOLD)
-        sessions = self.history.sessions()
+
+        # history.sessions() adds metrics per row on the loop's connection;
+        # names and clones need only the rows, read in a worker.
+        def rows() -> list[dict[str, Any]]:
+            with self._read_only() as conn:
+                conn.row_factory = sqlite3.Row
+                return [dict(r) for r in conn.execute("SELECT * FROM sessions WHERE NOT test")]
+
+        sessions = await asyncio.to_thread(rows)
         names = {
             str(r["session_key"]): (
                 str(r.get("name") or r["session_key"][:8]),
@@ -4589,21 +4597,31 @@ class Server:
             if total > ask_intents.WIDE_BYTES:
 
                 async def one(workspace: str, group: list[str]) -> tuple[str, str]:
-                    text = fleet_questions.clip("\n".join(group), fleet_questions.MAX_PROMPT_BYTES)
+                    kept = ask_intents.newest_within(group, ask_intents.WIDE_PASS_BYTES)
                     result = await asyncio.to_thread(
                         summarize,
-                        ask_intents.workspace_pass_prompt(question, workspace, [text]),
+                        ask_intents.workspace_pass_prompt(question, workspace, kept),
                         tier="deep",
                     )
                     return workspace, result.text
 
-                passes = await asyncio.gather(*(one(w, g) for w, g in grouped.items()))
+                by_size = sorted(
+                    grouped.items(), key=lambda item: -sum(len(c.encode()) for c in item[1])
+                )
+                summarised = by_size[: ask_intents.WIDE_PASSES]
+                left = by_size[ask_intents.WIDE_PASSES :]
+                passes = await asyncio.gather(*(one(w, g) for w, g in summarised))
                 sections += [(f"Workspace {w} (summarised first)", t) for w, t in passes]
                 note = (
                     f"The {sum(len(g) for g in grouped.values())} summary chunks in this period "
                     f"were too many to read at once, so each workspace was summarised first. "
                     "Say so in the answer."
                 )
+                if left:
+                    note += (
+                        f" Only the {len(summarised)} workspaces with the most recorded were read; "
+                        f"say that these were not: {', '.join(w for w, _ in left)}."
+                    )
             else:
                 sections += [
                     (f"Summary chunks, workspace {w}", "\n".join(g)) for w, g in grouped.items()

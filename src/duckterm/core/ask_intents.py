@@ -626,6 +626,12 @@ LEGACY_FROZEN_MS = 1791849600000  # 2026-10-13 00:00 UTC: legacy digests froze o
 LEGACY_BUCKETS = ("deliverables", "learnings", "next_actions", "user_learnings")
 PROMPT_DAYS = 14
 WIDE_BYTES = 200_000
+# A wide question costs one deep call per workspace it summarises first:
+# 13 workspaces on the owner's machine, so the passes, the chunks read and
+# each pass's bytes are bounded (newest kept).
+WIDE_CHUNKS = 2000
+WIDE_PASSES = 8
+WIDE_PASS_BYTES = 64_000
 
 
 def _hit(
@@ -918,21 +924,35 @@ def repo_history(
 def chunks_by_workspace(
     conn: Any, span: tuple[int, int], names: dict[str, tuple[str, str]]
 ) -> dict[str, list[str]]:
-    """Every summary chunk recorded in the span, grouped by workspace, for a
-    question about the whole fleet over a time."""
+    """The newest WIDE_CHUNKS summary chunks recorded in the span, grouped by
+    workspace and oldest first, for a question about the whole fleet over a
+    time."""
     out: dict[str, list[str]] = {}
-    for key, prose, at in conn.execute(
+    rows = conn.execute(
         "SELECT session_key, json_extract(text, '$.summary'), COALESCE(json_extract(text, "
         "'$.source_at'), created_at) AS at FROM digest_items WHERE bucket = "
-        "'summary_revision_v1' AND at BETWEEN ? AND ? ORDER BY at",
-        span,
-    ):
+        "'summary_revision_v1' AND at BETWEEN ? AND ? ORDER BY at DESC LIMIT ?",
+        (*span, WIDE_CHUNKS),
+    ).fetchall()
+    for key, prose, at in reversed(rows):
         name, workspace = names.get(key, (key[:8], ""))
         if prose:
             out.setdefault(workspace or "no workspace", []).append(
                 f"- [{name}, recorded on {_when(at)}] {prose}"
             )
     return out
+
+
+def newest_within(chunks: list[str], limit: int) -> list[str]:
+    """The newest chunks that fit in `limit` bytes, oldest first."""
+    kept: list[str] = []
+    used = 0
+    for chunk in reversed(chunks):
+        used += len(chunk.encode()) + 1
+        if used > limit:
+            break
+        kept.append(chunk)
+    return kept[::-1]
 
 
 def workspace_pass_prompt(question: str, workspace: str, chunks: list[str]) -> str:
