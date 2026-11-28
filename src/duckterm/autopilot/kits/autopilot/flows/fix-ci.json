@@ -1,0 +1,11 @@
+{
+  "name": "fix-ci",
+  "description": "Fix a pull request's failing CI from the failed checks' log, then run the tests",
+  "inputs": { "log": "text", "settings": "text?" },
+  "steps": [
+    { "id": "fix-ci", "run": "fix-ci", "with": { "log": "inputs.log" } },
+    { "id": "tests", "exec": "scripts/tests.py", "timeout": "15m",
+      "with": { "settings": "inputs.settings?" },
+      "routes": { "pass": "end", "fail": "fix-ci" }, "default": "fail", "max_loops": 2 }
+  ]
+}

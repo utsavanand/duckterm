@@ -27,6 +27,11 @@ export interface AutopilotEntry {
   approvals: { spec_on_visible: boolean; keep_merge_approval: boolean };
   budget_m: number;
   max_runs: number;
+  test_command?: string;
+  auto_merge?: AutoMerge;
+  // shadow merges approved as they stood, in a row; auto-merge needs 10
+  shadow_done?: number;
+  rules?: PathRules;
   active: number;
   watch: { checked_at?: number; error?: string };
 }
@@ -41,7 +46,19 @@ export interface AutopilotRun {
   trigger: TriggerType;
   item: { number?: number; title?: string; url?: string; started_by?: string | null };
   branch: string;
-  state: "starting" | "running" | "waiting_gate" | "succeeded" | "failed" | "cancelled" | "interrupted";
+  state: "starting" | "running" | "waiting_gate" | "succeeded" | "merged" | "ended" | "rejected" | "needs_info" | "declined" | "failed" | "cancelled" | "interrupted";
+  // After the pull request opens: waiting for CI, fixing it, at the merge gate, merging.
+  stage?: "ci" | "fixing-ci" | "merge-gate" | "merging" | null;
+  ci?: "pass" | "fail" | "timeout" | "none";
+  ci_head?: string;
+  ci_fixes?: number;
+  merged_sha?: string;
+  merge_reasons?: string[];
+  path_hits?: { field: string; path: string }[];
+  spec_class?: Classification | null;
+  diff_class?: Classification | null;
+  // Why a run ended at triage (needs_info, declined).
+  outcome?: string;
   started_at: number;
   ended_at?: number;
   tokens?: number;
@@ -53,6 +70,27 @@ export interface AutopilotRun {
   pr?: { number: number; url: string; base: string };
   pr_error?: string;
   pr_skipped?: string;
+  // Set while state is waiting_gate. `shown` is the step output the gate
+  // asks about (the spec), as text written by the model; `why` is the policy
+  // step's reason for asking.
+  gate?: {
+    step: string; question: string; choices: string[]; shown: string; why: string; asked_at: number;
+    // merge gates: the commit to merge, and whether only shadow mode asks
+    head?: string; shadow?: boolean; shadow_run?: number | null;
+  } | null;
+  answers?: { step: string; answer: string; note?: string | null; by: string; at: number }[];
+  // What the spec step judged the fix to touch; the policy reads it.
+  classification?: Classification | null;
+}
+
+export interface Classification {
+  surfaces?: string[];
+  user_visible?: boolean;
+  regression?: { level?: string; features?: string[] };
+  security?: { level?: string; areas?: string[] };
+  ai?: string;
+  data?: string;
+  size?: string;
 }
 
 // One step attempt from the kit runner's receipt. Times are Unix seconds.
@@ -64,6 +102,7 @@ export interface AutopilotAttempt {
   exit: number | null;
   choice: string | null;
   reason: string | null;
+  harness?: string | null;
   started_at: number | null;
   finished_at: number | null;
 }
@@ -120,7 +159,16 @@ export interface AutopilotDraft {
   approvals: { spec_on_visible: boolean; keep_merge_approval: boolean };
   budget_m: number;
   max_runs: number;
+  test_command: string;
+  auto_merge: AutoMerge;
+  rules: PathRules;
 }
+
+// "off": approve every merge; "shadow": approve every merge, counting those
+// the policy would make alone; "on": those merge when CI passes.
+export type AutoMerge = "off" | "shadow" | "on";
+// Changed files matching these globs raise that field at merge.
+export type PathRules = { security: string[]; data: string[]; ai: string[] };
 
 async function call<T>(method: string, path: string, body?: unknown): Promise<T> {
   const res = await fetch(path, {
@@ -144,10 +192,21 @@ export const autopilotApi = {
   summary: () => call<AutopilotSummary>("GET", "/api/autopilot/summary"),
   repositories: () => call<string[]>("GET", "/api/autopilot/repositories"),
   create: (draft: AutopilotDraft) => call<AutopilotEntry>("POST", "/api/autopilot/autopilots", draft),
-  update: (id: string, patch: Partial<AutopilotDraft> & { on?: boolean }) =>
+  // backlog: what happens to open issues an edit's new labels match ("new" by default).
+  update: (id: string, patch: Partial<AutopilotDraft> & { on?: boolean; backlog?: "run" | "new" }) =>
     call<AutopilotEntry>("PATCH", `/api/autopilot/autopilots/${encodeURIComponent(id)}`, patch),
+  // Open issues an edit's labels and issue repository would match that have not run.
+  backlog: (id: string, patch: Partial<AutopilotDraft>) =>
+    call<{ issues: number[] }>("POST", `/api/autopilot/autopilots/${encodeURIComponent(id)}/backlog`, patch),
   remove: (id: string) => call<{ ok: boolean }>("DELETE", `/api/autopilot/autopilots/${encodeURIComponent(id)}`),
   run: (id: string) => call<AutopilotRunDetail>("GET", `/api/autopilot/runs/${encodeURIComponent(id)}`),
   runOnce: (id: string, issue: number) =>
     call<{ run_id: string }>("POST", `/api/autopilot/autopilots/${encodeURIComponent(id)}/run`, { issue }),
+  // Touch ID: the Mac app signs the server's challenge for this merge.
+  mergeChallenge: (runId: string) =>
+    call<{ payload: string }>("POST", `/api/autopilot/runs/${encodeURIComponent(runId)}/merge/challenge`, {}),
+  mergeApprove: (runId: string, payload: string, signature: string) =>
+    call<{ ok: boolean }>("POST", `/api/autopilot/runs/${encodeURIComponent(runId)}/merge/approve`, { payload, signature }),
+  answer: (runId: string, step: string, answer: string, note?: string) =>
+    call<{ ok: boolean }>("POST", `/api/autopilot/runs/${encodeURIComponent(runId)}/gate`, { step, answer, note }),
 };

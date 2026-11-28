@@ -247,3 +247,33 @@ def test_gateway_credentials_go_in_a_private_mounted_file_never_in_docker_args(
     creds = json.loads((tmp_path / "c.json").read_text())
     assert creds["CLAUDE_CODE_OAUTH_TOKEN"] == "oauth-SECRET"
     assert (tmp_path / "c.json").stat().st_mode & 0o077 == 0
+
+
+def test_a_gateway_started_with_an_older_sign_in_is_replaced(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Codex refreshes its ChatGPT sign-in every few days; the proxy holds
+    # what it was started with
+    running: dict[str, str] = {}
+    calls: list[tuple[str, ...]] = []
+
+    def docker(*args: str, check: bool = True, **_: object) -> subprocess.CompletedProcess[str]:
+        calls.append(args)
+        if args[0] == "inspect":
+            out = f"true {running['stamp']}" if running else "false"
+        elif args[0] == "run":
+            running["stamp"] = args[args.index("--label") + 1].split("=", 1)[1]
+            out = ""
+        else:
+            out = "127.0.0.1:55001" if args[0] == "port" else ""
+        return subprocess.CompletedProcess(list(args), 0, out, "")
+
+    monkeypatch.setattr(sandbox, "docker", docker)
+    monkeypatch.setattr(sandbox.Gateway, "_control", lambda self, *a: {})
+    gw = sandbox.Gateway(name="gw", secret_path=tmp_path / "s", creds_path=tmp_path / "c.json")
+    for chatgpt in [("tok-1", "acct"), ("tok-1", "acct"), ("tok-2", "acct")]:
+        gw.ensure(anthropic_key=None, openai_key=None, chatgpt=chatgpt)
+    assert len([c for c in calls if c[0] == "run"]) == 2
+    creds = json.loads((tmp_path / "c.json").read_text())
+    assert (creds["CHATGPT_ACCESS_TOKEN"], creds["CHATGPT_ACCOUNT_ID"]) == ("tok-2", "acct")
+    assert "tok-2" not in " ".join(calls[-1])

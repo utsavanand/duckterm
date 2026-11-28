@@ -116,6 +116,7 @@ class FakeGitHub:
         self.issues: dict[int, dict[str, Any]] = {}
         self.labeled_by: dict[int, str] = {}
         self.writers = {"maintainer"}
+        self.repos: dict[str, Any] = {"/repos/o/r": {"permissions": {"push": True}}}
 
     def add(self, number: int, labels: list[str], by: str = "maintainer", pr: bool = False) -> None:
         item: dict[str, Any] = {
@@ -146,6 +147,8 @@ class FakeGitHub:
         if "/collaborators/" in path:
             login = path.split("/")[5]
             return {"permission": "write" if login in self.writers else "read"}
+        if path.count("/") == 3:
+            return self.repos.get(path)
         raise AssertionError(path)
 
 
@@ -191,11 +194,27 @@ def test_runs_beyond_the_limit_wait_for_the_next_poll(tmp_path: Path) -> None:
     assert _poll(gh, tmp_path, ["autopilot"], limit=2) == [9]
 
 
-def test_changing_the_labels_starts_over_from_what_is_there(tmp_path: Path) -> None:
+@pytest.mark.parametrize(("answer", "runs"), [(None, [4]), ("new", [4]), ("run", [3, 4])])
+def test_a_label_change_keeps_what_started_and_asks_about_what_now_matches(
+    home: Path, monkeypatch: pytest.MonkeyPatch, answer: str | None, runs: list[int]
+) -> None:
+    from duckterm.autopilot import api
+
     gh = FakeGitHub()
-    _poll(gh, tmp_path, ["autopilot"])
-    gh.add(10, ["bug"])
-    assert _poll(gh, tmp_path, ["bug"]) == []
+    monkeypatch.setattr(api, "_github", lambda: gh)
+    entry = store.create(_body(triggers={"github-issue": {"labels": ["autopilot"]}}))
+    seen = api._seen(entry["id"])
+    gh.add(1, ["autopilot"])
+    github_watch.poll(gh, "o/r", ["autopilot"], seen, 5)
+    gh.add(2, ["autopilot"])
+    assert [i["number"] for i in github_watch.poll(gh, "o/r", ["autopilot"], seen, 5)] == [2]
+    gh.add(3, ["bug"])
+    edit: dict[str, Any] = {"triggers": {"github-issue": {"labels": ["autopilot", "bug"]}}}
+    assert api.backlog(entry["id"], edit) == {"issues": [3]}
+    api.update(entry["id"], {**edit, "backlog": answer} if answer else edit)
+    gh.add(4, ["bug"])
+    polled = github_watch.poll(gh, "o/r", ["autopilot", "bug"], seen, 5)
+    assert [i["number"] for i in polled] == runs
 
 
 def test_watching_another_issue_repository_starts_over_from_what_is_there(
@@ -212,6 +231,37 @@ def test_watching_another_issue_repository_starts_over_from_what_is_there(
     assert [i["number"] for i in github_watch.poll(other, "o/reports", ["autopilot"], seen, 5)] == [
         12
     ]
+
+
+@pytest.mark.parametrize(
+    ("repos", "error"),
+    [
+        ({"/repos/o/r": {"permissions": {"push": False}}}, "can't push to o/r"),
+        ({"/repos/o/r": {"permissions": {"push": True}}}, "can't reach o/reports"),
+        ({}, "can't reach o/r"),
+    ],
+)
+def test_a_setup_the_token_cannot_carry_out_is_refused(
+    home: Path, monkeypatch: pytest.MonkeyPatch, repos: dict[str, Any], error: str
+) -> None:
+    from duckterm.autopilot import api
+
+    gh = FakeGitHub()
+    monkeypatch.setattr(api, "_github", lambda: gh)
+    gh.repos = repos
+    with pytest.raises(ValueError, match=error):
+        api.create(_body(issue_repo="o/reports"))
+    assert store.load() == []
+    gh.repos = {
+        "/repos/o/r": {"permissions": {"push": True}},
+        "/repos/o/reports": {"full_name": "o/reports"},
+    }
+    entry = api.create(_body(issue_repo="o/reports"))
+    gh.repos = repos
+    with pytest.raises(ValueError, match=error):
+        api.update(entry["id"], {"repo": "o/r"})
+    # pausing touches no repository, so it works without GitHub
+    assert api.update(entry["id"], {"on": False})["on"] is False
 
 
 def test_autopilot_routes_belong_to_the_autopilot_flag() -> None:
@@ -247,3 +297,10 @@ def test_a_workspace_sees_its_own_and_its_subfolders_flows_and_runs(home: Path) 
     entries = [e for e in store.load() if api.in_workspace(e, "Team")]
     assert sorted(e["workspace"] for e in entries) == ["Team", "Team/web"]
     assert [r["id"] for r in runs.list_runs() if api.in_workspace(r, "Team")] == ["r1"]
+
+
+def test_a_test_command_is_kept_and_one_that_cannot_be_split_is_refused(home: Path) -> None:
+    entry = store.create(_body(test_command=" pytest -q tests/unit "))
+    assert entry["test_command"] == "pytest -q tests/unit"
+    with pytest.raises(ValueError, match="unclosed quote"):
+        store.create(_body(test_command="pytest -k 'broken"))

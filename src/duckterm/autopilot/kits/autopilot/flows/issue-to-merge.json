@@ -1,19 +1,39 @@
 {
   "name": "issue-to-merge",
-  "description": "Spec the fix from an issue, build it, review it, draft the pull request",
-  "inputs": { "issue": "the issue: number, title, body, labels and URL, as JSON" },
+  "description": "Triage an issue, spec the fix, build and test it, have Codex review it for QA and security, then open the pull request and merge it once CI passes and the approvals allow",
+  "inputs": {
+    "issue": "the issue: number, title, body, labels and URL, as JSON",
+    "settings": "text?"
+  },
   "triggers": [
     { "type": "github-issue", "input": "issue" },
     { "type": "jira-issue", "input": "issue" },
     { "type": "slack-message", "input": "issue" }
   ],
   "steps": [
-    { "id": "spec", "run": "spec", "with": { "issue": "inputs.issue" } },
+    { "id": "triage", "decide": "triage", "with": { "issue": "inputs.issue" },
+      "routes": { "ready": "spec", "needs_info": "end", "decline": "end" }, "default": "needs_info" },
+    { "id": "spec", "run": "spec",
+      "with": { "issue": "inputs.issue", "feedback": "steps.spec-gate.outputs.note?" } },
+    { "id": "spec-policy", "exec": "scripts/policy.py", "args": ["spec"],
+      "with": { "classification": "steps.spec.outputs.classification",
+                "issue": "inputs.issue", "settings": "inputs.settings?" },
+      "routes": { "gate": "spec-gate", "skip": "build" }, "default": "gate" },
+    { "id": "spec-gate", "gate": "Approve the fix spec?", "show": "steps.spec.outputs.spec",
+      "routes": { "approve": "build", "revise": "spec", "reject": "end" }, "max_loops": 2 },
     { "id": "build", "run": "implement",
-      "with": { "spec": "steps.spec.outputs.spec", "findings": "steps.check.outputs.findings?" } },
-    { "id": "check", "decide": "review",
-      "with": { "spec": "steps.spec.outputs.spec", "diff": "workspace.diff" },
-      "routes": { "approve": "end", "revise": "build", "reject": "fail" },
-      "default": "reject", "max_loops": 2 }
+      "with": { "spec": "steps.spec.outputs.spec", "log": "steps.tests.outputs.log?",
+                "findings": "steps.security.outputs.findings?", "qa": "steps.qa.outputs.report?" } },
+    { "id": "tests", "exec": "scripts/tests.py", "timeout": "15m",
+      "with": { "settings": "inputs.settings?" },
+      "routes": { "pass": "checks", "fail": "build" }, "default": "fail", "max_loops": 3 },
+    { "id": "checks", "parallel": [
+        { "id": "qa", "decide": "qa", "harness": "codex",
+          "with": { "spec": "steps.spec.outputs.spec", "diff": "workspace.diff" } },
+        { "id": "security", "decide": "security", "harness": "codex",
+          "with": { "spec": "steps.spec.outputs.spec", "diff": "workspace.diff" } } ] },
+    { "id": "verdict", "exec": "scripts/verdict.py",
+      "with": { "qa": "steps.qa.outputs.verdict", "security": "steps.security.outputs.verdict" },
+      "routes": { "ship": "end", "revise": "build", "stop": "fail" }, "default": "stop", "max_loops": 2 }
   ]
 }

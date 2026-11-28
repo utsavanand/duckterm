@@ -125,6 +125,43 @@
   .ap-facts > div:nth-child(3) { border-left: 0; }
   .ap-facts > div:nth-child(n+3) { border-top: 1px solid var(--border); }
 }
+.ap-state-rejected, .ap-state-needs_info, .ap-state-declined { color: var(--text-soft); }
+
+.ap-gates { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 380px), 1fr)); gap: 12px; }
+.ap-gate { border: 1px solid var(--amber-border); background: var(--amber-bg); border-radius: 10px; padding: 14px 16px; display: flex; flex-direction: column; gap: 8px; min-width: 0; font-size: 0.8125rem; }
+.ap-gate-kind { font-size: 0.6875rem; font-weight: 600; text-transform: uppercase; letter-spacing: .05em; color: var(--amber-text); }
+.ap-gate h3 { margin: 0; font-size: 0.9375rem; font-weight: 500; }
+.ap-gate-title { border: 0; background: none; padding: 0; font: inherit; color: var(--text); text-align: left; cursor: pointer; overflow-wrap: anywhere; }
+.ap-gate-title:hover { text-decoration: underline; }
+.ap-gate-title:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.ap-lead { margin: 0 0 10px; }
+.ap-opt { display: flex; gap: 8px; align-items: center; font-size: 0.8125rem; margin: 0 0 8px; cursor: pointer; }
+.ap-opt input { accent-color: var(--brand-green); }
+.ap-rules { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 10px; }
+.ap-btn-link { font-size: 0.78125rem; padding: 4px 10px; border: 1px solid var(--border-strong); border-radius: 6px; text-decoration: none; }
+.ap-gate-marks { display: inline-flex; gap: 4px; }
+.ap-g { width: 20px; height: 20px; border-radius: 4px; font-size: 0.625rem; font-weight: 600; display: inline-grid; place-items: center; border: 1px solid var(--border); color: var(--muted); }
+.ap-g-req { border-color: var(--wait); color: var(--wait); }
+.ap-g-wait { border-color: var(--wait); background: var(--wait); color: var(--accent-fg); }
+.ap-g-ok { border-color: var(--brand-green); background: var(--brand-green); color: var(--on-green, #fff); }
+.ap-g-rej { border-color: var(--danger); color: var(--danger); }
+.ap-g-skip { border-style: dashed; opacity: .55; }
+.ap-higher { color: var(--amber-text); font-weight: 600; }
+.ap-state-merged { color: var(--brand-green-strong); }
+.ap-state-ended { color: var(--text-soft); }
+@media (max-width: 720px) { .ap-rules { grid-template-columns: 1fr; } }
+.ap-why { margin: 0; color: var(--text-soft); font-size: 0.78125rem; }
+.ap-why b { color: var(--text); font-weight: 500; }
+.ap-gate-foot { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: auto; }
+.ap-age { margin-left: auto; font-size: 0.75rem; color: var(--text-soft); }
+.ap-risk-sec { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 40%, var(--border)); }
+.ap-risk-ai { color: var(--busy); border-color: color-mix(in srgb, var(--busy) 40%, var(--border)); }
+.ap-risk-amber { color: var(--amber-text); border-color: var(--amber-border); }
+.ap-table td .ap-chips { margin-top: 4px; }
+.ap-detail td { background: var(--bg-soft); }
+.ap-steps { display: flex; flex-wrap: wrap; gap: 6px; }
+.ap-step { font-size: 0.75rem; border: 1px solid var(--border); border-radius: 6px; padding: 1px 8px; background: var(--bg); }
+.ap-step-bad { color: var(--danger); border-color: var(--danger); }
 
 /* setup dialog */
 .ap-field { display: flex; flex-direction: column; gap: 4px; margin: 0 0 12px; font-size: 0.8125rem; }
@@ -146,6 +183,11 @@
 .ap-recap ul { margin: 6px 0 8px; padding: 0; list-style: none; color: var(--text-soft); display: flex; flex-direction: column; gap: 3px; }
 .ap-recap .ap-small + .ap-small { margin-top: 6px; }
 .ap-secrets code { font-size: 0.6875rem; }
+.ap-backlog { border: 1px solid var(--amber-border); border-radius: 10px; padding: 10px 14px 12px; margin: 0 0 14px; display: flex; flex-direction: column; gap: 8px; font-size: 0.8125rem; }
+.ap-backlog legend { padding: 0 4px; font-weight: 500; }
+.ap-backlog label { display: grid; grid-template-columns: auto 1fr; column-gap: 8px; align-items: baseline; cursor: pointer; }
+.ap-backlog input { accent-color: var(--brand-green); }
+.ap-backlog small { grid-column: 2; color: var(--text-soft); font-size: 0.75rem; overflow-wrap: anywhere; }
 .ap-limits summary { cursor: pointer; font-size: 0.8125rem; color: var(--text-soft); display: flex; gap: 8px; list-style: none; }
 .ap-limits summary::-webkit-details-marker { display: none; }
 .ap-limits summary::before { content: "▸"; }

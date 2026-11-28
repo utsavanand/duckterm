@@ -19,10 +19,17 @@ description = "The DANGER-ZONES.md format and the inline @danger annotations the
 
 [[components]]
 kind = "skill"
+path = "skills/triage"
+effects = "read-only"
+inputs = { issue = "text?" }
+outputs = { verdict = { choice = ["ready", "needs_info", "decline"] }, questions = { file = "questions.md" } }
+
+[[components]]
+kind = "skill"
 path = "skills/spec"
 effects = "workspace"
-inputs = { issue = "text?" }
-outputs = { spec = { file = "spec.md" } }
+inputs = { issue = "text?", feedback = "text?" }
+outputs = { spec = { file = "spec.md" }, classification = { file = "classification.json" } }
 
 [[components]]
 kind = "skill"
@@ -35,7 +42,7 @@ outputs = { plan = { file = "plan.md" } }
 kind = "skill"
 path = "skills/implement"
 effects = "workspace"
-inputs = { plan = "file?", spec = "file?", findings = "file?" }
+inputs = { plan = "file?", spec = "file?", findings = "file?", qa = "file?", log = "text?" }
 
 [[components]]
 kind = "skill"
@@ -48,6 +55,19 @@ path = "skills/review"
 effects = "read-only"
 inputs = { diff = "file?", pr = "text?", spec = "file?" }
 outputs = { verdict = { choice = ["approve", "revise", "reject"] }, findings = { file = "review.md" } }
+
+[[components]]
+kind = "skill"
+path = "skills/security"
+effects = "read-only"
+inputs = { diff = "file?", spec = "file?" }
+outputs = { verdict = { choice = ["approve", "revise", "reject"] }, findings = { file = "security.md" }, classification = { file = "classification.json" } }
+
+[[components]]
+kind = "skill"
+path = "skills/fix-ci"
+effects = "workspace"
+inputs = { log = "text?" }
 
 [[components]]
 kind = "skill"
@@ -131,6 +151,10 @@ rules = [
 [[components]]
 kind = "flow"
 path = "flows/issue-to-merge.json"
+
+[[components]]
+kind = "flow"
+path = "flows/fix-ci.json"
 
 [[components]]
 kind = "flow"

@@ -119,15 +119,16 @@ def push(project: Path, repo: str, branch: str, token: str, base: str) -> None:
 
 
 def open_pull_request(repo: str, branch: str, title: str, body: str, token: str) -> dict[str, Any]:
-    """Open a draft pull request from the run branch into the default branch,
-    or return the one already open for it."""
+    """Open a pull request from the run branch into the default branch, or
+    return the one already open for it. It is not a draft: it merges only
+    after the run's merge policy, and a person's approval where that asks."""
     base = _api(token, "GET", f"/repos/{repo}")["default_branch"]
     try:
         made = _api(
             token,
             "POST",
             f"/repos/{repo}/pulls",
-            {"title": title, "head": branch, "base": base, "body": body, "draft": True},
+            {"title": title, "head": branch, "base": base, "body": body},
         )
     except urllib.error.HTTPError as exc:
         if exc.code != 422:
@@ -138,6 +139,134 @@ def open_pull_request(repo: str, branch: str, title: str, body: str, token: str)
             raise
         made = found[0]
     return {"number": int(made["number"]), "url": str(made["html_url"]), "base": base}
+
+
+# A check run that ended in any of these failed the head.
+FAILED = frozenset({"failure", "timed_out", "cancelled", "action_required", "startup_failure"})
+LOG_CHARS = 12000
+
+
+class MergeRefused(ValueError):
+    """GitHub would not merge: a conflict, branch protection or a moved head."""
+
+
+def checks(repo: str, sha: str, token: str) -> tuple[str, str]:
+    """CI on one commit: ("pass" | "fail" | "pending" | "none", log). The log
+    names each failed check with its summary and annotations, for the step
+    that fixes it. "none" means no check runs and no statuses at all."""
+    runs = _api(token, "GET", f"/repos/{repo}/commits/{sha}/check-runs?per_page=100")
+    runs = runs.get("check_runs") or []
+    status = _api(token, "GET", f"/repos/{repo}/commits/{sha}/status")
+    statuses = status.get("statuses") or []
+    if not runs and not statuses:
+        return "none", ""
+    failed = [r for r in runs if r.get("conclusion") in FAILED]
+    failed_statuses = [s for s in statuses if s.get("state") in ("failure", "error")]
+    if failed or failed_statuses:
+        parts = []
+        for r in failed:
+            out = r.get("output") or {}
+            notes = []
+            if out.get("annotations_count"):
+                for a in _api(token, "GET", f"/repos/{repo}/check-runs/{r['id']}/annotations")[:30]:
+                    notes.append(
+                        f"  {a.get('path')}:{a.get('start_line')}: {a.get('message', '').strip()}"
+                    )
+            # GitHub Actions leaves the summary empty; the job's own log says
+            # what failed
+            tail = (
+                _job_log_tail(repo, int(r["id"]), token)
+                if (r.get("app") or {}).get("slug") == "github-actions"
+                else ""
+            )
+            parts.append(
+                "\n".join(
+                    [
+                        f"## {r.get('name')}: {r.get('conclusion')}",
+                        str(out.get("title") or ""),
+                        str(out.get("summary") or ""),
+                        str(out.get("text") or "")[:3000],
+                        *notes,
+                        tail,
+                    ]
+                )
+            )
+        for s in failed_statuses:
+            parts.append(f"## {s.get('context')}: {s.get('state')}\n{s.get('description') or ''}")
+        return "fail", "\n\n".join(parts)[:LOG_CHARS]
+    waiting = any(r.get("status") != "completed" for r in runs)
+    if waiting or (statuses and status.get("state") == "pending"):
+        return "pending", ""
+    return "pass", ""
+
+
+JOB_LOG_TAIL = 6000
+
+
+class _NoRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, *args: Any, **kwargs: Any) -> None:
+        return None
+
+
+def _job_log_tail(repo: str, job_id: int, token: str) -> str:
+    """The lines of a GitHub Actions job's log before its first error, or its
+    end when it marks none.
+    GitHub answers with a redirect to a signed download URL, fetched without
+    the token so it goes nowhere but GitHub."""
+    req = urllib.request.Request(
+        f"https://api.github.com/repos/{repo}/actions/jobs/{job_id}/logs",
+        headers={"Authorization": f"Bearer {token}", "User-Agent": "duckterm-autopilot"},
+    )
+    try:
+        urllib.request.build_opener(_NoRedirect).open(req, timeout=30)
+        return ""
+    except urllib.error.HTTPError as exc:
+        where = exc.headers.get("Location") if exc.code in (301, 302, 307) else None
+    except OSError:
+        return ""
+    if not where or not where.startswith("https://"):
+        return ""
+    try:
+        with urllib.request.urlopen(where, timeout=30) as resp:
+            text = resp.read(2_000_000).decode(errors="replace")
+    except OSError:
+        return ""
+    return "job log:\n" + around_first_error(text)
+
+
+def around_first_error(text: str) -> str:
+    """The lines before a job log's first ##[error], or its end when there is
+    none, without the timestamps that cost a third of each line."""
+    lines = [re.sub(r"^\S+Z ", "", line) for line in text.splitlines()]
+    first = next((i for i, line in enumerate(lines) if line.startswith("##[error]")), None)
+    if first is not None:
+        lines = lines[max(0, first - 80) : first + 5]
+    return "\n".join(lines)[-JOB_LOG_TAIL:]
+
+
+def pull_head(repo: str, number: int, token: str) -> str:
+    return str(_api(token, "GET", f"/repos/{repo}/pulls/{number}")["head"]["sha"])
+
+
+def merge(repo: str, number: int, sha: str, title: str, token: str) -> str:
+    """Squash-merge the pull request at exactly `sha`; GitHub refuses if the
+    head moved. Returns the merge commit."""
+    try:
+        done = _api(
+            token,
+            "PUT",
+            f"/repos/{repo}/pulls/{number}/merge",
+            {"sha": sha, "merge_method": "squash", "commit_title": f"{title} (#{number})"},
+        )
+    except urllib.error.HTTPError as exc:
+        if exc.code in (405, 409, 422):
+            try:
+                why = json.loads(exc.read() or b"{}").get("message") or exc.reason
+            except ValueError:
+                why = exc.reason
+            raise MergeRefused(str(why)) from None
+        raise
+    return str(done.get("sha") or "")
 
 
 def _api(token: str, method: str, path: str, body: dict[str, Any] | None = None) -> Any:

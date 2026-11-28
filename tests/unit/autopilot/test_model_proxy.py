@@ -74,7 +74,7 @@ class Upstream(BaseHTTPRequestHandler):
             ).encode()
             ctype = "application/json"
         else:
-            body = sse(OPENAI_STREAM if self.path.startswith("/v1/responses") else ANTHROPIC_STREAM)
+            body = sse(OPENAI_STREAM if self.path.endswith("/responses") else ANTHROPIC_STREAM)
             ctype = "text/event-stream"
         self.send_response(200)
         self.send_header("content-type", ctype)
@@ -160,6 +160,35 @@ def test_codex_call_uses_bearer_key_and_charges_usage(setup: Any) -> None:
     assert status == 200
     assert seen[0]["headers"]["authorization"] == f"Bearer {OPENAI_KEY}"
     # 1000 uncached input + 50 output + 2000 cached at a tenth
+    assert proxy.run(token).used == 1250
+
+
+def test_codex_signed_in_with_chatgpt_calls_the_subscription_and_is_charged(
+    tmp_path: Path,
+) -> None:
+    seen: list[dict[str, Any]] = []
+    upstream = ThreadingHTTPServer(("127.0.0.1", 0), type("H", (Upstream,), {"seen": seen}))
+    serve(upstream)
+    proxy = ModelProxy(
+        anthropic_key=None,
+        openai_key=None,
+        log_path=tmp_path / "calls.jsonl",
+        chatgpt=("chatgpt-ACCESS", "acct-1"),
+        chatgpt_url=f"http://127.0.0.1:{upstream.server_address[1]}",
+    )
+    server = proxy.server("127.0.0.1", 0)
+    serve(server)
+    token = proxy.issue("run-1", budget=100_000, ttl=60)
+    try:
+        # a sandbox cannot pick the account its calls are billed to
+        headers = {"authorization": f"Bearer {token}", "chatgpt-account-id": "acct-other"}
+        assert call(server.server_address[1], "/v1/responses", headers)[0] == 200
+    finally:
+        server.shutdown()
+        upstream.shutdown()
+    assert seen[0]["path"] == "/backend-api/codex/responses"
+    assert seen[0]["headers"]["authorization"] == "Bearer chatgpt-ACCESS"
+    assert seen[0]["headers"]["chatgpt-account-id"] == "acct-1"
     assert proxy.run(token).used == 1250
 
 

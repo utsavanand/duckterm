@@ -1,4 +1,4 @@
-"""A successful run's branch is pushed from the host and gets a draft pull
+"""A successful run's branch is pushed from the host and gets a pull
 request; nothing else is pushed, and the token never reaches argv."""
 
 import json
@@ -67,7 +67,11 @@ def test_the_body_carries_the_spec_and_closes_the_issue_but_skips_a_linked_spec(
     item = {"number": 315, "title": "Row cannot be collapsed"}
     state = {"attempts": [{"step": "spec", "outputs": {"spec": {"path": "spec.md"}}}]}
     body = runs.pr_body(meta, item, tmp_path, state)
-    assert body.startswith("# Spec\nFix it.") and "Closes #315." in body and "draft" in body
+    assert (
+        body.startswith("# Spec\nFix it.")
+        and "Closes #315." in body
+        and "only with the owner's approval" in body
+    )
     linked = {"attempts": [{"step": "spec", "outputs": {"spec": {"path": "linked.md"}}}]}
     assert "host file" not in runs.pr_body(meta, item, tmp_path, linked)
     assert runs.pr_title(meta, item) == "Fix #315: Row cannot be collapsed"
@@ -109,7 +113,7 @@ def test_a_run_that_changed_nothing_opens_no_pull_request(
     root = tmp_path / "run"
     runs._write_meta(root, {"id": "r1"})
     monkeypatch.setattr(github_push, "push", lambda *a: pytest.fail("pushed"))
-    runs._publish(root, {"repo": "o/r"}, {"id": "r1", "branch": BRANCH}, {}, repo, head, {})
+    runs._publish(root, {"id": "r1", "repo": "o/r", "branch": BRANCH, "item": {}}, repo, head, {})
     assert "changed no files" in (root / "autopilot.json").read_text()
 
 
@@ -178,7 +182,7 @@ def test_a_run_that_changed_ci_configuration_is_never_pushed(
     monkeypatch.setattr(github_push, "open_pull_request", lambda *a: pytest.fail("opened a PR"))
     root = tmp_path / "run"
     runs._write_meta(root, {"id": "r1"})
-    runs._publish(root, {"repo": "o/r"}, {"id": "r1", "branch": BRANCH}, {}, repo, base, {})
+    runs._publish(root, {"id": "r1", "repo": "o/r", "branch": BRANCH, "item": {}}, repo, base, {})
     meta = json.loads((root / "autopilot.json").read_text())
     assert meta["pushed"] is False and "CI configuration" in meta["pr_skipped"]
     assert sent == []
@@ -196,7 +200,7 @@ def test_an_ordinary_push_failure_is_recorded_and_the_run_stays_succeeded(
     monkeypatch.setattr(github_push, "push", fail)
     root = tmp_path / "run"
     runs._write_meta(root, {"id": "r1", "state": "succeeded"})
-    runs._publish(root, {"repo": "o/r"}, {"id": "r1", "branch": BRANCH}, {}, repo, base, {})
+    runs._publish(root, {"id": "r1", "repo": "o/r", "branch": BRANCH, "item": {}}, repo, base, {})
     meta = json.loads((root / "autopilot.json").read_text())
     assert meta["state"] == "succeeded" and "network" in meta["pr_error"]
 

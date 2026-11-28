@@ -1,3 +1,72 @@
+## 2026-11-27 — GitHub Actions leaves a failed check's summary empty
+
+Autopilot's merge stage sends a failed CI run's log to a fix step. Read from
+the check-runs API, a real failed kaho run said only "Process completed with
+exit code 1": Actions puts nothing in a check's title, summary or text. The
+cause, a CHANGELOG version mismatch, was only in the job's own log. The fix
+step now gets the lines before the log's first ##[error], fetched from the
+job-log redirect without the token. Lesson: read a real failure through a new
+API before building on its fields; the fake that returned a summary was
+written from the docs, not from GitHub.
+
+## 2026-11-27 — Parallel reviewers raced for one diff file
+
+The first real run of the review stage (kaho-reports#8) failed after three
+rounds: both Codex reviewers kept asking for a revision because the diff's
+SHA-256 did not match the one they were given, e3b0c442…, the hash of an empty
+file. QA and security run in parallel and both resolved workspace.diff into
+the same folder through the same temporary git index, so one hashed an empty
+diff while the other wrote the real one. The runner now builds that diff under
+a lock. The same run showed two more: the "output unchanged" check compared a
+review's verdict word as a file and failed a second review that agreed with
+the first, and QA failed changes for tools the sandbox does not have. Unit
+tests with fake steps passed all along. Lesson: run parallel steps for real
+before calling a flow done; a fake that answers instantly never races.
+
+## 2026-11-27 — Codex can review on the owner's ChatGPT plan, through the gateway
+
+The approved Autopilot mock has Codex review what Claude Code builds. I first
+told the owner Codex needed an OpenAI API key; it does not. Codex on the Mac is
+signed in with ChatGPT, and a probe through a local relay showed Codex's
+Responses calls answered by chatgpt.com/backend-api/codex with that sign-in and
+the account header. The gateway now forwards Codex's calls there when there is
+no API key, and the sandbox still holds only its run token.
+
+The gateway kept whatever credentials it started with, for days: a refreshed
+sign-in or a new proxy version never reached it. It now carries a stamp of its
+credentials and code, and is replaced when either changes. Lesson: before
+asking the owner for a credential, check what they are already signed in with.
+
+## 2026-11-27 — Autopilot's spec gate stopped every run, or none
+
+The first spec gate (feat/autopilot-gates, never pushed) asked for approval on
+every run. The design (docs/specs/autopilot-issue-flow.md §3) asks only where
+risk calls for it, and never lets the model decide where. The branch sat
+unpushed for three days while main moved 300 commits, so it had to be ported.
+
+The spec step now writes a classification, a kit script (not a model) turns it
+into gate or skip, and the card says which rule asked. Unknown or unreadable
+values gate. A rejected spec goes back with the person's note. The runner's
+"output unchanged" check had to change: it failed a rewritten spec whose
+classification rightly stayed the same, so only all outputs unchanged fails.
+Lesson: a finished branch nobody pushes is not finished; ask the owner to push
+or park it the day it is done.
+
+## 2026-11-27 — Changing an autopilot's labels quietly skipped every issue it matched
+
+The issue watcher treated any change of labels as a fresh start: the next poll
+recorded every open issue that matched and never ran them. Someone adding a
+label to an autopilot so that waiting issues would run got nothing, with no
+sign why. Found while working out why Kaho's reports were never picked up.
+
+Only an autopilot's first poll records what is already there now. An edit that
+changes the labels or the issue repository keeps the issues already started
+and asks, when open issues newly match, "Only new ones" or "Run them"; the
+answer is kept in the watcher's record. Saving also checks that the GitHub
+token can push to the code repository and read the issue repository, so a
+setup that could never run is refused when it is made. Lesson: a reset that
+runs silently on an edit is a decision made for the person; ask them.
+
 ## 2026-11-27 — An autopilot assumed issues live next to the code
 
 Kaho's "Report a Bug" button files issues in utsavanand/kaho-reports, a repository
