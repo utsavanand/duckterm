@@ -121,6 +121,70 @@ REPLIES: dict[str, dict[str, Any]] = {
             }
         ]
     },
+    "design": {
+        "scope": "Tables and the route",
+        "columns": ["Server", "Storage"],
+        "components": [
+            {
+                "id": "srv",
+                "label": "Route",
+                "sub": "server.py",
+                "column": 0,
+                "files": ["src/duckterm/server.py", "ghost.py"],
+            },
+            {
+                "id": "db",
+                "label": "Tables",
+                "sub": "persistence",
+                "column": 9,
+                "files": ["src/duckterm/persistence/db.py", "src/duckterm/server.py"],
+            },
+            {"id": "db", "label": "Duplicate", "sub": "", "column": 0, "files": []},
+            {
+                "id": "disk",
+                "label": "Disk",
+                "sub": "outside",
+                "column": 1,
+                "files": [],
+                "external": True,
+            },
+        ],
+        "edges": [
+            {"from": "srv", "to": "db"},
+            {"from": "srv", "to": "nowhere"},
+            {"from": "srv", "to": "db"},
+        ],
+        "changes": [
+            {
+                "category": "Side effects",
+                "problem": "",
+                "solution": "Route returns 2 for everyone",
+                "files": ["src/duckterm/server.py"],
+                "components": ["srv", "ghost"],
+            },
+            {
+                "category": "New capability",
+                "problem": "No table a",
+                "solution": "Add table a",
+                "files": ["src/duckterm/persistence/db.py"],
+                "components": ["db"],
+            },
+            {"category": "Made up", "problem": "x", "solution": "", "files": [], "components": []},
+        ],
+        "boxes": [
+            {
+                "id": "t",
+                "title": "TABLES",
+                "column": 1,
+                "state": "same",
+                "items": [
+                    {"state": "changed", "before": "[]", "after": "['a']"},
+                    {"state": "bogus", "before": "", "after": ""},
+                ],
+            },
+        ],
+        "box_edges": [{"from": "t", "to": "t", "state": "added"}],
+    },
     "questions": {
         "items": [
             {
@@ -153,6 +217,7 @@ def fake_generate(  # type: ignore[no-untyped-def]
             ("guardrails", "# Task: Guardrails"),
             ("blast", "# Task: Blast radius"),
             ("author", "# Task: How the author got here"),
+            ("design", "# Task: Design of the change"),
         ):
             if marker in prompt:
                 card = name
@@ -452,3 +517,53 @@ def test_tests_card_merges_model_coverage_with_facts(
     guard = by_id["guardrails"]["data"]
     assert [f["rule"] for f in guard["findings"]] == ["Comment slop", "Over-engineering"]
     assert guard["verdict"] == "2 findings"  # the model finding plus the fixture commit subject
+
+
+def test_design_card_keeps_only_what_the_diff_supports_and_homes_every_file(
+    target: workspace.Target, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    serve(monkeypatch, fake_generate([]))
+    result = asyncio.run(cards.generate_all(target, payload_for(target), None))
+    design = {c["id"]: c for c in result["cards"]}["design"]["data"]
+    parts = {c["id"]: c for c in design["components"]}
+    assert design["columns"] == ["Server", "Storage", "Other"]
+    # ghost.py is not in the diff; server.py belongs to the first component that names it.
+    assert parts["srv"]["files"] == ["src/duckterm/server.py"]
+    assert parts["db"]["files"] == ["src/duckterm/persistence/db.py"]
+    assert parts["db"]["label"] == "Tables" and parts["db"]["column"] == 1
+    assert parts["db"]["additions"] == 1 and parts["db"]["deletions"] == 1
+    assert parts["disk"]["external"] is True and parts["disk"]["files"] == []
+    assert parts["_other"]["files"] == ["docs/notes.md"] and parts["_other"]["column"] == 2
+    assert design["edges"] == [{"from": "srv", "to": "db"}]
+    assert [(c["category"], c["components"]) for c in design["changes"]] == [
+        ("New capability", ["db"]),
+        ("Side effects", ["srv"]),
+    ]
+    assert design["boxes"][0]["items"] == [{"state": "changed", "before": "[]", "after": "['a']"}]
+    assert design["box_edges"] == []
+    assert design["verdict"] == "4 parts · 2 changes"
+
+
+def test_release_card_says_how_far_the_base_moved_and_which_files_it_touched(
+    target: workspace.Target, git_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    write(git_repo, "docs/notes.md", "# Notes on main\n")
+    commit(git_repo, "main edits the notes")
+    write(git_repo, "README.md", "readme\n")
+    commit(git_repo, "main adds a readme")
+    target = workspace.resolve(str(git_repo), "duckterm/feature")
+    serve(monkeypatch, fake_generate([]))
+    result = asyncio.run(cards.generate_all(target, payload_for(target), None, only=["intent"]))
+    release = {c["id"]: c for c in result["cards"]}["release"]["data"]
+    assert release["base_moved"] == {"commits": 2, "overlap": ["docs/notes.md"]}
+    assert [c["subject"] for c in release["commits"]] == ["Add table a and bump route"]
+
+
+def test_design_card_is_not_written_without_the_review_v2_boards(
+    target: workspace.Target, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[str] = []
+    serve(monkeypatch, fake_generate(calls))
+    result = asyncio.run(cards.generate_all(target, payload_for(target), None, design=False))
+    assert "design" not in calls
+    assert {c["id"]: c for c in result["cards"]}["design"]["status"] == "pending"

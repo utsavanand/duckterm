@@ -81,6 +81,40 @@ describe("readinessRows", () => {
     });
   });
 
+  it("names changed functions without a test, from the symbol index", () => {
+    const blast = card("blast", { symbols: [
+      { symbol: "check_api_key", change: "added", tested: true, outside_count: 0, path: "a.py", line: 1 },
+      { symbol: "LLMManager.get", change: "changed", tested: false, outside_count: 2, path: "b.py", line: 9 },
+      { symbol: "old_helper", change: "removed", tested: false, outside_count: 0, path: "c.py", line: 3 },
+      { symbol: "test_checks_key", change: "added", tested: false, outside_count: 0, path: "tests/test_ai.py", line: 5 },
+    ] });
+    const unit = readinessRows(header, [release, tests, blast]).find(row => row.id === "tests")!;
+    expect(unit.lines[0]).toEqual({ text: "1 of 2 changed functions have a test that reaches them", where: "symbol index" });
+    expect(unit.lines[1].text).toBe("No test: LLMManager.get");
+    expect(unit.ask).toContain("No test: LLMManager.get");
+  });
+
+  it("says how far the base moved and which of the PR's files it changed", () => {
+    const moved = card("release", { ...(release.data as object), base_moved: { commits: 3, overlap: ["shared/proto/auth.proto"] } });
+    const merge = readinessRows(header, [moved, tests]).find(row => row.id === "merge")!;
+    expect(merge.lines.map(line => line.text)).toEqual(["Conflicts with main", "main has 3 commits since the branch point, changing 1 of this PR's files", "Also changed on main: shared/proto/auth.proto"]);
+    expect(merge.ask).toContain("Files changed on both sides: shared/proto/auth.proto.");
+  });
+
+  it("splits stored data and deploy out of rollback, each with its own fix request", () => {
+    const touched = card("release", { checks: [
+      { name: "Schema or data path", hits: ["src/duckterm/persistence/db.py"], status: "fail", note: "" },
+      { name: "Installer, updater or build path", hits: ["scripts/build_package.sh"], status: "fail", note: "" },
+    ] });
+    const byId = Object.fromEntries(readinessRows(header, [touched]).map(row => [row.id, row]));
+    expect([byId.rollback.status, byId.data.status, byId.deploy.status]).toEqual(["block", "block", "part"]);
+    expect(byId.data.lines[0].text).toBe("Changes src/duckterm/persistence/db.py");
+    expect(byId.data.ask).toContain("existing rows");
+    expect(byId.deploy.ask).toContain("fresh worktree");
+    const clean = Object.fromEntries(readinessRows(header, [release]).map(row => [row.id, row]));
+    expect([clean.data.status, clean.deploy.status, clean.data.ask, clean.deploy.ask]).toEqual(["ok", "ok", null, null]);
+  });
+
   it("summarises: any block wins, then unread rows, then partial", () => {
     expect(overall(readinessRows(header, [release, tests])).label).toBe("Not ready to release");
     const clean = { ...header, row: { status: "open" } } as unknown as ReviewHeader;

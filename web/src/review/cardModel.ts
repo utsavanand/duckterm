@@ -9,7 +9,20 @@ export interface RiskData { files: RiskFile[]; counts: Record<Bucket, number>; r
 export interface BehaviourRow { situation: string; before: string; after: string; who_notices: string; regression_risk: "low" | "medium" | "high"; evidence: string[]; evidence_missing?: string[] }
 export interface BehaviourData { rows: BehaviourRow[]; verdict: string }
 export interface ReleaseCheck { name: string; hits: string[]; status: "pass" | "fail" | "conditional" | "info" | "unknown"; note: string }
-export interface ReleaseData { checks: ReleaseCheck[]; low_risk: "true" | "false" | "conditional"; condition: string; verdict: string }
+export interface ReleaseData {
+  checks: ReleaseCheck[]; low_risk: "true" | "false" | "conditional"; condition: string; verdict: string;
+  commits?: { sha: string; subject: string }[];
+  // How far the base branch moved since this branch left it, and which of this PR's files it changed.
+  base_moved?: { commits: number; overlap: string[] } | null;
+}
+export type DesignState = "same" | "changed" | "added" | "removed";
+export interface DesignComponent { id: string; label: string; sub: string; column: number; files: string[]; external: boolean; additions: number; deletions: number; new: boolean }
+export interface DesignChange { category: "New capability" | "Fix and hardening" | "Side effects" | "Supporting files"; problem: string; solution: string; files: string[]; components: string[] }
+export interface DesignBox { id: string; title: string; column: number; state: DesignState; items: { state: DesignState; before: string; after: string }[] }
+export interface DesignData {
+  scope: string; columns: string[]; components: DesignComponent[]; edges: { from: string; to: string }[];
+  changes: DesignChange[]; boxes: DesignBox[]; box_edges: { from: string; to: string; state: "same" | "added" | "removed" }[]; verdict: string;
+}
 export interface Question { kind: "unverified" | "confirm" | "cleanup" | "manual"; text: string; paths: string[] }
 export interface QuestionsData { items: Question[]; verdict: string }
 

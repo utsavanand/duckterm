@@ -2259,7 +2259,14 @@ class Server:
                 session=None,
                 local=True,
             )
-            await cards.generate_all(target, diff, row, only=only, author_facts=author_facts)
+            await cards.generate_all(
+                target,
+                diff,
+                row,
+                only=only,
+                author_facts=author_facts,
+                design=self.edition.includes("review_v2"),
+            )
 
         self._review_tasks[str(target.directory)] = asyncio.get_running_loop().create_task(run())
 

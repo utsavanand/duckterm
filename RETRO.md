@@ -7,6 +7,15 @@ no CI read "Ready to release" (main-qa-2 on #503). Evidence counts toward a
 pass only when it names what it tested. An unattributed log may still block on
 failure, but only CI on this head can make the row ready.
 
+## 2026-11-27 — The approved preview is the scope
+
+The owner approved a five-tab review preview. #503 shipped the shell with
+Changes as a placeholder and Map and History without their diagrams, noted
+as "follow-ups", and the owner found out by opening the preview again. A
+preview the owner says yes to is the build list: every board in it ships, or
+the owner is asked before one is split out, and every status report names
+what of it is not built.
+
 ## 2026-11-26 — Shown isn't counted
 
 The Release readiness tab listed a failed CI run and a failed gate as lines

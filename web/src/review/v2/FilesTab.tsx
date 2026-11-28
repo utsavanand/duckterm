@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type DiffFile, type DiffHunk, type ReviewDiff, type ReviewHeader } from "../../api";
 import { html } from "../../render";
+import type { DesignChange } from "../cardModel";
 import { Code } from "../DiffPane";
 import { languageFor, splitRows, unifiedRows } from "../diffModel";
+import { changeLabel } from "./Design";
 import { fileKind, fileTree, treeOrder, type TreeNode } from "./tree";
 
 export interface LineNote { path: string; from: number; to: number; text: string }
-export interface FileFilter { label: string; prefix: string }
+// A set of files opened from the Map, Changes or an area; the rest of the tree dims.
+export interface FileFilter { label: string; files: string[] }
 type Layout = "unified" | "split";
 // A selected range of lines in one hunk; numbers are the new-file lines, or
 // the old-file lines for removed lines.
@@ -17,22 +20,28 @@ function rowNumber(kind: string, oldNumber: number | null, newNumber: number | n
   return kind === "-" ? oldNumber ?? 0 : newNumber ?? 0;
 }
 
-export function FilesTab({ header, diff, error, whitespace, onWhitespace, focus, filter, onClearFilter, onMark, onNote }: {
-  header: ReviewHeader; diff: ReviewDiff | null; error: string; whitespace: boolean; onWhitespace: (value: boolean) => void;
+export function FilesTab({ header, diff, changes, error, whitespace, onWhitespace, focus, filter, onClearFilter, onMark, onNote }: {
+  header: ReviewHeader; diff: ReviewDiff | null; changes: DesignChange[]; error: string; whitespace: boolean; onWhitespace: (value: boolean) => void;
   focus: { path: string; line?: number; nonce: number } | null; filter: FileFilter | null; onClearFilter: () => void;
   onMark: (file: DiffFile, viewed: boolean) => void; onNote: (note: LineNote) => void;
 }) {
   const [layout, setLayout] = useState<Layout>("unified");
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [selected, setSelected] = useState<string | null>(null);
+  const [group, setGroup] = useState<"dir" | "change">("dir");
   const files = useMemo(() => diff?.files ?? [], [diff]);
   const tree = useMemo(() => fileTree(files), [files]);
-  const order = useMemo(() => treeOrder(tree), [tree]);
+  const byChange = useMemo(() => changeGroups(files, changes), [files, changes]);
+  const order = useMemo(() => group === "dir" ? treeOrder(tree) : byChange.flatMap(g => g.files), [group, tree, byChange]);
+  const inFilter = (path: string) => !filter || filter.files.includes(path);
   useEffect(() => {
-    setSelected(current => current && files.some(f => f.path === current) ? current : (filter ? order.find(f => f.path.startsWith(filter.prefix)) : order[0])?.path ?? null);
+    // Opening a filter jumps to its first file; otherwise keep the current one.
+    setSelected(current => filter ? order.find(f => filter.files.includes(f.path))?.path ?? current
+      : current && files.some(f => f.path === current) ? current : order[0]?.path ?? null);
   }, [files, order, filter]);
   useEffect(() => { if (focus && files.some(f => f.path === focus.path)) setSelected(focus.path); }, [focus, files]);
   const current = files.find(f => f.path === selected) ?? null;
+  const here = current ? changes.filter(change => change.files.includes(current.path)).map(changeLabel) : [];
 
   function step(direction: 1 | -1) {
     const index = order.findIndex(f => f.path === selected);
@@ -61,8 +70,19 @@ export function FilesTab({ header, diff, error, whitespace, onWhitespace, focus,
 
   return <div className="rv2-files">
     <nav className="rv2-tree" aria-label="Changed files">
+      <div className="rv2-treebar">
+        <span className="rv2-seg" role="group" aria-label="Group files">
+          <button aria-pressed={group === "dir"} onClick={() => setGroup("dir")}>Folders</button>
+          <button aria-pressed={group === "change"} disabled={!changes.length} onClick={() => setGroup("change")}>Changes</button>
+        </span>
+      </div>
       {filter && <div className="rv2-filter"><span>{filter.label}</span><button aria-label="Show all files" onClick={onClearFilter}>✕</button></div>}
-      <TreeList nodes={tree} depth={0} collapsed={collapsed} onToggle={toggle} selected={selected} onSelect={setSelected} filter={filter} />
+      {group === "dir"
+        ? <TreeList nodes={tree} depth={0} collapsed={collapsed} onToggle={toggle} selected={selected} onSelect={setSelected} inFilter={inFilter} />
+        : byChange.map(g => <div key={g.label} className="rv2-chgroup">
+          <div className="rv2-dir static"><span className="nm">{g.label}</span><span className="roll">{g.files.length}</span></div>
+          {g.files.map(file => <Leaf key={file.path} file={file} name={file.path.split("/").pop() ?? file.path} depth={1} selected={selected} onSelect={setSelected} out={!inFilter(file.path)} />)}
+        </div>)}
     </nav>
     {current && <div className="rv2-filepane">
       <div className="rv2-filebar">
@@ -77,13 +97,28 @@ export function FilesTab({ header, diff, error, whitespace, onWhitespace, focus,
         <button aria-pressed={current.viewed} onClick={() => onMark(current, !current.viewed)}>{current.viewed ? "Viewed ✓" : "Viewed"} <kbd>v</kbd></button>
         <button onClick={() => step(1)}>Next <kbd>j</kbd></button>
       </div>
+      {here.length > 0 && <div className="rv2-ctx">Changes here: {here.map((label, i) => <b key={i}>{label}</b>)}</div>}
       <FileDiff key={`${current.path}:${current.hash}`} file={current} header={header} layout={layout} focusLine={focus?.path === current.path ? focus.line : undefined} onNote={onNote} />
     </div>}
   </div>;
 }
 
-function TreeList({ nodes, depth, collapsed, onToggle, selected, onSelect, filter }: {
-  nodes: TreeNode[]; depth: number; collapsed: Set<string>; onToggle: (key: string) => void; selected: string | null; onSelect: (path: string) => void; filter: FileFilter | null;
+// Each change with its files, in the order the Changes board lists them; a
+// file in two changes shows under the first. Files no change names come last.
+function changeGroups(files: DiffFile[], changes: DesignChange[]): { label: string; files: DiffFile[] }[] {
+  const placed = new Set<string>(), out: { label: string; files: DiffFile[] }[] = [];
+  for (const change of changes) {
+    const mine = files.filter(file => change.files.includes(file.path) && !placed.has(file.path));
+    mine.forEach(file => placed.add(file.path));
+    if (mine.length) out.push({ label: changeLabel(change), files: mine });
+  }
+  const rest = files.filter(file => !placed.has(file.path));
+  if (rest.length) out.push({ label: "Not in a listed change", files: rest });
+  return out;
+}
+
+function TreeList({ nodes, depth, collapsed, onToggle, selected, onSelect, inFilter }: {
+  nodes: TreeNode[]; depth: number; collapsed: Set<string>; onToggle: (key: string) => void; selected: string | null; onSelect: (path: string) => void; inFilter: (path: string) => boolean;
 }) {
   return <>{nodes.map(node => {
     if (node.kind === "dir") {
@@ -93,21 +128,23 @@ function TreeList({ nodes, depth, collapsed, onToggle, selected, onSelect, filte
           <span className="tw">{shut ? "▸" : "▾"}</span><span className="nm">{node.name}</span>
           <span className="roll">{node.files} · +{node.additions} −{node.deletions}</span>
         </button>
-        {!shut && <TreeList nodes={node.children} depth={depth + 1} collapsed={collapsed} onToggle={onToggle} selected={selected} onSelect={onSelect} filter={filter} />}
+        {!shut && <TreeList nodes={node.children} depth={depth + 1} collapsed={collapsed} onToggle={onToggle} selected={selected} onSelect={onSelect} inFilter={inFilter} />}
       </div>;
     }
-    const { file } = node;
-    const kind = fileKind(file);
-    const out = filter && !file.path.startsWith(filter.prefix);
-    return <button key={file.path} className={`rv2-leaf${file.path === selected ? " on" : ""}${file.viewed ? " viewed" : ""}${out ? " out" : ""}`}
-      style={{ paddingLeft: 12 + depth * 14 }} title={file.path} aria-current={file.path === selected ? "true" : undefined} onClick={() => onSelect(file.path)}>
-      <span className="ck" aria-label={file.viewed ? "Viewed" : undefined}>{file.viewed ? "✓" : ""}</span>
-      <span className="nm">{node.name}</span>
-      {kind && <span className="kind">{kind}</span>}
-      {file.stale && <span className="kind warn">changed</span>}
-      <span className="st">+{file.additions} −{file.deletions}</span>
-    </button>;
+    return <Leaf key={node.file.path} file={node.file} name={node.name} depth={depth} selected={selected} onSelect={onSelect} out={!inFilter(node.file.path)} />;
   })}</>;
+}
+
+function Leaf({ file, name, depth, selected, onSelect, out }: { file: DiffFile; name: string; depth: number; selected: string | null; onSelect: (path: string) => void; out: boolean }) {
+  const kind = fileKind(file);
+  return <button className={`rv2-leaf${file.path === selected ? " on" : ""}${file.viewed ? " viewed" : ""}${out ? " out" : ""}`}
+    style={{ paddingLeft: 12 + depth * 14 }} title={file.path} aria-current={file.path === selected ? "true" : undefined} onClick={() => onSelect(file.path)}>
+    <span className="ck" aria-label={file.viewed ? "Viewed" : undefined}>{file.viewed ? "✓" : ""}</span>
+    <span className="nm">{name}</span>
+    {kind && <span className="kind">{kind}</span>}
+    {file.stale && <span className="kind warn">changed</span>}
+    <span className="st">+{file.additions} −{file.deletions}</span>
+  </button>;
 }
 
 function FileDiff({ file, header, layout, focusLine, onNote }: { file: DiffFile; header: ReviewHeader; layout: Layout; focusLine?: number; onNote: (note: LineNote) => void }) {

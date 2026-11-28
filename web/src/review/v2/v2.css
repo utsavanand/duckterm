@@ -1,13 +1,13 @@
 /* Review page v2 (flag review_v2) in the Mono lab style: neutral greys, white-alpha
    text, hairlines instead of cards, square corners, uppercase mono labels. Color
    only means something: amber waiting/partial, red blocking/conflict, green merged/added.
-   Geist is not bundled yet; the stacks fall back to the system faces. */
+   Geist Sans and Geist Mono ship with the app (@fontsource), so the page looks the same on every machine. */
 .rv2 {
   --m-bg: #0e0e0e; --m-panel: #141415; --m-raise: #1b1b1c; --m-line: rgba(255,255,255,.12); --m-soft: rgba(255,255,255,.07);
   --m-fg: #f4f4f4; --m-body: rgba(255,255,255,.74); --m-muted: rgba(255,255,255,.56); --m-faint: rgba(255,255,255,.34);
   --m-ok: #8fd19e; --m-bad: #f07167; --m-warn: #e0b45c;
   --m-add: rgba(120,200,140,.10); --m-add-n: rgba(120,200,140,.16); --m-del: rgba(240,113,103,.10); --m-del-n: rgba(240,113,103,.16); --m-sel: rgba(255,255,255,.07);
-  --m-ui: "Geist", "Inter", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  --m-ui: "Geist Sans", "Geist", "Inter", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   --m-mono: "Geist Mono", ui-monospace, "SF Mono", Menlo, Consolas, monospace;
   /* Review mode takes the whole window; Back returns to where it was opened. */
   position: fixed; inset: 0; z-index: 60;
@@ -167,7 +167,103 @@
 .rv2-answer.mine { border-left: 2px solid var(--m-muted); padding-left: 8px; border-top: 0; }
 .rv2-hint { color: var(--m-faint); font: 12px var(--m-ui); padding: 10px 14px; border-top: 1px solid var(--m-soft); margin: 0; }
 
+/* map and design diagrams */
+.rv2-mapbox { border: 1px solid var(--m-line); background: var(--m-panel); overflow-x: auto; }
+/* Drawn at natural size so labels fit their boxes; a narrow window scrolls. */
+.rv2-mapbox svg { display: block; max-width: none; }
+.rv2-mapbox text.col { fill: var(--m-faint); font: 500 10.5px var(--m-mono); letter-spacing: .08em; text-transform: uppercase; }
+.rv2-mapbox .node { cursor: pointer; }
+.rv2-mapbox .node.still { cursor: default; }
+.rv2-mapbox .node rect.box { fill: var(--m-raise); stroke: var(--m-line); }
+.rv2-mapbox .node.changed rect.box { stroke: var(--m-faint); }
+.rv2-mapbox .node.new rect.box { stroke: var(--m-muted); stroke-dasharray: 4 3; }
+.rv2-mapbox .node.still rect.box { fill: var(--m-bg); }
+.rv2-mapbox .node text { fill: var(--m-fg); font: 12.5px var(--m-ui); }
+.rv2-mapbox .node text.sub { fill: var(--m-faint); font: 11px var(--m-mono); }
+.rv2-mapbox .node text.flag { fill: var(--m-bad); font: 10.5px var(--m-ui); }
+.rv2-mapbox .node.still text { fill: var(--m-faint); }
+.rv2-mapbox .node:hover rect.box, .rv2-mapbox .node.hl rect.box, .rv2-mapbox .node:focus-visible rect.box { stroke: var(--m-fg); }
+.rv2-mapbox .node:focus-visible { outline: none; }
+.rv2-mapbox .node.dim { opacity: .28; }
+.rv2-mapbox .edge { stroke: var(--m-line); stroke-width: 1.5; fill: none; }
+.rv2-mapbox .edge.hl { stroke: var(--m-fg); }
+.rv2-mapbox .edge.dim { opacity: .25; }
+.rv2-mapbox .bar-add { fill: var(--m-ok); } .rv2-mapbox .bar-del { fill: var(--m-bad); }
+.rv2-mapbox .dbox rect.frame { fill: var(--m-raise); stroke: var(--m-line); }
+.rv2-mapbox .dbox.added rect.frame { stroke: var(--m-ok); stroke-dasharray: 5 3; }
+.rv2-mapbox .dbox.removed rect.frame { stroke: var(--m-bad); stroke-dasharray: 2 3; }
+.rv2-mapbox .dbox text.t { fill: var(--m-fg); font: 500 11.5px var(--m-mono); letter-spacing: .04em; }
+.rv2-mapbox .dbox text.it { font: 11.5px var(--m-ui); fill: var(--m-muted); }
+.rv2-mapbox .dbox text.it.added { fill: var(--m-ok); }
+.rv2-mapbox .dbox text.it.changed { fill: var(--m-warn); }
+.rv2-mapbox .dbox text.it.removed { fill: var(--m-bad); text-decoration: line-through; }
+.rv2-mapbox .dedge { stroke: var(--m-faint); stroke-width: 1.3; fill: none; }
+.rv2-mapbox .dedge.added { stroke: var(--m-ok); stroke-dasharray: 5 3; }
+.rv2-mapbox .arrow { fill: var(--m-faint); }
+.rv2-legend { display: flex; gap: 16px; flex-wrap: wrap; padding: 8px 12px; border-top: 1px solid var(--m-soft); font-size: 12px; color: var(--m-muted); }
+.rv2-legend i { display: inline-block; width: 10px; height: 10px; margin-right: 6px; vertical-align: -1px; }
+.rv2-legend i.a { background: var(--m-ok); } .rv2-legend i.d { background: var(--m-bad); }
+.rv2-legend i.n { border: 1px dashed var(--m-muted); } .rv2-legend i.u { background: var(--m-bg); border: 1px solid var(--m-line); }
+.rv2-legend .warn { color: var(--m-warn); }
+.rv2-chips { display: flex; gap: 6px; flex-wrap: wrap; }
+.rv2-chips button { font-size: 12px; padding: 2px 8px; color: var(--m-muted); text-align: left; }
+.rv2-chips button[aria-pressed="true"] { color: var(--m-bg); background: var(--m-fg); border-color: var(--m-fg); }
+.rv2-dhead { display: flex; justify-content: space-between; align-items: flex-end; gap: 16px; flex-wrap: wrap; }
+.rv2-dhead .rv2-lbl { margin-bottom: 4px; }
+.rv2-delta { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 24px; }
+.rv2-delta h3 { margin: 0 0 6px; font: 500 11.5px var(--m-mono); letter-spacing: .08em; text-transform: uppercase; }
+.rv2-delta ul { margin: 0; padding-left: 16px; display: flex; flex-direction: column; gap: 4px; font-size: 13px; }
+.rv2-delta .a h3 { color: var(--m-ok); } .rv2-delta .c h3 { color: var(--m-warn); } .rv2-delta .r h3 { color: var(--m-bad); }
+
+/* changes board */
+.rv2-cats { display: flex; flex-direction: column; gap: 34px; }
+.rv2-cathead { display: flex; align-items: baseline; gap: 12px; padding: 14px 0 10px; border-top: 1px solid var(--m-fg); }
+.rv2-cathead h3 { margin: 0; font: 500 13px var(--m-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--m-fg); }
+.rv2-cathead .idx { font: 400 13px var(--m-mono); color: var(--m-faint); }
+.rv2-cathead .dot { width: 7px; height: 7px; align-self: center; }
+.rv2-cat.warn .rv2-cathead .dot { background: var(--m-warn); }
+.rv2-cathead .cnt { font: 400 12px var(--m-mono); color: var(--m-faint); }
+.rv2-cathead .sub { font-size: 12.5px; color: var(--m-muted); }
+.rv2-cat .rv2-items { border-top: 0; }
+.rv2-cat .rv2-items li { display: block; padding: 0; }
+.rv2-cat .rv2-items button { width: 100%; display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 16px; align-items: center; border: 0 !important; padding: 12px 0 !important; text-align: left; }
+.rv2-cat .rv2-items button:hover:not(:disabled) { background: var(--m-panel); }
+.rv2-cat .rv2-items button:disabled { opacity: 1; cursor: default; }
+.rv2-cat .txt { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.rv2-cat .pr { font-size: 13px; color: var(--m-muted); }
+.rv2-cat .pr.none { color: var(--m-warn); font-style: italic; }
+.rv2-cat .so { font-size: 14px; color: var(--m-fg); }
+.rv2-cat .lb { display: inline-block; width: 78px; font: 400 10.5px var(--m-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--m-faint); font-style: normal; }
+.rv2-cat .more { font: 400 11px var(--m-mono); color: var(--m-faint); white-space: nowrap; }
+.rv2-cat button:hover .more { color: var(--m-fg); }
+
+/* files: grouping and context */
+.rv2-treebar { padding: 4px 10px 8px; }
+.rv2-dir.static { cursor: default; padding-left: 12px !important; color: var(--m-fg); font-size: 12.5px; }
+.rv2-chgroup + .rv2-chgroup { margin-top: 6px; border-top: 1px solid var(--m-soft); padding-top: 4px; }
+.rv2-ctx { padding: 6px 14px; border-bottom: 1px solid var(--m-soft); font-size: 12.5px; color: var(--m-muted); display: flex; gap: 10px; flex-wrap: wrap; }
+.rv2-ctx b { font-weight: 500; color: var(--m-fg); }
+
+/* chat rail */
+.rv2-chattabs { display: flex; gap: 0; align-items: center; padding: 8px 10px; border-bottom: 1px solid var(--m-line); }
+.rv2-chattabs button[aria-pressed] { font: 500 11px var(--m-mono); letter-spacing: .06em; text-transform: uppercase; color: var(--m-muted); }
+.rv2-chattabs button + button[aria-pressed] { border-left: 0; }
+.rv2-chattabs button[aria-pressed="true"] { color: var(--m-fg); background: var(--m-raise); }
+.rv2-chattabs .x, .rv2-dest .x { border: 0 !important; padding: 0 4px !important; color: var(--m-faint); }
+.rv2-chatbody { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.rv2-chatbody > * { flex: 1; min-height: 0; }
+.rv2-draft { display: flex; flex-direction: column; gap: 8px; padding: 10px; border-bottom: 1px solid var(--m-line); background: var(--m-raise); }
+.rv2-draft textarea { width: 100%; box-sizing: border-box; font: 13px/1.5 var(--m-ui); padding: 8px 10px; }
+.rv2-dest { display: flex; justify-content: space-between; align-items: center; }
+.rv2-notes { flex: 1; overflow: auto; padding: 12px; }
+.rv2-notes ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; }
+.rv2-notes li { padding: 10px 0; border-bottom: 1px solid var(--m-soft); display: flex; flex-direction: column; gap: 4px; }
+.rv2-notes p { margin: 0; font-size: 13px; }
+.rv2-noteloc { align-self: flex-start; border: 0 !important; padding: 0 !important; font: 400 11.5px var(--m-mono) !important; color: var(--m-muted); }
+.rv2-noteloc:hover { color: var(--m-fg); }
+
 @container (max-width: 900px) {
+  .rv2-delta { grid-template-columns: minmax(0, 1fr); }
   .rv2-lede { grid-template-columns: minmax(0, 1fr); }
   .rv2-rrow { grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px; }
   .rv2-rrow .bd { grid-column: 1 / -1; }
