@@ -463,9 +463,13 @@ def resume(
     run_id: str,
     *,
     gate: tuple[str, str] | None = None,
+    note: str | None = None,
     executor: Executor | None = None,
     limits: Limits | None = None,
 ) -> Run:
+    """Carry a run on. `gate` answers the gate it waits at; `note` is what the
+    person wrote with the answer, which later steps read as that gate's
+    `note` output (a rejected spec's reason, say)."""
     run = load_run(project, run_id)
     ex = executor or Executor()
     lim = limits or Limits()
@@ -521,7 +525,7 @@ def resume(
                 "started_at": g["asked_at"],
                 "finished_at": int(time.time()),
                 "choice": answer,
-                "outputs": {},
+                "outputs": {"note": note[:4000]} if note else {},
                 "exit": 0,
                 "reason": "",
                 "inputs_sha256": {},
@@ -1228,17 +1232,20 @@ def _collect(
         attempt["choice"] = str(value)
     if kind == "run" and structured.get("status") == "failed":
         return f"the skill reported failure: {structured.get('reason') or ''}"
+    previous = run.last_receipt(step["id"])
     for name, filename in _file_outputs(skill).items():
         f = outdir / filename
         if not f.is_file() or f.stat().st_size == 0:
             return f"file output {name!r} missing or empty at {f.relative_to(run.project)}"
-        data = f.read_bytes()
-        previous = run.last_receipt(step["id"])
-        if previous and not skill.get("idempotent"):
-            old = (previous["outputs"].get(name) or {}).get("sha256")
-            if old == sha256(data):
-                return f"file output {name!r} is unchanged from the previous attempt"
-        outputs[name] = {"path": str(f.relative_to(run.project)), "sha256": sha256(data)}
+        outputs[name] = {"path": str(f.relative_to(run.project)), "sha256": sha256(f.read_bytes())}
+    # A rerun that wrote nothing new did no work. One output may rightly stay
+    # the same (a rewritten spec keeps its classification), so only all of
+    # them unchanged counts.
+    if previous and outputs and not skill.get("idempotent"):
+        old = {n: (previous["outputs"].get(n) or {}).get("sha256") for n in outputs}
+        if all(old[n] == o["sha256"] for n, o in outputs.items()):
+            names = ", ".join(repr(n) for n in outputs)
+            return f"file output {names} is unchanged from the previous attempt"
     attempt["reason"] = str(structured.get("reason") or "")
     attempt["outputs"] = outputs
     return ""

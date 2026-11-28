@@ -79,6 +79,7 @@ def start(autopilot: dict[str, Any], trigger: str, item: dict[str, Any]) -> str:
         "repo": autopilot["repo"],
         "issue_repo": store.issue_repo(autopilot),
         "budget_m": autopilot["budget_m"],
+        "approvals": autopilot.get("approvals") or {},
         "trigger": trigger,
         "item": {k: item.get(k) for k in ("number", "title", "url", "started_by")},
         "branch": f"autopilot/{run_id}",
@@ -109,6 +110,11 @@ def _execute(meta: dict[str, Any], item: dict[str, Any]) -> None:
             if flow.triggers.get(meta["trigger"])
             else {}
         )
+        if "settings" in flow.inputs:
+            approvals = meta.get("approvals") or {}
+            inputs["settings"] = json.dumps(
+                {"spec_on_visible": bool(approvals.get("spec_on_visible"))}
+            )
         _in_sandbox(
             root,
             dirs,
@@ -138,6 +144,7 @@ def answer(run_id: str, body: dict[str, Any]) -> dict[str, Any]:
     if "/" in run_id or not (root / "autopilot.json").is_file():
         raise KeyError(run_id)
     step, choice = str(body.get("step") or ""), str(body.get("answer") or "")
+    note = str(body.get("note") or "").strip()[:4000] or None
     with _META_LOCK:
         meta = json.loads((root / "autopilot.json").read_text())
         gate = pending_gate(root)
@@ -150,17 +157,23 @@ def answer(run_id: str, body: dict[str, Any]) -> dict[str, Any]:
         # Only the owner reaches this API today; `by` is where a person's
         # name goes once runs are shared (people-and-projects spec).
         meta.setdefault("answers", []).append(
-            {"step": step, "answer": choice, "by": "owner", "at": int(time.time() * 1000)}
+            {
+                "step": step,
+                "answer": choice,
+                "note": note,
+                "by": "owner",
+                "at": int(time.time() * 1000),
+            }
         )
         meta["state"] = "running"
         _write_meta(root, meta)
     threading.Thread(
-        target=_continue, args=(meta, step, choice), name=f"autopilot-{run_id}", daemon=True
+        target=_continue, args=(meta, step, choice, note), name=f"autopilot-{run_id}", daemon=True
     ).start()
     return {"ok": True}
 
 
-def _continue(meta: dict[str, Any], step: str, choice: str) -> None:
+def _continue(meta: dict[str, Any], step: str, choice: str, note: str | None) -> None:
     root = runs_root() / meta["id"]
     dirs = RunDirs(root)
     rejected = choice == "reject"
@@ -169,7 +182,12 @@ def _continue(meta: dict[str, Any], step: str, choice: str) -> None:
             root,
             dirs,
             lambda ex: runner.resume(
-                dirs.project, meta["runner_run"], gate=(step, choice), executor=ex, limits=LIMITS
+                dirs.project,
+                meta["runner_run"],
+                gate=(step, choice),
+                note=note,
+                executor=ex,
+                limits=LIMITS,
             ),
             publish=not rejected,
         )
@@ -287,20 +305,40 @@ def pr_body(
 
 
 def spec_text(project: Path, state: dict[str, Any]) -> str | None:
-    """The newest spec the run wrote. The path comes from the run's receipt,
-    which the sandbox could write, so a link or a path outside the clone is
-    not read."""
-    found = None
-    for attempt in state.get("attempts") or []:
-        spec = (attempt.get("outputs") or {}).get("spec")
-        if isinstance(spec, dict) and spec.get("path"):
-            found = str(spec["path"])
-    if not found or Path(found).is_absolute() or ".." in Path(found).parts:
-        return None
-    data = _read_capped(project, found, SPEC_CAP)
+    """The newest spec the run wrote."""
+    data = _newest_output(project, state, "spec", SPEC_CAP)
     return None if data is None else data.decode(errors="replace")
 
 
+def classification(project: Path, state: dict[str, Any]) -> dict[str, Any] | None:
+    """The newest classification the spec step wrote (surfaces, user_visible,
+    regression, security, ai, data, size), keeping only those fields."""
+    data = _newest_output(project, state, "classification", CLASS_CAP)
+    try:
+        found = json.loads(data) if data is not None else None
+    except ValueError:
+        return None
+    if not isinstance(found, dict):
+        return None
+    return {k: found[k] for k in CLASS_FIELDS if k in found}
+
+
+def _newest_output(project: Path, state: dict[str, Any], name: str, cap: int) -> bytes | None:
+    """The newest file a step wrote as output `name`. The path comes from the
+    run's receipt, which the sandbox could write, so a link or a path outside
+    the clone is not read."""
+    found = None
+    for attempt in state.get("attempts") or []:
+        out = (attempt.get("outputs") or {}).get(name)
+        if isinstance(out, dict) and out.get("path"):
+            found = str(out["path"])
+    if not found or Path(found).is_absolute() or ".." in Path(found).parts:
+        return None
+    return _read_capped(project, found, cap)
+
+
+CLASS_CAP = 20_000
+CLASS_FIELDS = ("surfaces", "user_visible", "regression", "security", "ai", "data", "size")
 SPEC_CAP = 1_000_000
 RECEIPT_CAP = 1_000_000
 DIFF_CAP = 400_000
@@ -420,6 +458,7 @@ def list_runs() -> list[dict[str, Any]]:
                 meta["failure"] = receipt["failure"]
             if meta["state"] == "waiting_gate":
                 meta["gate"] = pending_gate(meta_path.parent, receipt)
+            meta["classification"] = classification(meta_path.parent / "repo", receipt)
         out.append(meta)
     return sorted(out, key=lambda m: m["started_at"], reverse=True)
 
@@ -497,24 +536,29 @@ def summary() -> dict[str, Any]:
 
 
 def pending_gate(root: Path, receipt: dict[str, Any] | None = None) -> dict[str, Any] | None:
-    """The gate the run waits at: its question, the answers it takes and the
-    text of what it shows (a step's output file)."""
+    """The gate the run waits at: its question, the answers it takes, the
+    text of what it shows (a step's output file) and why the policy step
+    before it asked, when one did."""
     receipt = receipt if receipt is not None else _receipt(root)
     pending = [g for g in (receipt or {}).get("gates") or [] if g.get("response") is None]
     if not pending:
         return None
     g = pending[-1]
     shown = ""
-    project = (root / "repo").resolve()
-    if isinstance(g.get("show"), dict) and g["show"].get("path"):
-        path = project / str(g["show"]["path"])
-        if path.is_file() and not path.is_symlink() and path.resolve().is_relative_to(project):
-            shown = path.read_text(errors="replace")[:SHOWN_CHARS]
+    path = g["show"].get("path") if isinstance(g.get("show"), dict) else None
+    if path and not Path(str(path)).is_absolute() and ".." not in Path(str(path)).parts:
+        data = _read_capped(root / "repo", str(path), SHOWN_CHARS)
+        shown = "" if data is None else data.decode(errors="replace")
+    # the flow names a gate's policy step after it: spec-gate ← spec-policy
+    asked_by = g["step"].removesuffix("-gate") + "-policy"
+    policy = [a for a in (receipt or {}).get("attempts") or [] if a.get("step") == asked_by]
     return {
         "step": g["step"],
         "question": g.get("question") or "",
         "choices": g["choices"],
         "shown": shown,
+        "why": str(policy[-1].get("reason") or "") if policy else "",
+        "asked_at": int(g.get("asked_at") or 0) * 1000,
     }
 
 

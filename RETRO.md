@@ -1,3 +1,18 @@
+## 2026-11-27 — Autopilot's spec gate stopped every run, or none
+
+The first spec gate (feat/autopilot-gates, never pushed) asked for approval on
+every run. The design (docs/specs/autopilot-issue-flow.md §3) asks only where
+risk calls for it, and never lets the model decide where. The branch sat
+unpushed for three days while main moved 300 commits, so it had to be ported.
+
+The spec step now writes a classification, a kit script (not a model) turns it
+into gate or skip, and the card says which rule asked. Unknown or unreadable
+values gate. A rejected spec goes back with the person's note. The runner's
+"output unchanged" check had to change: it failed a rewritten spec whose
+classification rightly stayed the same, so only all outputs unchanged fails.
+Lesson: a finished branch nobody pushes is not finished; ask the owner to push
+or park it the day it is done.
+
 ## 2026-11-27 — Changing an autopilot's labels quietly skipped every issue it matched
 
 The issue watcher treated any change of labels as a fresh start: the next poll

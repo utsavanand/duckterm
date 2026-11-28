@@ -1,16 +1,24 @@
 {
   "name": "issue-to-merge",
   "description": "Spec the fix from an issue, build it, review it, draft the pull request",
-  "inputs": { "issue": "the issue: number, title, body, labels and URL, as JSON" },
+  "inputs": {
+    "issue": "the issue: number, title, body, labels and URL, as JSON",
+    "settings": "text?"
+  },
   "triggers": [
     { "type": "github-issue", "input": "issue" },
     { "type": "jira-issue", "input": "issue" },
     { "type": "slack-message", "input": "issue" }
   ],
   "steps": [
-    { "id": "spec", "run": "spec", "with": { "issue": "inputs.issue" } },
-    { "id": "approve", "gate": "Build this fix?", "show": "steps.spec.outputs.spec",
-      "routes": { "approve": "build", "reject": "end" } },
+    { "id": "spec", "run": "spec",
+      "with": { "issue": "inputs.issue", "feedback": "steps.spec-gate.outputs.note?" } },
+    { "id": "spec-policy", "exec": "scripts/policy.py", "args": ["spec"],
+      "with": { "classification": "steps.spec.outputs.classification",
+                "issue": "inputs.issue", "settings": "inputs.settings?" },
+      "routes": { "gate": "spec-gate", "skip": "build" }, "default": "gate" },
+    { "id": "spec-gate", "gate": "Approve the fix spec?", "show": "steps.spec.outputs.spec",
+      "routes": { "approve": "build", "revise": "spec", "reject": "end" }, "max_loops": 2 },
     { "id": "build", "run": "implement",
       "with": { "spec": "steps.spec.outputs.spec", "findings": "steps.check.outputs.findings?" } },
     { "id": "check", "decide": "review",

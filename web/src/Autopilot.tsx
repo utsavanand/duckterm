@@ -77,7 +77,7 @@ export function AutopilotPage() {
   const [error, setError] = useState("");
   const [setup, setSetup] = useState<{ flow: AutopilotFlow; editing: AutopilotEntry | null } | null>(null);
   const [runOnce, setRunOnce] = useState<AutopilotEntry | null>(null);
-  const [openRun, setOpenRun] = useState<string | null>(null);
+  const [openRun, setOpenRun] = useState<OpenRun | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -110,7 +110,7 @@ export function AutopilotPage() {
 
   if (!data) return <div className="ap-page"><div className="ap-col"><h1>Autopilot</h1><p className="ap-muted">{error || "Loading…"}</p></div></div>;
   if (openRun) return <div className="ap-page"><div className="ap-col">
-    <RunDetail id={openRun} back="Autopilot" onBack={() => setOpenRun(null)} />
+    <RunDetail id={openRun.id} tab={openRun.tab} back="Autopilot" onBack={() => setOpenRun(null)} />
   </div></div>;
   const on = data.autopilots.filter(a => a.on).length;
   const paused = data.autopilots.length - on;
@@ -128,7 +128,7 @@ export function AutopilotPage() {
       <span className="ap-pill"><b>{done_today}</b> done today</span>
       <span className={`ap-pill${failed_today ? " ap-pill-bad" : ""}`}><b>{failed_today}</b> failed today</span>
     </div>}
-    <Waiting runs={data.runs} onAnswered={load} />
+    <Waiting runs={data.runs} onAnswered={load} onOpen={setOpenRun} />
 
     {data.autopilots.length > 0 && <section className="ap-sec">
       <h2>On autopilot <small>{on} on{paused ? ` · ${paused} paused` : ""}</small></h2>
@@ -161,7 +161,7 @@ export function AutopilotPage() {
       <h2>Runs</h2>
       {data.runs.length === 0
         ? <p className="ap-muted">No runs yet.</p>
-        : <RunTable runs={data.runs} onOpen={setOpenRun} />}
+        : <RunTable runs={data.runs} onOpen={id => setOpenRun({ id })} />}
     </section>}
 
     {setup && <SetupDialog overview={data} flow={setup.flow} editing={setup.editing} onClose={() => setSetup(null)}
@@ -194,46 +194,109 @@ function RunTable({ runs, onOpen }: { runs: AutopilotRun[]; onOpen: (id: string)
   </table></div>;
 }
 
-// Runs stopped at a gate, each with what it asks about. The shown text is
-// the model's output, so it is rendered as plain text, never as markup.
-function Waiting({ runs, onAnswered }: { runs: AutopilotRun[]; onAnswered: () => void | Promise<void> }) {
+type OpenRun = { id: string; tab?: RunTab };
+
+// Runs stopped at a gate, each with why the policy asked and what it asks
+// about. The spec itself is read on the run's Spec tab.
+function Waiting({ runs, onAnswered, onOpen }: {
+  runs: AutopilotRun[]; onAnswered: () => void | Promise<void>; onOpen: (open: OpenRun) => void;
+}) {
   const waiting = runs.filter(r => r.state === "waiting_gate" && r.gate);
   if (waiting.length === 0) return null;
-  return <>
-    <h2 className="ap-sec">Needs you <small>{waiting.length}</small></h2>
-    <div className="ap-gates">{waiting.map(run => <GateCard key={run.id} run={run} onAnswered={onAnswered} />)}</div>
-  </>;
+  return <section className="ap-sec">
+    <h2>Needs you <small>{waiting.length}</small></h2>
+    <div className="ap-gates">{waiting.map(run => <GateCard key={run.id} run={run} onAnswered={onAnswered} onOpen={onOpen} />)}</div>
+  </section>;
 }
 
-function GateCard({ run, onAnswered }: { run: AutopilotRun; onAnswered: () => void | Promise<void> }) {
+function GateCard({ run, onAnswered, onOpen }: {
+  run: AutopilotRun; onAnswered: () => void | Promise<void>; onOpen: (open: OpenRun) => void;
+}) {
+  const gate = run.gate!;
+  const spec = gate.step === "spec-gate";
+  return <article className="ap-gate">
+    <div className="ap-gate-kind">{spec ? "Spec approval" : gate.question || gate.step}</div>
+    <h3><button type="button" className="ap-gate-title" onClick={() => onOpen({ id: run.id })}>
+      {run.item.number ? <span className="ap-num">#{run.item.number}</span> : null} {run.item.title ?? run.id}
+    </button></h3>
+    <RiskChips c={run.classification} />
+    <Why gate={gate} />
+    <GateActions run={run} onAnswered={onAnswered} onRead={spec ? () => onOpen({ id: run.id, tab: "spec" }) : undefined} />
+  </article>;
+}
+
+function Why({ gate }: { gate: NonNullable<AutopilotRun["gate"]> }) {
+  return <p className="ap-why">
+    {gate.why ? <>Required because: <b>{gate.why}</b>. </> : null}
+    {gate.step === "spec-gate" ? "No code written yet; the sandbox is stopped." : null}
+  </p>;
+}
+
+// The answers a waiting gate takes. A spec sent back carries a note.
+function GateActions({ run, onAnswered, onRead }: {
+  run: AutopilotRun; onAnswered: () => void | Promise<void>; onRead?: () => void;
+}) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [rejecting, setRejecting] = useState(false);
   const gate = run.gate!;
-  async function answer(choice: string) {
+  async function answer(choice: string, note?: string) {
     setBusy(true);
+    setError("");
     try {
-      await autopilotApi.answer(run.id, gate.step, choice);
+      await autopilotApi.answer(run.id, gate.step, choice, note);
+      setRejecting(false);
       await onAnswered();
     } catch (e) {
       setError((e as Error).message);
       setBusy(false);
     }
   }
-  return <article className="ap-gate">
-    <div className="ap-gate-top">
-      <h3>{gate.question || `Answer ${gate.step}`}</h3>
-      <span className="ap-muted ap-small">
-        {run.item.url ? <a href={run.item.url} target="_blank" rel="noreferrer">#{run.item.number}</a> : run.item.number ? `#${run.item.number}` : null}
-        {" "}{run.item.title} · {run.repo}
-      </span>
-    </div>
-    {gate.shown ? <pre className="ap-shown">{gate.shown}</pre> : <p className="ap-muted">The step wrote nothing to show.</p>}
+  const minutes = gate.asked_at ? Math.max(0, Math.round((Date.now() - gate.asked_at) / 60000)) : null;
+  return <>
     {error && <p className="ap-error-text">{error}</p>}
-    <div className="ap-card-actions">
-      {gate.choices.map(choice => <Button key={choice} size="sm" variant={choice === "approve" ? undefined : "ghost"}
-        disabled={busy} onClick={() => void answer(choice)}>{choice.charAt(0).toUpperCase() + choice.slice(1)}</Button>)}
+    <div className="ap-gate-foot">
+      {onRead && <Button size="sm" variant="ghost" onClick={onRead}>Read spec</Button>}
+      {gate.choices.includes("revise")
+        ? <Button size="sm" variant="ghost" disabled={busy} onClick={() => setRejecting(true)}>Reject with note</Button>
+        : gate.choices.includes("reject") && <Button size="sm" variant="ghost" disabled={busy} onClick={() => void answer("reject")}>Reject</Button>}
+      {gate.choices.includes("approve") && <Button size="sm" disabled={busy} onClick={() => void answer("approve")}>Approve</Button>}
+      {minutes != null && <span className="ap-age">waiting {minutes < 60 ? `${minutes} min` : `${Math.floor(minutes / 60)} h`}</span>}
     </div>
-  </article>;
+    {rejecting && <RejectDialog busy={busy} error={error} canEnd={gate.choices.includes("reject")} onClose={() => setRejecting(false)}
+      onRevise={note => void answer("revise", note)} onEnd={() => void answer("reject")} />}
+  </>;
+}
+
+function RejectDialog({ busy, error, canEnd, onClose, onRevise, onEnd }: {
+  busy: boolean; error: string; canEnd: boolean; onClose: () => void; onRevise: (note: string) => void; onEnd: () => void;
+}) {
+  const [note, setNote] = useState("");
+  return <Modal title="Reject the spec" onClose={onClose}>
+    <p className="ap-muted ap-lead">The spec step runs again with your note, at most 2 more times.</p>
+    <label className="ap-field"><span>Note for the spec step</span>
+      <textarea style={{ ...inputStyle, fontFamily: "inherit", minHeight: 96, resize: "vertical" }} value={note} onChange={e => setNote(e.target.value)}
+        placeholder="What the spec should change" /></label>
+    {error && <p className="ap-error-text">{error}</p>}
+    <div className="ap-foot">
+      {canEnd && <span className="ap-foot-left"><Button variant="danger" size="sm" disabled={busy} onClick={onEnd}>End the run instead</Button></span>}
+      <Button variant="ghost" onClick={onClose}>Cancel</Button>
+      <Button disabled={busy || !note.trim()} onClick={() => onRevise(note.trim())}>Send back</Button>
+    </div>
+  </Modal>;
+}
+
+// The classification as chips: what the fix touches, with risk in colour.
+function RiskChips({ c }: { c?: AutopilotRun["classification"] }) {
+  if (!c) return null;
+  const chips: [string, string][] = (c.surfaces ?? []).map(s => [s, ""]);
+  if (c.user_visible) chips.push(["user visible", ""]);
+  if (c.security?.level && c.security.level !== "none") chips.push(["security", "ap-risk-sec"]);
+  if (c.ai && c.ai !== "deterministic") chips.push(["AI behaviour", "ap-risk-ai"]);
+  if (c.data && c.data !== "none") chips.push([`data: ${c.data}`, "ap-risk-amber"]);
+  if (c.regression?.level && c.regression.level !== "none") chips.push([`regression: ${c.regression.level}`, "ap-risk-amber"]);
+  if (chips.length === (c.surfaces ?? []).length) chips.push(["routine", ""]);
+  return <div className="ap-chips">{chips.map(([label, cls]) => <span key={label} className={`ap-chip ${cls}`}>{label}</span>)}</div>;
 }
 
 function RunRow({ run, onOpen }: { run: AutopilotRun; onOpen: () => void }) {
@@ -241,7 +304,8 @@ function RunRow({ run, onOpen }: { run: AutopilotRun; onOpen: () => void }) {
   const step = live ? run.current ?? "starting" : "—";
   return <tr className="ap-row" onClick={onOpen} tabIndex={0}
     onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(); } }}>
-    <td>{run.item.number ? <span className="ap-num">#{run.item.number}</span> : null} {run.item.title ?? run.id}</td>
+    <td>{run.item.number ? <span className="ap-num">#{run.item.number}</span> : null} {run.item.title ?? run.id}
+      <RiskChips c={run.classification} /></td>
     <td className="ap-muted">{run.autopilot_name}{run.workspace ? <span className="ap-small"> · {run.workspace}</span> : null}</td>
     <td>{step}</td>
     <td><RunState run={run} /></td>
@@ -275,10 +339,11 @@ type RunTab = "steps" | "spec" | "changes" | "issue";
 
 // A run opened from the runs list: what each step did, the spec it wrote,
 // the change on its branch and the issue it started from.
-function RunDetail({ id, back, onBack }: { id: string; back: string; onBack: () => void }) {
+function RunDetail({ id, tab: firstTab, back, onBack }: { id: string; tab?: RunTab; back: string; onBack: () => void }) {
   const [run, setRun] = useState<AutopilotRunDetail | null>(null);
   const [error, setError] = useState("");
-  const [tab, setTab] = useState<RunTab>("steps");
+  const [tab, setTab] = useState<RunTab>(firstTab ?? "steps");
+  const [reload, setReload] = useState(0);
   const [picked, setPicked] = useState<number | null>(null);
 
   useEffect(() => {
@@ -297,7 +362,7 @@ function RunDetail({ id, back, onBack }: { id: string; back: string; onBack: () 
     };
     void tick();
     return () => { stopped = true; clearTimeout(timer); };
-  }, [id]);
+  }, [id, reload]);
 
   const crumb = <button type="button" className="ap-link ap-back" onClick={onBack}>← {back}</button>;
   if (!run) return <div className="ap-run">{crumb}<p className={error ? "ap-error" : "ap-muted"}>{error || "Loading…"}</p></div>;
@@ -321,12 +386,19 @@ function RunDetail({ id, back, onBack }: { id: string; back: string; onBack: () 
         {run.item.url && <><a href={run.item.url} target="_blank" rel="noreferrer">Issue{run.item.number ? ` #${run.item.number}` : ""}</a> · </>}
         Branch <code>{run.branch}</code> {run.pushed ? "on GitHub" : "on this Mac"}
       </div>
+      <RiskChips c={run.classification} />
     </header>
 
     {run.error && <p className="ap-error" role="alert">{run.error}</p>}
     {run.pr_error && <p className="ap-error">Could not open the pull request: {run.pr_error}</p>}
     {run.pr_skipped && <p className="ap-warn">No pull request: {run.pr_skipped}.</p>}
-    {waiting.map(g => <p key={`${g.step}-${g.asked_at}`} className="ap-warn">Waiting for you at {g.step}{g.question ? `: ${g.question}` : ""}</p>)}
+    {run.gate && <section className="ap-gate">
+      <div className="ap-gate-kind">{run.gate.step === "spec-gate" ? "Spec approval" : "Waiting for you"}</div>
+      <h3>{run.gate.question || run.gate.step}</h3>
+      <Why gate={run.gate} />
+      <GateActions run={run} onAnswered={() => setReload(n => n + 1)}
+        onRead={run.gate.step === "spec-gate" && tab !== "spec" ? () => setTab("spec") : undefined} />
+    </section>}
 
     <dl className="ap-facts">
       <div><dt>Duration</dt><dd>{duration((ended - run.started_at) / 1000)}</dd></div>
@@ -662,7 +734,7 @@ function SetupDialog({ overview, flow, editing, onClose, onSaved }: {
 export function WorkspaceFlows({ workspace }: { workspace: string }) {
   const [data, setData] = useState<AutopilotOverview | null>(null);
   const [error, setError] = useState("");
-  const [openRun, setOpenRun] = useState<string | null>(null);
+  const [openRun, setOpenRun] = useState<OpenRun | null>(null);
   useEffect(() => {
     let stopped = false;
     let timer: ReturnType<typeof setTimeout>;
@@ -680,12 +752,12 @@ export function WorkspaceFlows({ workspace }: { workspace: string }) {
   }, [workspace]);
   if (!data) return <div className="ap-page ap-embedded"><div className="ap-col"><p className="ap-muted">{error || "Loading…"}</p></div></div>;
   if (openRun) return <div className="ap-page ap-embedded"><div className="ap-col">
-    <RunDetail id={openRun} back="Flows" onBack={() => setOpenRun(null)} />
+    <RunDetail id={openRun.id} tab={openRun.tab} back="Flows" onBack={() => setOpenRun(null)} />
   </div></div>;
   const flowsById = new Map(data.flows.map(f => [f.id, f]));
   return <div className="ap-page ap-embedded"><div className="ap-col">
     {error && <p className="ap-error" role="alert">{error}</p>}
-    <Waiting runs={data.runs} onAnswered={async () => setData(await autopilotApi.overview(workspace))} />
+    <Waiting runs={data.runs} onAnswered={async () => setData(await autopilotApi.overview(workspace))} onOpen={setOpenRun} />
     <section className="ap-sec">
       <h2>On autopilot</h2>
       {data.autopilots.length === 0
@@ -696,7 +768,7 @@ export function WorkspaceFlows({ workspace }: { workspace: string }) {
       <h2>Runs</h2>
       {data.runs.length === 0
         ? <p className="ap-muted">No runs in this workspace yet.</p>
-        : <RunTable runs={data.runs} onOpen={setOpenRun} />}
+        : <RunTable runs={data.runs} onOpen={id => setOpenRun({ id })} />}
     </section>
   </div></div>;
 }

@@ -54,9 +54,22 @@ export interface AutopilotRun {
   pr_error?: string;
   pr_skipped?: string;
   // Set while state is waiting_gate. `shown` is the step output the gate
-  // asks about (the spec), as plain text written by the model.
-  gate?: { step: string; question: string; choices: string[]; shown: string } | null;
-  answers?: { step: string; answer: string; by: string; at: number }[];
+  // asks about (the spec), as text written by the model; `why` is the policy
+  // step's reason for asking.
+  gate?: { step: string; question: string; choices: string[]; shown: string; why: string; asked_at: number } | null;
+  answers?: { step: string; answer: string; note?: string | null; by: string; at: number }[];
+  // What the spec step judged the fix to touch; the policy reads it.
+  classification?: Classification | null;
+}
+
+export interface Classification {
+  surfaces?: string[];
+  user_visible?: boolean;
+  regression?: { level?: string; features?: string[] };
+  security?: { level?: string; areas?: string[] };
+  ai?: string;
+  data?: string;
+  size?: string;
 }
 
 // One step attempt from the kit runner's receipt. Times are Unix seconds.
@@ -158,6 +171,6 @@ export const autopilotApi = {
   run: (id: string) => call<AutopilotRunDetail>("GET", `/api/autopilot/runs/${encodeURIComponent(id)}`),
   runOnce: (id: string, issue: number) =>
     call<{ run_id: string }>("POST", `/api/autopilot/autopilots/${encodeURIComponent(id)}/run`, { issue }),
-  answer: (runId: string, step: string, answer: string) =>
-    call<{ ok: boolean }>("POST", `/api/autopilot/runs/${encodeURIComponent(runId)}/gate`, { step, answer }),
+  answer: (runId: string, step: string, answer: string, note?: string) =>
+    call<{ ok: boolean }>("POST", `/api/autopilot/runs/${encodeURIComponent(runId)}/gate`, { step, answer, note }),
 };

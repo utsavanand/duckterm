@@ -39,6 +39,7 @@ class Flow:
     kit_path: Path
     triggers: dict[str, str]  # trigger type -> the flow input it fills
     gated: bool  # has a gate step, so a person approves something
+    inputs: frozenset[str] = frozenset()
 
     @property
     def id(self) -> str:
@@ -71,6 +72,7 @@ def flows(root: Path = KITS) -> list[Flow]:
                         kit_path=kit.root,
                         triggers=triggers,
                         gated=any("gate" in step for step in data.get("steps") or []),
+                        inputs=frozenset(data.get("inputs") or {}),
                     )
                 )
     return out
