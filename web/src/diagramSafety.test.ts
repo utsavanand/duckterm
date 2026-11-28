@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { diagramSourceSafe, diagramSvgSafe } from "./useMermaid";
+import { diagramSourceSafe, diagramSvgSafe } from "./render";
 
-describe("review diagrams load nothing remote (security on #509)", () => {
+describe("diagrams in model text load nothing remote (security on #509)", () => {
   it("renders the diagrams the review writes", () => {
     expect(diagramSourceSafe('graph LR\n  n0["readinessRows"]\n  n2["Boards.tsx"] --> n0')).toBe(true);
     expect(diagramSourceSafe("graph LR\n  subgraph web\n    A[ReviewV2] --> B(readiness.ts)\n  end\n  B -->|CI, gate| C{status}")).toBe(true);

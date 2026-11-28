@@ -6,6 +6,7 @@ import { Annotation, locatedAnnotations } from "./annotationHighlights";
 import "./messageAnnotations.css";
 import { useToast } from "./ui";
 import { Message, MessagePin, PinTarget } from "./MessagePins";
+import { diagramSourceSafe, diagramSvgSafe, MERMAID_SECURE } from "./render";
 import { useSessionResource } from "./useSessionResource";
 import { MobilePending } from "./MobilePending";
 import "./messages.css";
@@ -102,15 +103,18 @@ export function Messages({ sessionKey, sessionName = "Messages", active = true, 
         startOnLoad: false,
         securityLevel: "strict",
         theme: dark ? "dark" : "default",
+        secure: MERMAID_SECURE,
       });
       for (const el of [...blocks]) {
         el.setAttribute("data-rendered", "1");
         const src = el.textContent ?? "";
+        if (!diagramSourceSafe(src)) continue;
         try {
           const { svg } = await mermaid.render(
             `rdm-${++mermaidSeq}`,
             src,
           );
+          if (!diagramSvgSafe(svg)) continue;
           const host = document.createElement("div");
           host.className = "rd-mermaid-svg";
           host.innerHTML = svg;

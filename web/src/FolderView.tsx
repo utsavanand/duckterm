@@ -4,7 +4,7 @@ import { FolderRecipient, FolderRecipientPicker } from "./FolderRecipientPicker"
 import { Modal } from "./ui";
 import { ArtifactsView } from "./ArtifactsView";
 import { desktop } from "./desktop";
-import { html } from "./render";
+import { modelHtml } from "./render";
 import "./folderView.css";
 import "./folderDetails.css";
 import { FolderDetails, FolderActions } from "./FolderDetails";
@@ -189,7 +189,7 @@ function FolderChat({ folder, active }: { folder: string; active: boolean }) {
     <div ref={log} className="rd-folder-conversation" aria-live="polite" aria-label="Workspace conversation">
       {!loaded && !error && <p role="status">Loading conversation…</p>}
       {loaded && messages.length === 0 && !pending && <p className="rd-folder-intro">Ask what needs your attention or what the sessions in this workspace are working on.</p>}
-      {messages.map((message, index) => <div className="rd-folder-exchange" key={`${message.at}-${index}`}><div className="rd-folder-question"><small>You{message.dispatch?.assigned ? " · Assigned" : ""}{message.dispatch ? ` → ${message.dispatch.label}` : ""}</small><p>{message.q}</p></div>{message.dispatch ? <div className="rd-folder-delivery">{message.dispatch.recipients.map(r => <div key={r.message_id}><small>{r.name} · {({ queued: "Queued in inbox", accepted: "Accepted", read: "Read", answered: "Answered", declined: "Declined", expired: "Expired", cancelled: "Cancelled", blocked: "Access changed" })[r.status]}</small>{r.answer && <div className="rd-folder-answer"><small>{r.name} · Reply</small><div dangerouslySetInnerHTML={{ __html: html(r.answer) }} /></div>}</div>)}</div> : <div className="rd-folder-answer"><small>Workspace answer</small><div dangerouslySetInnerHTML={{ __html: html(message.a) }} /></div>}</div>)}
+      {messages.map((message, index) => <div className="rd-folder-exchange" key={`${message.at}-${index}`}><div className="rd-folder-question"><small>You{message.dispatch?.assigned ? " · Assigned" : ""}{message.dispatch ? ` → ${message.dispatch.label}` : ""}</small><p>{message.q}</p></div>{message.dispatch ? <div className="rd-folder-delivery">{message.dispatch.recipients.map(r => <div key={r.message_id}><small>{r.name} · {({ queued: "Queued in inbox", accepted: "Accepted", read: "Read", answered: "Answered", declined: "Declined", expired: "Expired", cancelled: "Cancelled", blocked: "Access changed" })[r.status]}</small>{r.answer && <div className="rd-folder-answer"><small>{r.name} · Reply</small><div dangerouslySetInnerHTML={{ __html: modelHtml(r.answer) }} /></div>}</div>)}</div> : <div className="rd-folder-answer"><small>Workspace answer</small><div dangerouslySetInnerHTML={{ __html: modelHtml(message.a) }} /></div>}</div>)}
       {pending !== null && <div className="rd-folder-exchange"><div className="rd-folder-question"><small>You</small><p>{pending}</p></div><p role="status">{recipient || plan ? "Queuing your message…" : "Reading this workspace’s sessions…"}</p></div>}
     </div>
     {error && <div className="rd-folder-error" role="alert">{error}{!loaded && <button className="rd-btn rd-btn-sm" onClick={() => setRetry(n => n + 1)}>Retry</button>}</div>}

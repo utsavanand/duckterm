@@ -7,6 +7,14 @@ no CI read "Ready to release" (main-qa-2 on #503). Evidence counts toward a
 pass only when it names what it tested. An unattributed log may still block on
 failure, but only CI on this head can make the row ready.
 
+## 2026-11-26 — Strict by default, loose by exception
+
+After #509 only the review page used the strict renderer; Oracle, Home,
+workspace replies and transcripts still rendered agent text through html(),
+so the same injected image would load there. The owner chose "the strict
+filter everywhere": agent or model text goes through modelHtml, and html()
+stays only where a frame's own CSP already blocks remote loads (artifacts).
+
 ## 2026-11-26 — Allow what you render, don't deny what you thought of
 
 modelHtml first stripped a list of tags that load things: img, video, iframe,
