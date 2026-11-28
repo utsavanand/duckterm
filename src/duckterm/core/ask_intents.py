@@ -133,7 +133,7 @@ def classify_prompt(
         "entities lists everything the owner referred to, each an object with a type:\n"
         '{"type":"agent","said":"words used","ids":["roster id", ...],"confidence":0-1} — '
         "match by name, workspace, purpose, activity or tasks; a role such as QA can be "
-        "several agents; ids must come from the roster;\n"
+        "several agents; ids are the roster's id values (32 hex characters), never names;\n"
         '{"type":"workspace","said":"...","id":"workspace name or null","confidence":0-1};\n'
         '{"type":"pr"|"artifact"|"note","said":"...","id":null,"confidence":0-1};\n'
         '{"type":"topic","said":"...","terms":["related phrases and likely spellings"],'
@@ -526,6 +526,7 @@ def health_list(
     waiting: int,
     interrupted: list[dict[str, Any]],
     workspaces: dict[str, str],
+    prs: str,
     now: int,
 ) -> str:
     """A fixed checklist of recent problems. Agents interrupted days ago are
@@ -535,8 +536,8 @@ def health_list(
     behind = [c for c in checkpoints if c["status"] == "behind"]
     lines = [
         "Checked: checkpoints of agents active in the last 7 days, open questions to you, "
-        "and agents interrupted in the last 24 hours. CI and pull requests aren't checked "
-        "here yet."
+        "agents interrupted in the last 24 hours, and open pull requests. CI on main isn't "
+        "checked."
     ]
     current = sum(1 for c in checkpoints if c["status"] == "current")
     lines.append(
@@ -551,6 +552,7 @@ def health_list(
             + (f" {_age(c['saved_at'], now)} ago" if c.get("saved_at") else "")
         )
     lines.append(f"- Waiting on you: {waiting} open question(s).")
+    lines.append(prs)
     lines.append(f"- Interrupted in the last 24 hours: {len(interrupted)}.")
     for row in interrupted:
         lines.append(
@@ -951,3 +953,107 @@ def prompt_lines(
             f"- to {_who(name, workspace)} · {_when(at)} · {source}\n  “{clip(text, 200)}”"
         )
     return "\n".join(lines)
+
+
+# ── Step 4: pull requests, from a background copy of the PR list ──
+
+
+def pr_health(copy: tuple[int, dict[str, Any]] | None) -> str:
+    if copy is None:
+        return "- Pull requests: not read yet; the PR list is being fetched."
+    if copy[1].get("error"):
+        error = clip(copy[1]["error"], 120)
+        return f"- Pull requests: couldn't build the PR list at {_when(copy[0])}: {error}"
+    rows = [r for r in copy[1]["rows"] if r.get("pr") and r["pr"].get("state") == "open"]
+    conflict = sum(1 for r in rows if r["status"] == "conflict")
+    failing = sum(1 for r in rows if r["status"] == "ci_failing")
+    return (
+        f"- Pull requests (as of {_when(copy[0])}): {conflict} with merge conflicts, "
+        f"{failing} with CI failing, of {len(rows)} open."
+    )
+
+
+PR_COPY_MS = 5 * 60_000
+# The first question waits this long for a cold copy, and a build stops
+# reading repositories after PR_BUILD_S (review_lists.build reads them one
+# after another, up to 25 s each).
+PR_WAIT_S = 45
+PR_BUILD_S = 120
+PR_NOT_READY = (
+    "The PR list is still being read from GitHub (it reads every repository your agents "
+    "use). Ask again in a minute."
+)
+PR_NUMBER = re.compile(r"#?(\d{1,6})\b")
+
+
+def pr_number(intent: dict[str, Any]) -> int | None:
+    for entity in intent["entities"]:
+        if entity["type"] == "pr":
+            match = PR_NUMBER.search(entity["id"] or entity["said"])
+            if match:
+                return int(match[1])
+    return None
+
+
+def _pr_line(row: dict[str, Any], names: dict[str, tuple[str, str]]) -> str:
+    pr = row.get("pr") or {}
+    session = row.get("session") or {}
+    _, workspace = names.get(session.get("key", ""), ("", ""))
+    checks = row.get("checks") or {}
+    failing = f" · {checks['failed']} check(s) failing" if checks.get("failed") else ""
+    return (
+        f"- #{pr.get('number')} {clip(str(pr.get('title') or row['branch']), 100)} · "
+        f"{row['label']} · {_who(session.get('name', '?'), workspace)}{failing}"
+    )
+
+
+def prs_list(
+    copy: dict[str, Any], as_of: int, names: dict[str, tuple[str, str]], refreshing: bool
+) -> str:
+    """Open pull requests grouped the way the PR list flags them. GitHub takes
+    12-30 s per workspace, so this is a copy with its time."""
+    if copy.get("error"):
+        return (
+            f"Couldn't build the PR list at {_when(as_of)}: {clip(copy['error'], 120)}. "
+            "It's tried again 5 minutes after that."
+        )
+    rows = [r for r in copy["rows"] if r.get("pr") and r["pr"].get("state") == "open"]
+    groups = [
+        ("Merge conflicts", [r for r in rows if r["status"] == "conflict"]),
+        ("CI failing", [r for r in rows if r["status"] == "ci_failing"]),
+        ("Ready for you", [r for r in rows if r["status"] == "ready"]),
+        ("Open, waiting on review or checks", [r for r in rows if r["status"] == "open"]),
+    ]
+    flagged = sum(1 for r in rows if r["needs_you"])
+    note = " A newer copy is being fetched." if refreshing else ""
+    lines = [f"{flagged} of {len(rows)} open pull requests need you, as of {_when(as_of)}.{note}"]
+    for title, members in groups:
+        if members:
+            lines.append(f"\n**{title}** ({len(members)})")
+            lines.extend(_pr_line(r, names) for r in members[:LIST_CAP])
+    rest = [r for r in rows if not r["needs_you"]]
+    if rest:
+        lines.append(f"\n{len(rest)} more are drafts or have changes requested (not listed).")
+    errors: dict[str, list[str]] = {}
+    for repo in copy.get("repos", []):
+        if repo.get("error"):
+            errors.setdefault(clip(str(repo["error"]), 120), []).append(repo["name"])
+    for error, repos in errors.items():
+        lines.append(f"\nCouldn't read GitHub for {', '.join(repos)}: {error}")
+    return "\n".join(lines)
+
+
+def pr_context(row: dict[str, Any] | None, number: int, as_of: int) -> str:
+    if row is None:
+        return f"PR #{number} is not in the PR list (as of {_when(as_of)})."
+    pr = row["pr"]
+    return (
+        f"PR #{number} {pr.get('title')} (as of {_when(as_of)}): {row['label']}; branch "
+        f"{row['branch']} by {(row.get('session') or {}).get('name', '?')}; checks "
+        f"{row.get('checks')}; review {row.get('review')}; conflict {row.get('conflict')}."
+    )
+
+
+def pr_topic(number: int) -> dict[str, Any]:
+    """Search records for the PR the way agents write it."""
+    return {"type": "topic", "said": f"#{number}", "terms": [f"PR {number}"], "confidence": 1.0}

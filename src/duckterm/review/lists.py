@@ -552,10 +552,13 @@ def build(
     *,
     owners: dict[tuple[str, str], str] | None = None,
     refresh: bool = False,
+    deadline: float | None = None,
 ) -> dict[str, Any]:
     """Rows for `sessions`. `owners` ({branch: session key}, from
     branch_owners) adds the branches each session pushed beyond the one it
-    is on; those are listed only when they have a pull request."""
+    is on; those are listed only when they have a pull request. Repositories
+    are read one after another, so per-call timeouts don't bound the whole
+    build: past `deadline` (time.monotonic()) the rest are listed unread."""
     owners = owners or {}
     by_repo: dict[str, list[tuple[dict[str, Any], str]]] = {}
     for row in sessions:
@@ -571,6 +574,19 @@ def build(
     rows: list[dict[str, Any]] = []
     repos: list[dict[str, Any]] = []
     for repo, members in by_repo.items():
+        if deadline is not None and time.monotonic() > deadline:
+            repos.append(
+                {
+                    "path": repo,
+                    "name": Path(repo).name,
+                    "github": None,
+                    "default_branch": None,
+                    "connected": False,
+                    "error": "the PR list ran out of time before reaching it",
+                    "fetched_at": 0,
+                }
+            )
+            continue
         current = {branch for _, branch in members if branch}
         pushed = [
             (session_row, branch)
