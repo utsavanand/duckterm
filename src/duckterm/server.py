@@ -4447,6 +4447,35 @@ class Server:
         if kind == "ask.agent" and "agent" not in types and "topic" in types:
             # "Which agent worked on X" names a topic, not an agent: find the agents.
             kind = "ask.history"
+        if kind in ("ask.prs", "ask.pr"):
+            copy, as_of, refreshing = await self._pr_copy()
+            names = {
+                str(r["session_key"]): (str(r.get("name") or ""), str(r.get("grp") or ""))
+                for r in self.history.sessions()
+            }
+            if kind == "ask.prs":
+                answer = ask_intents.prs_list(copy, as_of, names, refreshing)
+                exchange = oracle.append_chat(chat_path, question, answer, int(time.time() * 1000))
+                return {"answer": answer, "exchange": exchange, "sessions": [], "intent": kind}
+            number = ask_intents.pr_number(intent)
+            if number is None:
+                answer = "Which pull request do you mean? Give its number."
+                exchange = oracle.append_chat(chat_path, question, answer, int(time.time() * 1000))
+                return {"answer": answer, "exchange": exchange, "sessions": [], "intent": kind}
+            row = next(
+                (r for r in copy["rows"] if (r.get("pr") or {}).get("number") == number), None
+            )
+            answer, read = await self._ask_history(
+                question,
+                {**intent, "entities": [*intent["entities"], ask_intents.pr_topic(number)]},
+                by_id,
+                prior,
+                lead=("Pull request", ask_intents.pr_context(row, number, as_of)),
+            )
+            if not answer:
+                return None
+            exchange = oracle.append_chat(chat_path, question, answer, int(time.time() * 1000))
+            return {"answer": answer, "exchange": exchange, "sessions": read, "intent": kind}
         if kind == "ask.history":
             answer, read = await self._ask_history(question, intent, by_id, prior)
             if not answer:
@@ -4500,6 +4529,7 @@ class Server:
         intent: dict[str, Any],
         by_id: dict[str, dict[str, Any]],
         prior: list[dict[str, Any]],
+        lead: tuple[str, str] | None = None,
     ) -> tuple[str, list[str]]:
         """The cascade for questions about the past: word recall over every
         stage, a fast rerank, then one answer. A question with no topic ("what
@@ -4523,6 +4553,8 @@ class Server:
             ask_intents.repo_history, sessions, words, repo_span, owners
         )
         sections = [("Merges and releases in the local clones", ask_intents.repo_lines(events))]
+        if lead is not None:
+            sections.insert(0, lead)
         read = sorted({k for k in keys})
         note = ""
         if not words:
@@ -4593,6 +4625,41 @@ class Server:
         answered = await asyncio.to_thread(fleet_questions.generate, prepared, summarize)
         return answered.text, read
 
+    async def _pr_copy_if_ready(self) -> tuple[int, dict[str, Any]] | None:
+        """The PR copy without waiting for GitHub: a checklist mustn't take
+        30 s. Starts a build when there's none or it's stale."""
+        copy: tuple[int, dict[str, Any]] | None = getattr(self, "_pr_list_copy", None)
+        if copy is None:
+            self._pr_copy_kick = asyncio.ensure_future(self._pr_copy())
+            return None
+        await self._pr_copy()
+        return copy
+
+    async def _pr_copy(self) -> tuple[dict[str, Any], int, bool]:
+        """The PR list for every agent, as last built, with its time and
+        whether a newer one is being built. GitHub takes 12-30 s per call, so
+        the chat answers from this copy; only the first question waits."""
+        from duckterm.review import lists as review_lists
+
+        now = int(time.time() * 1000)
+        copy: tuple[int, dict[str, Any]] | None = getattr(self, "_pr_list_copy", None)
+        task: asyncio.Future[None] | None = getattr(self, "_pr_list_refresh", None)
+        idle = task is None or task.done()
+        if idle and (copy is None or now - copy[0] >= ask_intents.PR_COPY_MS):
+            members = [r for r in self.history.sessions() if not r.get("test")]
+            owners = await self._branch_owners(False)
+
+            async def rebuild() -> None:
+                result = await asyncio.to_thread(review_lists.build, members, owners=owners)
+                self._pr_list_copy = (int(time.time() * 1000), result)
+
+            task = self._pr_list_refresh = asyncio.ensure_future(rebuild())
+        if copy is None:
+            assert task is not None
+            await asyncio.shield(task)
+            copy = self._pr_list_copy
+        return copy[1], copy[0], task is not None and not task.done()
+
     async def _ask_list(
         self, kind: str, intent: dict[str, Any], by_id: dict[str, dict[str, Any]]
     ) -> str:
@@ -4630,6 +4697,7 @@ class Server:
                 len(self.relay.needs_you()),
                 interrupted,
                 {str(r["session_key"]): str(r.get("grp") or "") for r in sessions},
+                ask_intents.pr_health(await self._pr_copy_if_ready()),
                 now,
             )
         start, end = span or (now - 7 * 86_400_000, now)

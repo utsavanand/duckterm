@@ -442,7 +442,7 @@ def test_usage_ranks_agents_with_cache_reads_apart(fleet, monkeypatch, tmp_path)
     assert "- **spender** (duckterm-core): 2.3M (output 0.3M) · cache reads 0.9M" in answer
 
 
-def test_health_is_a_checklist_of_recent_problems(fleet, monkeypatch, tmp_path):
+def test_health_is_a_checklist_of_recent_problems(fleet, monkeypatch, tmp_path, github):
     server, owner = fleet
     session(server.history, "crashed", "crashed", "duckterm-core", tmp_path)
     session(server.history, "old-crash", "old-crash", "BodhBytes", tmp_path)
@@ -462,6 +462,11 @@ def test_health_is_a_checklist_of_recent_problems(fleet, monkeypatch, tmp_path):
         "- Interrupted in the last 24 hours: 1.\n  - **crashed** (duckterm-core), 0 h ago" in answer
     )
     assert "old-crash" not in answer
+    # The PR list isn't waited for; the next checklist reads the copy built meanwhile.
+    assert "- Pull requests: not read yet; the PR list is being fetched." in answer
+    asyncio.run(server._pr_copy())  # each test request runs its own event loop
+    answer = listed(server, owner, monkeypatch, {"intent": "ask.health", "entities": []}, "?")
+    assert "): 1 with merge conflicts, 1 with CI failing, of 4 open." in answer
 
 
 def test_sent_lists_owner_messages_with_unanswered_counted(fleet, monkeypatch):
@@ -743,3 +748,95 @@ def test_sent_lists_terminal_prompts_with_who_sent_them(fleet, monkeypatch):
         f"{who} · {when(now - 999)} · delivered by DuckTerm"
     )
     assert "task-notification" not in answer
+
+
+# ── Step 4: pull requests from a background copy ──
+
+
+def pr_row(number, status, label, needs_you, key, name, failed=0):
+    return {
+        "branch": f"b{number}",
+        "pr": {"number": number, "title": f"Change {number}", "state": "open"},
+        "status": status,
+        "label": label,
+        "needs_you": needs_you,
+        "session": {"key": key, "name": name},
+        "checks": {"total": 3, "failed": failed, "pending": 0, "passed": 3 - failed},
+        "review": "none",
+        "conflict": status == "conflict",
+    }
+
+
+@pytest.fixture
+def github(monkeypatch):
+    """review_lists.build reads git and GitHub; the copy around it is real."""
+    builds = []
+
+    def build(members, *, owners=None, refresh=False):
+        builds.append([m["session_key"] for m in members])
+        return {
+            "rows": [
+                pr_row(531, "conflict", "Conflicts", True, "peer", "main"),
+                pr_row(529, "ci_failing", "CI failing", True, "qa1", "main-qa", failed=2),
+                pr_row(500, "ready", "Ready", True, "agent", "release-dev"),
+                pr_row(532, "draft", "Draft", False, "qa2", "main-qa-2"),
+            ],
+            "repos": [
+                {"name": "duckterm", "error": None},
+                {"name": "bodhbit", "error": "Reconnect the GitHub connector"},
+                {"name": "sotto", "error": "Reconnect the GitHub connector"},
+            ],
+        }
+
+    monkeypatch.setattr("duckterm.review.lists.build", build)
+    return builds
+
+
+def test_prs_are_grouped_from_a_copy_built_once(fleet, monkeypatch, github):
+    server, owner = fleet
+    intent = {"intent": "ask.prs", "entities": []}
+    first = listed(server, owner, monkeypatch, intent, "Which PRs need me?")
+    lines = first.splitlines()
+    assert lines[0].startswith("3 of 4 open pull requests need you, as of ")
+    assert (
+        "**Merge conflicts** (1)\n- #531 Change 531 · Conflicts · **main** (duckterm-core)" in first
+    )
+    assert (
+        "- #529 Change 529 · CI failing · **main-qa** (duckterm-core) · 2 check(s) failing" in first
+    )
+    assert (
+        "**Ready for you** (1)\n- #500 Change 500 · Ready · **release-dev** (duckterm-leadership)"
+        in first
+    )
+    assert "1 more are drafts or have changes requested (not listed)." in first
+    assert "Couldn't read GitHub for bodhbit, sotto: Reconnect the GitHub connector" in first
+    listed(server, owner, monkeypatch, intent, "Which PRs need me?")
+    assert len(github) == 1
+    # A stale copy answers at once and a newer one is built behind it.
+    at, result = server._pr_list_copy
+    server._pr_list_copy = (at - 6 * 60_000, result)
+    stale = listed(server, owner, monkeypatch, intent, "Which PRs need me?")
+    assert "A newer copy is being fetched." in stale
+    assert len(github) == 2
+
+
+def test_a_pr_question_reads_its_row_and_what_agents_said(fleet, monkeypatch, github):
+    server, owner = fleet
+    with server.history._conn as conn:
+        conn.execute(
+            "INSERT INTO session_questions (id, sender, recipient, sender_name, root, question, "
+            "status, answer, created_at, expires_at, idempotency_key, content_hash, kind) "
+            "VALUES ('q1', 'agent', 'qa2', 'release-dev', 'duckterm-core', 'QA #500 please', "
+            "'answered', 'PASS within isolated scope', ?, 0, 'k', 'h', 'question')",
+            (int(time.time() * 1000),),
+        )
+    pr = {"type": "pr", "said": "#500", "id": None, "confidence": 0.95}
+    intent = {"intent": "ask.pr", "entities": [pr, agent("QA", ["qa1", "qa2"], 0.6)], "text": None}
+    answers = model(monkeypatch, intent, keep=[0, 1])
+    status, body = ask(server, owner, "What did QA say about #500?")
+    assert status == 200 and body["intent"] == "ask.pr"
+    answer = answers[-1]
+    assert "Pull request:\nPR #500 Change 500 (as of " in answer
+    assert "): Ready; branch b500 by release-dev;" in answer
+    assert "[agent message · release-dev (duckterm-leadership)" in answer
+    assert "answer from main-qa-2: PASS within isolated scope" in answer
