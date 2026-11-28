@@ -21,6 +21,7 @@ REQUEST_TIMEOUT_SECONDS = 10
 _REASON = {
     200: "OK",
     202: "Accepted",
+    302: "Found",
     303: "See Other",
     400: "Bad Request",
     401: "Unauthorized",
@@ -30,6 +31,8 @@ _REASON = {
     413: "Payload Too Large",
     429: "Too Many Requests",
     500: "Internal Server Error",
+    502: "Bad Gateway",
+    503: "Service Unavailable",
 }
 
 _CONTENT_TYPES = {
