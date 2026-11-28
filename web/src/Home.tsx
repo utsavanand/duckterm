@@ -373,16 +373,23 @@ const BLOCKED = ["conflict", "ci_failing", "changes_requested"];
 const unpushed = (r: PrRow) => !BLOCKED.includes(r.status) && r.unpushed_commits > 0
   ? `${r.unpushed_commits} ${r.unpushed_commits === 1 ? "commit" : "commits"} not pushed` : null;
 
-export function prGroups(rows: PrRow[]): [string, PrRow[]][] {
+// Merged pull requests stay listed for a day, so the owner sees what landed
+// and, once a release contains it, which one. Pulse also lists merges, but
+// the owner asked for them here too (2026-11-28).
+const MERGED_SHOWN_MS = 24 * 3600_000;
+
+export function prGroups(rows: PrRow[], now: number): [string, PrRow[]][] {
   const attention = (r: PrRow) => BLOCKED.includes(r.status) || r.unpushed_commits > 0;
   const open = rows.filter(r => r.pr?.state === "open");
-  const groups: [string, PrRow[]][] = [["Needs attention", open.filter(attention)], ["Open", open.filter(r => !attention(r))]];
+  const merged = rows.filter(r => r.pr?.state === "merged" && now - Date.parse(r.pr.merged_at ?? "") < MERGED_SHOWN_MS)
+    .sort((a, b) => Date.parse(b.pr?.merged_at ?? "") - Date.parse(a.pr?.merged_at ?? ""));
+  const groups: [string, PrRow[]][] = [["Needs attention", open.filter(attention)], ["Open", open.filter(r => !attention(r))], ["Merged", merged]];
   return groups.filter(([, list]) => list.length > 0);
 }
 
 // Pull requests across every top-level folder, in prGroups' groups.
 function PrsWidget() {
-  const { agents, onReview } = useContext(HomeActions);
+  const { agents, now, onReview } = useContext(HomeActions);
   const folders = useMemo(() => [...new Set(agents.map(a => a.group?.split("/")[0]).filter((f): f is string => !!f))].sort(), [agents]);
   const key = folders.join("\n");
   const [rows, setRows] = useState<PrRow[] | null>(null), [error, setError] = useState(""), [notice, setNotice] = useState("");
@@ -405,17 +412,17 @@ function PrsWidget() {
       setNotice(problems[0] ?? "");
       const failed = results.find((r): r is PromiseRejectedResult => r.status === "rejected");
       setError(failed && !merged.length ? (failed.reason as Error).message : "");
-      const open = merged.filter(r => r.pr?.state === "open").sort((a, b) => (b.updated_at ?? 0) - (a.updated_at ?? 0));
-      setRows(open);
+      const listed = merged.filter(r => r.pr && r.pr.state !== "closed").sort((a, b) => (b.updated_at ?? 0) - (a.updated_at ?? 0));
+      setRows(listed);
       // One diff at a time: each runs git on the owner's machine.
-      for (const row of open) {
+      for (const row of listed.filter(r => r.pr?.state === "open")) {
         if (stopped || !row.pr || riskCache.has(riskKey(row))) continue;
         try {
           const diff = await api.reviewDiff(row.repo, String(row.pr.number), { whitespace: false });
           const high = diff.files.find(f => f.bucket === "high");
           riskCache.set(riskKey(row), { ...diff.counts, unsure: diff.files.filter(f => f.bucket === "skim" && !safeFile(f)).length, head: diff.head_sha, reason: high ? `${high.path.split("/").pop()}: ${high.rules.find(rule => rule.bucket === "high")?.reason ?? "high risk"}` : "" });
           if (!stopped) setRisks(n => n + 1);
-        } catch { /* The row keeps "checking"; Review in DuckTerm shows the error. */ }
+        } catch { /* The row keeps "checking"; Review shows the error. */ }
       }
       if (!stopped) timer = setTimeout(() => void load(), PR_POLL_MS);
     };
@@ -425,12 +432,19 @@ function PrsWidget() {
   if (error) return <div className="rd-widget-unavailable"><strong>Unavailable</strong><p>{error}</p></div>;
   if (!folders.length) return <p className="rd-home-empty">No sessions in folders yet.</p>;
   if (!rows) return <div className="rd-widget-unavailable" role="status">Loading…</div>;
-  const groups = prGroups(rows);
+  const groups = prGroups(rows, now);
   if (!groups.length) return <p className="rd-home-empty">{notice || "No open pull requests."}</p>;
   return <>
     {groups.map(([name, list]) => <section key={name} className="rd-home-pr-group" aria-label={name}>
     <h3>{name} <span>{list.length}</span></h3>
     <ul className="rd-home-rows rd-home-prs">{list.map(row => {
+      if (row.pr?.state === "merged") return <li key={`${row.repo}\n${row.branch}`}>
+        <span className="rd-home-pr">
+          <span className="rd-home-pr-top"><span className="rd-home-pr-title" title={row.pr.title}>{row.pr.title}</span></span>
+          <small>{[`#${row.pr.number}`, row.label, row.repo_name].join(" · ")}</small>
+          <span className="rd-home-pr-acts"><a href={row.pr.url} target="_blank" rel="noreferrer">GitHub</a></span>
+        </span>
+      </li>;
       const risk = row.pr ? prRisk(row, riskCache.get(riskKey(row))) : null;
       return <li key={`${row.repo}\n${row.branch}`}>
         <span className="rd-home-pr">
@@ -442,10 +456,8 @@ function PrsWidget() {
           <small>{[row.pr && `#${row.pr.number}`, unpushed(row) ?? (row.needs_you ? row.label : risk?.why ?? row.label), row.repo_name].filter(Boolean).join(" · ")}</small>
           <span className="rd-home-pr-acts">
             {row.pr && <a href={row.pr.url} target="_blank" rel="noreferrer">GitHub</a>}
-            <button className="rd-home-link" onClick={() => onReview(row)}>Review in DuckTerm</button>
-            {risk?.level === "safe" && row.pr
-              ? <button className="rd-home-mini go" onClick={() => setApproving(row)}>Merge</button>
-              : <button className="rd-home-mini" onClick={() => onReview(row)}>Look closer</button>}
+            <button className="rd-home-mini" onClick={() => onReview(row)}>Review</button>
+            {risk?.level === "safe" && row.pr && <button className="rd-home-mini go" onClick={() => setApproving(row)}>Merge</button>}
           </span>
         </span>
       </li>;
@@ -461,8 +473,7 @@ const PULSE_POLL_MS = 30_000;
 const PULSE_KIND = { pr: "Merged", release: "Release", artifact: "Made", needs: "" };
 
 // The Fleet monitor's Pulse feed (served to Home as /home/pulse), minus its
-// needs-you items: Home has its own Needs you widget. Merges show here, not
-// in Pull requests.
+// needs-you items: Home has its own Needs you widget.
 function PulseWidget() {
   const { now, onOpenTerminal } = useContext(HomeActions);
   const [events, setEvents] = useState<PulseEvent[] | null>(null), [error, setError] = useState("");
