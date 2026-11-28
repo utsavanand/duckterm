@@ -1,3 +1,22 @@
+## 2026-11-27 — Refusing a repository's network config left a race; don't read it at all
+
+Review fetched with the owner's credentials from the session's own
+repository, and refused when that repository set a proxy, URL rewrite,
+askpass or protocol key. The check read the config before git did, so a
+session that wrote the key in between was still obeyed. Now only a bare
+mirror under ~/.duckterm/mirrors talks to the remote, using the origin URL
+first recorded for that clone. The session's repository fetches from the
+mirror with GIT_ALLOW_PROTOCOL=file and no credential helper, askpass or ssh,
+so nothing it sets afterwards changes where the owner's credentials go.
+GIT_ALLOW_PROTOCOL also overrides any protocol.<name>.allow, which replaces the
+per-protocol pins. Worktree removal, branch deletion and spotlight now run
+through the same runner. Spotlight's diff ran the worktree's textconv as the
+server. Still open: filter and merge-driver blanking reads config before git
+runs, so a session racing that window can run its own driver in a local
+read. Closing it needs a config snapshot git can't re-read, which git
+doesn't offer. Worktree creation still runs checkout hooks and filters,
+which git-lfs needs.
+
 ## 2026-11-27 — A run record that only the list reads hides what the run did
 
 Autopilot's runs list read the runner's receipt down to step names and exit

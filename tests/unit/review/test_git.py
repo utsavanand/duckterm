@@ -300,54 +300,77 @@ def test_the_owners_credential_helper_runs_and_the_repos_does_not(
         server.shutdown()
 
 
+class _Attacker(http.server.BaseHTTPRequestHandler):
+    hits = 0
+
+    def do_GET(self) -> None:  # noqa: N802
+        type(self).hits += 1
+        _AskForPassword.do_GET(self)  # type: ignore[arg-type]
+
+    do_CONNECT = do_GET  # noqa: N815
+
+    def log_message(self, *args: object) -> None:
+        pass
+
+
 @pytest.mark.parametrize(
     "key, value",
     [
         ("http.proxy", "http://127.0.0.1:{port}"),
-        ("http.{url}.sslVerify", "false"),
-        ("http.curloptResolve", "127.0.0.1:{port}:127.0.0.1"),
         ("remote.origin.proxy", "http://127.0.0.1:{port}"),
-        ("url.{url}.insteadOf", "http://unused/"),
-        ("core.gitProxy", "/usr/bin/false"),
-        ("core.askPass", "/usr/bin/false"),
-        ("protocol.http.allow", "always"),
+        ("http.curloptResolve", "origin.invalid:{port}:127.0.0.1"),
+        ("url.http://127.0.0.1:{port}/.insteadOf", "http://origin.invalid:{port}/"),
+        ("remote.origin.url", "http://127.0.0.1:{port}/x"),
     ],
 )
-def test_a_repo_that_sets_network_config_is_never_fetched(
+def test_a_repos_network_config_never_steers_the_owners_fetch(
     git_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, key: str, value: str
 ) -> None:
-    # Each of these could steer where the owner's credentials are sent; with
-    # it set, plain git still asks the owner's helper, and DuckTerm must not.
-    server = http.server.HTTPServer(("127.0.0.1", 0), _AskForPassword)
+    # A session can write its repository's config after DuckTerm first saw
+    # it. Each of these sends plain git, with the owner's credential helper,
+    # to another server; DuckTerm's fetch goes to the first origin only.
+    _Attacker.hits = 0
+    server = http.server.HTTPServer(("127.0.0.1", 0), _Attacker)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     try:
-        marker = tmp_path / "owner-ran"
+        port = server.server_port
         helper = tmp_path / "owner.sh"
-        helper.write_text(f"#!/bin/sh\ntouch {marker}\n")
+        helper.write_text("#!/bin/sh\necho username=u; echo password=p\n")
         helper.chmod(0o755)
         (tmp_path / "home").mkdir()
         (tmp_path / "home/.gitconfig").write_text(f"[credential]\n\thelper = !{helper}\n")
         monkeypatch.setenv("HOME", str(tmp_path / "home"))
-        port = server.server_port
-        url = f"http://127.0.0.1:{port}/x"
-        # curl skips a proxy for a loopback host, so a proxied origin is one
-        # only the proxy can reach, as an attacker's would be.
-        origin = "http://github.invalid/x" if key.endswith("proxy") else url
-        run(git_repo, "remote", "add", "origin", origin)
-        run(git_repo, "config", key.format(url=url), value.format(url=url, port=port))
         monkeypatch.setattr(git, "_REMOTE_PROTOCOLS", ("http",))
+        # Unresolvable, so only a setting that steers it reaches the server.
+        run(git_repo, "remote", "add", "origin", f"http://origin.invalid:{port}/x")
+        assert git.remote_heads(git_repo) is None
+        run(git_repo, "config", key.format(port=port), value.format(port=port))
         subprocess.run(
             ["git", "-C", str(git_repo), "ls-remote", "origin"],
             capture_output=True,
             env={**os.environ, "GIT_TERMINAL_PROMPT": "0"},
         )
-        assert marker.exists()  # the setting doesn't stop plain git asking
-        marker.unlink()
+        assert _Attacker.hits  # plain git really goes there
+        _Attacker.hits = 0
         assert git.remote_heads(git_repo) is None
-        assert "the repository sets" in (git.fetch(git_repo, ["main"]) or "")
-        assert not marker.exists()
+        assert git.fetch(git_repo, ["main"])
+        assert _Attacker.hits == 0
     finally:
         server.shutdown()
+
+
+def test_repositories_with_one_origin_share_a_mirror_and_see_each_others_pushes(
+    git_repo: Path, tmp_path: Path
+) -> None:
+    before = set((git.paths.home() / "mirrors").glob("*.git"))
+    a, b = tmp_path / "a", tmp_path / "b"
+    for clone in (a, b):
+        subprocess.run(["git", "clone", "-q", str(git_repo), str(clone)], check=True)
+    pushed = commit(git_repo, "n.txt", "n\n", "new on origin")
+    assert git.fetch(a, ["main"]) is None
+    assert git.fetch(b, ["*"], tags=False) is None
+    assert run(a, "rev-parse", "origin/main") == run(b, "rev-parse", "origin/main") == pushed
+    assert len(set((git.paths.home() / "mirrors").glob("*.git")) - before) == 1
 
 
 def test_a_repo_chosen_remote_helper_never_runs(
