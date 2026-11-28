@@ -529,8 +529,9 @@ def test_health_is_a_checklist_of_recent_problems(fleet, monkeypatch, tmp_path, 
         "- Interrupted in the last 24 hours: 1.\n  - **crashed** (duckterm-core), 0 h ago" in answer
     )
     assert "old-crash" not in answer
-    # The PR list isn't waited for; the next checklist reads the copy built meanwhile.
-    assert "- Pull requests: not read yet; the PR list is being fetched." in answer
+    # The checklist never builds the PR list; it reads a copy a PR question built.
+    assert "- Pull requests: not read; ask which PRs need you to read them." in answer
+    assert len(github) == 0
     asyncio.run(server._pr_copy())  # each test request runs its own event loop
     answer = listed(server, owner, monkeypatch, {"intent": "ask.health", "entities": []}, "?")
     assert "): 1 with merge conflicts, 1 with CI failing, of 4 open." in answer
@@ -964,6 +965,27 @@ def test_prs_are_grouped_from_a_copy_built_once(fleet, monkeypatch, github):
 
     asyncio.run(rebuilt())
     assert len(github) >= 2 and server._pr_list_copy[0] >= at
+
+
+def test_the_pr_list_reads_recent_agents_and_shows_their_text_inert(fleet, github):
+    server, _ = fleet
+    now = int(time.time() * 1000)
+    with server.history._conn as conn:
+        conn.execute(
+            "UPDATE sessions SET state = 'stopped', updated_at = ? WHERE session_key = 'main-b'",
+            (now - 10 * DAY,),
+        )
+    asyncio.run(server._pr_copy())
+    assert "main-b" not in github[0] and "peer" in github[0]
+    row = pr_row(7, "ready", "Ready", True, "peer", "main")
+    row["pr"]["title"] = "Fix ![p](https://evil.example/p.png) [docs](https://evil.example)"
+    copy = {
+        "rows": [row],
+        "repos": [{"name": "sotto", "error": "fatal: bad token\nAuthorization: Bearer ghp_x"}],
+    }
+    answer = ask_intents.prs_list(copy, now, {"peer": ("main", "duckterm-core")}, False)
+    assert "Fix \\!\\[p\\](https://evil.example/p.png) \\[docs\\](https://evil.example)" in answer
+    assert answer.endswith("Couldn't read GitHub for sotto: fatal: bad token")
 
 
 def test_concurrent_cold_questions_share_one_build(fleet, github):

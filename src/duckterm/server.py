@@ -4771,16 +4771,6 @@ class Server:
         answer = result.text.strip()
         return "" if not answer or ask_intents.NOT_RECORDED in answer else answer
 
-    async def _pr_copy_if_ready(self) -> tuple[int, dict[str, Any]] | None:
-        """The PR copy without waiting for GitHub: a checklist mustn't take
-        30 s. Starts a build when there's none or it's stale."""
-        copy: tuple[int, dict[str, Any]] | None = getattr(self, "_pr_list_copy", None)
-        if copy is None:
-            self._pr_copy_kick = asyncio.ensure_future(self._pr_copy())
-            return None
-        await self._pr_copy()
-        return copy
-
     async def _pr_copy(self) -> tuple[dict[str, Any] | None, int, bool]:
         """The PR list for every agent, as last built, with its time and
         whether a newer one is being built. GitHub takes 12-30 s per call, so
@@ -4793,7 +4783,18 @@ class Server:
         task: asyncio.Future[None] | None = getattr(self, "_pr_list_refresh", None)
         idle = task is None or task.done()
         if idle and (copy is None or now - copy[0] >= ask_intents.PR_COPY_MS):
-            members = [r for r in self.history.sessions() if not r.get("test")]
+            # Agents that are running or were updated in the last week: every
+            # session ever would read repositories nobody works in any more.
+            members = [
+                r
+                for r in self.history.sessions()
+                if not r.get("test")
+                and r.get("state") not in ("archived", "merged")
+                and (
+                    r.get("state") not in AT_REST_STATES
+                    or (r.get("updated_at") or 0) >= now - ask_intents.PR_MEMBER_MS
+                )
+            ]
 
             # Assigned before its first await, so concurrent questions share
             # one build (six cold callers once started six).
@@ -4807,7 +4808,8 @@ class Server:
                 except Exception as error:  # git, GitHub and the filesystem
                     # Kept as the copy, so questions say what failed and the
                     # next build waits PR_COPY_MS instead of running per question.
-                    result = {"rows": [], "repos": [], "error": f"{type(error).__name__}: {error}"}
+                    first = (str(error).splitlines() or [""])[0]
+                    result = {"rows": [], "repos": [], "error": f"{type(error).__name__}: {first}"}
                 self._pr_list_copy = (int(time.time() * 1000), result)
 
             task = self._pr_list_refresh = asyncio.ensure_future(rebuild())
@@ -4857,7 +4859,9 @@ class Server:
                 len(self.relay.needs_you()),
                 interrupted,
                 {str(r["session_key"]): str(r.get("grp") or "") for r in sessions},
-                ask_intents.pr_health(await self._pr_copy_if_ready()),
+                # The copy as it is, never a build: a checklist mustn't wait
+                # 30 s or read every recent agent's repositories from GitHub.
+                ask_intents.pr_health(getattr(self, "_pr_list_copy", None)),
                 now,
             )
         start, end = span or (now - 7 * 86_400_000, now)

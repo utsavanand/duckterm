@@ -401,6 +401,16 @@ def _who(name: object, workspace: object) -> str:
     return f"**{name}** ({workspace or 'no workspace'})"
 
 
+MARKDOWN = re.compile(r"([\\`*_\[\]<>!~])")
+
+
+def plain(text: object, limit: int) -> str:
+    """Agent-written text for a list answer, cut and with Markdown escaped: a
+    title can't become a link, image or tag in the chat, which renders these
+    answers and replays them from oracle-chat.json."""
+    return MARKDOWN.sub(r"\\\1", clip(" ".join(str(text or "").split()), limit))
+
+
 def time_range(intent: dict[str, Any]) -> tuple[int, int] | None:
     """The first time entity as milliseconds, or None when there isn't a
     readable one. The classifier wrote it in the owner's timezone with an
@@ -432,7 +442,7 @@ def needs_you_list(notes: list[dict[str, Any]], now: int) -> str:
         what = note.get("question") or note.get("detail") or choices[0].get("question")
         lines.append(
             f"- {_who(note.get('name'), note.get('folder'))} · {note.get('kind')} · "
-            f"open {_age(note.get('created_at') or now, now)}: {clip(str(what or ''), 200)}"
+            f"open {_age(note.get('created_at') or now, now)}: {plain(what, 200)}"
         )
     return "\n".join(lines)
 
@@ -482,7 +492,8 @@ def artifacts_list(
     for row in rows[:LIST_CAP]:
         removed = f" · removed {_when(row['removed_at'])}" if row.get("removed_at") else ""
         lines.append(
-            f"- “{row.get('title')}” by {_who(row.get('session_name'), row.get('folder'))} · "
+            f"- “{plain(row.get('title'), 200)}” by "
+            f"{_who(row.get('session_name'), row.get('folder'))} · "
             f"created {_when(row['created_at'])} · updated {_when(row['updated_at'])}{removed}"
         )
     return "\n".join(lines)
@@ -509,7 +520,7 @@ def work_list(tasks: list[dict[str, Any]], now: int, workspace: str | None) -> s
     for task in active[:LIST_CAP]:
         owner = task.get("owner_name") or "removed agent"
         lines.append(
-            f"- {clip(task['title'], 160)} · {_who(owner, task['folder'])} · "
+            f"- {plain(task['title'], 160)} · {_who(owner, task['folder'])} · "
             f"updated {_age(task['updated_at'], now)} ago"
         )
     if len(active) > LIST_CAP:
@@ -606,10 +617,10 @@ def sent_list(
     for row in rows[:LIST_CAP]:
         name, folder = names.get(row["recipient"], (row["recipient"][:8], ""))
         status = row["status"]
-        answer = f": {clip(row['answer'], 160)}" if row.get("answer") else ""
+        answer = f": {plain(row['answer'], 160)}" if row.get("answer") else ""
         lines.append(
             f"- to {_who(name, folder)} · {_when(row['created_at'])} · {status}{answer}\n"
-            f"  “{clip(row['question'], 160)}”"
+            f"  “{plain(row['question'], 160)}”"
         )
     return "\n".join(lines)
 
@@ -1009,7 +1020,7 @@ def prompt_lines(
         name, workspace = names.get(key, (key[:8], ""))
         source = "delivered by DuckTerm" if delivered else "typed or pasted in the terminal"
         lines.append(
-            f"- to {_who(name, workspace)} · {_when(at)} · {source}\n  “{clip(text, 200)}”"
+            f"- to {_who(name, workspace)} · {_when(at)} · {source}\n  “{plain(text, 200)}”"
         )
     return "\n".join(lines)
 
@@ -1019,9 +1030,9 @@ def prompt_lines(
 
 def pr_health(copy: tuple[int, dict[str, Any]] | None) -> str:
     if copy is None:
-        return "- Pull requests: not read yet; the PR list is being fetched."
+        return "- Pull requests: not read; ask which PRs need you to read them."
     if copy[1].get("error"):
-        error = clip(copy[1]["error"], 120)
+        error = plain(copy[1]["error"], 120)
         return f"- Pull requests: couldn't build the PR list at {_when(copy[0])}: {error}"
     rows = [r for r in copy[1]["rows"] if r.get("pr") and r["pr"].get("state") == "open"]
     conflict = sum(1 for r in rows if r["status"] == "conflict")
@@ -1037,6 +1048,7 @@ PR_COPY_MS = 5 * 60_000
 # reading repositories after PR_BUILD_S (review_lists.build reads them one
 # after another, up to 25 s each).
 PR_WAIT_S = 45
+PR_MEMBER_MS = 7 * 86_400_000
 PR_BUILD_S = 120
 PR_NOT_READY = (
     "The PR list is still being read from GitHub (it reads every repository your agents "
@@ -1061,7 +1073,7 @@ def _pr_line(row: dict[str, Any], names: dict[str, tuple[str, str]]) -> str:
     checks = row.get("checks") or {}
     failing = f" · {checks['failed']} check(s) failing" if checks.get("failed") else ""
     return (
-        f"- #{pr.get('number')} {clip(str(pr.get('title') or row['branch']), 100)} · "
+        f"- #{pr.get('number')} {plain(pr.get('title') or row['branch'], 100)} · "
         f"{row['label']} · {_who(session.get('name', '?'), workspace)}{failing}"
     )
 
@@ -1073,7 +1085,7 @@ def prs_list(
     12-30 s per workspace, so this is a copy with its time."""
     if copy.get("error"):
         return (
-            f"Couldn't build the PR list at {_when(as_of)}: {clip(copy['error'], 120)}. "
+            f"Couldn't build the PR list at {_when(as_of)}: {plain(copy['error'], 120)}. "
             "It's tried again 5 minutes after that."
         )
     rows = [r for r in copy["rows"] if r.get("pr") and r["pr"].get("state") == "open"]
@@ -1096,7 +1108,8 @@ def prs_list(
     errors: dict[str, list[str]] = {}
     for repo in copy.get("repos", []):
         if repo.get("error"):
-            errors.setdefault(clip(str(repo["error"]), 120), []).append(repo["name"])
+            first = (str(repo["error"]).splitlines() or [""])[0]
+            errors.setdefault(plain(first, 120), []).append(repo["name"])
     for error, repos in errors.items():
         lines.append(f"\nCouldn't read GitHub for {', '.join(repos)}: {error}")
     return "\n".join(lines)
