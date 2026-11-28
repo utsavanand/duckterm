@@ -1,7 +1,9 @@
 import { ReactNode, useCallback, useEffect, useState } from "react";
 import {
-  AutopilotDraft, AutopilotEntry, AutopilotFlow, AutopilotOverview, AutopilotRun, AutopilotSummary, autopilotApi, TriggerType,
+  AutopilotAttempt, AutopilotChanges, AutopilotDraft, AutopilotEntry, AutopilotFlow, AutopilotOverview, AutopilotRun,
+  AutopilotRunDetail, AutopilotSummary, autopilotApi, TriggerType,
 } from "./autopilotApi";
+import { modelHtml } from "./render";
 import { api } from "./api";
 import { Button, inputStyle, Modal } from "./ui";
 import "./autopilot.css";
@@ -107,6 +109,9 @@ export function AutopilotPage() {
   }
 
   if (!data) return <div className="ap-page"><div className="ap-col"><h1>Autopilot</h1><p className="ap-muted">{error || "Loading…"}</p></div></div>;
+  if (openRun) return <div className="ap-page"><div className="ap-col">
+    <RunDetail id={openRun} back="Autopilot" onBack={() => setOpenRun(null)} />
+  </div></div>;
   const on = data.autopilots.filter(a => a.on).length;
   const paused = data.autopilots.length - on;
   const flowsById = new Map(data.flows.map(f => [f.id, f]));
@@ -155,7 +160,7 @@ export function AutopilotPage() {
       <h2>Runs</h2>
       {data.runs.length === 0
         ? <p className="ap-muted">No runs yet.</p>
-        : <RunTable runs={data.runs} openRun={openRun} setOpenRun={setOpenRun} />}
+        : <RunTable runs={data.runs} onOpen={setOpenRun} />}
     </section>}
 
     {setup && <SetupDialog overview={data} flow={setup.flow} editing={setup.editing} onClose={() => setSetup(null)}
@@ -181,46 +186,197 @@ function AutopilotRow({ entry, flowsById, workspace, children }: {
   </div>;
 }
 
-function RunTable({ runs, openRun, setOpenRun }: {
-  runs: AutopilotRun[]; openRun: string | null; setOpenRun: (f: (id: string | null) => string | null) => void;
-}) {
+function RunTable({ runs, onOpen }: { runs: AutopilotRun[]; onOpen: (id: string) => void }) {
   return <div className="ap-table-wrap"><table className="ap-table">
     <thead><tr><th>Issue</th><th>Autopilot</th><th>Step</th><th>State</th><th className="ap-num-col">Tokens</th><th>Started</th></tr></thead>
-    <tbody>{runs.map(run => <RunRow key={run.id} run={run} open={openRun === run.id}
-      onToggle={() => setOpenRun(id => id === run.id ? null : run.id)} />)}</tbody>
+    <tbody>{runs.map(run => <RunRow key={run.id} run={run} onOpen={() => onOpen(run.id)} />)}</tbody>
   </table></div>;
 }
 
-function RunRow({ run, open, onToggle }: { run: AutopilotRun; open: boolean; onToggle: () => void }) {
+function RunRow({ run, onOpen }: { run: AutopilotRun; onOpen: () => void }) {
   const live = run.state === "running" || run.state === "starting";
   const step = live ? run.current ?? "starting" : "—";
-  return <>
-    <tr className="ap-row" onClick={onToggle} aria-expanded={open} tabIndex={0}
-      onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onToggle(); } }}>
-      <td>{run.item.number ? <span className="ap-num">#{run.item.number}</span> : null} {run.item.title ?? run.id}</td>
-      <td className="ap-muted">{run.autopilot_name}{run.workspace ? <span className="ap-small"> · {run.workspace}</span> : null}</td>
-      <td>{step}</td>
-      <td><span className={`ap-state ap-state-${run.state}`}>{run.pr ? "PR open" : STATE_LABEL[run.state] ?? run.state}</span></td>
-      <td className="ap-mono ap-num-col">{run.tokens != null ? `${Math.round(run.tokens / 1000)}k` : "—"}</td>
-      <td className="ap-muted">{new Date(run.started_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</td>
-    </tr>
-    {open && <tr className="ap-detail"><td colSpan={6}>
-      <div className="ap-steps">
-        {(run.steps ?? []).map(s => <span key={`${s.step}-${s.attempt}`} className={`ap-step${s.exit ? " ap-step-bad" : ""}`}>
-          {s.step}{s.attempt > 1 ? ` (attempt ${s.attempt})` : ""}{s.choice ? `: ${s.choice}` : ""}
-        </span>)}
-        {(run.steps ?? []).length === 0 && <span className="ap-muted">No steps finished yet.</span>}
+  return <tr className="ap-row" onClick={onOpen} tabIndex={0}
+    onKeyDown={e => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); onOpen(); } }}>
+    <td>{run.item.number ? <span className="ap-num">#{run.item.number}</span> : null} {run.item.title ?? run.id}</td>
+    <td className="ap-muted">{run.autopilot_name}{run.workspace ? <span className="ap-small"> · {run.workspace}</span> : null}</td>
+    <td>{step}</td>
+    <td><RunState run={run} /></td>
+    <td className="ap-mono ap-num-col">{tokens(run.tokens)}</td>
+    <td className="ap-muted">{new Date(run.started_at).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}</td>
+  </tr>;
+}
+
+function RunState({ run }: { run: AutopilotRun }) {
+  return <span className={`ap-state ap-state-${run.state}`}>{run.pr ? "PR open" : STATE_LABEL[run.state] ?? run.state}</span>;
+}
+
+const tokens = (n: number | undefined) => n != null ? `${Math.round(n / 1000)}k` : "—";
+
+function duration(seconds: number): string {
+  const s = Math.max(0, Math.round(seconds));
+  if (s < 60) return `${s} s`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return s % 60 ? `${m} min ${s % 60} s` : `${m} min`;
+  return `${Math.floor(m / 60)} h ${m % 60} min`;
+}
+
+const KIND_LABEL: Record<string, string> = { run: "Claude Code", decide: "Claude Code · decides", gate: "your approval" };
+
+function attemptStatus(a: AutopilotAttempt): "done" | "now" | "fail" {
+  if (a.status === "started") return "now";
+  return a.exit ? "fail" : "done";
+}
+
+type RunTab = "steps" | "spec" | "changes" | "issue";
+
+// A run opened from the runs list: what each step did, the spec it wrote,
+// the change on its branch and the issue it started from.
+function RunDetail({ id, back, onBack }: { id: string; back: string; onBack: () => void }) {
+  const [run, setRun] = useState<AutopilotRunDetail | null>(null);
+  const [error, setError] = useState("");
+  const [tab, setTab] = useState<RunTab>("steps");
+  const [picked, setPicked] = useState<number | null>(null);
+
+  useEffect(() => {
+    let stopped = false;
+    let timer: ReturnType<typeof setTimeout>;
+    const tick = async () => {
+      try {
+        const next = await autopilotApi.run(id);
+        if (stopped) return;
+        setRun(next);
+        setError("");
+        if (["starting", "running", "waiting_gate"].includes(next.state)) timer = setTimeout(tick, POLL_MS);
+      } catch (e) {
+        if (!stopped) setError((e as Error).message);
+      }
+    };
+    void tick();
+    return () => { stopped = true; clearTimeout(timer); };
+  }, [id]);
+
+  const crumb = <button type="button" className="ap-link ap-back" onClick={onBack}>← {back}</button>;
+  if (!run) return <div className="ap-run">{crumb}<p className={error ? "ap-error" : "ap-muted"}>{error || "Loading…"}</p></div>;
+
+  const ended = run.ended_at ?? (["starting", "running", "waiting_gate"].includes(run.state) ? Date.now() : run.started_at);
+  const waiting = run.gates.filter(g => g.response == null);
+  const files = run.changes?.files ?? [];
+  const shown = picked ?? run.attempts.length - 1;
+  const attempt = run.attempts[shown];
+
+  return <div className="ap-run">
+    {crumb}
+    <header className="ap-run-head">
+      <h1>{run.item.number ? <span className="ap-num">#{run.item.number}</span> : null} {run.item.title ?? run.id}</h1>
+      <div className="ap-meta">
+        <RunState run={run} /> · {run.autopilot_name} · <b>{run.repo}</b> · started {new Date(run.started_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}
+        {run.item.started_by ? ` by ${run.item.started_by}` : ""}
       </div>
-      {run.error && <p className="ap-error-text">{run.error}</p>}
-      {run.pr_error && <p className="ap-error-text">Could not open the pull request: {run.pr_error}</p>}
-      {run.pr && <p className="ap-small"><a href={run.pr.url} target="_blank" rel="noreferrer">Draft pull request #{run.pr.number}</a> into {run.pr.base}</p>}
-      {run.pr_skipped && <p className="ap-muted ap-small">No pull request: {run.pr_skipped}.</p>}
-      <p className="ap-muted ap-small">
-        Branch <code>{run.branch}</code>{run.pushed ? " on GitHub" : " on this Mac"}{run.item.started_by ? ` · started by ${run.item.started_by}` : ""}
-        {run.item.url && <> · <a href={run.item.url} target="_blank" rel="noreferrer">Open the issue</a></>}
-      </p>
-    </td></tr>}
-  </>;
+      <div className="ap-meta">
+        {run.pr && <><a href={run.pr.url} target="_blank" rel="noreferrer">Draft pull request #{run.pr.number}</a> into {run.pr.base} · </>}
+        {run.item.url && <><a href={run.item.url} target="_blank" rel="noreferrer">Issue{run.item.number ? ` #${run.item.number}` : ""}</a> · </>}
+        Branch <code>{run.branch}</code> {run.pushed ? "on GitHub" : "on this Mac"}
+      </div>
+    </header>
+
+    {run.error && <p className="ap-error" role="alert">{run.error}</p>}
+    {run.pr_error && <p className="ap-error">Could not open the pull request: {run.pr_error}</p>}
+    {run.pr_skipped && <p className="ap-warn">No pull request: {run.pr_skipped}.</p>}
+    {waiting.map(g => <p key={`${g.step}-${g.asked_at}`} className="ap-warn">Waiting for you at {g.step}{g.question ? `: ${g.question}` : ""}</p>)}
+
+    <dl className="ap-facts">
+      <div><dt>Duration</dt><dd>{duration((ended - run.started_at) / 1000)}</dd></div>
+      <div><dt>Tokens</dt><dd className="ap-mono-num">{tokens(run.tokens)}</dd></div>
+      <div><dt>Approvals</dt><dd>{run.gates.length === 0 ? "None asked" : `${run.gates.length - waiting.length} of ${run.gates.length} answered`}</dd></div>
+      <div><dt>Sandbox</dt><dd>Docker on this Mac{run.ended_at ? ", removed" : ""}</dd></div>
+    </dl>
+
+    <div className="ap-tabs" role="tablist">
+      {([["steps", "Steps", run.attempts.length], ["spec", "Spec", null], ["changes", "Changes", files.length], ["issue", "Issue", null]] as const)
+        .map(([key, label, count]) => <button key={key} type="button" role="tab" aria-selected={tab === key}
+          className={tab === key ? "ap-tab-on" : ""} onClick={() => setTab(key)}>
+          {label}{count ? <span className="ap-tab-count">{count}</span> : null}
+        </button>)}
+    </div>
+
+    {tab === "steps" && (run.attempts.length === 0
+      ? <p className="ap-muted">No step has started yet.</p>
+      : <div className="ap-split">
+        <ol className="ap-attempts">{run.attempts.map((a, i) => <li key={`${a.step}-${a.attempt}`}>
+          <button type="button" className={i === shown ? "ap-sel" : ""} onClick={() => setPicked(i)}>
+            <i className={`ap-ic ap-ic-${attemptStatus(a)}`} />
+            <span className="ap-att-main">
+              <span className="ap-att-name">{a.step}{a.attempt > 1 ? <span className="ap-att-n">attempt {a.attempt}</span> : null}
+                <span className="ap-att-kind">{KIND_LABEL[a.kind ?? ""] ?? a.kind}</span></span>
+              <span className={`ap-att-out${a.exit ? " ap-att-bad" : ""}`}>{firstLine(a)}</span>
+            </span>
+            <span className="ap-att-time">{a.started_at ? duration((a.finished_at ?? Date.now() / 1000) - a.started_at) : ""}</span>
+          </button>
+        </li>)}</ol>
+        {attempt && <section className="ap-panel">
+          <h3>{attempt.step}{attempt.attempt > 1 ? ` · attempt ${attempt.attempt}` : ""}</h3>
+          <div className="ap-meta">
+            {KIND_LABEL[attempt.kind ?? ""] ?? attempt.kind}
+            {attempt.started_at ? ` · ${new Date(attempt.started_at * 1000).toLocaleTimeString()}` : ""}
+            {attempt.started_at ? ` · ${duration((attempt.finished_at ?? Date.now() / 1000) - attempt.started_at)}` : ""}
+            {attempt.choice ? ` · chose ${attempt.choice}` : ""}
+            {attempt.exit ? ` · exit ${attempt.exit}` : ""}
+            {run.loops[attempt.step] ? ` · looped back ${run.loops[attempt.step]}×` : ""}
+          </div>
+          {attempt.reason
+            ? <div className="ap-doc" dangerouslySetInnerHTML={{ __html: modelHtml(attempt.reason) }} />
+            : <p className="ap-muted">{attempt.status === "started" ? "Still running." : "This step left no summary."}</p>}
+        </section>}
+      </div>)}
+
+    {tab === "spec" && (run.spec
+      ? <div className="ap-doc ap-doc-box" dangerouslySetInnerHTML={{ __html: modelHtml(run.spec) }} />
+      : <p className="ap-muted">This run wrote no spec.</p>)}
+
+    {tab === "changes" && <Changes changes={run.changes} />}
+
+    {tab === "issue" && <div className="ap-doc-box">
+      <h3>{run.item.title ?? "Untitled"}</h3>
+      {run.issue_body
+        ? <div className="ap-doc" dangerouslySetInnerHTML={{ __html: modelHtml(run.issue_body) }} />
+        : <p className="ap-muted">The issue has no description.</p>}
+      {run.item.url && <p className="ap-small"><a href={run.item.url} target="_blank" rel="noreferrer">Open on GitHub</a></p>}
+    </div>}
+  </div>;
+}
+
+function firstLine(a: AutopilotAttempt): string {
+  if (a.status === "started") return "running…";
+  const line = (a.reason ?? "").split("\n").find(l => l.trim()) ?? "";
+  return line.replace(/[*`_#]/g, "").trim() || (a.choice ? `chose ${a.choice}` : "");
+}
+
+function Changes({ changes }: { changes: AutopilotChanges | null }) {
+  if (!changes) return <p className="ap-muted">The run's clone is gone, so its change can't be shown.</p>;
+  if (changes.files.length === 0) return <p className="ap-muted">The run changed no files.</p>;
+  const added = changes.files.reduce((n, f) => n + f.added, 0);
+  const removed = changes.files.reduce((n, f) => n + f.removed, 0);
+  const patches = changes.patch.split(/^(?=diff --git )/m).filter(Boolean);
+  return <div className="ap-changes">
+    <div className="ap-table-wrap"><table className="ap-table">
+      <thead><tr><th>{changes.files.length} files</th><th className="ap-num-col"><span className="ap-add">+{added}</span> <span className="ap-del">−{removed}</span></th></tr></thead>
+      <tbody>{changes.files.map(f => <tr key={f.path}>
+        <td className="ap-mono">{f.path}</td>
+        <td className="ap-mono ap-num-col">{f.binary ? "binary" : <><span className="ap-add">+{f.added}</span> <span className="ap-del">−{f.removed}</span></>}</td>
+      </tr>)}</tbody>
+    </table></div>
+    {patches.map(p => {
+      const lines = p.replace(/\n$/, "").split("\n");
+      const path = /^diff --git a\/(.*) b\//.exec(lines[0])?.[1] ?? lines[0];
+      return <div key={path} className="ap-diff">
+        <header className="ap-mono">{path}</header>
+        <pre>{lines.slice(1).filter(l => !/^(index |--- |\+\+\+ |new file|deleted file)/.test(l)).map((l, i) =>
+          <span key={i} className={l.startsWith("@@") ? "ap-dh" : l.startsWith("+") ? "ap-da" : l.startsWith("-") ? "ap-dd" : undefined}>{l || " "}</span>)}</pre>
+      </div>;
+    })}
+    {changes.cut && <p className="ap-muted">The diff is cut at 400 KB. The branch has the rest.</p>}
+  </div>;
 }
 
 function RunOnceDialog({ entry, onClose, onStarted }: { entry: AutopilotEntry; onClose: () => void; onStarted: () => void }) {
@@ -424,6 +580,9 @@ export function WorkspaceFlows({ workspace }: { workspace: string }) {
     return () => { stopped = true; clearTimeout(timer); };
   }, [workspace]);
   if (!data) return <div className="ap-page ap-embedded"><div className="ap-col"><p className="ap-muted">{error || "Loading…"}</p></div></div>;
+  if (openRun) return <div className="ap-page ap-embedded"><div className="ap-col">
+    <RunDetail id={openRun} back="Flows" onBack={() => setOpenRun(null)} />
+  </div></div>;
   const flowsById = new Map(data.flows.map(f => [f.id, f]));
   return <div className="ap-page ap-embedded"><div className="ap-col">
     {error && <p className="ap-error" role="alert">{error}</p>}
@@ -437,7 +596,7 @@ export function WorkspaceFlows({ workspace }: { workspace: string }) {
       <h2>Runs</h2>
       {data.runs.length === 0
         ? <p className="ap-muted">No runs in this workspace yet.</p>
-        : <RunTable runs={data.runs} openRun={openRun} setOpenRun={setOpenRun} />}
+        : <RunTable runs={data.runs} onOpen={setOpenRun} />}
     </section>
   </div></div>;
 }

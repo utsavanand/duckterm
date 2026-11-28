@@ -200,6 +200,17 @@ def test_newer_dispatch_revision_is_never_downgraded(home, monkeypatch):
     ) == before
 
 
+def test_identical_script_under_older_receipt_moves_receipt_to_current_revision(home):
+    source = app(home, "DuckTerm")
+    script = hook_dispatch.ensure_shared_script(source)
+    receipt = script.with_name("assets.json")
+    record = json.loads(receipt.read_text())
+    record["revision"] = hook_dispatch.REVISION - 1
+    receipt.write_text(json.dumps(record))
+    assert hook_dispatch.ensure_shared_script(source) == script
+    assert json.loads(receipt.read_text())["revision"] == hook_dispatch.REVISION
+
+
 def test_shared_handler_upgrade_requires_a_higher_revision(home, monkeypatch):
     source = app(home, "DuckTerm")
     script = hook_dispatch.ensure_shared_script(source)

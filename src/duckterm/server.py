@@ -77,7 +77,7 @@ from duckterm import (
 from duckterm.agents import tmux
 from duckterm.agents.terminal import available_terminals, open_in_terminal
 from duckterm.autopilot import api as ap_api
-from duckterm.core import events, fleet_questions, oracle, oracle_intent, support
+from duckterm.core import events, fleet_pulse, fleet_questions, oracle, oracle_intent, support
 from duckterm.core.approvals import Approval, ApprovalRegistry
 from duckterm.core.backup_jobs import BackupJobs
 from duckterm.core.eventbus import EventBus
@@ -380,6 +380,10 @@ _ROUTES: list[Route] = [
     Route("GET", "/support/chat", lambda s, r, w, h, b, seg: s._support_chat(w)),
     Route("DELETE", "/support/chat", lambda s, r, w, h, b, seg: s._support_chat(w, clear=True)),
     Route("GET", "/control-tower", lambda s, r, w, h, b, seg: s._control_tower(w)),
+    Route("GET", "/fleet/pulse", lambda s, r, w, h, b, seg: s._fleet_pulse(w)),
+    # Home's Pulse widget: the same feed, gated on `home` rather than `fleet_monitor`.
+    Route("GET", "/home/pulse", lambda s, r, w, h, b, seg: s._fleet_pulse(w)),
+    Route("GET", "/fleet/mail", lambda s, r, w, h, b, seg: s._fleet_mail(w)),
     Route("GET", "/relay", lambda s, r, w, h, b, seg: s._relay_list(w)),
     # ── Oracle voice: the optional local neural voice ──
     Route("GET", "/voice/status", lambda s, r, w, h, b, seg: s._voice_status(w)),
@@ -2702,6 +2706,10 @@ class Server:
                 str(s["session_key"])
             ):
                 s["state"] = "waiting"
+            # Restart context is server-only and can be many megabytes. Keep it
+            # through enrichment/binding checks, but never serialize it into
+            # the dashboard's recurring session-list response.
+            s.pop("restart_json", None)
         await _write_json(
             writer,
             200,
@@ -5281,6 +5289,37 @@ class Server:
             return
         self.history.session_api._sweep()
         await _write_json(writer, 200, mail_analytics.snapshot(self.history._conn, days))
+
+    _PULSE_TTL_MS = 30_000
+
+    async def _fleet_pulse(self, writer: asyncio.StreamWriter) -> None:
+        """Artifacts, PR merges and releases for the Fleet monitor's Pulse.
+        Git reads are cached briefly: every open dashboard polls this. One
+        refresh runs at a time; polls that arrive during it wait for it."""
+        now = int(time.time() * 1000)
+        cached = getattr(self, "_pulse_cache", None)
+        if cached is None or now - cached[0] >= self._PULSE_TTL_MS:
+            refresh = getattr(self, "_pulse_refresh", None)
+            if refresh is None or refresh.done():
+                since = now - fleet_pulse.WINDOW_MS
+                refresh = self._pulse_refresh = asyncio.ensure_future(
+                    asyncio.to_thread(
+                        fleet_pulse.collect,
+                        self.history.sessions(),
+                        self.history.artifacts.recent(since, fleet_pulse.LIMIT),
+                        now,
+                    )
+                )
+            # A dropped poll must not cancel the refresh other polls share.
+            cached = self._pulse_cache = (now, await asyncio.shield(refresh))
+        await _write_json(writer, 200, {"events": cached[1]})
+
+    _FLEET_MAIL_MS = 10 * 60_000
+
+    async def _fleet_mail(self, writer: asyncio.StreamWriter) -> None:
+        since = int(time.time() * 1000) - self._FLEET_MAIL_MS
+        mail = self.history.session_api.peer_mail(since)
+        await _write_json(writer, 200, {"messages": mail})
 
     async def _control_tower(self, writer: asyncio.StreamWriter) -> None:
         """Fleet insights for the control tower page. Session states and

@@ -4,12 +4,13 @@ import { adjust, appended, boxOf, homeDefaults, settle } from "./homeGrid";
 const at = (instances: ReturnType<typeof homeDefaults>, id: string) => boxOf(instances.find(i => i.id === id)!);
 
 it("pushes the widget a drag lands on downwards and leaves the rest where they are", () => {
-  // Drag Teams (0,0 3x2) onto Spend (0,4 3x8).
-  const moved = adjust(homeDefaults(), "teams", at(homeDefaults(), "teams"), "move", 0, 4);
-  expect(at(moved, "teams")).toEqual({ x: 0, y: 4, w: 3, h: 2 });
-  expect(at(moved, "spend")).toEqual({ x: 0, y: 6, w: 3, h: 8 });
+  // Drag Teams (0,0 3x1) onto Spend (0,2 3x5); Spend pushes Pulse down in turn.
+  const moved = adjust(homeDefaults(), "teams", at(homeDefaults(), "teams"), "move", 0, 2);
+  expect(at(moved, "teams")).toEqual({ x: 0, y: 2, w: 3, h: 1 });
+  expect(at(moved, "spend")).toEqual({ x: 0, y: 3, w: 3, h: 5 });
+  expect(at(moved, "pulse")).toEqual({ x: 0, y: 8, w: 3, h: 5 });
   // Autopilot keeps its row; the gap Teams left stays open.
-  expect(at(moved, "autopilot")).toEqual({ x: 0, y: 2, w: 3, h: 2 });
+  expect(at(moved, "autopilot")).toEqual({ x: 0, y: 1, w: 3, h: 1 });
   // Widgets in other columns are untouched.
   expect(at(moved, "prs")).toEqual({ x: 3, y: 0, w: 5, h: 6 });
   expect(at(moved, "chat")).toEqual({ x: 8, y: 0, w: 4, h: 12 });

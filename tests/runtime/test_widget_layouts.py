@@ -140,9 +140,11 @@ def test_home_layout_is_off_without_the_flag(app, tmp_path):
 def test_home_layout_places_widgets_on_a_grid_in_its_own_file(app, tmp_path):
     app.edition = editions.EditionConfig("full", editions.FULL.features | {"home"})
     initial = req(app, "GET", "home")[1]
-    assert [(x["type"], x["params"]) for x in initial["instances"]][:2] == [
-        ("teams", {"x": 0, "y": 0, "w": 3, "h": 2}),
-        ("autopilot", {"x": 0, "y": 2, "w": 3, "h": 2}),
+    assert [(x["type"], x["params"]) for x in initial["instances"]][:4] == [
+        ("teams", {"x": 0, "y": 0, "w": 3, "h": 1}),
+        ("autopilot", {"x": 0, "y": 1, "w": 3, "h": 1}),
+        ("spend", {"x": 0, "y": 2, "w": 3, "h": 5}),
+        ("pulse", {"x": 0, "y": 7, "w": 3, "h": 5}),
     ]
     moved = [dict(x, params=dict(x["params"])) for x in initial["instances"]]
     moved[0]["params"]["y"] = 9

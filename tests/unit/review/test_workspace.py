@@ -157,3 +157,21 @@ def test_mark_viewed_validates_its_body(branch_repo: Path) -> None:
     )
     assert store.ref_key("307") == "pr-307"
     assert store.repo_key("/x/duckterm", "utsavanand/duckterm") == "utsavanand__duckterm"
+
+
+def test_the_review_diff_never_runs_a_repos_textconv(branch_repo: Path, tmp_path: Path) -> None:
+    # A session can commit .gitattributes and write the textconv into .git/config.
+    marker = tmp_path / "ran"
+    program = tmp_path / "textconv.sh"
+    program.write_text(f'#!/bin/sh\ntouch {marker}\ncat "$1"\n')
+    program.chmod(0o755)
+    run(branch_repo, "checkout", "-q", "duckterm/feature")
+    write(branch_repo, ".gitattributes", "*.py diff=x\n")
+    commit(branch_repo, "attributes")  # git reads attributes from the worktree
+    run(branch_repo, "config", "diff.x.textconv", str(program))
+    run(branch_repo, "diff", "main", "duckterm/feature")
+    assert marker.exists()  # plain git really runs it
+    marker.unlink()
+    target = workspace.resolve(str(branch_repo), "duckterm/feature")
+    workspace.diff_payload(target, since=target.base_sha, whitespace=True)
+    assert not marker.exists()
