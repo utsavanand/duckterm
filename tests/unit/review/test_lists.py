@@ -534,3 +534,19 @@ def test_a_detached_session_keeps_the_pr_it_pushed(
     built = lists.build(rows, owners=owners, refresh=True)
     assert [(r["branch"], r["pr"]["number"]) for r in built["rows"]] == [("topic", 7)]
     assert lists.build(rows, owners={}, refresh=True)["rows"] == []
+
+
+def test_a_local_folder_origin_is_named_unsupported_not_unreachable(
+    clone: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(lists.git, "_REMOTE_PROTOCOLS", ("https", "ssh"))
+    monkeypatch.setattr(lists.git, "github_slug", lambda repo: None)
+    run(clone, "checkout", "-q", "-b", "duckterm/fff")
+    result = lists.build([session("s7", clone)])
+    assert "https or ssh URL" in result["repos"][0]["error"]
+    run(clone, "remote", "set-url", "origin", "https://example.invalid/r.git")
+    lists._cache.clear()
+    other = clone.parent / "other"
+    subprocess.run(["git", "clone", "-q", str(clone), str(other)], check=True)
+    run(other, "remote", "set-url", "origin", "https://example.invalid/r.git")
+    assert lists.build([session("s8", other)])["repos"][0]["error"] == "The remote is unreachable"

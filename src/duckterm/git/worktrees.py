@@ -42,14 +42,23 @@ def _clean_git_env() -> dict[str, str]:
 
 
 def _git(repo: Path, *args: str) -> str:
+    """git in a repository sessions work in and can configure, through
+    review/git, which runs none of the repository's programs."""
+    try:
+        return review_git.run(repo, *args, timeout=30)
+    except review_git.ReviewGitError as e:
+        raise GitError(f"git {' '.join(args)} failed: {e}") from e
+
+
+def _checkout_git(repo: Path, *args: str) -> str:
+    """git that runs the repository's checkout hooks and filters: `worktree
+    add` checks out files, and git-lfs needs its smudge filter for that."""
     try:
         result = subprocess.run(
             ["git", "-C", str(repo), *args],
             capture_output=True,
             text=True,
             env=_clean_git_env(),
-            # Network commands (fetch) hang forever offline / on a dead VPN;
-            # without a cap the UI request never returns and threads pile up.
             timeout=30,
         )
     except subprocess.TimeoutExpired as e:
@@ -74,7 +83,7 @@ class WorktreeManager:
         args = ["worktree", "add", "-b", branch, str(dest)]
         if base is not None:
             args.append(base)
-        _git(repo, *args)
+        _checkout_git(repo, *args)
         return Worktree(path=dest, branch=branch, repo_path=repo)
 
     def list_worktrees(self, repo_path: Path) -> list[Worktree]:
@@ -115,17 +124,7 @@ class WorktreeManager:
             # the list — we still have the local branches. Sessions work in
             # this repository and can write its config, so the fetch goes
             # through review/git, which runs none of the repository's programs.
-            with contextlib.suppress(review_git.ReviewGitError):
-                review_git.run(
-                    repo,
-                    "fetch",
-                    "--quiet",
-                    "--no-recurse-submodules",
-                    "--upload-pack=git-upload-pack",
-                    "origin",
-                    timeout=25,
-                    network=True,
-                )
+            review_git.fetch(repo, ["*"], tags=False)
         out = _git(
             repo,
             "for-each-ref",

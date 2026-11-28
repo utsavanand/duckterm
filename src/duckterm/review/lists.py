@@ -400,6 +400,8 @@ def _repo_state(repo: str, branches: list[str], *, refresh: bool) -> dict[str, A
                 pulls = github.pulls(slug, token)
             except github.GitHubError as exc:
                 error = str(exc)
+    elif heads is None and git.origin_unsupported(repo):
+        error = "The origin isn't an https or ssh URL, so review can't fetch it"
     elif heads is None:
         error = "The remote is unreachable"
     entry = {

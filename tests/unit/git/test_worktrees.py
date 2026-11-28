@@ -116,3 +116,21 @@ def test_unmerged_commits_counts_branch_only_commits(git_repo: Path, tmp_path: P
         capture_output=True,
     )
     assert mgr.unmerged_commits(wt.path) == 1
+
+
+def test_remove_runs_no_hook_from_the_repo(git_repo: Path, tmp_path: Path) -> None:
+    import subprocess
+
+    mgr = WorktreeManager(root=tmp_path / "wt")
+    wt = mgr.add(git_repo, "gone")
+    marker = tmp_path / "ran"
+    hook = git_repo / ".git/hooks/reference-transaction"
+    hook.write_text(f"#!/bin/sh\ntouch {marker}\n")
+    hook.chmod(0o755)
+    subprocess.run(["git", "-C", str(git_repo), "branch", "probe"], check=True)
+    subprocess.run(["git", "-C", str(git_repo), "branch", "-D", "probe"], check=True)
+    assert marker.exists()  # plain git branch -D really runs it
+    marker.unlink()
+    mgr.remove(git_repo, wt.path)
+    assert "gone" not in mgr.branches(git_repo, fetch=False)
+    assert not marker.exists()

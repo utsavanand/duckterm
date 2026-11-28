@@ -60,6 +60,15 @@ def _isolated_tmux_socket() -> Iterator[None]:
             os.environ["DUCKTERM_TMUX_SOCKET"] = prev
 
 
+@pytest.fixture(autouse=True)
+def _local_git_origins(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Test repositories are cloned from local folders; production review
+    mirrors fetch over https and ssh only."""
+    from duckterm.review import git as review_git
+
+    monkeypatch.setattr(review_git, "_REMOTE_PROTOCOLS", ("https", "ssh", "file"))
+
+
 @pytest.fixture(autouse=True, scope="session")
 def _clean_git_env() -> Iterator[None]:
     """Strip inherited GIT_* repo pointers (GIT_DIR/GIT_INDEX_FILE/…) for the

@@ -7,48 +7,45 @@ the worktree; the main tree ends up with the changes unstaged so you can inspect
 test, then commit or `git checkout -- .` to discard.
 """
 
-import subprocess
+import tempfile
 from pathlib import Path
 
-from duckterm.git.worktrees import GitError, _clean_git_env
+from duckterm.git.worktrees import GitError
+from duckterm.review import git as review_git
 
 
-def _git(cwd: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
-    result = subprocess.run(
-        ["git", "-C", str(cwd), *args],
-        capture_output=True,
-        text=True,
-        env=_clean_git_env(),
-    )
-    if check and result.returncode != 0:
-        raise GitError(f"git {' '.join(args)} failed: {result.stderr.strip()}")
-    return result
+def _git(cwd: Path, *args: str) -> str:
+    """Both checkouts' config and attributes are the session's to write, so
+    git runs through review/git: no textconv, external diff, hook, filter or
+    merge driver of theirs runs."""
+    try:
+        return review_git.run(cwd, *args, timeout=30)
+    except review_git.ReviewGitError as e:
+        raise GitError(f"git {' '.join(args)} failed: {e}") from e
 
 
 def spotlight_to_main(repo: Path, worktree: Path) -> list[str]:
     """Apply the worktree's full diff (committed + uncommitted, vs the main
     checkout's HEAD) onto the main working tree. Returns the changed file paths.
     Returns [] when there is nothing to sync."""
-    base = _git(repo, "rev-parse", "HEAD").stdout.strip()
+    base = _git(repo, "rev-parse", "HEAD").strip()
     # Diff the worktree's working tree against the main checkout's HEAD.
-    diff = _git(worktree, "diff", base).stdout
+    diff = _git(worktree, "diff", "--no-ext-diff", "--no-textconv", base)
     # Include files the worktree added but hasn't committed (untracked).
-    untracked = _git(worktree, "ls-files", "--others", "--exclude-standard").stdout.split()
+    untracked = _git(worktree, "ls-files", "--others", "--exclude-standard").split()
 
     if not diff and not untracked:
         return []
 
     changed: list[str] = []
     if diff:
-        apply = subprocess.run(
-            ["git", "-C", str(repo), "apply", "--3way"],
-            input=diff,
-            capture_output=True,
-            text=True,
-            env=_clean_git_env(),
-        )
-        if apply.returncode != 0:
-            raise GitError(f"spotlight apply failed: {apply.stderr.strip()}")
+        with tempfile.NamedTemporaryFile("w", suffix=".patch") as patch:
+            patch.write(diff)
+            patch.flush()
+            try:
+                review_git.run(repo, "apply", "--3way", patch.name, timeout=30)
+            except review_git.ReviewGitError as e:
+                raise GitError(f"spotlight apply failed: {e}") from e
         changed.extend(_changed_paths(diff))
 
     for rel in untracked:

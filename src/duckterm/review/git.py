@@ -7,10 +7,16 @@ remote-tracking refs and tags a bounded `fetch` brings in.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import re
 import subprocess
+import threading
 from pathlib import Path
+
+from duckterm.helpers import paths
+from duckterm.helpers.private_files import private_read, private_write
 
 
 class ReviewGitError(RuntimeError):
@@ -18,12 +24,10 @@ class ReviewGitError(RuntimeError):
 
 
 # A repository's own config can name programs git will run: an fsmonitor,
-# hooks, a signature verifier under log.showSignature, a diff textconv, the
-# command fetch runs to list an alternate object store's refs, and an ssh
-# command, credential helper or remote helper when git reaches a remote.
-# Sessions report the folders read here and can write their .git/config, so
-# none of them may run as the server. Only fetch and remote_heads are meant to
-# reach a remote; see _config_pairs for what they keep.
+# hooks, a signature verifier under log.showSignature, a diff textconv, and
+# the command fetch runs to list an alternate object store's refs. Sessions
+# report the folders read here and can write their .git/config, so none of
+# them may run as the server.
 _NO_REPO_PROGRAMS = (
     "-c",
     "core.fsmonitor=false",
@@ -39,31 +43,22 @@ _NO_REPO_PROGRAMS = (
     "gpg.x509.program=false",
     "-c",
     "core.alternateRefsCommand=true",
-    # ext:: runs a command as the transport and fd:: talks to an open file
-    # descriptor. A repository's protocol.<name>.allow beats protocol.allow,
-    # so these two are pinned on every call.
-    "-c",
-    "protocol.ext.allow=never",
-    "-c",
-    "protocol.fd.allow=never",
 )
-_OFFLINE = ("-c", "protocol.allow=never")
-# file covers a clone whose origin is a local folder. It runs upload-pack on
-# this machine, so fetch and ls-remote pass --upload-pack: git keeps the first
-# remote.origin.uploadpack it reads, so the repo's own beats any -c override.
-_REMOTE_PROTOCOLS = ("https", "ssh", "file")
+# Transports git may use, given as GIT_ALLOW_PROTOCOL, which overrides every
+# protocol.allow and protocol.<name>.allow setting. A transport can be a
+# program (ext::, a remote helper), so a call into a session's repository
+# allows none, or only a local folder (the mirror). The mirror reaches the
+# real remote over https or ssh; tests add http and file.
+_REMOTE_PROTOCOLS = ("https", "ssh")
+# user@host:path, git's ssh shorthand. The host can't start with "-", and
+# "name::" is a remote helper, not a host.
+_SCP_URL = re.compile(r"^(?:[^@/:\s]+@)?[A-Za-z0-9][A-Za-z0-9.-]*:(?!:)")
+# Fetching from the mirror needs no credentials, and none may be offered if
+# the repository's url.<x>.insteadOf points the mirror's path elsewhere.
+_LOCAL_FOLDER = [("credential.helper", ""), ("core.askPass", ""), ("core.sshCommand", "false")]
 _OWNER_SCOPES = ("system", "global", "unknown")
-# Settings that decide where a request goes or which certificate it trusts.
-# Set by the repository, they could send the owner's credentials to another
-# host, and a URL-specific http.<url>.* key there beats any general override,
-# so a call whose repository sets one is refused rather than overridden.
-# protocol.<name>.allow and remote.<name>.vcs choose the transport, which for
-# a remote helper is a program. Push URLs are left alone: fetch never reads
-# them and DuckTerm never pushes.
-_REPO_NETWORK_KEYS = re.compile(
-    r"^(https?\..*|remote\..*\.proxy|url\..*\.insteadof|core\.gitproxy|core\.askpass"
-    r"|protocol\..*|remote\..*\.vcs)$"
-)
+_mirrors_lock = threading.Lock()
+_mirror_locks: dict[Path, threading.Lock] = {}
 
 
 # Programs a repository can attach to files through attributes, which it also
@@ -74,7 +69,11 @@ _REPO_DRIVERS = re.compile(r"^(filter\..*\.(clean|smudge|process)|merge\..*\.dri
 
 
 def _git(
-    path: str | Path, args: list[str], timeout: float, pairs: list[tuple[str, str]], network: bool
+    path: str | Path,
+    args: list[str],
+    timeout: float,
+    pairs: list[tuple[str, str]],
+    protocols: tuple[str, ...] = (),
 ) -> subprocess.CompletedProcess[str]:
     """Run git with the given config as GIT_CONFIG_* variables, so a key
     crafted to contain "=" can't be misparsed as it can with -c."""
@@ -83,11 +82,11 @@ def _git(
     for i, (key, value) in enumerate(pairs):
         env[f"GIT_CONFIG_KEY_{i}"] = key
         env[f"GIT_CONFIG_VALUE_{i}"] = value
-    if network:
-        env["GIT_TERMINAL_PROMPT"] = "0"
+    env["GIT_ALLOW_PROTOCOL"] = ":".join(protocols)
+    env["GIT_TERMINAL_PROMPT"] = "0"
     try:
         return subprocess.run(
-            ["git", *_NO_REPO_PROGRAMS, *(() if network else _OFFLINE), "-C", str(path), *args],
+            ["git", *_NO_REPO_PROGRAMS, "-C", str(path), *args],
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -99,53 +98,21 @@ def _git(
         raise ReviewGitError(str(exc)) from exc
 
 
-def _config_pairs(path: str | Path, timeout: float, network: bool) -> list[tuple[str, str]]:
-    """Config overriding what the repository may not choose, read with one
-    `git config` call (which runs nothing). Every call blanks the repository's
-    filters and merge drivers. A call that reaches a remote also keeps the
-    owner's own credential helpers and ssh command (system, global or the git
-    install's own file) and drops the repository's: an empty credential.helper
-    clears every helper read so far, and the owner's are given again after it."""
-    pattern = _REPO_DRIVERS.pattern
-    if network:
-        pattern += r"|^credential\..*helper$|^core\.sshcommand$|" + _REPO_NETWORK_KEYS.pattern
+def _config_pairs(path: str | Path, timeout: float) -> list[tuple[str, str]]:
+    """Blanks for the repository's own filters and merge drivers, read with
+    one `git config` call (which runs nothing). The owner's are kept."""
     result = _git(
-        path, ["config", "--show-scope", "-z", "--get-regexp", pattern], timeout, [], False
+        path, ["config", "--show-scope", "-z", "--get-regexp", _REPO_DRIVERS.pattern], timeout, []
     )
     # exit 1: nothing matched
     fields = result.stdout.split("\0") if result.returncode == 0 else []
     pairs: list[tuple[str, str]] = []
-    if network:
-        pairs += [
-            ("protocol.allow", "never"),
-            *((f"protocol.{name}.allow", "always") for name in _REMOTE_PROTOCOLS),
-            ("core.askPass", ""),
-            ("gc.auto", "0"),
-            ("maintenance.auto", "false"),
-            ("credential.helper", ""),
-        ]
-    ssh = "ssh"
     for scope, entry in zip(fields[::2], fields[1::2], strict=False):
-        key, _, value = entry.partition("\n")
-        if scope == "command":  # DuckTerm's own -c settings
-            continue
-        owner = scope in _OWNER_SCOPES
-        if _REPO_DRIVERS.match(key):
-            if not owner:
-                pairs.append((key, ""))
-                if key.startswith("filter."):
-                    pairs.append((key.rsplit(".", 1)[0] + ".required", "false"))
-        elif _REPO_NETWORK_KEYS.match(key):
-            if not owner:
-                raise ReviewGitError(f"remote unreachable: the repository sets {key}")
-        elif not owner:
-            continue
-        elif key == "core.sshcommand":
-            ssh = value
-        else:
-            pairs.append((key, value))
-    if network:
-        pairs.append(("core.sshCommand", ssh))
+        key = entry.partition("\n")[0]
+        if scope not in _OWNER_SCOPES:
+            pairs.append((key, ""))
+            if key.startswith("filter."):
+                pairs.append((key.rsplit(".", 1)[0] + ".required", "false"))
     return pairs
 
 
@@ -160,8 +127,12 @@ def _env() -> dict[str, str]:
     return env
 
 
-def run(path: str | Path, *args: str, timeout: float = 15, network: bool = False) -> str:
-    result = _git(path, list(args), timeout, _config_pairs(path, timeout, network), network)
+def run(path: str | Path, *args: str, timeout: float = 15, local_folder: bool = False) -> str:
+    """git in a repository a session may control: none of its programs run
+    and nothing leaves this machine. local_folder lets fetch and ls-remote
+    read another repository on disk."""
+    pairs = _config_pairs(path, timeout) + (_LOCAL_FOLDER if local_folder else [])
+    result = _git(path, list(args), timeout, pairs, ("file",) if local_folder else ())
     if result.returncode:
         raise ReviewGitError(result.stderr.strip() or f"git {args[0]} failed")
     return result.stdout
@@ -272,8 +243,7 @@ def conflicts(repo: str | Path, base: str, head: str) -> bool | None:
             repo,
             ["merge-tree", "--write-tree", "--name-only", "--end-of-options", base, head],
             30,
-            _config_pairs(repo, 30, False),
-            False,
+            _config_pairs(repo, 30),
         )
     except ReviewGitError:
         return None
@@ -329,19 +299,88 @@ def tag_containing(repo: str | Path, sha: str) -> str | None:
     return tags[0] if tags else None
 
 
+def _remote_url(url: str) -> bool:
+    """A URL the mirror may fetch: an allowed scheme, or an absolute local
+    path when tests allow file. Never one that starts like an option."""
+    if url.startswith("-"):
+        return False
+    if "://" in url:
+        scheme = url.split("://", 1)[0]
+    elif _SCP_URL.match(url):
+        scheme = "ssh"
+    else:
+        scheme = "file" if url.startswith("/") else ""
+    return scheme in _REMOTE_PROTOCOLS
+
+
+def _recorded_origin(root: str, seen: str) -> str:
+    """The origin URL first seen for this clone. A session can change its
+    origin later; the owner's credentials keep going to the first one."""
+    record = paths.home() / "mirrors" / "repos.json"
+    with _mirrors_lock:
+        repos: dict[str, str] = json.loads(private_read(record) or "{}")
+        if root not in repos and _remote_url(seen):
+            repos[root] = seen
+            private_write(record, json.dumps(repos, indent=2, sort_keys=True))
+        return repos.get(root, "")
+
+
+def _mirror(repo: str | Path) -> tuple[Path, str] | None:
+    """A bare mirror DuckTerm owns, and the origin URL it fetches from.
+
+    Only the mirror reaches the remote, with the owner's credentials, ssh
+    command and URL rewrites. A session can write its own repository's config
+    (a proxy, a rewrite, a helper, a new origin) but none of it is read on
+    that call; the session's repository is then fetched from the mirror."""
+    try:
+        root = repo_root(repo)
+        # The raw setting: `remote get-url` would apply the repository's
+        # url.<x>.insteadOf.
+        seen = run(repo, "config", "--get", "remote.origin.url").strip()
+    except ReviewGitError:
+        return None
+    url = _recorded_origin(root, seen)
+    if not _remote_url(url):
+        return None
+    tail = re.sub(r"[^A-Za-z0-9_.-]", "_", url.rstrip("/").rsplit("/", 1)[-1])[:40]
+    name = f"{hashlib.sha256(url.encode()).hexdigest()[:16]}-{tail}"
+    mirror = paths.home() / "mirrors" / f"{name}.git"
+    if not (mirror / "HEAD").exists():
+        mirror.parent.mkdir(parents=True, exist_ok=True)
+        _owner_git(mirror.parent, ["init", "--quiet", "--bare", str(mirror)], 15)
+    return mirror, url
+
+
+def origin_unsupported(repo: str | Path) -> bool:
+    """True when origin is set to a URL the mirror won't fetch, such as a
+    local folder or file://, so the page can say why nothing is fetched."""
+    try:
+        root = repo_root(repo)
+        seen = run(repo, "config", "--get", "remote.origin.url").strip()
+    except ReviewGitError:
+        return False
+    return not _remote_url(_recorded_origin(root, seen))
+
+
+def _owner_git(mirror: Path, args: list[str], timeout: float) -> str:
+    pairs = [("gc.auto", "0"), ("maintenance.auto", "false")]
+    with _mirrors_lock:
+        lock = _mirror_locks.setdefault(mirror, threading.Lock())
+    with lock:  # two fetches into one mirror would race for its ref locks
+        result = _git(mirror, args, timeout, pairs, _REMOTE_PROTOCOLS)
+    if result.returncode:
+        raise ReviewGitError(result.stderr.strip() or f"git {args[0]} failed")
+    return result.stdout
+
+
 def remote_heads(repo: str | Path) -> dict[str, str] | None:
     """Branch -> tip sha on origin, from one `ls-remote` round trip. None when
     the remote is unreachable."""
+    mirror = _mirror(repo)
+    if mirror is None:
+        return None
     try:
-        out = run(
-            repo,
-            "ls-remote",
-            "--upload-pack=git-upload-pack",
-            "--heads",
-            "origin",
-            timeout=20,
-            network=True,
-        )
+        out = _owner_git(mirror[0], ["ls-remote", "--heads", "--end-of-options", mirror[1]], 20)
     except ReviewGitError:
         return None
     heads: dict[str, str] = {}
@@ -353,16 +392,40 @@ def remote_heads(repo: str | Path) -> dict[str, str] | None:
 
 
 def fetch(repo: str | Path, refs: list[str], *, tags: bool = True) -> str | None:
-    """Bring the named remote branches and the tags up to date. Every ref must
+    """Bring the named remote branches ("*" for all) and the tags up to date,
+    into the mirror and from there into the repository. Every named ref must
     exist on origin (see remote_heads). Bounded and non-fatal: returns the
     error text when the network is unavailable."""
-    args = ["fetch", "--quiet", "--no-recurse-submodules", "--upload-pack=git-upload-pack"]
-    if tags:
-        args.append("--tags")
-    args.append("origin")
-    args += [f"+refs/heads/{ref}:refs/remotes/origin/{ref}" for ref in refs]
+    mirror = _mirror(repo)
+    if mirror is None:
+        return "no origin"
+    tag_args = ["--tags"] if tags else []
     try:
-        run(repo, *args, timeout=25, network=True)
+        _owner_git(
+            mirror[0],
+            [
+                "fetch",
+                "--quiet",
+                "--no-recurse-submodules",
+                *tag_args,
+                "--end-of-options",
+                mirror[1],
+            ]
+            + [f"+refs/heads/{ref}:refs/heads/{ref}" for ref in refs],
+            25,
+        )
+        run(
+            repo,
+            "fetch",
+            "--quiet",
+            "--no-recurse-submodules",
+            *tag_args,
+            "--end-of-options",
+            str(mirror[0]),
+            *[f"+refs/heads/{ref}:refs/remotes/origin/{ref}" for ref in refs],
+            timeout=25,
+            local_folder=True,
+        )
     except ReviewGitError as exc:
         return str(exc) or "fetch failed"
     return None
