@@ -19,6 +19,7 @@ TYPES = {
         "chat",
         "prs",
         "spend",
+        "pulse",
         "usage",
         "needs-you",
         "agents",
@@ -31,9 +32,10 @@ TYPES = {
 # Home places widgets on a 12-column grid: (type, x, y, w, h).
 HOME_COLUMNS = 12
 HOME_DEFAULTS = (
-    ("teams", 0, 0, 3, 2),
-    ("autopilot", 0, 2, 3, 2),
-    ("spend", 0, 4, 3, 8),
+    ("teams", 0, 0, 3, 1),
+    ("autopilot", 0, 1, 3, 1),
+    ("spend", 0, 2, 3, 5),
+    ("pulse", 0, 7, 3, 5),
     ("prs", 3, 0, 5, 6),
     ("needs-you", 3, 6, 5, 6),
     ("chat", 8, 0, 4, 12),

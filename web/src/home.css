@@ -183,6 +183,15 @@ button.rd-home-nav:hover { background:var(--m-panel) }
 
 /* Pull requests: risk first, then where to look. */
 .rd-home-prs li { display:block }
+.rd-home-pulse li { display:grid; grid-template-columns:64px minmax(0,1fr) auto; gap:10px; align-items:baseline }
+.rd-home-pulse-kind { font-family:var(--m-mono); font-size:11px; text-transform:uppercase; letter-spacing:.08em; color:var(--m-faint) }
+.rd-home-pulse li.pr .rd-home-pulse-kind { color:var(--m-ok) }
+.rd-home-pulse li.release .rd-home-pulse-kind { color:var(--m-fg) }
+.rd-home-pulse-what { display:flex; flex-direction:column; gap:2px; min-width:0 }
+.rd-home-pulse-title { color:var(--m-fg); overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+.rd-home-pulse-what small { font-size:12px; color:var(--m-faint); font-family:var(--m-mono); overflow:hidden; text-overflow:ellipsis; white-space:nowrap }
+.rd-home-pulse-what small .rd-home-row-link { font-family:inherit; font-size:inherit; color:var(--m-muted) }
+.rd-home-pulse-age { font-family:var(--m-mono); font-size:11px; color:var(--m-faint); font-variant-numeric:tabular-nums }
 .rd-home-pr-group h3 { margin:0; padding:10px 0 4px; font-family:var(--m-mono); font-size:11px; font-weight:500; text-transform:uppercase; letter-spacing:.08em; color:var(--m-muted) }
 .rd-home-pr-group:first-child h3 { padding-top:0 }
 .rd-home-pr-group h3 span { color:var(--m-faint); margin-left:6px; font-variant-numeric:tabular-nums }

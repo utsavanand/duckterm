@@ -71,7 +71,7 @@ def recover() -> None:
 
 
 def run(run_id: str) -> dict[str, Any]:
-    return runs.get(run_id)
+    return runs.detail(run_id)
 
 
 def summary() -> dict[str, Any]:

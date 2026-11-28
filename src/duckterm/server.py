@@ -381,6 +381,8 @@ _ROUTES: list[Route] = [
     Route("DELETE", "/support/chat", lambda s, r, w, h, b, seg: s._support_chat(w, clear=True)),
     Route("GET", "/control-tower", lambda s, r, w, h, b, seg: s._control_tower(w)),
     Route("GET", "/fleet/pulse", lambda s, r, w, h, b, seg: s._fleet_pulse(w)),
+    # Home's Pulse widget: the same feed, gated on `home` rather than `fleet_monitor`.
+    Route("GET", "/home/pulse", lambda s, r, w, h, b, seg: s._fleet_pulse(w)),
     Route("GET", "/fleet/mail", lambda s, r, w, h, b, seg: s._fleet_mail(w)),
     Route("GET", "/relay", lambda s, r, w, h, b, seg: s._relay_list(w)),
     # ── Oracle voice: the optional local neural voice ──
@@ -2704,6 +2706,10 @@ class Server:
                 str(s["session_key"])
             ):
                 s["state"] = "waiting"
+            # Restart context is server-only and can be many megabytes. Keep it
+            # through enrichment/binding checks, but never serialize it into
+            # the dashboard's recurring session-list response.
+            s.pop("restart_json", None)
         await _write_json(
             writer,
             200,

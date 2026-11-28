@@ -14,6 +14,44 @@ Changing the issue repository starts the watch over, since issue numbers from th
 old one mean nothing in the new one. Lesson: a field used for four jobs is four
 assumptions; ask which of them a new user breaks before calling it one setting.
 
+## 2026-11-27 — A run record that only the list reads hides what the run did
+
+Autopilot's runs list read the runner's receipt down to step names and exit
+codes, and the row opened to chips. The receipt already held each attempt's
+timing and summary, the spec path, and the clone held the diff. The owner's
+first real run had a pull request but no way to see why. Build the detail view
+from the files the run already writes before adding new ones, and record what
+a later view needs (the base commit) at the moment it is known.
+
+## 2026-11-27 — Shared in-flight reads need a deadline through body decoding
+
+A Messages request that never settled remained in the shared pending map, so
+polling stopped and reopening the tab reused the same hung promise. Bound both
+headers and body decoding, abort the local transport, and release pending
+ownership even when a remote bridge ignores cancellation. Publish cache changes
+only from the winning read: late successes and access errors must neither
+replace nor evict newer replies. Keep the last verified content during transient
+failures and pause retries when the tab is inactive. Regression tests cover each
+of these paths; source reproduction alone does not identify a live server stall.
+
+## 2026-11-27 — Session-list refreshes carried megabytes of unused restart context
+
+A live Python stack caught HistoryStore.sessions sorting full SQLite rows on
+the event loop. A bounded size-only query found 24.8 MB of restart_json across
+74 sessions, including a 13 MB entry. The dashboard never reads that field,
+but every session-list response serialized and transferred it. Sort row
+references after retrieval so SQLite does not spill the large payloads into a
+temporary sort, and remove restart_json only after internal identity/context
+checks have finished. Restart storage and internal readers keep the full data.
+
+Check bytes per row as well as row count on frequently polled endpoints. Moving
+work to a thread would not remove redundant serialization or browser parsing.
+This fixes a measured allocation/work amplifier, not every reported stall.
+
+Browser fixtures also consumed restart_json to post correctly bound fake-agent
+events. Keep that setup on their isolated database (read-only, test=1), rather
+than retaining a large production response solely for a test helper.
+
 ## 2026-11-27 — The fleet chat had summaries all along; it just didn't say what they were
 
 A spec said the fleet chat ignored checkpoint summaries because it read the
