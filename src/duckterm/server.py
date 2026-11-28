@@ -77,7 +77,15 @@ from duckterm import (
 from duckterm.agents import tmux
 from duckterm.agents.terminal import available_terminals, open_in_terminal
 from duckterm.autopilot import api as ap_api
-from duckterm.core import events, fleet_pulse, fleet_questions, oracle, oracle_intent, support
+from duckterm.core import (
+    ask_intents,
+    events,
+    fleet_pulse,
+    fleet_questions,
+    oracle,
+    oracle_intent,
+    support,
+)
 from duckterm.core.approvals import Approval, ApprovalRegistry
 from duckterm.core.backup_jobs import BackupJobs
 from duckterm.core.eventbus import EventBus
@@ -4406,6 +4414,65 @@ class Server:
             }
         return {"plan": {**by_id[intent["session_id"]], "text": intent["text"]}}
 
+    async def _ask_intents(self, question: str, messages: bool) -> dict[str, Any] | None:
+        """Classify, resolve, then read only what the intent needs. None means
+        the intent isn't built yet, so the caller answers as before."""
+        agents = ask_intents.roster(self)
+        chat_path = paths.home() / "oracle-chat.json"
+        prior = oracle.load_chat(chat_path)
+        result = await asyncio.to_thread(
+            summarize, ask_intents.classify_prompt(question, agents, prior), tier="fast"
+        )
+        if not result.text:
+            return None
+        intent = ask_intents.parse(result.text, agents)
+        by_id = {a["id"]: a for a in agents}
+        kind = intent["intent"]
+        if kind in ("act.message", "clarify") and messages:
+            certain, candidates = ask_intents.agents_named(intent, ask_intents.ACT_THRESHOLD)
+            text = intent["text"] or ""
+            if kind == "act.message" and len(candidates) == 1 and certain and text:
+                return {"plan": {**self._oracle_agent(by_id[certain[0]]), "text": text}}
+            return {
+                "clarify": {
+                    "text": text,
+                    "candidates": [self._oracle_agent(by_id[c]) for c in candidates],
+                }
+            }
+        if kind not in ("ask.agent", "ask.fleet"):
+            return None
+        reading = agents
+        if kind == "ask.agent":
+            certain, candidates = ask_intents.agents_named(intent, ask_intents.ASK_THRESHOLD)
+            if not certain or len(certain) > ask_intents.MAX_AGENTS_READ:
+                said = next((e["said"] for e in intent["entities"] if e["type"] == "agent"), "")
+                answer = ask_intents.clarify_answer(said, [by_id[c] for c in candidates])
+                exchange = oracle.append_chat(chat_path, question, answer, int(time.time() * 1000))
+                return {"answer": answer, "exchange": exchange, "sessions": candidates}
+            reading = [by_id[c] for c in certain]
+            context = "\n\n".join([await ask_intents.agent_context(self, a) for a in reading])
+        else:
+            context = ask_intents.fleet_context(self, agents)
+        prompt = ask_intents.answer_prompt(
+            question, fleet_questions.clip(context, fleet_questions.MAX_PROMPT_BYTES), prior, kind
+        )
+        prepared = fleet_questions.Prepared(prompt, tuple(a["id"] for a in reading))
+        answered = await asyncio.to_thread(fleet_questions.generate, prepared, summarize)
+        if not answered.text:
+            return None
+        exchange = oracle.append_chat(chat_path, question, answered.text, int(time.time() * 1000))
+        return {
+            "answer": answered.text,
+            "exchange": exchange,
+            "sessions": [a["id"] for a in reading],
+            "backend": answered.backend,
+            "intent": kind,
+        }
+
+    @staticmethod
+    def _oracle_agent(agent: dict[str, Any]) -> dict[str, str]:
+        return {"id": agent["id"], "name": agent["name"], "folder": agent["workspace"]}
+
     async def _fleet_ask(self, writer: asyncio.StreamWriter, body: bytes) -> None:
         """Route explicit folder messages; answer other questions from session digests."""
         try:
@@ -4433,7 +4500,30 @@ class Server:
         if not question:
             await _write_json(writer, 400, {"error": "question required"})
             return
-        if folder is None and "request_key" in req and self.edition.includes("oracle_messages"):
+        classified = False
+        if folder is None and self.edition.includes("ask_intents"):
+            messages = "request_key" in req and self.edition.includes("oracle_messages")
+            if messages and not (
+                isinstance(req["request_key"], str)
+                and re.fullmatch(r"[A-Za-z0-9_-]{1,59}", req["request_key"])
+            ):
+                await _write_json(writer, 400, {"error": "Invalid request_key"})
+                return
+            try:
+                routed = await self._ask_intents(question, messages)
+            except APIError as exc:
+                await _write_json(writer, exc.status, {"error": str(exc)})
+                return
+            if routed is not None:
+                await _write_json(writer, 200, routed)
+                return
+            classified = True
+        if (
+            folder is None
+            and not classified
+            and "request_key" in req
+            and self.edition.includes("oracle_messages")
+        ):
             key = req["request_key"]
             if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,59}", key):
                 await _write_json(writer, 400, {"error": "Invalid request_key"})

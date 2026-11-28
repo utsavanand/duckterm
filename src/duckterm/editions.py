@@ -78,6 +78,7 @@ DEVELOPMENT = frozenset(
         "oracle_messages",
         "fleet_monitor",
         "support",
+        "ask_intents",
     }
 )
 
