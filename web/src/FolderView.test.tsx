@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, beforeEach, expect, it, vi } from "vitest";
 import { api } from "./api";
 import { FolderView } from "./FolderView";
+import { LEAKY, remoteRefs } from "./test/remoteLoads";
 import { edition, CODE, FULL, LITE } from "./test/editions";
 import { StaticEdition } from "./edition";
 vi.mock("./api", () => ({ api: { folderChat: vi.fn(), fleetAsk: vi.fn(), folderArtifacts: vi.fn(), folderRecipients: vi.fn(), folderDispatch: vi.fn() } }));
@@ -213,4 +214,14 @@ it("keeps suggestion buttons read-only even when a recipient is selected", async
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "What needs my attention?" })); });
   expect(api.fleetAsk).toHaveBeenCalledWith("What needs my attention?", "Website", undefined);
   expect(api.folderDispatch).not.toHaveBeenCalled();
+});
+it("renders workspace answers and agent replies without anything that loads remotely", async () => {
+  vi.mocked(api.folderChat).mockResolvedValue({ messages: [
+    { q: "Status?", a: LEAKY, at: 1 },
+    { q: "Review this", a: "", at: 2, dispatch: { request_key: "k", target: { kind: "session", id: "ui-1" }, label: "ui-dev",
+      recipients: [{ session_id: "ui-1", name: "ui-dev", message_id: "q-test", status: "answered", answer: LEAKY }] } },
+  ] });
+  const { container } = render(<FolderView folder="Website" />, { wrapper: edition(FULL) });
+  expect(await screen.findAllByText("Leak check")).toHaveLength(2);
+  expect(remoteRefs(container)).toEqual([]);
 });

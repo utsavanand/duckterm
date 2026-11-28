@@ -2,6 +2,8 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { api } from "./api";
 import { Messages as ActualMessages } from "./Messages";
+import { messageMarkup } from "./AnnotatedText";
+import { LEAKY, remoteRefs } from "./test/remoteLoads";
 
 // Messages fetches /sessions/:key/messages directly and polls it.
 const transcript = (prompt: string, reply: string) => ({
@@ -162,4 +164,11 @@ it("submits the next turn once and retains the draft if delivery fails", async (
   fireEvent.click(screen.getByRole("button",{name:"Send"}));
   await waitFor(() => expect(input).toHaveValue(""));
   expect(send).toHaveBeenCalledTimes(2); send.mockRestore();
+});
+
+it("renders transcript text without anything that loads remotely", () => {
+  const root = document.createElement("div");
+  root.innerHTML = messageMarkup(LEAKY);
+  expect(root.querySelector("strong")?.textContent).toBe("Leak check");
+  expect(remoteRefs(root)).toEqual([]);
 });

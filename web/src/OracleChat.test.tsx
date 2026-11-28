@@ -2,6 +2,7 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { afterEach, expect, it, vi } from "vitest";
 import { api, RelayNote, RelayRule } from "./api";
 import { OracleChat } from "./OracleChat";
+import { LEAKY, remoteRefs } from "./test/remoteLoads";
 vi.mock("./api", () => ({
   api: { oracleChat: vi.fn(), fleetAsk: vi.fn(), clearOracleChat: vi.fn(), relayAnswer: vi.fn(), proposeRule: vi.fn(), createRule: vi.fn(), deleteRule: vi.fn() },
 }));
@@ -152,4 +153,11 @@ it("labels offers apart from needs-you notes and turns listed options into one-c
   expect(screen.getByRole("group", { name: "Offer from product-manager" })).toBeVisible();
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Yes, make it" })); });
   expect(api.relayAnswer).toHaveBeenCalledWith("o1", "Yes, make it");
+});
+
+it("renders Oracle answers without anything that loads remotely", async () => {
+  vi.mocked(api.oracleChat).mockResolvedValue({ messages: [{ q: "status?", a: LEAKY, at: 1 }] });
+  const { container } = render(<OracleChat relay={NO_RELAY} onRelayChange={() => {}} onClose={() => {}} />);
+  expect((await screen.findByText("Leak check")).tagName).toBe("STRONG");
+  expect(remoteRefs(container)).toEqual([]);
 });

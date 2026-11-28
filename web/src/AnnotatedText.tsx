@@ -1,11 +1,11 @@
 import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Annotation, clearHighlights, highlightAnnotations } from "./annotationHighlights";
-import { html } from "./render";
+import { modelHtml } from "./render";
 
 export function messageMarkup(source: string, plain = false) {
   if (plain) return source.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   const content = document.createElement("div");
-  content.innerHTML = html(source);
+  content.innerHTML = modelHtml(source);
   // Wrap sanitized tables without changing their semantics or annotated text.
   // Only the table scrolls when a pane is too narrow for its columns.
   for (const table of content.querySelectorAll("table")) {

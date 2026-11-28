@@ -69,8 +69,9 @@ export function html(md: string): string {
   return DOMPurify.sanitize(marked.parse(md, { async: false }) as string);
 }
 
-// Text a model wrote about content someone else controls (a PR diff can carry
-// a prompt injection). Rendering it must not fetch anything: a remote image,
+// Text a model or agent wrote (owner: "do the strict filter everywhere"). It
+// reads content someone else controls, and a PR diff or a web page can carry
+// a prompt injection. Rendering it must not fetch anything: a remote image,
 // an <input type=image> or a style url() would carry what the model was told
 // to leak in its URL. An allowlist of what markdown produces, because a
 // denylist missed <input type=image> and <mglyph src> (security, QA on #509).
@@ -83,3 +84,27 @@ export function modelHtml(md: string): string {
     ALLOWED_TAGS: MODEL_TAGS, ALLOWED_ATTR: MODEL_ATTRS, ALLOW_DATA_ATTR: false,
   });
 }
+
+// Diagrams in model and agent text (review cards, transcripts) can carry a
+// prompt injection. Mermaid copies init directives (themeCSS), frontmatter
+// config and classDef/style values into the SVG's <style>, and its CSS
+// sanitizer keeps url() (security on #509). Such diagrams stay as readable
+// source; nothing a diagram needs is lost.
+const STYLING = /%%\{|^\s*---|^\s*(classDef|style|linkStyle)\s/im;
+export function diagramSourceSafe(source: string): boolean {
+  return !STYLING.test(source);
+}
+
+// After rendering, anything that could still fetch: url() other than the
+// SVG's own #marker references, @import, image-set, CSS escapes in a <style>
+// block or style attribute (which could spell url), and href/src pointing
+// outside the SVG.
+const CSS_TEXT = /<style[^>]*>([\s\S]*?)<\/style>|\sstyle\s*=\s*"([^"]*)"|\sstyle\s*=\s*'([^']*)'/gi;
+const FETCHING = /url\(\s*['"]?\s*(?!#)|@import|image-set\(|\s(?:xlink:)?(?:href|src)\s*=\s*['"]?\s*(?!#)/i;
+export function diagramSvgSafe(svg: string): boolean {
+  if (FETCHING.test(svg)) return false;
+  return ![...svg.matchAll(CSS_TEXT)].some(match => (match[1] ?? match[2] ?? match[3]).includes("\\"));
+}
+
+// Config keys diagram text may not set: the ones mermaid copies into CSS.
+export const MERMAID_SECURE = ["secure", "securityLevel", "startOnLoad", "maxTextSize", "maxEdges", "themeCSS", "themeVariables", "fontFamily"];
