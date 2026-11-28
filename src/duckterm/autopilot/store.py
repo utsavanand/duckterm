@@ -17,6 +17,11 @@ from duckterm.helpers import instance
 
 _LOCK = threading.Lock()
 MAX_LABELS = 20
+# How merges are approved: "off" asks every time, "shadow" asks every time
+# but counts merges the policy would have made alone, "on" merges those alone.
+AUTO_MERGE = ("off", "shadow", "on")
+SHADOW_RUNS = 10
+RULE_FIELDS = ("security", "data", "ai")
 
 
 def root() -> Path:
@@ -84,6 +89,17 @@ def delete(autopilot_id: str) -> None:
         _save(kept)
 
 
+def set_shadow(autopilot_id: str, done: int) -> None:
+    """Record how many shadow merges in a row the owner approved unchanged."""
+    with _LOCK:
+        entries = load()
+        for entry in entries:
+            if entry["id"] == autopilot_id:
+                entry["shadow_done"] = done
+                _save(entries)
+                return
+
+
 def issue_repo(entry: dict[str, Any]) -> str:
     """Where the autopilot watches issues; records saved before issue_repo
     existed watch their code repository."""
@@ -128,6 +144,21 @@ def validated(body: dict[str, Any], base: dict[str, Any]) -> dict[str, Any]:
         raise ValueError("The test command has an unclosed quote") from None
     if len(test_command) > 300:
         raise ValueError("The test command is too long")
+    mode = str(body.get("auto_merge") or base.get("auto_merge") or "shadow")
+    if mode not in AUTO_MERGE:
+        raise ValueError("Choose how merges are approved")
+    shadow_done = int(base.get("shadow_done") or 0)
+    if mode == "on" and shadow_done < SHADOW_RUNS:
+        raise ValueError(
+            f"Auto-merge turns on after {SHADOW_RUNS} merges you approved as they stood; "
+            f"{shadow_done} so far"
+        )
+    raw_rules = body.get("rules")
+    raw_rules = raw_rules if isinstance(raw_rules, dict) else {}
+    rules = {
+        field: [str(p).strip() for p in raw_rules.get(field) or [] if str(p).strip()][:50]
+        for field in RULE_FIELDS
+    }
     raw_approvals = body.get("approvals")
     approvals = raw_approvals if isinstance(raw_approvals, dict) else {}
     return {
@@ -145,6 +176,10 @@ def validated(body: dict[str, Any], base: dict[str, Any]) -> dict[str, Any]:
             "keep_merge_approval": bool(approvals.get("keep_merge_approval")),
         },
         "test_command": test_command,
+        "auto_merge": mode,
+        # counted by the server as shadow merges are approved, never from a request
+        "shadow_done": shadow_done,
+        "rules": rules,
         "budget_m": max(1, min(50, int(body.get("budget_m") or 5))),
         "max_runs": max(1, min(4, int(body.get("max_runs") or 2))),
     }

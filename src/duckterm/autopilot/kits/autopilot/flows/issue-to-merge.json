@@ -1,6 +1,6 @@
 {
   "name": "issue-to-merge",
-  "description": "Triage an issue, spec the fix, build and test it, have Codex review it for QA and security, draft the pull request",
+  "description": "Triage an issue, spec the fix, build and test it, have Codex review it for QA and security, then open the pull request and merge it once CI passes and the approvals allow",
   "inputs": {
     "issue": "the issue: number, title, body, labels and URL, as JSON",
     "settings": "text?"

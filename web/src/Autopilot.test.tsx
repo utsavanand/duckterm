@@ -54,7 +54,8 @@ beforeEach(() => {
       : path === "/api/autopilot/repositories" ? ["o/duckterm", "o/uv-suite"]
       : path === "/folders" ? { folders: ["Team", "Docs"] }
       : method === "POST" && path === "/api/autopilot/autopilots" ? { id: "ap-2" }
-      : path.startsWith("/api/autopilot/runs/") ? detail(path.split("/").pop()!)
+      : path.endsWith("/merge/challenge") ? { payload: "duckterm-approve v1\nhead=abc" }
+      : path.startsWith("/api/autopilot/runs/") && method === "GET" ? detail(path.split("/").pop()!)
       : path.endsWith("/backlog") ? { issues: [7, 8] }
       : {};
     return new Response(JSON.stringify(body), { status: 200 });
@@ -86,6 +87,7 @@ it("sets up a listed flow with only the triggers that exist, and labels as a lis
     flow: "autopilot/issue-to-merge", name: "uv-suite issue to merge", workspace: "Team", repo: "o/uv-suite", issue_repo: "",
     triggers: { "github-issue": { labels: ["autopilot", "bug"] } },
     approvals: { spec_on_visible: false, keep_merge_approval: false }, budget_m: 5, max_runs: 2, test_command: "",
+    auto_merge: "shadow", rules: { security: [], data: [], ai: [] },
   });
 });
 
@@ -171,7 +173,7 @@ it("a run row opens the run: each step with its time and output, the error and t
 it("a run's spec and changes tabs show the spec it wrote and its diff", async () => {
   await mount();
   await openRow("Badge colour");
-  expect(screen.getByRole("link", { name: "Draft pull request #450" })).toHaveAttribute("href", "https://github.com/o/duckterm/pull/450");
+  expect(screen.getByRole("link", { name: "Pull request #450" })).toHaveAttribute("href", "https://github.com/o/duckterm/pull/450");
   expect(screen.getByText(/on GitHub/)).toBeInTheDocument();
   await act(async () => { fireEvent.click(screen.getByRole("tab", { name: "Spec" })); });
   expect(screen.getByRole("heading", { name: "Problem" })).toBeInTheDocument();
@@ -269,6 +271,53 @@ it("a run's steps name what ran each one: Claude Code, Codex, a script or you", 
   const labels = Array.from(document.querySelectorAll(".ap-attempts .ap-att-kind")).map(e => e.textContent);
   expect(labels).toEqual(["Claude Code", "script", "Codex · decides", "your approval", "runs the reviews together"]);
   expect(screen.getByText("Raised CLOSE_TIMEOUT in audio_capture.py.")).toBeInTheDocument();
+});
+
+function mergeWaiting(shadow: boolean) {
+  overview.runs.unshift({ id: "r4", autopilot: "ap-1", autopilot_name: "kaho reports", workspace: "", flow: "autopilot/issue-to-merge",
+    repo: "o/kaho", trigger: "github-issue", item: { number: 8, title: "Mic stuck" }, branch: "autopilot/r4", state: "waiting_gate",
+    started_at: Date.now(), ci: "pass", ci_head: "abcdef1234", pr: { number: 37, url: "https://github.com/o/kaho/pull/37", base: "main" },
+    steps: [{ step: "spec-policy", attempt: 1, choice: "skip" }],
+    merge_reasons: shadow ? [] : ["user visible"],
+    gate: { step: "merge-gate", question: "Merge pull request #37?", choices: ["approve", "reject"], shown: "", asked_at: Date.now(),
+      why: shadow ? "" : "user visible", head: "abcdef1234", shadow, shadow_run: shadow ? 5 : null } });
+}
+
+it("a merge the policy would make alone still asks in shadow mode, and says which run of 10 it is", async () => {
+  mergeWaiting(true);
+  await mount();
+  const card = screen.getByText(/Merge approval · PR #37 · shadow mode/).closest("article")!;
+  expect(card).toHaveTextContent("The policy would auto-merge this. Shadow mode stops it for you (run 5 of 10). CI green on abcdef1.");
+  expect(within(card).getByRole("link", { name: "Open PR" })).toHaveAttribute("href", "https://github.com/o/kaho/pull/37");
+  const marks = Array.from(screen.getAllByRole("row")[1].querySelectorAll(".ap-g")).map(e => e.className);
+  expect(marks).toEqual(["ap-g ap-g-skip", "ap-g ap-g-wait"]);
+});
+
+it("in a browser a merge can be rejected but not approved: Touch ID needs the Mac app", async () => {
+  mergeWaiting(false);
+  await mount();
+  const card = screen.getByText(/Merge approval · PR #37/).closest("article")!;
+  expect(card).toHaveTextContent("Required because: user visible.");
+  expect(within(card).queryByRole("button", { name: /Approve/ })).toBeNull();
+  expect(card).toHaveTextContent("Approve with Touch ID in the DuckTerm app");
+  await act(async () => { fireEvent.click(within(card).getByRole("button", { name: "Reject" })); });
+  expect(sent.find(r => r.method === "POST")?.body).toEqual({ step: "merge-gate", answer: "reject" });
+});
+
+it("in the Mac app, approving a merge signs the server's challenge with Touch ID", async () => {
+  const sign = vi.fn(async () => "sig-1");
+  vi.stubGlobal("webkit", { messageHandlers: { approval: { postMessage: async (m: { operation: string; payload?: string }) =>
+    m.operation === "sign" ? sign() : "key" } } });
+  vi.stubGlobal("__rubbertermDesktop", { canApprove: true, targets: [] });
+  mergeWaiting(true);
+  await mount();
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Approve with Touch ID" })); });
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
+  expect(sign).toHaveBeenCalledTimes(1);
+  expect(sent.filter(r => r.method === "POST").map(r => [r.path, r.body])).toEqual([
+    ["/api/autopilot/runs/r4/merge/challenge", {}],
+    ["/api/autopilot/runs/r4/merge/approve", { payload: "duckterm-approve v1\nhead=abc", signature: "sig-1" }],
+  ]);
 });
 
 it("Read spec opens the run on its Spec tab", async () => {

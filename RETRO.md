@@ -1,3 +1,14 @@
+## 2026-11-27 — GitHub Actions leaves a failed check's summary empty
+
+Autopilot's merge stage sends a failed CI run's log to a fix step. Read from
+the check-runs API, a real failed kaho run said only "Process completed with
+exit code 1": Actions puts nothing in a check's title, summary or text. The
+cause, a CHANGELOG version mismatch, was only in the job's own log. The fix
+step now gets the lines before the log's first ##[error], fetched from the
+job-log redirect without the token. Lesson: read a real failure through a new
+API before building on its fields; the fake that returned a summary was
+written from the docs, not from GitHub.
+
 ## 2026-11-27 — Parallel reviewers raced for one diff file
 
 The first real run of the review stage (kaho-reports#8) failed after three

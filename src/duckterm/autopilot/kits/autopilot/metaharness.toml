@@ -65,6 +65,12 @@ outputs = { verdict = { choice = ["approve", "revise", "reject"] }, findings = {
 
 [[components]]
 kind = "skill"
+path = "skills/fix-ci"
+effects = "workspace"
+inputs = { log = "text?" }
+
+[[components]]
+kind = "skill"
 path = "skills/qa"
 effects = "read-only"
 inputs = { url = "text?", diff = "file?", spec = "file?" }
@@ -145,6 +151,10 @@ rules = [
 [[components]]
 kind = "flow"
 path = "flows/issue-to-merge.json"
+
+[[components]]
+kind = "flow"
+path = "flows/fix-ci.json"
 
 [[components]]
 kind = "flow"

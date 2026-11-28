@@ -136,6 +136,14 @@ def answer(run_id: str, body: dict[str, Any]) -> dict[str, Any]:
     return runs.answer(run_id, body)
 
 
+def merge_challenge(run_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    return runs.merge_challenge(run_id)
+
+
+def merge_approve(run_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    return runs.merge_approve(run_id, body)
+
+
 def summary() -> dict[str, Any]:
     return runs.summary()
 

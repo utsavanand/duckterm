@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from duckterm import github_projects
-from duckterm.autopilot import catalog, executor, github_push, sandbox, store
+from duckterm.autopilot import catalog, delivery, executor, github_push, sandbox, store
 from duckterm.autopilot.executor import AutopilotExecutor, RunDirs, prepare_github
 from duckterm.autopilot.sandbox import Gateway, Sandbox
 from duckterm.kits import install, plan, runner
@@ -150,6 +150,7 @@ def _execute(meta: dict[str, Any], item: dict[str, Any]) -> None:
                 },
             ),
         )
+        _deliver(root)
     except Exception as exc:  # noqa: BLE001 — any failure ends the run with its reason
         _update(root, state="failed", error=str(exc)[:500])
     _settle(root)
@@ -165,7 +166,7 @@ def answer(run_id: str, body: dict[str, Any]) -> dict[str, Any]:
     note = str(body.get("note") or "").strip()[:4000] or None
     with _META_LOCK:
         meta = json.loads((root / "autopilot.json").read_text())
-        gate = pending_gate(root)
+        gate = meta.get("merge_gate") or pending_gate(root)
         if meta["state"] != "waiting_gate" or gate is None:
             raise ValueError("This run is not waiting for an answer")
         if step != gate["step"] or choice not in gate["choices"]:
@@ -183,6 +184,19 @@ def answer(run_id: str, body: dict[str, Any]) -> dict[str, Any]:
                 "at": int(time.time() * 1000),
             }
         )
+        if step == "merge-gate":
+            if choice == "approve":
+                raise ValueError("Approving a merge needs Touch ID in the DuckTerm app")
+            # the pull request stays open for the owner to finish by hand
+            meta.update(
+                state="ended",
+                stage=None,
+                outcome="Merge rejected; the pull request stays open",
+                ended_at=int(time.time() * 1000),
+            )
+            _write_meta(root, meta)
+            delivery.count_shadow(meta["autopilot"], approved=False)
+            return {"ok": True}
         meta["state"] = "running"
         _write_meta(root, meta)
     threading.Thread(
@@ -211,6 +225,8 @@ def _continue(meta: dict[str, Any], step: str, choice: str, note: str | None) ->
         )
         if rejected and run.state["state"] == "succeeded":
             _update(root, state="rejected")
+        else:
+            _deliver(root)
     except Exception as exc:  # noqa: BLE001 — any failure ends the run with its reason
         _update(root, state="failed", error=str(exc)[:500])
     _settle(root)
@@ -222,12 +238,14 @@ def _in_sandbox(
     drive: Callable[[AutopilotExecutor], runner.Run],
     *,
     publish: bool = True,
+    main: bool = True,
 ) -> runner.Run:
     """Give the run a sandbox and a model token for as long as `drive` takes:
     to the end, a failure or a gate. Tokens a run used before a gate count
     against its budget after it. A run that succeeds is published unless the
     owner rejected it: rejecting routes the flow to its end, which the runner
-    records as success."""
+    records as success. `main` is False for a flow run on the side (fixing
+    CI), which leaves the run's state and receipt to its caller."""
     meta = json.loads((root / "autopilot.json").read_text())
     used = float(meta.get("tokens") or 0)  # the gateway weighs tokens, so a float
     left = int(meta["budget_m"] * 1_000_000 - used)
@@ -248,6 +266,8 @@ def _in_sandbox(
         token = gateway.mint(meta["id"], budget=left, ttl=TOKEN_TTL)
         _update(root, state="running", sandbox=box.name)
         run = drive(AutopilotExecutor(box, dirs, token, meta["branch"]))
+        if not main:
+            return run
         _update(root, state=run.state["state"], runner_run=run.id)
         triaged = _triage(run.state)
         if triaged:
@@ -288,7 +308,7 @@ def _settle(root: Path) -> None:
 def _publish(
     root: Path, meta: dict[str, Any], project: Path, base_sha: str, state: dict[str, Any]
 ) -> None:
-    """Push the run branch and open a draft pull request for it. A run that
+    """Push the run branch and open a pull request for it. A run that
     changed nothing opens nothing. A failure here is recorded on the run; the
     branch stays on this Mac either way."""
     if _git_out(project, "rev-list", "--count", f"{base_sha}..HEAD") == "0":
@@ -312,6 +332,188 @@ def _publish(
         _update(root, pr_error=str(exc)[:300])
 
 
+def _deliver(root: Path) -> None:
+    """Carry a run whose pull request is open on to its merge: wait for CI,
+    fix a failure (at most delivery.FIX_CI_MAX times), then merge or wait for
+    the owner's approval as the merge policy says. Also picks a CI wait up
+    again after a restart. Raises on anything that ends the run."""
+    meta = json.loads((root / "autopilot.json").read_text())
+    pr = meta.get("pr")
+    if not pr or meta["state"] not in ("succeeded", "running"):
+        return
+    project = root / "repo"
+    token, _ = github_projects.local_token()
+    fixes = int(meta.get("ci_fixes") or 0)
+    while True:
+        head = _git_out(project, "rev-parse", "HEAD")
+        _update(root, state="running", stage="ci", ci_head=head)
+        result, log = delivery.wait_ci(meta["repo"], head, token)
+        _update(root, ci=result)
+        if result in ("pass", "none"):
+            break
+        if result == "timeout":
+            raise RuntimeError("CI did not finish within 60 minutes; the pull request stays open")
+        if fixes >= delivery.FIX_CI_MAX:
+            raise RuntimeError(f"CI still failed after {fixes} fixes; the pull request stays open")
+        fixes += 1
+        _update(root, stage="fixing-ci", ci_fixes=fixes)
+        _fix_ci(root, meta, log)
+        if _git_out(project, "rev-parse", "HEAD") == head:
+            raise RuntimeError("fixing CI changed nothing; the pull request stays open")
+        github_push.push(project, meta["repo"], meta["branch"], token, meta["base_sha"])
+    receipt = _receipt(root) or {}
+    files = [
+        f
+        for f in _git_out(project, "diff", "--name-only", meta["base_sha"], "HEAD").split("\n")
+        if f
+    ]
+    try:
+        entry = store.get(meta["autopilot"])
+    except KeyError:
+        entry = {}
+    hits = delivery.path_hits(files, entry.get("rules") or {})
+    reasons = delivery.merge_policy(
+        classification(project, receipt, step="spec"),
+        classification(project, receipt, step="security"),
+        hits,
+        any(g.get("step") == "spec-gate" for g in receipt.get("gates") or []),
+    )
+    gate = delivery.merge_gate(
+        reasons,
+        str(entry.get("auto_merge") or "shadow"),
+        int(entry.get("shadow_done") or 0),
+        head,
+        pr,
+    )
+    _update(root, path_hits=hits, merge_reasons=reasons)
+    if gate:
+        _update(root, state="waiting_gate", stage="merge-gate", merge_gate=gate)
+        return
+    _merge(root, head)
+
+
+def _fix_ci(root: Path, meta: dict[str, Any], log: str) -> None:
+    dirs = RunDirs(root)
+    settings = json.dumps({"test_command": meta.get("test_command") or ""})
+    run = _in_sandbox(
+        root,
+        dirs,
+        lambda ex: runner.start(
+            dirs.project,
+            "autopilot/fix-ci",
+            harness=HARNESS,
+            inputs={"log": log or "CI failed with no log", "settings": settings},
+            executor=ex,
+            limits=LIMITS,
+            executor_state={"run_host": "mac", "branch": meta["branch"], "sandbox_id": ex.box.name},
+        ),
+        main=False,
+    )
+    if run.state["state"] != "succeeded":
+        why = (run.state.get("failure") or {}).get("reason") or run.state["state"]
+        raise RuntimeError(f"fixing CI failed: {why}")
+
+
+def _merge(root: Path, approved: str) -> None:
+    """Merge the pull request only at the commit CI passed on and the owner
+    approved, and only if it is still the pull request's head: a push after
+    either stops the merge (issue-flow spec §5)."""
+    meta = json.loads((root / "autopilot.json").read_text())
+    pr = meta["pr"]
+    token, _ = github_projects.local_token()
+    _update(root, state="running", stage="merging")
+    current = github_push.pull_head(meta["repo"], int(pr["number"]), token)
+    if not meta.get("ci_head") == approved == current:
+        raise RuntimeError(
+            "the pull request moved after CI or approval; nothing was merged, it stays open"
+        )
+    try:
+        merged = github_push.merge(
+            meta["repo"], int(pr["number"]), approved, pr_title(meta, meta["item"]), token
+        )
+    except github_push.MergeRefused as exc:
+        raise RuntimeError(f"GitHub would not merge: {exc}") from None
+    _update(root, state="merged", stage=None, merged_sha=merged)
+
+
+def merge_challenge(run_id: str) -> dict[str, Any]:
+    """A Touch ID challenge for the merge the run waits for: the Mac app signs
+    it with the Secure Enclave key, so a session holding the install token
+    still cannot approve a merge."""
+    from duckterm.review import approvals
+
+    root, meta, gate = _waiting_merge(run_id)
+    if not approvals.key_status()["enrolled"]:
+        raise ValueError("No Touch ID key is bound; open the DuckTerm app on this Mac")
+    payload = approvals.challenge(
+        {
+            "repo": str(root / "repo"),
+            "github": meta["repo"],
+            "pr": str(meta["pr"]["number"]),
+            "head": gate["head"],
+            "folder": "autopilot",
+            "release": run_id,
+        }
+    )
+    return {"payload": payload}
+
+
+def merge_approve(run_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    """Merge on a Touch ID signature over this run's challenge."""
+    from duckterm.review import approvals
+
+    try:
+        payload = str(body.get("payload") or "")
+        fields = approvals.take_challenge(payload)
+        signed = approvals.verify(payload, body.get("signature"))
+    except approvals.ApprovalError as exc:
+        raise ValueError(str(exc)) from None
+    with _META_LOCK:
+        root, meta, gate = _waiting_merge(run_id)
+        if (fields["release"], fields["head"]) != (run_id, gate["head"]):
+            raise ValueError("That approval was for a different merge; approve again")
+        if not signed:
+            raise ValueError("The signature does not match this Mac's Touch ID key")
+        meta.setdefault("answers", []).append(
+            {
+                "step": "merge-gate",
+                "answer": "approve",
+                "by": "owner",
+                "touch_id": True,
+                "at": int(time.time() * 1000),
+            }
+        )
+        meta.update(state="running", stage="merging")
+        _write_meta(root, meta)
+    threading.Thread(
+        target=_merge_approved, args=(root, gate), name=f"autopilot-{run_id}", daemon=True
+    ).start()
+    return {"ok": True}
+
+
+def _merge_approved(root: Path, gate: dict[str, Any]) -> None:
+    meta = json.loads((root / "autopilot.json").read_text())
+    try:
+        _merge(root, gate["head"])
+        if gate.get("shadow"):
+            delivery.count_shadow(meta["autopilot"], approved=True)
+    except Exception as exc:  # noqa: BLE001 — any failure ends the run with its reason
+        _update(root, state="failed", error=str(exc)[:500])
+        delivery.count_shadow(meta["autopilot"], approved=False)
+    _settle(root)
+
+
+def _waiting_merge(run_id: str) -> tuple[Path, dict[str, Any], dict[str, Any]]:
+    root = runs_root() / run_id
+    if "/" in run_id or not (root / "autopilot.json").is_file():
+        raise KeyError(run_id)
+    meta = json.loads((root / "autopilot.json").read_text())
+    gate = meta.get("merge_gate")
+    if meta["state"] != "waiting_gate" or not gate:
+        raise ValueError("This run is not waiting for a merge approval")
+    return root, meta, gate
+
+
 def issue_ref(meta: dict[str, Any], item: dict[str, Any]) -> str:
     """`#7`, or `owner/reports#7` when the issue is in another repository
     than the pull request; GitHub links and closes that form across repos."""
@@ -330,14 +532,14 @@ def pr_body(
     meta: dict[str, Any], item: dict[str, Any], project: Path, state: dict[str, Any]
 ) -> str:
     """The spec the run wrote, a closing reference to the issue, and where it
-    came from. Draft until a person reviews it."""
+    came from."""
     spec = spec_text(project, state)
     parts = [spec[:20000].strip()] if spec else []
     if item.get("number"):
         parts.append(f"Closes {issue_ref(meta, item)}.")
     parts.append(
-        f"Opened as a draft by DuckTerm autopilot ({meta['flow']}, run {meta['id']}). "
-        "Review it before merging."
+        f"Opened by DuckTerm autopilot ({meta['flow']}, run {meta['id']}). It merges "
+        "after CI passes, and only with the owner's approval unless auto-merge is on."
     )
     return "\n\n".join(parts)
 
@@ -348,10 +550,13 @@ def spec_text(project: Path, state: dict[str, Any]) -> str | None:
     return None if data is None else data.decode(errors="replace")
 
 
-def classification(project: Path, state: dict[str, Any]) -> dict[str, Any] | None:
-    """The newest classification the spec step wrote (surfaces, user_visible,
-    regression, security, ai, data, size), keeping only those fields."""
-    data = _newest_output(project, state, "classification", CLASS_CAP)
+def classification(
+    project: Path, state: dict[str, Any], step: str | None = None
+) -> dict[str, Any] | None:
+    """The newest classification a step wrote (the spec's, or the security
+    review's of the diff; any step's when `step` is None), keeping only the
+    fields the policy reads."""
+    data = _newest_output(project, state, "classification", CLASS_CAP, step)
     try:
         found = json.loads(data) if data is not None else None
     except ValueError:
@@ -361,12 +566,16 @@ def classification(project: Path, state: dict[str, Any]) -> dict[str, Any] | Non
     return {k: found[k] for k in CLASS_FIELDS if k in found}
 
 
-def _newest_output(project: Path, state: dict[str, Any], name: str, cap: int) -> bytes | None:
-    """The newest file a step wrote as output `name`. The path comes from the
-    run's receipt, which the sandbox could write, so a link or a path outside
-    the clone is not read."""
+def _newest_output(
+    project: Path, state: dict[str, Any], name: str, cap: int, step: str | None = None
+) -> bytes | None:
+    """The newest file a step (any, or `step`) wrote as output `name`. The
+    path comes from the run's receipt, which the sandbox could write, so a
+    link or a path outside the clone is not read."""
     found = None
     for attempt in state.get("attempts") or []:
+        if step is not None and attempt.get("step") != step:
+            continue
         out = (attempt.get("outputs") or {}).get(name)
         if isinstance(out, dict) and out.get("path"):
             found = str(out["path"])
@@ -466,11 +675,25 @@ def _git_out(project: Path, *args: str) -> str:
 
 
 def recover() -> None:
-    """At server start: a run whose thread died with the last server is over."""
+    """At server start: a run waiting for CI waits again, since nothing of it
+    lived in the last server but the wait; any other run whose thread died
+    with the last server is over."""
     for meta in list_runs():
-        if meta["state"] in ACTIVE:
+        if meta["state"] in ACTIVE and meta.get("stage") == "ci":
+            threading.Thread(
+                target=_resume_ci, args=(runs_root() / meta["id"],), daemon=True
+            ).start()
+        elif meta["state"] in ACTIVE:
             _update(runs_root() / meta["id"], state="interrupted", error="DuckTerm restarted")
             Sandbox(meta["id"], "runc").destroy()
+
+
+def _resume_ci(root: Path) -> None:
+    try:
+        _deliver(root)
+    except Exception as exc:  # noqa: BLE001 — any failure ends the run with its reason
+        _update(root, state="failed", error=str(exc)[:500])
+    _settle(root)
 
 
 def list_runs() -> list[dict[str, Any]]:
@@ -495,8 +718,10 @@ def list_runs() -> list[dict[str, Any]]:
             if receipt.get("failure"):
                 meta["failure"] = receipt["failure"]
             if meta["state"] == "waiting_gate":
-                meta["gate"] = pending_gate(meta_path.parent, receipt)
+                meta["gate"] = meta.get("merge_gate") or pending_gate(meta_path.parent, receipt)
             meta["classification"] = classification(meta_path.parent / "repo", receipt)
+            meta["spec_class"] = classification(meta_path.parent / "repo", receipt, step="spec")
+            meta["diff_class"] = classification(meta_path.parent / "repo", receipt, step="security")
         out.append(meta)
     return sorted(out, key=lambda m: m["started_at"], reverse=True)
 
@@ -569,7 +794,7 @@ def summary() -> dict[str, Any]:
         "available": True,
         "active": sum(1 for m in runs if m["state"] in ACTIVE),
         "waiting_gate": sum(1 for m in runs if m["state"] == "waiting_gate"),
-        "done_today": sum(1 for m in today if m["state"] == "succeeded"),
+        "done_today": sum(1 for m in today if m["state"] in ("succeeded", "merged")),
         "failed_today": sum(1 for m in today if m["state"] == "failed"),
     }
 
@@ -602,10 +827,22 @@ def pending_gate(root: Path, receipt: dict[str, Any] | None = None) -> dict[str,
 
 
 def _receipt(root: Path) -> dict[str, Any] | None:
+    """The run's receipt: its flow's, with the attempts of any flow run on the
+    side after it (fixing CI) added in order, and the newest one's current
+    step."""
     found = sorted((root / "repo" / runner.RUNS).glob("*/run.json"))
-    if not found:
+    receipts = [r for r in (_one_receipt(root, f) for f in found) if r is not None]
+    if not receipts:
         return None
-    raw = _read_capped(root, str(found[-1].relative_to(root)), RECEIPT_CAP + 1)
+    main, *later = receipts
+    for extra in later:
+        main["attempts"] = [*(main.get("attempts") or []), *(extra.get("attempts") or [])]
+        main["current"] = extra.get("current")
+    return main
+
+
+def _one_receipt(root: Path, path: Path) -> dict[str, Any] | None:
+    raw = _read_capped(root, str(path.relative_to(root)), RECEIPT_CAP + 1)
     if raw is None or len(raw) > RECEIPT_CAP:
         return None
     try:

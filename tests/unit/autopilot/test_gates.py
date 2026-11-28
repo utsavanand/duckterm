@@ -13,7 +13,7 @@ from typing import Any
 
 import pytest
 
-from duckterm.autopilot import executor, runs
+from duckterm.autopilot import delivery, executor, github_push, runs, store
 from duckterm.kits import runner
 
 SPEC = "# Fix\n\nProblem: the row cannot be collapsed.\n"
@@ -42,6 +42,10 @@ class _Steps(runner.Executor):
 
     def __init__(self, box: Any, dirs: executor.RunDirs, token: str, branch: str) -> None:
         self.box = box
+        self.dirs = dirs
+
+    # commit each step's work to the run branch, as the real executor does
+    after_step = executor.AutopilotExecutor.after_step
 
     def harness_ready(self, *_: Any, **__: Any) -> str | None:
         return None
@@ -69,6 +73,8 @@ class _Steps(runner.Executor):
             (out / "classification.json").write_text(json.dumps(self.classification))
         if step == "build":
             (Path(cwd) / "fix.txt").write_text("fixed\n")
+        if step == "fix-ci":
+            (Path(cwd) / "fix.txt").write_text(f"fixed for CI {self.calls.count('fix-ci')}\n")
         if step == "qa":
             (out / "qa.md").write_text("Pass.\n")
             failing = self.qa_fail_once and self.calls.count("qa") == 1
@@ -307,3 +313,161 @@ def test_a_review_that_sends_the_work_back_runs_again_on_the_new_build(
     assert run["state"] == "succeeded"
     assert _Steps.calls.count("build") == 2 and _Steps.calls.count("qa") == 2
     assert published == [run["id"]]
+
+
+class _GitHub:
+    """CI results to hand out in order, the pull request's head, and merges."""
+
+    def __init__(self) -> None:
+        self.ci: list[tuple[str, str]] = [("pass", "")]
+        self.pushed = 0
+        self.merged: list[str] = []
+        self.moved_to: str | None = None
+
+
+@pytest.fixture
+def merging(published: list[str], monkeypatch: pytest.MonkeyPatch) -> _GitHub:
+    from duckterm import github_projects
+    from duckterm.review import approvals
+
+    gh = _GitHub()
+
+    def publish(root: Path, meta: dict[str, Any], *_: Any) -> None:
+        published.append(meta["id"])
+        runs._update(root, pushed=True, pr={"number": 5, "url": "u", "base": "main"})
+
+    def head(root: Path) -> str:
+        return runs._git_out(root / "repo", "rev-parse", "HEAD")
+
+    monkeypatch.setattr(runs, "_publish", publish)
+    monkeypatch.setattr(github_projects, "local_token", lambda: ("gh-token", {}))
+    monkeypatch.setattr(delivery, "wait_ci", lambda repo, sha, token: gh.ci.pop(0))
+    monkeypatch.setattr(github_push, "push", lambda *a: setattr(gh, "pushed", gh.pushed + 1))
+    monkeypatch.setattr(
+        github_push,
+        "pull_head",
+        lambda repo, n, token: gh.moved_to or head(runs.runs_root() / published[0]),
+    )
+    monkeypatch.setattr(
+        github_push, "merge", lambda repo, n, sha, title, token: gh.merged.append(sha) or "m1"
+    )
+    monkeypatch.setattr(approvals, "key_status", lambda: {"enrolled": True})
+    monkeypatch.setattr(approvals, "verify", lambda payload, sig: sig == "touch-id")
+    _Steps.classification = ROUTINE
+    return gh
+
+
+def _autopilot(**over: Any) -> dict[str, Any]:
+    entry = store.create(
+        {
+            "flow": "autopilot/issue-to-merge",
+            "repo": "o/r",
+            "triggers": {"github-issue": {"labels": ["autopilot"]}},
+            **over,
+        }
+    )
+    return entry
+
+
+def _approve(run_id: str, signature: str = "touch-id") -> None:
+    payload = runs.merge_challenge(run_id)["payload"]
+    runs.merge_approve(run_id, {"payload": payload, "signature": signature})
+
+
+def test_a_routine_fix_waits_for_ci_then_asks_before_merging_in_shadow_mode(
+    merging: _GitHub,
+) -> None:
+    entry = _autopilot()
+    run = runs.get(runs.start(entry, "github-issue", {"number": 7, "title": "Row stuck"}))
+    assert run["state"] == "waiting_gate"
+    gate = run["gate"]
+    assert (gate["step"], gate["shadow"], gate["shadow_run"], gate["why"]) == (
+        "merge-gate",
+        True,
+        1,
+        "",
+    )
+    assert gate["head"] == run["ci_head"]
+    assert merging.merged == []
+
+
+def test_approving_with_touch_id_merges_at_the_approved_head_and_counts_it(
+    merging: _GitHub,
+) -> None:
+    entry = _autopilot()
+    run_id = runs.start(entry, "github-issue", {"number": 7, "title": "Row stuck"})
+    with pytest.raises(ValueError, match="Touch ID"):
+        runs.answer(run_id, {"step": "merge-gate", "answer": "approve"})
+    with pytest.raises(ValueError, match="signature"):
+        _approve(run_id, signature="forged")
+    _approve(run_id)
+    run = runs.get(run_id)
+    assert run["state"] == "merged"
+    assert merging.merged == [run["ci_head"]]
+    assert run["answers"][-1]["touch_id"] is True
+    assert store.get(entry["id"])["shadow_done"] == 1
+
+
+def test_a_push_after_approval_stops_the_merge_and_starts_the_count_over(
+    merging: _GitHub,
+) -> None:
+    entry = _autopilot()
+    store.set_shadow(entry["id"], 4)
+    run_id = runs.start(entry, "github-issue", {"number": 7, "title": "Row stuck"})
+    merging.moved_to = "f" * 40
+    _approve(run_id)
+    run = runs.get(run_id)
+    assert run["state"] == "failed" and "moved" in run["error"]
+    assert merging.merged == []
+    assert store.get(entry["id"])["shadow_done"] == 0
+
+
+def test_rejecting_a_merge_ends_the_run_with_the_pull_request_open(merging: _GitHub) -> None:
+    entry = _autopilot()
+    store.set_shadow(entry["id"], 3)
+    run_id = runs.start(entry, "github-issue", {"number": 7, "title": "Row stuck"})
+    runs.answer(run_id, {"step": "merge-gate", "answer": "reject"})
+    run = runs.get(run_id)
+    assert (run["state"], run["outcome"]) == (
+        "ended",
+        "Merge rejected; the pull request stays open",
+    )
+    assert store.get(entry["id"])["shadow_done"] == 0 and merging.merged == []
+
+
+def test_a_failed_ci_is_fixed_in_a_sandbox_pushed_and_checked_again(merging: _GitHub) -> None:
+    merging.ci = [("fail", "## tests: failure\ntest_row.py:3 assert"), ("pass", "")]
+    entry = _autopilot()
+    run = runs.get(runs.start(entry, "github-issue", {"number": 7, "title": "Row stuck"}))
+    assert run["state"] == "waiting_gate" and run["ci_fixes"] == 1
+    assert merging.pushed == 1
+    assert "fix-ci" in _Steps.calls
+    assert any("test_row.py:3" in p for p in _Steps.prompts if "fix-ci" in p)
+    assert [a["step"] for a in runs.detail(run["id"])["attempts"]][-2:] == ["fix-ci", "tests"]
+
+
+def test_ci_that_keeps_failing_ends_the_run_after_three_fixes(merging: _GitHub) -> None:
+    merging.ci = [("fail", "boom")] * 4
+    entry = _autopilot()
+    run = runs.get(runs.start(entry, "github-issue", {"number": 7, "title": "Row stuck"}))
+    assert run["state"] == "failed" and "after 3 fixes" in run["error"]
+    assert merging.merged == []
+
+
+def test_a_fix_a_path_rule_names_asks_even_with_auto_merge_on(merging: _GitHub) -> None:
+    entry = _autopilot(rules={"security": ["fix.txt"]})
+    store.set_shadow(entry["id"], 10)
+    store.update(entry["id"], {"auto_merge": "on"})
+    run = runs.get(runs.start(entry, "github-issue", {"number": 7, "title": "Row stuck"}))
+    assert run["state"] == "waiting_gate"
+    assert run["gate"]["why"] == "path rule (security): fix.txt"
+
+
+def test_with_auto_merge_on_a_routine_fix_merges_when_ci_passes(merging: _GitHub) -> None:
+    entry = _autopilot()
+    with pytest.raises(ValueError, match="after 10"):
+        store.update(entry["id"], {"auto_merge": "on"})
+    store.set_shadow(entry["id"], 10)
+    store.update(entry["id"], {"auto_merge": "on"})
+    run = runs.get(runs.start(entry, "github-issue", {"number": 7, "title": "Row stuck"}))
+    assert run["state"] == "merged" and merging.merged == [run["ci_head"]]
