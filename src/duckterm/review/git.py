@@ -351,6 +351,17 @@ def _mirror(repo: str | Path) -> tuple[Path, str] | None:
     return mirror, url
 
 
+def origin_unsupported(repo: str | Path) -> bool:
+    """True when origin is set to a URL the mirror won't fetch, such as a
+    local folder or file://, so the page can say why nothing is fetched."""
+    try:
+        root = repo_root(repo)
+        seen = run(repo, "config", "--get", "remote.origin.url").strip()
+    except ReviewGitError:
+        return False
+    return not _remote_url(_recorded_origin(root, seen))
+
+
 def _owner_git(mirror: Path, args: list[str], timeout: float) -> str:
     pairs = [("gc.auto", "0"), ("maintenance.auto", "false")]
     with _mirrors_lock:

@@ -3,6 +3,7 @@ import os
 import runpy
 from pathlib import Path
 
+from duckterm.review import git as review_git
 from duckterm.runtimes.claude_code import ClaudeCodeRuntime
 
 
@@ -20,4 +21,7 @@ def fixture_transcript(self, *, cwd, session_id):
 
 
 ClaudeCodeRuntime.locate_transcript = fixture_transcript
+# The specs push to local bare repositories; production mirrors fetch over
+# https and ssh only (see tests/conftest.py).
+review_git._REMOTE_PROTOCOLS = ("https", "ssh", "file")
 runpy.run_module("duckterm.cli", run_name="__main__")
