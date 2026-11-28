@@ -4428,11 +4428,18 @@ class Server:
         intent = ask_intents.parse(result.text, agents)
         by_id = {a["id"]: a for a in agents}
         kind = intent["intent"]
+        if kind in ask_intents.ACTIONS and messages:
+            return await self._ask_action(question, kind, intent, by_id, chat_path)
         if kind in ("act.message", "clarify") and messages:
             certain, candidates = ask_intents.agents_named(intent, ask_intents.ACT_THRESHOLD)
             text = intent["text"] or ""
             if kind == "act.message" and len(candidates) == 1 and certain and text:
-                return {"plan": {**self._oracle_agent(by_id[certain[0]]), "text": text}}
+                plan: dict[str, Any] = {**self._oracle_agent(by_id[certain[0]]), "text": text}
+                if ask_intents.is_question(text) and ask_intents.word_sets(intent):
+                    recorded = await self._already_recorded(text, intent)
+                    if recorded:
+                        plan["records"] = recorded
+                return {"plan": plan}
             return {
                 "clarify": {
                     "text": text,
@@ -4628,6 +4635,113 @@ class Server:
         prepared = fleet_questions.Prepared(prompt, tuple(read))
         answered = await asyncio.to_thread(fleet_questions.generate, prepared, summarize)
         return answered.text, read
+
+    async def _ask_action(
+        self,
+        question: str,
+        kind: str,
+        intent: dict[str, Any],
+        by_id: dict[str, dict[str, Any]],
+        chat_path: Path,
+    ) -> dict[str, Any]:
+        """A write as a plan the owner confirms in the chat; nothing runs here.
+        Merging is never a plan: approve opens the Approve screen, which
+        needs Touch ID."""
+
+        def reply(answer: str) -> dict[str, Any]:
+            exchange = oracle.append_chat(chat_path, question, answer, int(time.time() * 1000))
+            return {"answer": answer, "exchange": exchange, "sessions": [], "intent": kind}
+
+        action = ask_intents.ACTIONS[kind]
+        if action == "approve":
+            number = ask_intents.pr_number(intent)
+            if number is None:
+                return reply("Which pull request? Give its number. Nothing was done.")
+            copy, as_of, _ = await self._pr_copy()
+            if copy is None:
+                return reply(ask_intents.PR_NOT_READY)
+            row = next(
+                (r for r in copy["rows"] if (r.get("pr") or {}).get("number") == number), None
+            )
+            if row is None or row["pr"].get("state") != "open":
+                return reply(
+                    f"#{number} isn't an open pull request in the PR list (as of "
+                    f"{ask_intents._when(as_of)}). Nothing was done."
+                )
+            pr = row["pr"]
+            return {
+                "action": {
+                    "kind": "approve",
+                    "pr": {
+                        "repo": row["repo"],
+                        "number": number,
+                        "title": pr.get("title") or row["branch"],
+                        "label": row["label"],
+                        "head_sha": pr.get("head_sha"),
+                    },
+                }
+            }
+        agent, why = ask_intents.one_target(intent, by_id)
+        if agent is None:
+            return reply(why)
+        row = self.history.session(agent["id"]) or {}
+        plan: dict[str, Any] = {
+            "kind": action,
+            "agent": self._oracle_agent(agent),
+            "doing": ask_intents.doing(agent, row.get("updated_at"), int(time.time() * 1000)),
+        }
+        if action == "answer":
+            notes = [n for n in self.relay.needs_you() if n["session_key"] == agent["id"]]
+            if not notes:
+                return reply(
+                    f"{ask_intents.label(agent)} has no open question for you. Nothing was sent."
+                )
+            note = max(notes, key=lambda n: n.get("created_at") or 0)
+            choices = note.get("questions") or [{}]
+            plan["note"] = {
+                "id": note["id"],
+                "question": note.get("question")
+                or note.get("detail")
+                or choices[0].get("question"),
+            }
+            plan["text"] = intent["text"] or ""
+            if not plan["text"]:
+                return reply("What should the answer say? Nothing was sent.")
+        return {"action": plan}
+
+    async def _already_recorded(self, text: str, intent: dict[str, Any]) -> str:
+        """Records that already answer a question the owner is about to send,
+        or "" (design rule 10: check the records before asking an agent)."""
+        now = int(time.time() * 1000)
+        names = {
+            str(r["session_key"]): (
+                str(r.get("name") or r["session_key"][:8]),
+                str(r.get("grp") or ""),
+            )
+            for r in self.history.sessions()
+        }
+        words = ask_intents.word_sets(intent)
+
+        def search() -> list[dict[str, Any]]:
+            with self._read_only() as conn:
+                return ask_intents.recall(
+                    conn, words, ask_intents.phrases(intent), names, None, [], now
+                )
+
+        hits = (await asyncio.to_thread(search))[: ask_intents.RERANK_POOL]
+        sessions = self.history.sessions()
+        events, _ = await asyncio.to_thread(
+            ask_intents.repo_history, sessions, [], (now - 7 * 86_400_000, now), {}
+        )
+        sections = [
+            ("Records", "\n".join(ask_intents.hit_line(h) for h in hits)),
+            ("Merges and releases in the local clones", ask_intents.repo_lines(events)),
+        ]
+        result = await asyncio.to_thread(
+            summarize, ask_intents.records_prompt(text, sections), tier="deep"
+        )
+        answer = result.text.strip()
+        return "" if not answer or ask_intents.NOT_RECORDED in answer else answer
 
     async def _pr_copy_if_ready(self) -> tuple[int, dict[str, Any]] | None:
         """The PR copy without waiting for GitHub: a checklist mustn't take
