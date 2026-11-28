@@ -405,7 +405,7 @@ def _who(name: object, workspace: object) -> str:
 MARKDOWN = re.compile(r"([\\`*_\[\]<>!~@])")
 # GFM turns bare URLs into links too: break the scheme's "://", "mailto:"
 # and "www." (an escaped character renders as itself).
-AUTOLINK = re.compile(r"(?i):(?=//)|(?<=mailto):|(?<=xmpp):|(?<=\bwww)\.")
+AUTOLINK = re.compile(r"(?i):(?=//)|(?<=mailto):|(?<=xmpp):|(?<=www)\.")
 
 
 def plain(text: object, limit: int) -> str:

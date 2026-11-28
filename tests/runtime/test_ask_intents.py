@@ -999,6 +999,8 @@ def test_the_pr_list_reads_recent_agents_and_shows_their_text_inert(fleet, githu
     [
         ("Re-auth at https://evil.example/login", "Re-auth at https\\://evil.example/login"),
         ("see www.evil.example now", "see www\\.evil.example now"),
+        ("fix_www.evil.example/login", "fix\\_www\\.evil.example/login"),
+        ("1www.evil.example", "1www\\.evil.example"),
         ("mail a@evil.example or mailto:b", "mail a\\@evil.example or mailto\\:b"),
         ("Merge at 14:03, v0.4.224", "Merge at 14:03, v0.4.224"),
     ],
