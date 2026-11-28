@@ -4432,6 +4432,16 @@ class Server:
             return await self._ask_action(question, kind, intent, by_id, chat_path)
         if kind in ("act.message", "clarify") and messages:
             certain, candidates = ask_intents.agents_named(intent, ask_intents.ACT_THRESHOLD)
+            # The roster keeps agents that finished in the last day so they can
+            # be asked about; a message goes only to one that is running.
+            resting = [c for c in candidates if by_id[c]["state"] in AT_REST_STATES]
+            if resting and len(resting) == len(candidates):
+                who = ", ".join(ask_intents.label(by_id[c]) for c in resting)
+                answer = f"{who} isn't running, so nothing was sent."
+                exchange = oracle.append_chat(chat_path, question, answer, int(time.time() * 1000))
+                return {"answer": answer, "exchange": exchange, "sessions": resting, "intent": kind}
+            certain = [c for c in certain if c not in resting]
+            candidates = [c for c in candidates if c not in resting]
             text = intent["text"] or ""
             if kind == "act.message" and len(candidates) == 1 and certain and text:
                 plan: dict[str, Any] = {**self._oracle_agent(by_id[certain[0]]), "text": text}
@@ -4534,6 +4544,18 @@ class Server:
         )
         return contextlib.closing(conn)
 
+    async def _session_rows(self) -> list[dict[str, Any]]:
+        """Non-test session rows, read in a worker: history.sessions() adds
+        metrics per row on the loop's connection, and searches need only names
+        and checkouts."""
+
+        def rows() -> list[dict[str, Any]]:
+            with self._read_only() as conn:
+                conn.row_factory = sqlite3.Row
+                return [dict(r) for r in conn.execute("SELECT * FROM sessions WHERE NOT test")]
+
+        return await asyncio.to_thread(rows)
+
     async def _ask_history(
         self,
         question: str,
@@ -4550,7 +4572,7 @@ class Server:
         span = ask_intents.time_range(intent)
         words = ask_intents.word_sets(intent)
         keys, _ = ask_intents.agents_named(intent, ask_intents.ASK_THRESHOLD)
-        sessions = self.history.sessions()
+        sessions = await self._session_rows()
         names = {
             str(r["session_key"]): (
                 str(r.get("name") or r["session_key"][:8]),
@@ -4579,21 +4601,31 @@ class Server:
             if total > ask_intents.WIDE_BYTES:
 
                 async def one(workspace: str, group: list[str]) -> tuple[str, str]:
-                    text = fleet_questions.clip("\n".join(group), fleet_questions.MAX_PROMPT_BYTES)
+                    kept = ask_intents.newest_within(group, ask_intents.WIDE_PASS_BYTES)
                     result = await asyncio.to_thread(
                         summarize,
-                        ask_intents.workspace_pass_prompt(question, workspace, [text]),
+                        ask_intents.workspace_pass_prompt(question, workspace, kept),
                         tier="deep",
                     )
                     return workspace, result.text
 
-                passes = await asyncio.gather(*(one(w, g) for w, g in grouped.items()))
+                by_size = sorted(
+                    grouped.items(), key=lambda item: -sum(len(c.encode()) for c in item[1])
+                )
+                summarised = by_size[: ask_intents.WIDE_PASSES]
+                left = by_size[ask_intents.WIDE_PASSES :]
+                passes = await asyncio.gather(*(one(w, g) for w, g in summarised))
                 sections += [(f"Workspace {w} (summarised first)", t) for w, t in passes]
                 note = (
                     f"The {sum(len(g) for g in grouped.values())} summary chunks in this period "
                     f"were too many to read at once, so each workspace was summarised first. "
                     "Say so in the answer."
                 )
+                if left:
+                    note += (
+                        f" Only the {len(summarised)} workspaces with the most recorded were read; "
+                        f"say that these were not: {', '.join(w for w, _ in left)}."
+                    )
             else:
                 sections += [
                     (f"Summary chunks, workspace {w}", "\n".join(g)) for w, g in grouped.items()
@@ -4713,12 +4745,13 @@ class Server:
         """Records that already answer a question the owner is about to send,
         or "" (design rule 10: check the records before asking an agent)."""
         now = int(time.time() * 1000)
+        sessions = await self._session_rows()
         names = {
             str(r["session_key"]): (
                 str(r.get("name") or r["session_key"][:8]),
                 str(r.get("grp") or ""),
             )
-            for r in self.history.sessions()
+            for r in sessions
         }
         words = ask_intents.word_sets(intent)
 
@@ -4729,29 +4762,18 @@ class Server:
                 )
 
         hits = (await asyncio.to_thread(search))[: ask_intents.RERANK_POOL]
-        sessions = self.history.sessions()
         events, _ = await asyncio.to_thread(
             ask_intents.repo_history, sessions, [], (now - 7 * 86_400_000, now), {}
         )
-        sections = [
-            ("Records", "\n".join(ask_intents.hit_line(h) for h in hits)),
-            ("Merges and releases in the local clones", ask_intents.repo_lines(events)),
+        merges = [line[2:] for line in ask_intents.repo_lines(events).splitlines()]
+        records = [ask_intents.hit_line(h)[2:] for h in hits] + merges
+        sources = [ask_intents.hit_source(h) for h in hits] + [
+            "local clone: " + line for line in merges
         ]
         result = await asyncio.to_thread(
-            summarize, ask_intents.records_prompt(text, sections), tier="deep"
+            summarize, ask_intents.records_prompt(text, records), tier="deep"
         )
-        answer = result.text.strip()
-        return "" if not answer or ask_intents.NOT_RECORDED in answer else answer
-
-    async def _pr_copy_if_ready(self) -> tuple[int, dict[str, Any]] | None:
-        """The PR copy without waiting for GitHub: a checklist mustn't take
-        30 s. Starts a build when there's none or it's stale."""
-        copy: tuple[int, dict[str, Any]] | None = getattr(self, "_pr_list_copy", None)
-        if copy is None:
-            self._pr_copy_kick = asyncio.ensure_future(self._pr_copy())
-            return None
-        await self._pr_copy()
-        return copy
+        return ask_intents.cited(result.text.strip(), sources)
 
     async def _pr_copy(self) -> tuple[dict[str, Any] | None, int, bool]:
         """The PR list for every agent, as last built, with its time and
@@ -4765,7 +4787,18 @@ class Server:
         task: asyncio.Future[None] | None = getattr(self, "_pr_list_refresh", None)
         idle = task is None or task.done()
         if idle and (copy is None or now - copy[0] >= ask_intents.PR_COPY_MS):
-            members = [r for r in self.history.sessions() if not r.get("test")]
+            # Agents that are running or were updated in the last week: every
+            # session ever would read repositories nobody works in any more.
+            members = [
+                r
+                for r in self.history.sessions()
+                if not r.get("test")
+                and r.get("state") not in ("archived", "merged")
+                and (
+                    r.get("state") not in AT_REST_STATES
+                    or (r.get("updated_at") or 0) >= now - ask_intents.PR_MEMBER_MS
+                )
+            ]
 
             # Assigned before its first await, so concurrent questions share
             # one build (six cold callers once started six).
@@ -4779,7 +4812,8 @@ class Server:
                 except Exception as error:  # git, GitHub and the filesystem
                     # Kept as the copy, so questions say what failed and the
                     # next build waits PR_COPY_MS instead of running per question.
-                    result = {"rows": [], "repos": [], "error": f"{type(error).__name__}: {error}"}
+                    first = (str(error).splitlines() or [""])[0]
+                    result = {"rows": [], "repos": [], "error": f"{type(error).__name__}: {first}"}
                 self._pr_list_copy = (int(time.time() * 1000), result)
 
             task = self._pr_list_refresh = asyncio.ensure_future(rebuild())
@@ -4829,7 +4863,9 @@ class Server:
                 len(self.relay.needs_you()),
                 interrupted,
                 {str(r["session_key"]): str(r.get("grp") or "") for r in sessions},
-                ask_intents.pr_health(await self._pr_copy_if_ready()),
+                # The copy as it is, never a build: a checklist mustn't wait
+                # 30 s or read every recent agent's repositories from GitHub.
+                ask_intents.pr_health(getattr(self, "_pr_list_copy", None)),
                 now,
             )
         start, end = span or (now - 7 * 86_400_000, now)

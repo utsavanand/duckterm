@@ -103,6 +103,9 @@ def fleet(memory_rig, monkeypatch):
             "options": [],
         }
     )
+    # The rig flags its sessions as tests; here they stand in for real agents,
+    # and Ask DuckTerm leaves test sessions out.
+    history._conn.execute("UPDATE sessions SET test = 0")
     history._conn.commit()
     return server, {"x-duckterm-token": server.token}
 
@@ -160,6 +163,38 @@ def test_ask_agent_reads_newest_summary_and_what_happened_since(fleet, monkeypat
     assert "main-qa" not in prompt and "BodhBytes" not in prompt
     chat = dispatch(server, "GET", "/oracle/chat", owner)[1]["messages"]
     assert [m["a"] for m in chat] == ["The answer."]
+
+
+def test_latest_checkpoint_resolves_without_reading_retained_sources(fleet):
+    server, _ = fleet
+    history = server.history
+    whole = history.checkpoints("agent")[0]
+    with history._conn as conn:
+        conn.execute(
+            "UPDATE checkpoints SET record_json = json_set(record_json, '$.retained_sources', "
+            "json(?)) WHERE session_key = 'agent'",
+            (json.dumps([{"id": "s", "text": "x" * 1_000_000}]),),
+        )
+    latest = history.latest_checkpoint("agent")
+    assert latest["summary"] == whole["summary"] and latest["summary"]
+    assert latest["summary_state"] == whole["summary_state"] == "ready"
+    assert "retained_sources" not in latest["record"]
+    with history._conn as conn:
+        conn.execute("UPDATE checkpoints SET record_json = '{' WHERE session_key = 'agent'")
+    assert history.latest_checkpoint("agent")["summary_state"] == "unavailable"
+
+
+def test_the_classify_call_is_bounded_whatever_the_fleet_or_paste(fleet, monkeypatch):
+    server, _ = fleet
+    monkeypatch.setattr("duckterm.core.ask_intents.ROSTER_BYTES", 600)
+    with server.history._conn as conn:
+        conn.execute("UPDATE sessions SET state = 'stopped' WHERE session_key = 'main-b'")
+    agents = ask_intents.roster(server)
+    assert 0 < len(agents) < 5 and "main-b" not in {a["id"] for a in agents}
+    assert len(json.dumps(agents)) <= 600
+    prompt = ask_intents.classify_prompt("status? " + "x" * 50_000, agents, [])
+    owner_message = json.loads(prompt.split("\n")[-1])["owner_message"]
+    assert len(owner_message) == ask_intents.CLASSIFY_QUESTION_BYTES
 
 
 def test_a_role_reads_every_agent_it_names(fleet, monkeypatch):
@@ -272,6 +307,37 @@ def test_a_message_to_one_certain_agent_is_a_plan_and_two_ask_which(fleet, monke
     assert status == 200
     assert [c["folder"] for c in body["clarify"]["candidates"]] == ["duckterm-core", "BodhBytes"]
     assert server.history.session_api.open_mail("agent") == []
+
+
+def test_a_message_goes_only_to_a_running_agent(fleet, monkeypatch):
+    server, owner = fleet
+    with server.history._conn as conn:
+        conn.execute(
+            "UPDATE sessions SET state = 'stopped', updated_at = ? WHERE session_key = 'main-b'",
+            (int(time.time() * 1000),),
+        )
+    model(
+        monkeypatch,
+        {
+            "intent": "act.message",
+            "entities": [agent("main", ["main-b"], 0.95)],
+            "text": "pull main",
+        },
+    )
+    status, body = ask(server, owner, "Tell main in BodhBytes to pull main", request_key="k1")
+    assert status == 200 and "plan" not in body
+    assert body["answer"] == "main (BodhBytes) isn't running, so nothing was sent."
+    # With a running namesake, the stopped one drops out and the plan is certain.
+    model(
+        monkeypatch,
+        {
+            "intent": "act.message",
+            "entities": [agent("main", ["peer", "main-b"], 0.95)],
+            "text": "pull main",
+        },
+    )
+    status, body = ask(server, owner, "Tell main to pull main", request_key="k2")
+    assert body["plan"]["id"] == "peer"
 
 
 def test_intents_not_built_yet_answer_as_before(fleet, monkeypatch):
@@ -463,8 +529,9 @@ def test_health_is_a_checklist_of_recent_problems(fleet, monkeypatch, tmp_path, 
         "- Interrupted in the last 24 hours: 1.\n  - **crashed** (duckterm-core), 0 h ago" in answer
     )
     assert "old-crash" not in answer
-    # The PR list isn't waited for; the next checklist reads the copy built meanwhile.
-    assert "- Pull requests: not read yet; the PR list is being fetched." in answer
+    # The checklist never builds the PR list; it reads a copy a PR question built.
+    assert "- Pull requests: not read; ask which PRs need you to read them." in answer
+    assert len(github) == 0
     asyncio.run(server._pr_copy())  # each test request runs its own event loop
     answer = listed(server, owner, monkeypatch, {"intent": "ask.health", "entities": []}, "?")
     assert "): 1 with merge conflicts, 1 with CI failing, of 4 open." in answer
@@ -590,6 +657,49 @@ def test_history_finds_agent_messages_and_survives_a_bad_rerank(fleet, monkeypat
     assert "answer from main-qa-2: #500 PASS within isolated scope" in answer
 
 
+def test_probe_sessions_and_test_events_never_reach_a_history_answer(fleet, monkeypatch):
+    server, owner = fleet
+    history = server.history
+    now = int(time.time() * 1000)
+    with history._conn as conn:
+        conn.execute("UPDATE sessions SET test = 1 WHERE session_key = 'qa2'")
+    chunk(history, "peer", "Real: shipped bug reporting.", now - DAY)
+    chunk(history, "qa2", "Probe: bug reporting summary.", now - DAY)
+    memory(history, "qa2", [{"id": "m", "kind": "decision", "text": "Probe bug reporting"}], now)
+    history.folder_tasks.start("duckterm-core", "qa2", "Probe bug reporting task")
+    history._conn.commit()
+    with history._conn as conn:
+        conn.execute(
+            "INSERT INTO session_questions (id, sender, recipient, sender_name, root, question, "
+            "status, created_at, expires_at, idempotency_key, content_hash, kind) "
+            "VALUES ('q1', 'peer', 'qa2', 'main', 'duckterm-core', 'Probe bug reporting ask', "
+            "'queued', ?, 0, 'k', 'h', 'question')",
+            (now,),
+        )
+    history.record(
+        {
+            "_id": "probe-prompt",
+            "_ts": now - 1000,
+            "event_type": "UserPromptSubmit",
+            "session_key": "qa2",
+            "prompt": "Probe bug reporting prompt",
+            "test": True,
+        }
+    )
+    intent = {"intent": "ask.history", "entities": [topic("bug reporting")], "text": None}
+    answers = model(monkeypatch, intent, keep="not json")
+    status, _ = ask(server, owner, "Who built bug reporting?")
+    assert status == 200
+    records = answers[-1].split("Records:", 1)[1]
+    assert "Real: shipped bug reporting." in records
+    assert "Probe" not in records
+    assert "qa2" not in {a["id"] for a in ask_intents.roster(server)}
+    with server._read_only() as conn:
+        grouped = ask_intents.chunks_by_workspace(conn, (0, now), {})
+    assert [c for g in grouped.values() for c in g if "Probe" in c] == []
+    assert any("Real: shipped bug reporting." in c for g in grouped.values() for c in g)
+
+
 def test_legacy_digests_are_read_only_for_spans_before_they_froze(fleet, monkeypatch):
     server, owner = fleet
     with server.history._conn as conn:
@@ -696,6 +806,28 @@ def test_a_wide_question_is_summarised_per_workspace_first(fleet, monkeypatch):
     ]
     assert "Workspace duckterm-core (summarised first):\nThe answer." in answers[-1]
     assert "too many to read at once" in answers[-1]
+
+
+def test_a_wide_question_reads_only_the_largest_workspaces_and_newest_chunks(fleet, monkeypatch):
+    server, owner = fleet
+    now = int(time.time() * 1000)
+    chunk(server.history, "peer", "Old core " + "o" * 300, now - 3 * DAY)
+    chunk(server.history, "peer", "New core " + "n" * 300, now - DAY)
+    chunk(server.history, "main-b", "Bodh " + "y" * 50, now - DAY)
+    monkeypatch.setattr("duckterm.core.ask_intents.WIDE_BYTES", 100)
+    monkeypatch.setattr("duckterm.core.ask_intents.WIDE_PASSES", 2)
+    monkeypatch.setattr("duckterm.core.ask_intents.WIDE_PASS_BYTES", 400)
+    answers = model(monkeypatch, {"intent": "ask.history", "entities": [], "text": None})
+    ask(server, owner, "What did the fleet do this week?")
+    passes = {
+        a.split("'")[1]: a
+        for a in answers
+        if a.startswith("Summarise what agents in the workspace")
+    }
+    assert len(passes) == 2 and "duckterm-core" in passes
+    assert "New core" in passes["duckterm-core"] and "Old core" not in passes["duckterm-core"]
+    (left,) = {"BodhBytes", "duckterm-core", "duckterm-leadership"} - set(passes)
+    assert f"say that these were not: {left}." in answers[-1]
 
 
 def test_a_topic_without_an_agent_is_a_history_search(fleet, monkeypatch):
@@ -837,6 +969,59 @@ def test_prs_are_grouped_from_a_copy_built_once(fleet, monkeypatch, github):
 
     asyncio.run(rebuilt())
     assert len(github) >= 2 and server._pr_list_copy[0] >= at
+
+
+def test_the_pr_list_reads_recent_agents_and_shows_their_text_inert(fleet, github):
+    server, _ = fleet
+    now = int(time.time() * 1000)
+    with server.history._conn as conn:
+        conn.execute(
+            "UPDATE sessions SET state = 'stopped', updated_at = ? WHERE session_key = 'main-b'",
+            (now - 10 * DAY,),
+        )
+    asyncio.run(server._pr_copy())
+    assert "main-b" not in github[0] and "peer" in github[0]
+    row = pr_row(7, "ready", "Ready", True, "peer", "main")
+    row["pr"]["title"] = "Fix ![p](https://evil.example/p.png) [docs](https://evil.example)"
+    copy = {
+        "rows": [row],
+        "repos": [{"name": "sotto", "error": "fatal: bad token\nAuthorization: Bearer ghp_x"}],
+    }
+    answer = ask_intents.prs_list(copy, now, {"peer": ("main", "duckterm-core")}, False)
+    assert (
+        "Fix \\!\\[p\\](https\\://evil.example/p.png) \\[docs\\](https\\://evil.example)" in answer
+    )
+    assert answer.endswith("Couldn't read GitHub for sotto: fatal: bad token")
+
+
+@pytest.mark.parametrize(
+    "text, shown",
+    [
+        ("Re-auth at https://evil.example/login", "Re-auth at https\\://evil.example/login"),
+        ("see www.evil.example now", "see www\\.evil.example now"),
+        ("fix_www.evil.example/login", "fix\\_www\\.evil.example/login"),
+        ("1www.evil.example", "1www\\.evil.example"),
+        ("mail a@evil.example or mailto:b", "mail a\\@evil.example or mailto\\:b"),
+        ("Merge at 14:03, v0.4.224", "Merge at 14:03, v0.4.224"),
+    ],
+)
+def test_record_text_cannot_autolink(text, shown):
+    assert ask_intents.plain(text, 200) == shown
+
+
+def test_agent_names_are_escaped_and_cut(fleet):
+    server, _ = fleet
+    with server.history._conn as conn:
+        conn.execute(
+            "UPDATE sessions SET name = ? WHERE session_key = 'qa2'",
+            ("[x](https://evil.example) " + "n" * 48_000,),
+        )
+    agents = ask_intents.roster(server)
+    # A 48 KB name is cut, so the agents after it are still in the roster.
+    assert len(agents) == 5 and max(len(a["name"]) for a in agents) <= 80
+    named = next(a for a in agents if a["id"] == "qa2")
+    assert ask_intents.label(named).startswith("\\[x\\](https\\://evil.example) nnn")
+    assert ask_intents._who(named["name"], "w_1").endswith("** (w\\_1)")
 
 
 def test_concurrent_cold_questions_share_one_build(fleet, github):
@@ -1031,9 +1216,26 @@ def test_a_question_for_an_agent_shows_what_the_records_already_say(fleet, monke
         server, owner, "Ask release-dev if the fleet chat fix is done", request_key="k"
     )
     assert status == 200
-    assert body["plan"]["records"] == "The answer."
-    assert "Fleet chat fix #536 merged." in answers[-1]
+    # An answer that cites no record (a planted claim, or the fake's "The
+    # answer.") counts as not recorded: the Send card shows no records.
+    assert "records" not in body["plan"]
     assert answers[-1].startswith("The owner is about to ask an agent the question below.")
+    assert "\n[1] [summary · release-dev (duckterm-leadership) · recorded on " in answers[-1]
+    assert "Fleet chat fix #536 merged." in answers[-1]
+
+    def summarize(prompt, **_kw):
+        if prompt.startswith(CLASSIFY):
+            return Summary(json.dumps(intent), "cli")
+        return Summary("Yes, #536 merged [1] [9].", "cli")
+
+    monkeypatch.setattr("duckterm.server.summarize", summarize)
+    status, body = ask(
+        server, owner, "Ask release-dev if the fleet chat fix is done", request_key="k3"
+    )
+    records = body["plan"]["records"]
+    assert records.startswith("Yes, #536 merged [1] [9].\n\nFrom the records:\n- [1] summary by ")
+    assert "release-dev (duckterm-leadership), recorded on " in records
+    assert "- [9]" not in records
     # A statement isn't checked against records.
     model(monkeypatch, {**intent, "text": "rebase #446"})
     status, body = ask(server, owner, "Tell release-dev to rebase #446", request_key="k2")
