@@ -359,6 +359,57 @@ def test_a_repos_network_config_never_steers_the_owners_fetch(
         server.shutdown()
 
 
+@pytest.mark.parametrize(
+    "origin",
+    ["--upload-pack={program}", "file://{bare}", "{bare}", "ext::{program}"],
+    ids=["option", "file_url", "local_path", "ext"],
+)
+def test_an_origin_the_mirror_may_not_fetch_is_never_recorded_or_run(
+    git_repo: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, origin: str
+) -> None:
+    monkeypatch.setattr(git, "_REMOTE_PROTOCOLS", ("https", "ssh"))
+    marker = tmp_path / "ran"
+    program = tmp_path / "program.sh"
+    program.write_text(f"#!/bin/sh\ntouch {marker}\nexit 1\n")
+    program.chmod(0o755)
+    bare = tmp_path / "bare.git"
+    subprocess.run(["git", "clone", "-q", "--bare", str(git_repo), str(bare)], check=True)
+    url = origin.format(program=program, bare=bare)
+    run(git_repo, "config", "remote.origin.url", url)
+    if url.startswith("--"):  # plain git reads it as an option and runs it
+        subprocess.run(["git", "-C", str(git_repo), "fetch", url, "main"], capture_output=True)
+        assert marker.exists()
+        marker.unlink()
+    assert git.remote_heads(git_repo) is None
+    assert git.fetch(git_repo, ["main"]) == "no origin"
+    assert not marker.exists()
+    assert not git.ref_exists(git_repo, "refs/remotes/origin/main")
+    record = git.paths.home() / "mirrors" / "repos.json"
+    assert str(git_repo.resolve()) not in (record.read_text() if record.exists() else "")
+
+
+@pytest.mark.parametrize(
+    ("url", "allowed"),
+    [
+        ("https://github.com/o/r.git", True),
+        ("ssh://git@github.com/o/r.git", True),
+        ("git@github.com:o/r.git", True),
+        ("github.com:o/r", True),
+        ("-oProxyCommand=x:o/r", False),
+        ("--upload-pack=x", False),
+        ("ext::sh -c x", False),
+        ("file:///tmp/r", False),
+        ("/tmp/r", False),
+        ("http://example.com/r", False),
+    ],
+)
+def test_remote_url_allows_https_and_ssh_only(
+    monkeypatch: pytest.MonkeyPatch, url: str, allowed: bool
+) -> None:
+    monkeypatch.setattr(git, "_REMOTE_PROTOCOLS", ("https", "ssh"))
+    assert git._remote_url(url) is allowed
+
+
 def test_repositories_with_one_origin_share_a_mirror_and_see_each_others_pushes(
     git_repo: Path, tmp_path: Path
 ) -> None:

@@ -48,8 +48,11 @@ _NO_REPO_PROGRAMS = (
 # protocol.allow and protocol.<name>.allow setting. A transport can be a
 # program (ext::, a remote helper), so a call into a session's repository
 # allows none, or only a local folder (the mirror). The mirror reaches the
-# real remote; tests add http.
-_REMOTE_PROTOCOLS = ("https", "ssh", "file")
+# real remote over https or ssh; tests add http and file.
+_REMOTE_PROTOCOLS = ("https", "ssh")
+# user@host:path, git's ssh shorthand. The host can't start with "-", and
+# "name::" is a remote helper, not a host.
+_SCP_URL = re.compile(r"^(?:[^@/:\s]+@)?[A-Za-z0-9][A-Za-z0-9.-]*:(?!:)")
 # Fetching from the mirror needs no credentials, and none may be offered if
 # the repository's url.<x>.insteadOf points the mirror's path elsewhere.
 _LOCAL_FOLDER = [("credential.helper", ""), ("core.askPass", ""), ("core.sshCommand", "false")]
@@ -296,13 +299,27 @@ def tag_containing(repo: str | Path, sha: str) -> str | None:
     return tags[0] if tags else None
 
 
+def _remote_url(url: str) -> bool:
+    """A URL the mirror may fetch: an allowed scheme, or an absolute local
+    path when tests allow file. Never one that starts like an option."""
+    if url.startswith("-"):
+        return False
+    if "://" in url:
+        scheme = url.split("://", 1)[0]
+    elif _SCP_URL.match(url):
+        scheme = "ssh"
+    else:
+        scheme = "file" if url.startswith("/") else ""
+    return scheme in _REMOTE_PROTOCOLS
+
+
 def _recorded_origin(root: str, seen: str) -> str:
     """The origin URL first seen for this clone. A session can change its
     origin later; the owner's credentials keep going to the first one."""
     record = paths.home() / "mirrors" / "repos.json"
     with _mirrors_lock:
         repos: dict[str, str] = json.loads(private_read(record) or "{}")
-        if root not in repos and seen:
+        if root not in repos and _remote_url(seen):
             repos[root] = seen
             private_write(record, json.dumps(repos, indent=2, sort_keys=True))
         return repos.get(root, "")
@@ -323,7 +340,7 @@ def _mirror(repo: str | Path) -> tuple[Path, str] | None:
     except ReviewGitError:
         return None
     url = _recorded_origin(root, seen)
-    if not url:
+    if not _remote_url(url):
         return None
     tail = re.sub(r"[^A-Za-z0-9_.-]", "_", url.rstrip("/").rsplit("/", 1)[-1])[:40]
     name = f"{hashlib.sha256(url.encode()).hexdigest()[:16]}-{tail}"
@@ -352,7 +369,7 @@ def remote_heads(repo: str | Path) -> dict[str, str] | None:
     if mirror is None:
         return None
     try:
-        out = _owner_git(mirror[0], ["ls-remote", "--heads", mirror[1]], 20)
+        out = _owner_git(mirror[0], ["ls-remote", "--heads", "--end-of-options", mirror[1]], 20)
     except ReviewGitError:
         return None
     heads: dict[str, str] = {}
@@ -375,7 +392,14 @@ def fetch(repo: str | Path, refs: list[str], *, tags: bool = True) -> str | None
     try:
         _owner_git(
             mirror[0],
-            ["fetch", "--quiet", "--no-recurse-submodules", *tag_args, mirror[1]]
+            [
+                "fetch",
+                "--quiet",
+                "--no-recurse-submodules",
+                *tag_args,
+                "--end-of-options",
+                mirror[1],
+            ]
             + [f"+refs/heads/{ref}:refs/heads/{ref}" for ref in refs],
             25,
         )
@@ -385,6 +409,7 @@ def fetch(repo: str | Path, refs: list[str], *, tags: bool = True) -> str | None
             "--quiet",
             "--no-recurse-submodules",
             *tag_args,
+            "--end-of-options",
             str(mirror[0]),
             *[f"+refs/heads/{ref}:refs/remotes/origin/{ref}" for ref in refs],
             timeout=25,
