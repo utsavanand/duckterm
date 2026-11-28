@@ -77,7 +77,15 @@ from duckterm import (
 from duckterm.agents import tmux
 from duckterm.agents.terminal import available_terminals, open_in_terminal
 from duckterm.autopilot import api as ap_api
-from duckterm.core import events, fleet_pulse, fleet_questions, oracle, oracle_intent, support
+from duckterm.core import (
+    ask_intents,
+    events,
+    fleet_pulse,
+    fleet_questions,
+    oracle,
+    oracle_intent,
+    support,
+)
 from duckterm.core.approvals import Approval, ApprovalRegistry
 from duckterm.core.backup_jobs import BackupJobs
 from duckterm.core.eventbus import EventBus
@@ -4406,6 +4414,262 @@ class Server:
             }
         return {"plan": {**by_id[intent["session_id"]], "text": intent["text"]}}
 
+    async def _ask_intents(self, question: str, messages: bool) -> dict[str, Any] | None:
+        """Classify, resolve, then read only what the intent needs. None means
+        the intent isn't built yet, so the caller answers as before."""
+        agents = ask_intents.roster(self)
+        chat_path = paths.home() / "oracle-chat.json"
+        prior = oracle.load_chat(chat_path)
+        result = await asyncio.to_thread(
+            summarize, ask_intents.classify_prompt(question, agents, prior), tier="fast"
+        )
+        if not result.text:
+            return None
+        intent = ask_intents.parse(result.text, agents)
+        by_id = {a["id"]: a for a in agents}
+        kind = intent["intent"]
+        if kind in ("act.message", "clarify") and messages:
+            certain, candidates = ask_intents.agents_named(intent, ask_intents.ACT_THRESHOLD)
+            text = intent["text"] or ""
+            if kind == "act.message" and len(candidates) == 1 and certain and text:
+                return {"plan": {**self._oracle_agent(by_id[certain[0]]), "text": text}}
+            return {
+                "clarify": {
+                    "text": text,
+                    "candidates": [self._oracle_agent(by_id[c]) for c in candidates],
+                }
+            }
+        if kind in ask_intents.LIST_INTENTS:
+            answer = await self._ask_list(kind, intent, by_id)
+            exchange = oracle.append_chat(chat_path, question, answer, int(time.time() * 1000))
+            return {"answer": answer, "exchange": exchange, "sessions": [], "intent": kind}
+        types = {e["type"] for e in intent["entities"]}
+        if kind == "ask.agent" and "agent" not in types and "topic" in types:
+            # "Which agent worked on X" names a topic, not an agent: find the agents.
+            kind = "ask.history"
+        if kind == "ask.history":
+            answer, read = await self._ask_history(question, intent, by_id, prior)
+            if not answer:
+                return None
+            exchange = oracle.append_chat(chat_path, question, answer, int(time.time() * 1000))
+            return {"answer": answer, "exchange": exchange, "sessions": read, "intent": kind}
+        if kind not in ("ask.agent", "ask.fleet"):
+            return None
+        reading = agents
+        if kind == "ask.agent":
+            certain, candidates = ask_intents.agents_named(intent, ask_intents.ASK_THRESHOLD)
+            if not certain or len(certain) > ask_intents.MAX_AGENTS_READ:
+                said = next((e["said"] for e in intent["entities"] if e["type"] == "agent"), "")
+                answer = ask_intents.clarify_answer(said, [by_id[c] for c in candidates])
+                exchange = oracle.append_chat(chat_path, question, answer, int(time.time() * 1000))
+                return {"answer": answer, "exchange": exchange, "sessions": candidates}
+            reading = [by_id[c] for c in certain]
+            context = "\n\n".join([await ask_intents.agent_context(self, a) for a in reading])
+        else:
+            context = ask_intents.fleet_context(self, agents)
+        prompt = ask_intents.answer_prompt(
+            question,
+            fleet_questions.clip(context, fleet_questions.MAX_PROMPT_BYTES - 32 * 1024),
+            prior,
+            kind,
+        )
+        prepared = fleet_questions.Prepared(prompt, tuple(a["id"] for a in reading))
+        answered = await asyncio.to_thread(fleet_questions.generate, prepared, summarize)
+        if not answered.text:
+            return None
+        exchange = oracle.append_chat(chat_path, question, answered.text, int(time.time() * 1000))
+        return {
+            "answer": answered.text,
+            "exchange": exchange,
+            "sessions": [a["id"] for a in reading],
+            "backend": answered.backend,
+            "intent": kind,
+        }
+
+    def _read_only(self) -> contextlib.closing[sqlite3.Connection]:
+        """A read-only connection for a worker: history searches scan tens of
+        MB of summaries and must not run on the loop's connection."""
+        conn = sqlite3.connect(
+            self.history.path.resolve().as_uri() + "?mode=ro", uri=True, timeout=5
+        )
+        return contextlib.closing(conn)
+
+    async def _ask_history(
+        self,
+        question: str,
+        intent: dict[str, Any],
+        by_id: dict[str, dict[str, Any]],
+        prior: list[dict[str, Any]],
+    ) -> tuple[str, list[str]]:
+        """The cascade for questions about the past: word recall over every
+        stage, a fast rerank, then one answer. A question with no topic ("what
+        did the fleet do this week") reads every summary chunk in the span,
+        per workspace first when it is too much for one answer."""
+        now = int(time.time() * 1000)
+        span = ask_intents.time_range(intent)
+        words = ask_intents.word_sets(intent)
+        keys, _ = ask_intents.agents_named(intent, ask_intents.ASK_THRESHOLD)
+        sessions = self.history.sessions()
+        names = {
+            str(r["session_key"]): (
+                str(r.get("name") or r["session_key"][:8]),
+                str(r.get("grp") or ""),
+            )
+            for r in sessions
+        }
+        owners = {branch: key for (_, branch), key in (await self._branch_owners(False)).items()}
+        repo_span = span or (now - 7 * 86_400_000, now)
+        events, commits = await asyncio.to_thread(
+            ask_intents.repo_history, sessions, words, repo_span, owners
+        )
+        sections = [("Merges and releases in the local clones", ask_intents.repo_lines(events))]
+        read = sorted({k for k in keys})
+        note = ""
+        if not words:
+
+            def chunks() -> dict[str, list[str]]:
+                with self._read_only() as conn:
+                    return ask_intents.chunks_by_workspace(conn, repo_span, names)
+
+            grouped = await asyncio.to_thread(chunks)
+            total = sum(len(c.encode()) for group in grouped.values() for c in group)
+            if total > ask_intents.WIDE_BYTES:
+
+                async def one(workspace: str, group: list[str]) -> tuple[str, str]:
+                    text = fleet_questions.clip("\n".join(group), fleet_questions.MAX_PROMPT_BYTES)
+                    result = await asyncio.to_thread(
+                        summarize,
+                        ask_intents.workspace_pass_prompt(question, workspace, [text]),
+                        tier="deep",
+                    )
+                    return workspace, result.text
+
+                passes = await asyncio.gather(*(one(w, g) for w, g in grouped.items()))
+                sections += [(f"Workspace {w} (summarised first)", t) for w, t in passes]
+                note = (
+                    f"The {sum(len(g) for g in grouped.values())} summary chunks in this period "
+                    f"were too many to read at once, so each workspace was summarised first. "
+                    "Say so in the answer."
+                )
+            else:
+                sections += [
+                    (f"Summary chunks, workspace {w}", "\n".join(g)) for w, g in grouped.items()
+                ]
+        else:
+
+            def search() -> list[dict[str, Any]]:
+                with self._read_only() as conn:
+                    return ask_intents.recall(
+                        conn, words, ask_intents.phrases(intent), names, span, keys, now
+                    )
+
+            hits = await asyncio.to_thread(search)
+            pool = hits[: ask_intents.RERANK_POOL]
+            if pool:
+                ranked = await asyncio.to_thread(
+                    summarize, ask_intents.rerank_prompt(question, pool), tier="fast"
+                )
+                keep = ask_intents.parse_rerank(ranked.text, len(pool))
+                pool = [pool[i] for i in keep] if keep is not None else pool[:15]
+            read = sorted({h["key"] for h in pool} | set(keys))
+            searched = " or ".join("“" + " ".join(w) + "”" for w in words)
+            note = (
+                f"Searched for {searched} in memory items, summary chunks, tasks, agent "
+                f"messages, prompts and replies from the last {ask_intents.PROMPT_DAYS} days, "
+                "digests from before Oct 12, and commit messages"
+                + (
+                    f", for {', '.join(ask_intents.label(by_id[k]) for k in keys if k in by_id)}"
+                    if keys
+                    else ""
+                )
+                + f"; {len(hits)} matched by words and {len(pool)} were kept as on topic."
+            )
+            sections += [
+                ("Records", "\n".join(ask_intents.hit_line(h) for h in pool)),
+                ("Commits", "\n".join(commits)),
+            ]
+        prompt = ask_intents.history_prompt(question, sections, prior, note)
+        prepared = fleet_questions.Prepared(prompt, tuple(read))
+        answered = await asyncio.to_thread(fleet_questions.generate, prepared, summarize)
+        return answered.text, read
+
+    async def _ask_list(
+        self, kind: str, intent: dict[str, Any], by_id: dict[str, dict[str, Any]]
+    ) -> str:
+        """Answers that are records: shown as they are, no answer call."""
+        now = int(time.time() * 1000)
+        span = ask_intents.time_range(intent)
+        if kind == "ask.needs_you":
+            return ask_intents.needs_you_list(self.relay.needs_you(), now)
+        if kind == "ask.artifacts":
+            words = ask_intents.word_sets(intent)
+            rows = self.history.artifacts.find_titles(words)
+            _, mentioned = ask_intents.agents_named(intent, 0)
+            return ask_intents.artifacts_list(rows, words, [by_id[k] for k in mentioned])
+        if kind == "ask.work":
+            workspace = next(
+                (e["id"] for e in intent["entities"] if e["type"] == "workspace" and e["id"]),
+                None,
+            )
+            return ask_intents.work_list(self.history.folder_tasks.list_tasks(), now, workspace)
+        if kind == "ask.usage":
+            days = 7 if span is None else max(1, min(36500, -(-(now - span[0]) // 86_400_000)))
+            return ask_intents.usage_table(await self._token_report(days), days)
+        if kind == "ask.health":
+            from duckterm.core import checkpoint_health
+
+            sessions = self.history.sessions()
+            interrupted = [
+                r
+                for r in sessions
+                if r.get("state") == "interrupted"
+                and now - (r.get("updated_at") or 0) < ask_intents.RECENTLY_FINISHED_MS
+            ]
+            return ask_intents.health_list(
+                checkpoint_health.report(self.history._conn, now),
+                len(self.relay.needs_you()),
+                interrupted,
+                {str(r["session_key"]): str(r.get("grp") or "") for r in sessions},
+                now,
+            )
+        start, end = span or (now - 7 * 86_400_000, now)
+        rows = [
+            dict(r)
+            for r in self.history._conn.execute(
+                "SELECT recipient, question, status, answer, created_at FROM session_questions "
+                "WHERE sender = 'owner' AND created_at >= ? AND created_at <= ? "
+                "ORDER BY created_at DESC",
+                (start, end),
+            )
+        ]
+        names = {
+            str(r["session_key"]): (
+                str(r.get("name") or r["session_key"][:8]),
+                str(r.get("grp") or ""),
+            )
+            for r in self.history.sessions()
+        }
+        label = (
+            "in the last 7 days"
+            if span is None
+            else f"between {ask_intents._when(start)} and {ask_intents._when(end)}"
+        )
+        sent = ask_intents.sent_list(rows, names, now, label)
+        # A read-only list: every agent the classifier offered, however sure.
+        _, keys = ask_intents.agents_named(intent, 0)
+        if not keys and span is None:
+            return sent
+
+        def prompts() -> list[tuple[str, int, str, bool]]:
+            with self._read_only() as conn:
+                return ask_intents.owner_prompts(conn, keys, (start, end))
+
+        return sent + "\n\n" + ask_intents.prompt_lines(await asyncio.to_thread(prompts), names)
+
+    @staticmethod
+    def _oracle_agent(agent: dict[str, Any]) -> dict[str, str]:
+        return {"id": agent["id"], "name": agent["name"], "folder": agent["workspace"]}
+
     async def _fleet_ask(self, writer: asyncio.StreamWriter, body: bytes) -> None:
         """Route explicit folder messages; answer other questions from session digests."""
         try:
@@ -4433,7 +4697,30 @@ class Server:
         if not question:
             await _write_json(writer, 400, {"error": "question required"})
             return
-        if folder is None and "request_key" in req and self.edition.includes("oracle_messages"):
+        classified = False
+        if folder is None and self.edition.includes("ask_intents"):
+            messages = "request_key" in req and self.edition.includes("oracle_messages")
+            if messages and not (
+                isinstance(req["request_key"], str)
+                and re.fullmatch(r"[A-Za-z0-9_-]{1,59}", req["request_key"])
+            ):
+                await _write_json(writer, 400, {"error": "Invalid request_key"})
+                return
+            try:
+                routed = await self._ask_intents(question, messages)
+            except APIError as exc:
+                await _write_json(writer, exc.status, {"error": str(exc)})
+                return
+            if routed is not None:
+                await _write_json(writer, 200, routed)
+                return
+            classified = True
+        if (
+            folder is None
+            and not classified
+            and "request_key" in req
+            and self.edition.includes("oracle_messages")
+        ):
             key = req["request_key"]
             if not isinstance(key, str) or not re.fullmatch(r"[A-Za-z0-9_-]{1,59}", key):
                 await _write_json(writer, 400, {"error": "Invalid request_key"})
@@ -5258,18 +5545,20 @@ class Server:
         except ValueError:
             await _write_json(writer, 400, {"error": "days must be 1..36500 or all"})
             return
+        result = await self._token_report(
+            days,
+            agent=params.get("agent", [""])[0],
+            folder=params.get("folder", [""])[0],
+            session=params.get("session", [""])[0],
+        )
+        await _write_json(writer, 200, result)
+
+    async def _token_report(self, days: int | None, **filters: str) -> dict[str, Any]:
         async with self._tokens_lock:
             identities = await asyncio.to_thread(self._token_identities)
-            result = await asyncio.to_thread(
-                self._tokens.analytics,
-                days,
-                time.time(),
-                identities,
-                agent=params.get("agent", [""])[0],
-                folder=params.get("folder", [""])[0],
-                session=params.get("session", [""])[0],
+            return await asyncio.to_thread(
+                lambda: self._tokens.analytics(days, time.time(), identities, **filters)
             )
-        await _write_json(writer, 200, result)
 
     async def _mail_analytics(
         self, writer: asyncio.StreamWriter, headers: dict[str, str], query: str

@@ -767,6 +767,50 @@ class HistoryStore:
             out.append(resolve_checkpoint(self._conn, key, d))
         return out
 
+    def latest_checkpoint(self, key: str) -> dict[str, Any] | None:
+        """The newest checkpoint only. checkpoints() resolves every one, which
+        costs a revision read per checkpoint when only the newest is wanted."""
+        row = self._conn.execute(
+            "SELECT id, label, summary, record_json, markdown_path, created_at "
+            "FROM checkpoints WHERE session_key = ? ORDER BY created_at DESC LIMIT 1",
+            (key,),
+        ).fetchone()
+        if row is None:
+            return None
+        d = dict(row)
+        try:
+            d["record"] = json.loads(d.pop("record_json"))
+        except (ValueError, TypeError):
+            d["record"] = {"format": "unreadable"}
+        return resolve_checkpoint(self._conn, key, d)
+
+    def since_checkpoint(self, key: str, after: int, max_bytes: int) -> list[tuple[int, str, str]]:
+        """Prompts and finished replies after `after` (ms), newest kept when
+        they exceed max_bytes, returned oldest first as (ts, kind, text). Each
+        text is cut to a quarter of the budget so one pasted log can't crowd
+        out the rest."""
+        rows = self._conn.execute(
+            "SELECT ts, event_type, json_extract(payload_json, '$.prompt') AS prompt, "
+            "json_extract(payload_json, '$.last_assistant_message') AS reply FROM events "
+            "WHERE session_key = ? AND ts > ? AND event_type IN ('UserPromptSubmit', 'Stop') "
+            "ORDER BY ts DESC",
+            (key, after),
+        )
+        out: list[tuple[int, str, str]] = []
+        used = 0
+        for row in rows:
+            prompt = row["event_type"] == "UserPromptSubmit"
+            text = row["prompt"] if prompt else row["reply"]
+            if not isinstance(text, str) or not text.strip():
+                continue
+            text = text.encode()[: max_bytes // 4].decode(errors="ignore")
+            used += len(text.encode())
+            if used > max_bytes:
+                break
+            out.append((row["ts"], "prompt" if prompt else "reply", text))
+        out.reverse()
+        return out
+
     def events_for(self, key: str, limit: int = 200) -> list[dict[str, Any]]:
         """The most recent events for a session, oldest-first, for building a
         checkpoint record."""

@@ -81,3 +81,13 @@ it("still sends a typed name that only one session has", async () => {
   await one.send();
   expect(api.messageSession).toHaveBeenCalledWith("k-dev-a", "ship it?", "inbox", expect.any(String), "@DEV ship it?");
 });
+
+it("renders a hostile title in a saved answer without fetching or styling", async () => {
+  vi.mocked(api.oracleChat).mockResolvedValue({
+    messages: [{ q: "where's the spec?", a: "- Spec ![p](https://evil.example/p.png) <style>body{display:none}</style> **by ui-dev**", at: 1 }],
+  });
+  const { view } = await chat();
+  expect((await screen.findByText("by ui-dev")).tagName).toBe("STRONG");
+  expect(view.container.querySelector(".rd-home-a img")).toBeNull();
+  expect(view.container.querySelector(".rd-home-a style")).toBeNull();
+});

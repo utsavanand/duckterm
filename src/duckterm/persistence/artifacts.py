@@ -79,6 +79,18 @@ BEGIN DELETE FROM artifact_metadata WHERE session_key = OLD.session_key; END;
 FIELDS = "id, session_key, title, source_path, media_type, size, sha256, created_at, updated_at"
 
 
+def match_words(column: str, word_sets: list[list[str]]) -> tuple[str, list[str]]:
+    """SQL that is true when the column holds every word of any one set,
+    case-insensitively (LIKE ignores ASCII case), with its parameters."""
+    clauses, params = [], []
+    for words in word_sets:
+        clauses.append("(" + " AND ".join(f"{column} LIKE ? ESCAPE '\\'" for _ in words) + ")")
+        for word in words:
+            escaped = word.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            params.append(f"%{escaped}%")
+    return " OR ".join(clauses), params
+
+
 class ArtifactError(ValueError):
     def __init__(self, status: int, message: str) -> None:
         self.status = status
@@ -249,6 +261,45 @@ class ArtifactStore:
                 rows.append(snapshot)
         ordered = sorted(rows, key=lambda row: (-row["updated_at"], row["id"]))
         return ordered if limit < 0 else ordered[:limit]
+
+    def find_titles(
+        self, word_sets: builtins.list[builtins.list[str]], limit: int = 50
+    ) -> builtins.list[dict[str, Any]]:
+        """Artifacts in every workspace, removed ones included, whose title has
+        every word of any one set. The match runs before the limit, so an old
+        artifact isn't hidden behind newer ones the way list_folder's 500 rows
+        hide it (1,186 artifacts on the owner's machine)."""
+
+        # Bounded under SQLite's parameter limit whatever the caller passes.
+        word_sets = [w[:6] for w in word_sets if w][:24]
+        if not word_sets:
+            return []
+        fields = ", ".join("a." + field.strip() for field in FIELDS.split(","))
+        live, params = match_words("a.title", word_sets)
+        rows = [
+            self.describe(dict(row))
+            for row in self.conn.execute(
+                f"SELECT {fields}, COALESCE(NULLIF(s.name, ''), s.session_key) AS session_name, "
+                "s.state AS session_state, s.grp AS folder FROM artifacts a "
+                f"JOIN sessions s ON s.session_key = a.session_key WHERE {live} "
+                "ORDER BY a.updated_at DESC, a.id LIMIT ?",
+                (*params, limit),
+            )
+        ]
+        removed, params = match_words("json_extract(m.snapshot_json, '$.title')", word_sets)
+        for row in self.conn.execute(
+            "SELECT m.snapshot_json, m.removed_at, COALESCE(NULLIF(s.name, ''), s.session_key) "
+            "AS session_name, s.state AS session_state, s.grp AS folder FROM artifact_metadata m "
+            "JOIN sessions s ON s.session_key = m.session_key "
+            f"WHERE m.removed_at IS NOT NULL AND ({removed}) ORDER BY m.removed_at DESC LIMIT ?",
+            (*params, limit),
+        ):
+            snapshot = json.loads(row["snapshot_json"])
+            snapshot.update(
+                {key: row[key] for key in ("removed_at", "session_name", "session_state", "folder")}
+            )
+            rows.append(snapshot)
+        return sorted(rows, key=lambda row: (-row["updated_at"], row["id"]))[:limit]
 
     def describe(self, row: dict[str, Any]) -> dict[str, Any]:
         meta = self.conn.execute(
