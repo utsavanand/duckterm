@@ -6,6 +6,7 @@ waits on the owner. Only the model is faked; records are real."""
 import asyncio
 import base64
 import json
+import subprocess
 import time
 
 import pytest
@@ -20,6 +21,7 @@ from duckterm.llm.summarizer import Summary
 __all__ = ["memory_rig"]
 
 CLASSIFY = "Classify the owner's latest message in DuckTerm's Ask DuckTerm chat."
+RERANK = "Which of these numbered snippets are actually about"
 
 
 def session(history, key, name, group, tmp, state_event="Stop"):
@@ -104,14 +106,17 @@ def fleet(memory_rig, monkeypatch):
     return server, {"x-duckterm-token": server.token}
 
 
-def model(monkeypatch, intent):
-    """The classifier returns `intent`; the answer call returns fixed text."""
+def model(monkeypatch, intent, keep=None):
+    """The classifier returns `intent`; the reranker keeps `keep` (a JSON
+    value, or raw text); the answer call returns fixed text."""
     answers = []
 
     def summarize(prompt, **_kw):
         if prompt.startswith(CLASSIFY):
             return Summary(json.dumps(intent), "cli")
         answers.append(prompt)
+        if prompt.startswith(RERANK):
+            return Summary(keep if isinstance(keep, str) else json.dumps({"keep": keep}), "cli")
         return Summary("The answer.", "cli")
 
     monkeypatch.setattr("duckterm.server.summarize", summarize)
@@ -270,8 +275,8 @@ def test_a_message_to_one_certain_agent_is_a_plan_and_two_ask_which(fleet, monke
 
 def test_intents_not_built_yet_answer_as_before(fleet, monkeypatch):
     server, owner = fleet
-    answers = model(monkeypatch, {"intent": "ask.history", "entities": [], "text": None})
-    status, body = ask(server, owner, "What shipped yesterday?", request_key="k3")
+    answers = model(monkeypatch, {"intent": "act.rule", "entities": [], "text": None})
+    status, body = ask(server, owner, "Always let QA's reads through", request_key="k3")
     assert status == 200 and "intent" not in body
     # The old digest prompt ran, once; the old router did not classify again.
     [prompt] = answers
@@ -471,3 +476,270 @@ def test_sent_lists_owner_messages_with_unanswered_counted(fleet, monkeypatch):
     )
     assert "to **main-qa-2** (duckterm-core)" in lines[1] and "“Run the soak test”" in lines[2]
     assert "to **main-qa** (duckterm-core)" in lines[3]
+
+
+# ── Step 3: history ──
+
+DAY = 86_400_000
+
+
+def chunk(history, key, prose, at, identity=None):
+    """A summary chunk as the checkpoint writer stores it (only the fields read)."""
+    identity = identity or f"chunk-{key}-{at}"
+    with history._conn as conn:
+        conn.execute(
+            "INSERT INTO digest_items (id, session_key, bucket, text, created_at, updated_at) "
+            "VALUES (?, ?, 'summary_revision_v1', ?, ?, ?)",
+            (identity, key, json.dumps({"summary": prose, "source_at": at}), at, at),
+        )
+    return identity
+
+
+def memory(history, key, items, at):
+    with history._conn as conn:
+        conn.execute(
+            "INSERT INTO digest_items (id, session_key, bucket, text, created_at, updated_at) "
+            "VALUES (?, ?, 'memory_items_v1', ?, ?, ?)",
+            (
+                f"mem-{key}-{at}",
+                key,
+                json.dumps({"format": "memory_items_v1", "items": items}),
+                at,
+                at,
+            ),
+        )
+
+
+def topic(said, *terms):
+    return {"type": "topic", "said": said, "terms": list(terms), "confidence": 0.9}
+
+
+def test_history_ranks_distilled_whole_phrase_records_first_with_recorded_dates(fleet, monkeypatch):
+    server, owner = fleet
+    history = server.history
+    now = int(time.time() * 1000)
+    old = chunk(history, "peer", "Reviewed the approval flow.", now - 10 * DAY)
+    new = chunk(history, "qa1", "Approval follow-up.", now - 2 * DAY)
+    memory(
+        history,
+        "peer",
+        [
+            {
+                "id": "a",
+                "kind": "decision",
+                "text": "Owner rejected Touch ID for approvals",
+                "since": old,
+            }
+        ],
+        now - 10 * DAY,
+    )
+    memory(
+        history,
+        "qa1",
+        [
+            {
+                "id": "b",
+                "kind": "decision",
+                "text": "Owner chose Touch ID as the owner-only boundary",
+                "since": new,
+            }
+        ],
+        now - 2 * DAY,
+    )
+    # Substring recall brings this in ("face" in "interface"); ranking puts it last.
+    chunk(history, "qa2", "Polished the interface of the face panel.", now - DAY)
+    intent = {"intent": "ask.history", "entities": [topic("Touch ID", "Face ID")], "text": None}
+    answers = model(monkeypatch, intent, keep=[0, 1])
+    status, body = ask(server, owner, "When did we decide Touch ID?")
+    assert status == 200 and body["intent"] == "ask.history"
+    rerank, answer = answers
+    snippets = json.loads(rerank.split("\n", 1)[1])["snippets"]
+    assert [s["source"] for s in snippets[:2]] == ["memory decision", "memory decision"]
+    assert snippets[-1]["text"].startswith("Polished the interface")
+    assert "[memory decision · main-qa (duckterm-core) · recorded on " in answer
+    assert "[memory decision · main (duckterm-core) · recorded on " in answer
+    assert "interface" not in answer.split("Records:", 1)[1]
+    assert "the newest wins" in answer
+    assert "Searched for “touch” or “face”" in answer
+
+
+def test_history_finds_agent_messages_and_survives_a_bad_rerank(fleet, monkeypatch):
+    server, owner = fleet
+    headers = enroll(server.history, "qa2", "duckterm-core")
+    call(server.history, headers, "PATCH", "/self", {"activity": "QA"})
+    with server.history._conn as conn:
+        conn.execute(
+            "INSERT INTO session_questions (id, sender, recipient, sender_name, root, question, "
+            "status, answer, created_at, expires_at, idempotency_key, content_hash, kind) "
+            "VALUES ('q1', 'agent', 'qa2', 'release-dev', 'duckterm-core', 'QA #500 please', "
+            "'answered', '#500 PASS within isolated scope', ?, 0, 'k', 'h', 'question')",
+            (int(time.time() * 1000),),
+        )
+    intent = {"intent": "ask.history", "entities": [topic("#500 QA", "500")], "text": None}
+    answers = model(monkeypatch, intent, keep="not json")
+    status, _ = ask(server, owner, "What did QA say about #500?")
+    assert status == 200
+    answer = answers[-1]
+    assert "[agent message · release-dev (duckterm-leadership)" in answer
+    assert "answer from main-qa-2: #500 PASS within isolated scope" in answer
+
+
+def test_legacy_digests_are_read_only_for_spans_before_they_froze(fleet, monkeypatch):
+    server, owner = fleet
+    with server.history._conn as conn:
+        conn.execute(
+            "INSERT INTO digest_items (id, session_key, bucket, text, created_at, updated_at) "
+            "VALUES ('d1', 'peer', 'deliverables', 'Bug reporting UI shipped in v0.4.113', ?, ?)",
+            (1791000000000, 1791000000000),
+        )
+    entities = [topic("bug reporting")]
+    answers = model(
+        monkeypatch, {"intent": "ask.history", "entities": entities, "text": None}, keep=[0]
+    )
+    ask(server, owner, "Who built bug reporting?")
+    assert "[legacy deliverables · main (duckterm-core)" in answers[-1]
+    later = {
+        "type": "time",
+        "said": "this week",
+        "from": "2026-11-23T00:00:00-08:00",
+        "to": "2026-11-28T00:00:00-08:00",
+    }
+    answers = model(
+        monkeypatch,
+        {"intent": "ask.history", "entities": [*entities, later], "text": None},
+        keep=[0],
+    )
+    ask(server, owner, "Who built bug reporting this week?")
+    assert "legacy deliverables" not in answers[-1]
+
+
+def test_merges_and_releases_name_the_agent_whose_branch_merged(fleet, monkeypatch, tmp_path):
+    server, owner = fleet
+    repo = tmp_path / "repo"
+
+    def git(*args):
+        subprocess.run(
+            ["git", "-c", "tag.gpgsign=false", "-c", "commit.gpgsign=false", *args],
+            cwd=repo,
+            check=True,
+            capture_output=True,
+        )
+
+    repo.mkdir()
+    git("init", "-q", "-b", "main")
+    git("-c", "user.email=a@b", "-c", "user.name=a", "commit", "-q", "--allow-empty", "-m", "start")
+    git("checkout", "-q", "-b", "feat-x")
+    git(
+        "-c",
+        "user.email=a@b",
+        "-c",
+        "user.name=a",
+        "commit",
+        "-q",
+        "--allow-empty",
+        "-m",
+        "Add bug reporting",
+    )
+    git("checkout", "-q", "main")
+    git(
+        "-c",
+        "user.email=a@b",
+        "-c",
+        "user.name=a",
+        "merge",
+        "-q",
+        "--no-ff",
+        "feat-x",
+        "-m",
+        "Merge pull request #12 from u/feat-x",
+        "-m",
+        "Bug reporting",
+    )
+    git("tag", "v1.0")
+    with server.history._conn as conn:
+        conn.execute(
+            "UPDATE sessions SET cwd = ?, branch = 'feat-x', updated_at = ? "
+            "WHERE session_key = 'qa1'",
+            (str(repo), int(time.time() * 1000)),
+        )
+    answers = model(
+        monkeypatch,
+        {"intent": "ask.history", "entities": [topic("bug reporting")], "text": None},
+        keep=[],
+    )
+    ask(server, owner, "Who shipped bug reporting?")
+    answer = answers[-1]
+    assert "- merged #12 Bug reporting in repo by main-qa (duckterm-core, claude-code)" in answer
+    assert "- release v1.0 in repo (1 merged PR)" in answer
+    assert "- commit in repo, " in answer and ": Add bug reporting" in answer
+
+
+def test_a_wide_question_is_summarised_per_workspace_first(fleet, monkeypatch):
+    server, owner = fleet
+    now = int(time.time() * 1000)
+    chunk(server.history, "peer", "Core work " + "x" * 200, now - DAY)
+    chunk(server.history, "main-b", "Bodh work " + "y" * 200, now - DAY)
+    monkeypatch.setattr("duckterm.core.ask_intents.WIDE_BYTES", 100)
+    answers = model(monkeypatch, {"intent": "ask.history", "entities": [], "text": None})
+    ask(server, owner, "What did the fleet do this week?")
+    passes = [a for a in answers if a.startswith("Summarise what agents in the workspace")]
+    assert sorted(p.split("'")[1] for p in passes) == [
+        "BodhBytes",
+        "duckterm-core",
+        "duckterm-leadership",
+    ]
+    assert "Workspace duckterm-core (summarised first):\nThe answer." in answers[-1]
+    assert "too many to read at once" in answers[-1]
+
+
+def test_a_topic_without_an_agent_is_a_history_search(fleet, monkeypatch):
+    server, owner = fleet
+    intent = {"intent": "ask.agent", "entities": [topic("bug reporting")], "text": None}
+    model(monkeypatch, intent)
+    status, body = ask(server, owner, "Which agent worked on bug reporting?")
+    assert status == 200 and body["intent"] == "ask.history"
+
+
+def test_sent_lists_terminal_prompts_with_who_sent_them(fleet, monkeypatch):
+    server, owner = fleet
+    history = server.history
+    now = int(time.time() * 1000)
+    for i, (kind, field, text) in enumerate(
+        [
+            ("PromptDelivery", "text", "Duckterm Oracle: you have 1 inbox item"),
+            ("UserPromptSubmit", "prompt", "Duckterm Oracle: you have 1 inbox item"),
+            ("UserPromptSubmit", "prompt", "merge 525 on pass"),
+            ("UserPromptSubmit", "prompt", "<task-notification>\n<task-id>b1</task-id>"),
+        ]
+    ):
+        history.record(
+            {
+                "_id": f"p{i}",
+                "_ts": now - 1000 + i,
+                "event_type": kind,
+                "session_key": "agent",
+                field: text,
+            }
+        )
+    intent = {
+        "intent": "ask.sent",
+        "entities": [agent("release-dev", ["agent"], 0.5)],
+        "text": None,
+    }
+    answer = listed(server, owner, monkeypatch, intent, "What did I ask release-dev?")
+    prompts = answer.split("Prompts the agents received in their terminals, newest first:\n", 1)[1]
+
+    def when(ms):
+        return time.strftime("%b %-d %H:%M", time.localtime(ms / 1000))
+
+    who = "- to **release-dev** (duckterm-leadership)"
+    lines = prompts.splitlines()
+    pairs = dict(zip(lines[1::2], lines[0::2], strict=True))
+    assert (
+        pairs["  “merge 525 on pass”"]
+        == f"{who} · {when(now - 998)} · typed or pasted in the terminal"
+    )
+    assert pairs["  “Duckterm Oracle: you have 1 inbox item”"] == (
+        f"{who} · {when(now - 999)} · delivered by DuckTerm"
+    )
+    assert "task-notification" not in answer
