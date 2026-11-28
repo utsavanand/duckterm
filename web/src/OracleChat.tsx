@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, OracleAgent, OracleExchange, RelayNote, RelayRule, RelayState } from "./api";
 import { useEdition } from "./edition";
-import { html } from "./render";
+import { modelHtml } from "./render";
 import { NoteCard, ProposalCard, RuleFields } from "./RelayNotes";
 
 // Chat-only entries: rule proposals and short replies to rule commands.
@@ -244,7 +244,7 @@ export function OracleChat({
               <div className="rd-oracle-q">{e.exchange.q}</div>
               <div
                 className="rd-oracle-a rd-msg-text"
-                dangerouslySetInnerHTML={{ __html: html(e.exchange.a) }}
+                dangerouslySetInnerHTML={{ __html: modelHtml(e.exchange.a) }}
               />
             </div>
           ) : e.type === "note" ? (

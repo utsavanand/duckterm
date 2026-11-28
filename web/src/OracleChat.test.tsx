@@ -19,6 +19,19 @@ it("shows the saved conversation with answers rendered as markdown", async () =>
   expect(screen.queryByText(/\*\*architect\*\*/)).toBeNull();
 });
 
+// Record answers carry agent-written titles verbatim (security, #545): a
+// title can't load a tracking pixel or hide the page, and the saved chat
+// replays it on every load.
+it("renders a hostile title in a saved answer without fetching or styling", async () => {
+  vi.mocked(api.oracleChat).mockResolvedValue({
+    messages: [{ q: "where's the spec?", a: "- Spec ![p](https://evil.example/p.png) <style>body{display:none}</style> **by ui-dev**", at: 1 }],
+  });
+  const { container } = render(<OracleChat relay={NO_RELAY} onRelayChange={() => {}} onClose={() => {}} />);
+  expect((await screen.findByText("by ui-dev")).tagName).toBe("STRONG");
+  expect(container.querySelector(".rd-oracle-a img")).toBeNull();
+  expect(container.querySelector(".rd-oracle-a style")).toBeNull();
+});
+
 it("sends on Enter, not Shift+Enter, and appends the stored exchange", async () => {
   vi.mocked(api.oracleChat).mockResolvedValue({ messages: [] });
   let finish!: (v: { answer: string; exchange: { q: string; a: string; at: number }; sessions: string[] }) => void;

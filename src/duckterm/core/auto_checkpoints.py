@@ -1,9 +1,10 @@
 """Automatic checkpoints (owner, 2026-11-15).
 
 An agent is due after 50 new messages, or after 15 quiet minutes with at least
-one new message, counted since its last checkpoint. The 50-message trigger waits
-for a pause (a turn end, or a quiet minute): mid-turn, the conversation file
-changes while it is copied and the checkpoint fails. At most two run at once,
+one new message, counted since its last checkpoint. Either way it waits for a
+pause (a turn end, or a minute with no events): mid-turn, the conversation file
+changes while it is copied and the checkpoint fails. "Quiet" counts only prompts
+and turn ends, so a long turn of tool calls looked quiet (2026-11-27). At most two run at once,
 the agent with the most new messages first. There is no daily cap. Agents idle
 for over 7 days are not caught up until they become active again. A failed
 checkpoint is still a checkpoint row, so it is retried only after new messages.
@@ -48,9 +49,7 @@ def due(conn: Any, now: int, busy: set[str]) -> list[str]:
             f"AND event_type IN ({','.join('?' * len(MESSAGE_EVENTS))})",
             (key, last or started or 0, *MESSAGE_EVENTS),
         ).fetchone()
-        if count and now - latest >= QUIET_MS:
-            ready.append((count, key))
-        elif count >= NEW_MESSAGES:
+        if count >= NEW_MESSAGES or (count and now - latest >= QUIET_MS):
             last_type, last_ts = conn.execute(
                 "SELECT event_type, ts FROM events WHERE session_key=? ORDER BY ts DESC LIMIT 1",
                 (key,),

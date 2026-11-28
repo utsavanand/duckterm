@@ -75,20 +75,26 @@ it("leaves out the chat and pull requests when the edition lacks Oracle and PR r
   expect(screen.getByRole("article", { name: "Teams" })).toBeVisible();
 });
 
-it("lists open pull requests once across top-level folders, grouped as Needs attention and Open", async () => {
-  // Merged and closed PRs are left out: merges show in Pulse.
+it("lists pull requests once across top-level folders, grouped as Needs attention, Open and Merged today", async () => {
+  // Closed PRs are left out, and so are merges older than a day.
+  const merged = (n: number, ago: number) => pr(n, { status: "merged", label: "Merged · not released yet", pr: { number: n, title: `PR ${n}`, url: "", state: "merged", merged_at: new Date(NOW - ago).toISOString() } as PrRow["pr"] });
   vi.mocked(api.folderPrs).mockImplementation(async folder => ({ repos: [], rows: folder === "Duckterm"
-    ? [pr(1), pr(2, { status: "conflict", label: "Conflict with base" }), pr(3, { status: "merged", pr: { number: 3, title: "PR 3", url: "", state: "merged" } as PrRow["pr"] }),
+    ? [pr(1), pr(2, { status: "conflict", label: "Conflict with base" }), merged(3, 3_600_000), merged(5, 60_000), merged(6, 25 * 3_600_000),
       pr(7, { status: "closed", pr: { number: 7, title: "PR 7", url: "", state: "closed" } as PrRow["pr"] })]
     : [pr(1), pr(4, { unpushed_commits: 2 })] }));
   await show();
   expect(vi.mocked(api.folderPrs).mock.calls.map(call => call[0])).toEqual(["Duckterm", "Nourish"]);
   const widget = within(screen.getByRole("article", { name: "Pull requests" }));
   const titles = (group: string) => within(widget.getByRole("region", { name: group })).getAllByRole("listitem").map(row => row.querySelector(".rd-home-pr-title")?.textContent);
-  expect(widget.getAllByRole("region").map(r => r.querySelector("h3")?.textContent)).toEqual(["Needs attention 2", "Open 1"]);
+  expect(widget.getAllByRole("region").map(r => r.querySelector("h3")?.textContent)).toEqual(["Needs attention 2", "Open 1", "Merged 2"]);
   expect(titles("Needs attention")).toEqual(["PR 4", "PR 2"]);
   expect(within(widget.getByRole("region", { name: "Needs attention" })).getAllByRole("listitem")[0]).toHaveTextContent("#4 · 2 commits not pushed");
   expect(titles("Open")).toEqual(["PR 1"]);
+  expect(titles("Merged")).toEqual(["PR 5", "PR 3"]);
+  // One way into the review per open PR; merged rows only link to GitHub.
+  const open = within(widget.getByRole("region", { name: "Open" })).getByRole("listitem");
+  expect(within(open).getAllByRole("button").map(b => b.textContent)).toEqual(["Review"]);
+  expect(within(widget.getByRole("region", { name: "Merged" })).queryAllByRole("button")).toEqual([]);
 });
 
 it("leaves out pull request groups with nothing in them", async () => {
