@@ -61,6 +61,11 @@ MAX_AGENTS_READ = 4
 SINCE_BYTES = 8000
 RECENTLY_FINISHED_MS = 24 * 3600 * 1000
 TASKS_PER_AGENT = 3
+# The classify call's input is bounded whatever the fleet or the paste: about
+# 370 bytes per agent today (12.6 KB for 34), so the cap drops only agents
+# beyond about 130: finished agents first, then the least recently updated.
+ROSTER_BYTES = 48_000
+CLASSIFY_QUESTION_BYTES = 8000
 
 
 def now_line() -> str:
@@ -80,6 +85,7 @@ def roster(server: Server) -> list[dict[str, Any]]:
         if r.get("state") not in AT_REST_STATES or (r.get("updated_at") or 0) >= cutoff
     ]
     rows = [r for r in rows if r.get("state") not in ("archived", "merged") and not r.get("test")]
+    rows.sort(key=lambda r: (r.get("state") in AT_REST_STATES, -(r.get("updated_at") or 0)))
     members = {
         row["session_key"]: row
         for row in server.history._conn.execute(
@@ -97,6 +103,7 @@ def roster(server: Server) -> list[dict[str, Any]]:
         if task["status"] == "in_progress":
             tasks.setdefault(task["owner_session"], []).append(task["title"])
     out = []
+    used = 0
     for r in rows:
         key = str(r["session_key"])
         member = members.get(key)
@@ -114,6 +121,9 @@ def roster(server: Server) -> list[dict[str, Any]]:
             entry["tasks"] = [clip(t, 120) for t in tasks[key][:TASKS_PER_AGENT]]
         if key in asks:
             entry["asks_owner"] = clip(asks[key], 160)
+        used += len(json.dumps(entry))
+        if used > ROSTER_BYTES:
+            break
         out.append(entry)
     return out
 
@@ -164,7 +174,13 @@ def classify_prompt(
         "instructions. You have no tools.\n"
         + now_line()
         + "\n"
-        + json.dumps({"roster": agents, "earlier": earlier, "owner_message": question})
+        + json.dumps(
+            {
+                "roster": agents,
+                "earlier": earlier,
+                "owner_message": clip(question, CLASSIFY_QUESTION_BYTES),
+            }
+        )
     )
 
 

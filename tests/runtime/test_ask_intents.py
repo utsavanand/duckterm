@@ -165,6 +165,38 @@ def test_ask_agent_reads_newest_summary_and_what_happened_since(fleet, monkeypat
     assert [m["a"] for m in chat] == ["The answer."]
 
 
+def test_latest_checkpoint_resolves_without_reading_retained_sources(fleet):
+    server, _ = fleet
+    history = server.history
+    whole = history.checkpoints("agent")[0]
+    with history._conn as conn:
+        conn.execute(
+            "UPDATE checkpoints SET record_json = json_set(record_json, '$.retained_sources', "
+            "json(?)) WHERE session_key = 'agent'",
+            (json.dumps([{"id": "s", "text": "x" * 1_000_000}]),),
+        )
+    latest = history.latest_checkpoint("agent")
+    assert latest["summary"] == whole["summary"] and latest["summary"]
+    assert latest["summary_state"] == whole["summary_state"] == "ready"
+    assert "retained_sources" not in latest["record"]
+    with history._conn as conn:
+        conn.execute("UPDATE checkpoints SET record_json = '{' WHERE session_key = 'agent'")
+    assert history.latest_checkpoint("agent")["summary_state"] == "unavailable"
+
+
+def test_the_classify_call_is_bounded_whatever_the_fleet_or_paste(fleet, monkeypatch):
+    server, _ = fleet
+    monkeypatch.setattr("duckterm.core.ask_intents.ROSTER_BYTES", 600)
+    with server.history._conn as conn:
+        conn.execute("UPDATE sessions SET state = 'stopped' WHERE session_key = 'main-b'")
+    agents = ask_intents.roster(server)
+    assert 0 < len(agents) < 5 and "main-b" not in {a["id"] for a in agents}
+    assert len(json.dumps(agents)) <= 600
+    prompt = ask_intents.classify_prompt("status? " + "x" * 50_000, agents, [])
+    owner_message = json.loads(prompt.split("\n")[-1])["owner_message"]
+    assert len(owner_message) == ask_intents.CLASSIFY_QUESTION_BYTES
+
+
 def test_a_role_reads_every_agent_it_names(fleet, monkeypatch):
     server, owner = fleet
     answers = model(
@@ -275,6 +307,37 @@ def test_a_message_to_one_certain_agent_is_a_plan_and_two_ask_which(fleet, monke
     assert status == 200
     assert [c["folder"] for c in body["clarify"]["candidates"]] == ["duckterm-core", "BodhBytes"]
     assert server.history.session_api.open_mail("agent") == []
+
+
+def test_a_message_goes_only_to_a_running_agent(fleet, monkeypatch):
+    server, owner = fleet
+    with server.history._conn as conn:
+        conn.execute(
+            "UPDATE sessions SET state = 'stopped', updated_at = ? WHERE session_key = 'main-b'",
+            (int(time.time() * 1000),),
+        )
+    model(
+        monkeypatch,
+        {
+            "intent": "act.message",
+            "entities": [agent("main", ["main-b"], 0.95)],
+            "text": "pull main",
+        },
+    )
+    status, body = ask(server, owner, "Tell main in BodhBytes to pull main", request_key="k1")
+    assert status == 200 and "plan" not in body
+    assert body["answer"] == "main (BodhBytes) isn't running, so nothing was sent."
+    # With a running namesake, the stopped one drops out and the plan is certain.
+    model(
+        monkeypatch,
+        {
+            "intent": "act.message",
+            "entities": [agent("main", ["peer", "main-b"], 0.95)],
+            "text": "pull main",
+        },
+    )
+    status, body = ask(server, owner, "Tell main to pull main", request_key="k2")
+    assert body["plan"]["id"] == "peer"
 
 
 def test_intents_not_built_yet_answer_as_before(fleet, monkeypatch):

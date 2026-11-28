@@ -4432,6 +4432,16 @@ class Server:
             return await self._ask_action(question, kind, intent, by_id, chat_path)
         if kind in ("act.message", "clarify") and messages:
             certain, candidates = ask_intents.agents_named(intent, ask_intents.ACT_THRESHOLD)
+            # The roster keeps agents that finished in the last day so they can
+            # be asked about; a message goes only to one that is running.
+            resting = [c for c in candidates if by_id[c]["state"] in AT_REST_STATES]
+            if resting and len(resting) == len(candidates):
+                who = ", ".join(ask_intents.label(by_id[c]) for c in resting)
+                answer = f"{who} isn't running, so nothing was sent."
+                exchange = oracle.append_chat(chat_path, question, answer, int(time.time() * 1000))
+                return {"answer": answer, "exchange": exchange, "sessions": resting, "intent": kind}
+            certain = [c for c in certain if c not in resting]
+            candidates = [c for c in candidates if c not in resting]
             text = intent["text"] or ""
             if kind == "act.message" and len(candidates) == 1 and certain and text:
                 plan: dict[str, Any] = {**self._oracle_agent(by_id[certain[0]]), "text": text}

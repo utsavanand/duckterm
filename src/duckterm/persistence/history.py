@@ -769,9 +769,14 @@ class HistoryStore:
 
     def latest_checkpoint(self, key: str) -> dict[str, Any] | None:
         """The newest checkpoint only. checkpoints() resolves every one, which
-        costs a revision read per checkpoint when only the newest is wanted."""
+        costs a revision read per checkpoint when only the newest is wanted.
+        retained_sources is nearly all of a large record (8.4 of 8.4 MB on the
+        owner's machine) and resolving never reads it, so SQLite drops it
+        before Python parses the rest."""
         row = self._conn.execute(
-            "SELECT id, label, summary, record_json, markdown_path, created_at "
+            "SELECT id, label, summary, CASE WHEN json_valid(record_json) "
+            "THEN json_remove(record_json, '$.retained_sources') ELSE record_json END "
+            "AS record_json, markdown_path, created_at "
             "FROM checkpoints WHERE session_key = ? ORDER BY created_at DESC LIMIT 1",
             (key,),
         ).fetchone()
