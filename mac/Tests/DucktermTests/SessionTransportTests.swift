@@ -46,6 +46,11 @@ extension SessionTransportTests {
         for (path, method) in [("/bugreport/context", "POST"), ("/bugreport/submit", "GET"), ("/bugreport/submit?extra=true", "POST"), ("/bugreport/bundles/../../secret", "GET"), ("/bugreport/bundles/" + String(repeating: "a", count: 32), "DELETE")] {
             XCTAssertThrowsError(try SessionTransport.request(base: base, params: ["path": path, "method": method]))
         }
+        let filing = try SessionTransport.request(base: base, params: ["path": "/bugreport/file", "method": "POST", "body": "{}"])
+        XCTAssertEqual(filing.timeoutInterval, 90)
+        for (path, method) in [("/bugreport/file", "GET"), ("/bugreport/file?extra=true", "POST"), ("/bugreport/file/extra", "POST")] {
+            XCTAssertThrowsError(try SessionTransport.request(base: base, params: ["path": path, "method": method]))
+        }
         let context = try SessionTransport.request(base: base, params: ["path": "/bugreport/context?session_key=remote-session", "method": "GET"])
         XCTAssertEqual(context.url?.query, "session_key=remote-session")
     }

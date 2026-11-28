@@ -133,6 +133,15 @@ struct BugReportUITests {
             verify(try await js(web, "document.documentElement.scrollWidth <= window.innerWidth") as? Bool == true)
             _ = try await js(web, "document.getElementById('save').scrollIntoView({block:'end'})")
             verify(try await js(web, "document.getElementById('save').getBoundingClientRect().bottom <= innerHeight") as? Bool == true)
+            if let directory = ProcessInfo.processInfo.environment["RT_REPORT_SCREENSHOTS"] {
+                let image: NSImage? = await withCheckedContinuation { continuation in
+                    web.takeSnapshot(with: nil) { image, _ in continuation.resume(returning: image) }
+                }
+                if let tiff = image?.tiffRepresentation, let bitmap = NSBitmapImageRep(data: tiff),
+                   let png = bitmap.representation(using: .png, properties: [:]) {
+                    try png.write(to: URL(fileURLWithPath: directory).appendingPathComponent("bug-report-actions-\(width).png"))
+                }
+            }
             _ = try await js(web, "window.scrollTo(0,0)")
             if let directory = ProcessInfo.processInfo.environment["RT_REPORT_SCREENSHOTS"] {
                 let image: NSImage? = await withCheckedContinuation { continuation in
@@ -201,6 +210,47 @@ struct BugReportUITests {
         verify(failedDiagnostics.contains("could not read local server diagnostics") && !failedDiagnostics.contains("/private/owner/token"))
         _ = try await js(failedWeb, "document.dispatchEvent(new KeyboardEvent('keydown',{key:'Escape'}))")
         try await wait { !failedReport.isOpen }
+        // Actual native form -> immutable ZIP -> injected delivery. No report leaves this test.
+        var sent: [Data] = []
+        let sender = BugReportDelivery { request in
+            sent.append(request.httpBody!)
+            let status = sent.count == 1 ? 503 : 200
+            let number = sent.count == 2 ? 42 : 43
+            return (Data("{\"ok\":true,\"id\":\(number)}".utf8),
+                HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: nil, headerFields: nil)!)
+        }
+        let deliveryReport = BugReportController(screenshot: nil, delivery: sender)
+        deliveryReport.show()
+        guard let deliveryPanel = NSApp.windows.first(where: { $0.title == panel.title && $0.isVisible }),
+              let deliveryWeb = deliveryPanel.contentView as? WKWebView else { fatalError("Missing delivery report") }
+        try await wait { try await js(deliveryWeb, "typeof window.updateReport === 'function'") as? Bool == true }
+        verify(sent.isEmpty, "Opening the form must not transmit anything")
+        _ = try await js(deliveryWeb, "document.getElementById('summary').value='Synthetic private report';document.getElementById('details').value='Selected report text';document.getElementById('diagnostics').checked=false;document.getElementById('send').click()")
+        try await wait { try await js(deliveryWeb, "document.getElementById('send').textContent === 'Retry report' && !document.getElementById('send').disabled") as? Bool == true }
+        verify(sent.count == 1)
+        verify(try await js(deliveryWeb, "!document.getElementById('email').hidden") as? Bool == true)
+        _ = try await js(deliveryWeb, "document.getElementById('send').click()")
+        try await wait { try await js(deliveryWeb, "document.getElementById('status').textContent.includes('Report #42 filed privately')") as? Bool == true }
+        verify(sent.count == 2)
+        // Multipart boundaries can change between manual attempts; the JSON ID
+        // and ZIP must not. Strip only the random framing boundary for comparison.
+        func normalized(_ data: Data) -> Data {
+            let firstLine = data.range(of: Data("\r\n".utf8))!
+            let boundary = data.subdata(in: 0..<firstLine.lowerBound)
+            var result = data
+            while let range = result.range(of: boundary) { result.replaceSubrange(range, with: Data("BOUNDARY".utf8)) }
+            return result
+        }
+        verify(normalized(sent[0]) == normalized(sent[1]), "Retry must keep the exact report ID, metadata and ZIP")
+        verify(try await js(deliveryWeb, "document.getElementById('send').disabled") as? Bool == true)
+        _ = try await js(deliveryWeb, "document.getElementById('summary').value='Edited synthetic report';document.getElementById('summary').dispatchEvent(new Event('input',{bubbles:true}))")
+        try await wait { try await js(deliveryWeb, "!document.getElementById('send').disabled") as? Bool == true }
+        _ = try await js(deliveryWeb, "document.getElementById('send').click()")
+        try await wait { try await js(deliveryWeb, "document.getElementById('status').textContent.includes('Report #43 filed privately')") as? Bool == true }
+        verify(sent.count == 3 && normalized(sent[1]) != normalized(sent[2]), "Edited contents must create a new submission")
+        _ = try await js(deliveryWeb, "document.getElementById('cancel').click()")
+        try await wait { !deliveryReport.isOpen }
+        print("PASS: native explicit send, failed-service fallback, immutable retry, receipt and edited submission")
         var finishClosed: CheckedContinuation<String?, Never>?
         let closedReport = BugReportController(screenshot: nil, loadResumeReadiness: {
             await withCheckedContinuation { finishClosed = $0 }

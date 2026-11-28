@@ -36,12 +36,12 @@ enum BugReportError: LocalizedError {
     }
 }
 
-struct BugAttachment {
+struct BugAttachment: Equatable {
     let name: String
     let data: Data
 }
 
-struct BugReportData {
+struct BugReportData: Equatable {
     static let maxFileBytes = 5 * 1024 * 1024
     static let maxTotalBytes = 15 * 1024 * 1024
     var attachments: [BugAttachment] = []

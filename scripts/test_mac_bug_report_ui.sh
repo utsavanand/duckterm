@@ -12,7 +12,13 @@ sources=()
 for source in mac/Sources/Duckterm/*.swift; do
   [[ "$source" == */main.swift ]] || sources+=("$source")
 done
-swiftc -framework AppKit -framework WebKit \
+REPORT_SPARKLE_DIR="$(pwd)/mac/.build/artifacts/sparkle/Sparkle/Sparkle.xcframework/macos-arm64_x86_64"
+if [[ ! -d "$REPORT_SPARKLE_DIR/Sparkle.framework" ]]; then
+  echo "Resolve the pinned Mac dependencies first: cd mac && swift package resolve" >&2
+  exit 1
+fi
+swiftc -framework AppKit -framework WebKit -F "$REPORT_SPARKLE_DIR" -framework Sparkle \
+  -Xlinker -rpath -Xlinker "$REPORT_SPARKLE_DIR" \
   "${sources[@]}" mac/Tests/BugReportUITests.swift \
   -o "$REPORT_UI_TEST_DIR/ReportUITests.app/Contents/MacOS/report-ui-tests"
 "$REPORT_UI_TEST_DIR/ReportUITests.app/Contents/MacOS/report-ui-tests"

@@ -1780,6 +1780,10 @@ class Server:
                     await _write_json(writer, 413, {"error": "report request too large"})
                     return
                 result = await asyncio.to_thread(bug_reports.prepare, json.loads(body))
+            elif parsed.path == "/bugreport/file" and method == "POST":
+                from duckterm.bug_report_delivery import file_report
+
+                result = await asyncio.to_thread(file_report, json.loads(body))
             elif parsed.path.startswith("/bugreport/bundles/") and method == "GET":
                 report_id = parsed.path.removeprefix("/bugreport/bundles/")
                 data = await asyncio.to_thread(bug_reports.bundle, report_id)

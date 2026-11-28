@@ -32,8 +32,8 @@ test("bug report downloads the exact reviewed body and captured attachments", as
     expect(reviewed).not.toContain('### DuckTerm version');
     expect(reviewed).not.toContain('### Resume readiness');
     await page.screenshot({ path: '/tmp/duckterm-bug-report-implemented.png', fullPage: true });
-    await report.getByRole('button', { name: 'Prepare mail draft', exact: true }).click();
-    await expect(report.getByRole('heading', { name: 'Draft prepared', exact: true })).toBeVisible();
+    await report.getByRole('button', { name: 'Save ZIP / email', exact: true }).click();
+    await expect(report.getByRole('heading', { name: 'Report prepared', exact: true })).toBeVisible();
     await expect(report.getByText(/Nothing has been sent/)).toBeVisible();
     const mail = await report.getByRole('link', { name: 'Open mail draft', exact: true }).getAttribute('href');
     expect(new URL(mail!).searchParams.get('body')).toBe(reviewed);

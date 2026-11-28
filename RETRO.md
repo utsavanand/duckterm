@@ -630,6 +630,18 @@ an empty state is the first thing a new feature shows.
 
 ## 2026-11-25 — Fixture completion and retry deadlines need explicit evidence
 
+## 2026-11-25 — Report delivery must preserve explicit consent and retry identity
+
+Changing a local “prepare email” route into an upload would make older clients
+send private reports without a matching user action. Keep preparation local and
+add a separate owner-authenticated filing operation. Freeze the reviewed ZIP and
+report ID before sending and reuse them on retries: a connection loss can follow
+a successful write. Show an unconfirmed outcome until a receipt is recovered;
+never silently send mail, discard attachments, or claim a failed send means the
+server stored nothing. Test the native form as well as transport mocks, including
+ZIP export, removed diagnostics, double clicks, and changed versus retried input.
+
+
 A tmux fixture exposed its JSON path before write_text finished, so a reader
 could parse an empty file. Publish that fixture by atomic rename. A separate
 lock-recovery test mixed its behavior assertion with a 100 ms scheduling budget;
