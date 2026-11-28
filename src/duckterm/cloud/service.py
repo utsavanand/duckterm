@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import functools
 import json
 import re
 import secrets
@@ -247,7 +248,12 @@ class AccountService:
             return 200, {"removed": True}, {}
         raise Refused(404, "not_found")
 
-    async def handle(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter) -> None:
+    async def handle(
+        self,
+        reader: asyncio.StreamReader,
+        writer: asyncio.StreamWriter,
+        tls: ssl.SSLContext | None = None,
+    ) -> None:
         peer = writer.get_extra_info("peername")
         address = peer[0] if peer else "-"
         # Counted when accepted, so connections that never finish their headers
@@ -262,6 +268,10 @@ class AccountService:
         self.open[address] += 1
         try:
             async with asyncio.timeout(HEADER_SECONDS):
+                # The handshake runs here, after the caps and inside the header
+                # budget: a socket that never sends a ClientHello is still counted.
+                if tls is not None:
+                    await writer.start_tls(tls)
                 method, target = parse_request_line(await reader.readline())
                 if not target.startswith("/") or len(target) > 4096:
                     raise ValueError("Invalid target")
@@ -293,4 +303,8 @@ async def serve(
     port: int,
     context: ssl.SSLContext | None = None,
 ) -> asyncio.Server:
-    return await asyncio.start_server(service.handle, host, port, ssl=context, limit=16384)
+    # Plain TCP accept: asyncio's own TLS handshake would run before handle() and
+    # its caps, with a 60 s default timeout.
+    return await asyncio.start_server(
+        functools.partial(service.handle, tls=context), host, port, limit=16384
+    )

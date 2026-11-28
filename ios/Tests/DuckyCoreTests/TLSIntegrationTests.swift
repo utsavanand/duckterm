@@ -225,6 +225,25 @@ final class TLSIntegrationTests: XCTestCase {
         }
     }
 
+    func testReadsShareOneKeptConnectionAndEventsAnswerAStaleCursor() async throws {
+        let fixture = try TLSFixture(mode: "local")
+        defer { fixture.close() }
+        let invitation = fixture.invitation!
+        let client = try DuckyClient(host: PairedHost(invitation: invitation, token: try DuckyClient.newCredential()),
+                                     resolver: { _ in ["127.0.0.1"] })
+        defer { client.close() }
+        let pending = try await client.claim(invitation, name: "Test iPhone")
+        XCTAssertEqual(try fixture.command("approve \(pending.id)"), "ok")
+        let before = try fixture.counts()
+        let first = try await client.snapshot(cursor: nil)
+        _ = try await client.snapshot(cursor: first.cursor)
+        let events = try await client.events(cursor: "stale0cursor")
+        XCTAssertTrue(events.changed)
+        let after = try fixture.counts()
+        XCTAssertEqual(after.requests, before.requests + 3)
+        XCTAssertEqual(after.handshakes, before.handshakes + 1, "Reads reuse one kept-alive TLS connection")
+    }
+
     func testRedirectNeverForwardsTheDeviceCredential() async throws {
         let fixture = try TLSFixture(mode: "local")
         defer { fixture.close() }

@@ -38,7 +38,21 @@ final class FakeTransport: DuckyTransport {
     var claimError: Error?
     var hold: CheckedContinuation<Void, Never>?
     var holdNextSnapshot = false
+    // Off: answers like a Mac from before /v2/events. On: each wait holds until the test releases it.
+    var supportsEvents = false
+    var eventCalls = 0
+    var eventError: Error?
+    var eventHold: CheckedContinuation<Void, Never>?
     init(host: PairedHost) { self.host = host }
+    func events(cursor: String) async throws -> EventsResult {
+        guard supportsEvents else { throw DuckyError.unavailable(404) }
+        eventCalls += 1
+        if let eventError { self.eventError = nil; throw eventError }
+        await withCheckedContinuation { eventHold = $0 }
+        return try JSONDecoder().decode(EventsResult.self, from: JSONSerialization.data(withJSONObject:
+            ["version": 1, "host_id": host.hostID, "changed": true, "cursor": "2"]))
+    }
+    func releaseEvent() { eventHold?.resume(); eventHold = nil }
     func claim(_ invitation: Invitation, name: String) async throws -> PairStatus {
         claims += 1
         if let claimError { throw claimError }
@@ -226,6 +240,38 @@ final class SessionModelTests: XCTestCase {
         await settle()
         clock.tick(); await settle()
         XCTAssertEqual(transports[0].snapshotReads, 3)
+    }
+
+    func testIdlePollWaitsForTheMacToReportAChangeInsteadOfSleeping() async {
+        store = FakeStore(paired(hostA))
+        let m = model()
+        await m.restore()
+        transports[0].supportsEvents = true
+        m.enterForeground(); await settle()
+        XCTAssertEqual(transports[0].snapshotReads, 2)
+        XCTAssertEqual(transports[0].eventCalls, 1)
+        XCTAssertTrue(clock.waiting.isEmpty, "A Mac with events is waited on, not slept on")
+        transports[0].releaseEvent(); await settle()
+        XCTAssertEqual(transports[0].snapshotReads, 3, "A reported change reads the snapshot at once")
+        XCTAssertEqual(transports[0].eventCalls, 2)
+        m.enterBackground(); await settle()
+        transports[0].releaseEvent(); await settle()
+        XCTAssertEqual(transports[0].snapshotReads, 3, "A wait answered after backgrounding reads nothing")
+    }
+
+    func testFailedEventWaitFallsBackToTheNormalPause() async {
+        store = FakeStore(paired(hostA))
+        let m = model()
+        await m.restore()
+        transports[0].supportsEvents = true
+        transports[0].eventError = URLError(.networkConnectionLost)
+        m.enterForeground(); await settle()
+        XCTAssertEqual(clock.waiting.count, 1, "A failed wait never spins")
+        clock.tick(); await settle()
+        XCTAssertEqual(transports[0].snapshotReads, 3)
+        XCTAssertEqual(transports[0].eventCalls, 2, "Events are tried again after a transient failure")
+        m.enterBackground(); await settle()
+        transports[0].releaseEvent()
     }
 
     func testDroppedPollsRetryQuicklyAndSayReconnectingBeforeOffline() async {
