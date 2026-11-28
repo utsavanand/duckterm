@@ -62,7 +62,7 @@ describe("readinessRows", () => {
       ["CI is still running", { total: 2, failed: 0, pending: 1, passed: 1 }, { passed: true }, "part", "Ready with open items"],
       ["nothing ran on this head", null, null, "part", "Ready with open items"],
       ["CI passed", { total: 2, failed: 0, pending: 0, passed: 2 }, null, "ok", "Ready to release"],
-      ["only the gate ran, and passed", null, { passed: true }, "ok", "Ready to release"],
+      ["only an unattributed gate passed", null, { passed: true }, "part", "Ready with open items"],
     ] as const)("%s", (_, checks, gate, status, label) => {
       const { row, total } = run(checks, gate);
       expect(row.status).toBe(status);

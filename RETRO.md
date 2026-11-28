@@ -1,3 +1,12 @@
+## 2026-11-28 — Newer isn't yours
+
+The readiness fix let a passing gate log stand in for CI. The log at
+/tmp/duckterm-gate.log names no repository or head, and the only check was
+that it was newer than the commit, so a pass from another repo made a PR with
+no CI read "Ready to release" (main-qa-2 on #503). Evidence counts toward a
+pass only when it names what it tested. An unattributed log may still block on
+failure, but only CI on this head can make the row ready.
+
 ## 2026-11-26 — Shown isn't counted
 
 The Release readiness tab listed a failed CI run and a failed gate as lines

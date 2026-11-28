@@ -25,8 +25,8 @@ function waiting(id: string, name: string, sub: string, card: string, cards: Rev
 }
 
 // Test runs on this head. The header's checks are read fresh from GitHub, so
-// they win over the release card's copy. The gate log only appears on the card
-// when it is newer than the head commit, so a gate result is never stale.
+// they win over the release card's copy. Gate logs have no repository/head
+// identity: a newer timestamp alone cannot establish a passing run for this head.
 type RunResult = "fail" | "pending" | "pass" | "none";
 function ciResult(header: ReviewHeader, release: ReleaseData | null): { result: RunResult; text: string } {
   const checks = header.row?.checks;
@@ -73,15 +73,16 @@ export function readinessRows(header: ReviewHeader, cards: ReviewCard[]): ReadyR
     const ci = ciResult(header, release);
     const gate = tests.gate ? (tests.gate.passed ? "pass" : "fail") : "none";
     const failed = ci.result === "fail" || gate === "fail";
-    // Ready needs a green run on this head: CI or a gate, nothing failed or running.
-    const ran = !failed && ci.result !== "pending" && (ci.result === "pass" || gate === "pass");
+    // Ready needs a passing CI result. An unattributed gate may block on failure,
+    // but cannot supply positive evidence that this head passed.
+    const ran = !failed && ci.result === "pass";
     if (!lines.length) lines.push({ text: "Every changed file has a test that reaches it" });
     lines.push({ text: ci.text, where: "CI" });
-    lines.push({ text: tests.gate ? `Gate ${tests.gate.passed ? "passed" : "failed"} after this head was committed, ${tests.gate.age_minutes} min ago` : "Gate: no run since this head was committed", where: "gate" });
+    lines.push({ text: tests.gate ? `Local gate log ${tests.gate.passed ? "passed" : "failed"} (not tied to this head), ${tests.gate.age_minutes} min ago` : "Gate: no run since this head was committed", where: "gate" });
     const status: ReadyStatus = uncovered.length || tests.slop.length || failed ? "block" : partial.length || tests.gaps.length || !ran ? "part" : "ok";
     const lead = failed
       ? `tests fail on this head (${[ci.result === "fail" ? ci.text : "", gate === "fail" ? "local gate failed" : ""].filter(Boolean).join("; ")}). Fix the failures, then rerun the gate and push.`
-      : fix.length ? "add the missing tests, then run the gate so this head has a result." : "no test run has passed on this head yet. Run the gate, or wait for CI, and post the result.";
+      : fix.length ? "add the missing tests, then push so CI runs on this head." : "CI has not passed on this head yet. Push so CI runs, or wait for it to finish.";
     rows.push({ id: "tests", name: "Unit tests", sub: "changed code", status, lines, card: "tests",
       ask: status === "ok" ? null : request(pr, lead, fix) });
   }

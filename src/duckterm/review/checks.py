@@ -222,7 +222,8 @@ def existing_tests(repo: str, head_ref: str, paths: list[str]) -> dict[str, list
 
 
 def gate_report(head_time: int | None) -> dict[str, Any] | None:
-    """The last local gate run, if its log is newer than the head commit."""
+    """The last local gate run, if its log is newer than the head commit. The log
+    names no repository or head, so it can show a failure but never prove a pass."""
     try:
         stat = GATE_LOG.stat()
     except OSError:
