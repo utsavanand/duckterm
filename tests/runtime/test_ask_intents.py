@@ -1180,9 +1180,26 @@ def test_a_question_for_an_agent_shows_what_the_records_already_say(fleet, monke
         server, owner, "Ask release-dev if the fleet chat fix is done", request_key="k"
     )
     assert status == 200
-    assert body["plan"]["records"] == "The answer."
-    assert "Fleet chat fix #536 merged." in answers[-1]
+    # An answer that cites no record (a planted claim, or the fake's "The
+    # answer.") counts as not recorded: the Send card shows no records.
+    assert "records" not in body["plan"]
     assert answers[-1].startswith("The owner is about to ask an agent the question below.")
+    assert "\n[1] [summary · release-dev (duckterm-leadership) · recorded on " in answers[-1]
+    assert "Fleet chat fix #536 merged." in answers[-1]
+
+    def summarize(prompt, **_kw):
+        if prompt.startswith(CLASSIFY):
+            return Summary(json.dumps(intent), "cli")
+        return Summary("Yes, #536 merged [1] [9].", "cli")
+
+    monkeypatch.setattr("duckterm.server.summarize", summarize)
+    status, body = ask(
+        server, owner, "Ask release-dev if the fleet chat fix is done", request_key="k3"
+    )
+    records = body["plan"]["records"]
+    assert records.startswith("Yes, #536 merged [1] [9].\n\nFrom the records:\n- [1] summary by ")
+    assert "release-dev (duckterm-leadership), recorded on " in records
+    assert "- [9]" not in records
     # A statement isn't checked against records.
     model(monkeypatch, {**intent, "text": "rebase #446"})
     status, body = ask(server, owner, "Tell release-dev to rebase #446", request_key="k2")

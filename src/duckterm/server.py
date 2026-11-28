@@ -4544,6 +4544,18 @@ class Server:
         )
         return contextlib.closing(conn)
 
+    async def _session_rows(self) -> list[dict[str, Any]]:
+        """Non-test session rows, read in a worker: history.sessions() adds
+        metrics per row on the loop's connection, and searches need only names
+        and checkouts."""
+
+        def rows() -> list[dict[str, Any]]:
+            with self._read_only() as conn:
+                conn.row_factory = sqlite3.Row
+                return [dict(r) for r in conn.execute("SELECT * FROM sessions WHERE NOT test")]
+
+        return await asyncio.to_thread(rows)
+
     async def _ask_history(
         self,
         question: str,
@@ -4560,15 +4572,7 @@ class Server:
         span = ask_intents.time_range(intent)
         words = ask_intents.word_sets(intent)
         keys, _ = ask_intents.agents_named(intent, ask_intents.ASK_THRESHOLD)
-
-        # history.sessions() adds metrics per row on the loop's connection;
-        # names and clones need only the rows, read in a worker.
-        def rows() -> list[dict[str, Any]]:
-            with self._read_only() as conn:
-                conn.row_factory = sqlite3.Row
-                return [dict(r) for r in conn.execute("SELECT * FROM sessions WHERE NOT test")]
-
-        sessions = await asyncio.to_thread(rows)
+        sessions = await self._session_rows()
         names = {
             str(r["session_key"]): (
                 str(r.get("name") or r["session_key"][:8]),
@@ -4741,12 +4745,13 @@ class Server:
         """Records that already answer a question the owner is about to send,
         or "" (design rule 10: check the records before asking an agent)."""
         now = int(time.time() * 1000)
+        sessions = await self._session_rows()
         names = {
             str(r["session_key"]): (
                 str(r.get("name") or r["session_key"][:8]),
                 str(r.get("grp") or ""),
             )
-            for r in self.history.sessions()
+            for r in sessions
         }
         words = ask_intents.word_sets(intent)
 
@@ -4757,19 +4762,18 @@ class Server:
                 )
 
         hits = (await asyncio.to_thread(search))[: ask_intents.RERANK_POOL]
-        sessions = self.history.sessions()
         events, _ = await asyncio.to_thread(
             ask_intents.repo_history, sessions, [], (now - 7 * 86_400_000, now), {}
         )
-        sections = [
-            ("Records", "\n".join(ask_intents.hit_line(h) for h in hits)),
-            ("Merges and releases in the local clones", ask_intents.repo_lines(events)),
+        merges = [line[2:] for line in ask_intents.repo_lines(events).splitlines()]
+        records = [ask_intents.hit_line(h)[2:] for h in hits] + merges
+        sources = [ask_intents.hit_source(h) for h in hits] + [
+            "local clone: " + line for line in merges
         ]
         result = await asyncio.to_thread(
-            summarize, ask_intents.records_prompt(text, sections), tier="deep"
+            summarize, ask_intents.records_prompt(text, records), tier="deep"
         )
-        answer = result.text.strip()
-        return "" if not answer or ask_intents.NOT_RECORDED in answer else answer
+        return ask_intents.cited(result.text.strip(), sources)
 
     async def _pr_copy(self) -> tuple[dict[str, Any] | None, int, bool]:
         """The PR list for every agent, as last built, with its time and
