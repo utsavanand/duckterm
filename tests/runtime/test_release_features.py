@@ -115,7 +115,7 @@ def test_inventory_and_local_override_survive_restart(isolated):
         try:
             server = Server(history=history, edition=editions.FULL)
             code, inventory = request(server, "GET", "/feature-flags")
-            assert code == 200 and len(inventory["flags"]) == 12
+            assert code == 200 and len(inventory["flags"]) == 13
             assert {"autopilot", "oracle_messages", "fleet_monitor", "support"} <= {
                 f["id"] for f in inventory["flags"]
             }
