@@ -120,8 +120,9 @@ def classify_prompt(
         "intent is one of: ask.agent (what one or a few named agents are doing), ask.fleet "
         "(the whole fleet: who is stuck, what is going on), ask.history (past work, "
         "decisions, what shipped), ask.pr (one pull request), ask.needs_you (what waits on "
-        "the owner), ask.prs (which PRs need attention), ask.artifacts (documents agents "
-        "made), ask.work (counts of tasks or features), ask.usage (tokens or cost), "
+        "the owner), ask.prs (which PRs need attention), ask.artifacts (finding a document, "
+        "spec or other artifact, or whether an agent made one), ask.work (counts of tasks "
+        "or features), ask.usage (tokens or cost), "
         "ask.health (is anything broken), ask.sent (what the owner asked agents), "
         "act.message (tell or ask ONE agent something now), act.broadcast (tell several), "
         "act.answer, act.checkpoint, act.stop, act.restart, act.rule, act.approve (merge or "
@@ -330,3 +331,240 @@ def answer_prompt(question: str, context: str, prior: list[dict[str, Any]], inte
         + ("\n\nEarlier exchanges:\n" + "\n".join(history) if history else "")
         + f"\n\nQuestion: {question}\nAnswer:"
     )
+
+
+# ── Step 2: answers that are lists, shown as records with no second model call ──
+
+LIST_INTENTS = frozenset(
+    {"ask.needs_you", "ask.artifacts", "ask.work", "ask.usage", "ask.health", "ask.sent"}
+)
+STALE_MS = 7 * 24 * 3_600_000
+# Words that name the kind of thing, not which one: "the Mono lab spec" is
+# titled "Mono lab visual style".
+GENERIC_WORDS = frozenset(
+    {"the", "and", "for", "spec", "doc", "docs", "document", "page", "artifact", "file"}
+)
+LIST_CAP = 25
+
+
+def _age(ms: int, now: int) -> str:
+    hours = max(0, now - ms) / 3_600_000
+    return f"{hours:.0f} h" if hours < 48 else f"{hours / 24:.0f} d"
+
+
+def _when(ms: int) -> str:
+    return time.strftime("%b %-d %H:%M", time.localtime(ms / 1000))
+
+
+def _who(name: object, workspace: object) -> str:
+    return f"**{name}** ({workspace or 'no workspace'})"
+
+
+def time_range(intent: dict[str, Any]) -> tuple[int, int] | None:
+    """The first time entity as milliseconds, or None when there isn't a
+    readable one. The classifier wrote it in the owner's timezone with an
+    offset, so the conversion is exact."""
+    from datetime import datetime
+
+    for entity in intent["entities"]:
+        if entity["type"] == "time":
+            try:
+                start = datetime.fromisoformat(entity["from"])
+                end = datetime.fromisoformat(entity["to"])
+            except ValueError:
+                return None
+            if start.tzinfo is None or end.tzinfo is None:
+                return None
+            return int(start.timestamp() * 1000), int(end.timestamp() * 1000)
+    return None
+
+
+def needs_you_list(notes: list[dict[str, Any]], now: int) -> str:
+    if not notes:
+        return (
+            "Nothing is waiting on you. Offers, where an agent finished and suggests more, "
+            "aren't counted."
+        )
+    lines = [f"{len(notes)} open, oldest first (offers not counted):"]
+    for note in sorted(notes, key=lambda n: n.get("created_at") or 0):
+        choices = note.get("questions") or [{}]
+        what = note.get("question") or note.get("detail") or choices[0].get("question")
+        lines.append(
+            f"- {_who(note.get('name'), note.get('folder'))} · {note.get('kind')} · "
+            f"open {_age(note.get('created_at') or now, now)}: {clip(str(what or ''), 200)}"
+        )
+    return "\n".join(lines)
+
+
+# A classifier answer is bounded only by the model's output, and each word is
+# one SQL parameter per searched column.
+WORD_SETS = 24
+WORDS_PER_SET = 6
+
+
+def artifact_words(intent: dict[str, Any]) -> list[list[str]]:
+    """One word set per thing said: the artifact's own words, then each topic
+    term. A title matches a set when it has every word of it."""
+    phrases = [e["said"] for e in intent["entities"] if e["type"] == "artifact"]
+    for entity in intent["entities"]:
+        if entity["type"] == "topic":
+            phrases.extend([entity["said"], *entity["terms"]])
+    sets = []
+    for phrase in phrases:
+        words = [w for w in phrase.lower().split() if len(w) > 2 and w not in GENERIC_WORDS]
+        if words and words not in sets:
+            sets.append(words[:WORDS_PER_SET])
+    return sets[:WORD_SETS]
+
+
+def artifacts_list(
+    rows: list[dict[str, Any]], words: list[list[str]], agents: list[dict[str, Any]]
+) -> str:
+    """Every match, with a yes/no line first when the owner named agents: "Did
+    main-dev make it?" is answered by comparing the records, not by hiding
+    the other matches."""
+    searched = " or ".join("“" + " ".join(w) + "”" for w in words) or "nothing"
+    if not rows:
+        return f"No artifact titles match {searched} (every workspace, removed ones included)."
+    lines = []
+    if agents:
+        keys = {a["id"] for a in agents}
+        theirs = sum(1 for r in rows if r.get("session_key") in keys)
+        who = " or ".join(label(a) for a in agents)
+        lines.append(
+            f"{theirs} of these {'is' if theirs == 1 else 'are'} by {who}."
+            if theirs
+            else f"None of these are by {who}."
+        )
+    lines.append(f"{len(rows)} artifact(s) with titles matching {searched}, newest first:")
+    for row in rows[:LIST_CAP]:
+        removed = f" · removed {_when(row['removed_at'])}" if row.get("removed_at") else ""
+        lines.append(
+            f"- “{row.get('title')}” by {_who(row.get('session_name'), row.get('folder'))} · "
+            f"created {_when(row['created_at'])} · updated {_when(row['updated_at'])}{removed}"
+        )
+    return "\n".join(lines)
+
+
+def work_list(tasks: list[dict[str, Any]], now: int, workspace: str | None) -> str:
+    """Tasks in progress, recent and stale apart: 142 of 178 on the owner's
+    machine hadn't been touched in a week."""
+    from duckterm.persistence.folder_chats import within
+
+    open_tasks = [
+        t
+        for t in tasks
+        if t["status"] == "in_progress" and (workspace is None or within(t["folder"], workspace))
+    ]
+    active = [t for t in open_tasks if now - t["updated_at"] < STALE_MS]
+    active.sort(key=lambda t: -t["updated_at"])
+    scope = f" in {workspace}" if workspace else ""
+    lines = [
+        f"{len(open_tasks)} tasks are marked in progress{scope}: {len(active)} updated in the "
+        f"last 7 days, {len(open_tasks) - len(active)} not touched for longer (counted, not "
+        "listed)."
+    ]
+    for task in active[:LIST_CAP]:
+        owner = task.get("owner_name") or "removed agent"
+        lines.append(
+            f"- {clip(task['title'], 160)} · {_who(owner, task['folder'])} · "
+            f"updated {_age(task['updated_at'], now)} ago"
+        )
+    if len(active) > LIST_CAP:
+        lines.append(f"…and {len(active) - LIST_CAP} more active.")
+    return "\n".join(lines)
+
+
+def usage_table(report: dict[str, Any], days: int) -> str:
+    """Per agent, ranked by tokens excluding cache reads: cache reads were 97%
+    of all tokens on the owner's machine and cost about a tenth of input."""
+    totals: dict[tuple[str, str], dict[str, int]] = {}
+    for row in report["rows"]:
+        entry = totals.setdefault(
+            (row["session_name"], row["folder_name"]),
+            {"input": 0, "output": 0, "cache_write": 0, "cache_read": 0},
+        )
+        for field in entry:
+            entry[field] += int(row.get(field) or 0)
+    if not totals:
+        return f"No token usage recorded in the last {days} day(s)."
+
+    def m(value: int) -> str:
+        return f"{value / 1e6:.1f}M"
+
+    ranked = sorted(
+        totals.items(), key=lambda kv: -(kv[1]["input"] + kv[1]["output"] + kv[1]["cache_write"])
+    )
+    lines = [
+        f"Token use over the last {days} day(s) (UTC days, as the usage store records them), "
+        "ranked by input, output and cache writes. Cache reads are shown apart because they "
+        "are most of the volume and the cheapest. Not priced here; Analytics prices them."
+    ]
+    for (name, folder), t in ranked[:10]:
+        lines.append(
+            f"- {_who(name, folder)}: {m(t['input'] + t['output'] + t['cache_write'])} "
+            f"(output {m(t['output'])}) · cache reads {m(t['cache_read'])}"
+        )
+    return "\n".join(lines)
+
+
+def health_list(
+    checkpoints: list[dict[str, Any]],
+    waiting: int,
+    interrupted: list[dict[str, Any]],
+    workspaces: dict[str, str],
+    now: int,
+) -> str:
+    """A fixed checklist of recent problems. Agents interrupted days ago are
+    history, not breakage; agents idle since their last checkpoint aren't
+    behind."""
+    failing = [c for c in checkpoints if c["status"] == "failing"]
+    behind = [c for c in checkpoints if c["status"] == "behind"]
+    lines = [
+        "Checked: checkpoints of agents active in the last 7 days, open questions to you, "
+        "and agents interrupted in the last 24 hours. CI and pull requests aren't checked "
+        "here yet."
+    ]
+    current = sum(1 for c in checkpoints if c["status"] == "current")
+    lines.append(
+        f"- Checkpoints: {current} of {len(checkpoints)} current, {len(behind)} behind, "
+        f"{len(failing)} failing."
+    )
+    for c in failing + behind:
+        count = c["new_messages"]
+        lines.append(
+            f"  - {_who(c['name'], workspaces.get(c['key']))} {c['status']}: {count} new "
+            f"message{'' if count == 1 else 's'} since its last save"
+            + (f" {_age(c['saved_at'], now)} ago" if c.get("saved_at") else "")
+        )
+    lines.append(f"- Waiting on you: {waiting} open question(s).")
+    lines.append(f"- Interrupted in the last 24 hours: {len(interrupted)}.")
+    for row in interrupted:
+        lines.append(
+            f"  - {_who(row.get('name') or row['session_key'][:8], row.get('grp'))}, "
+            f"{_age(row['updated_at'], now)} ago"
+        )
+    return "\n".join(lines)
+
+
+def sent_list(
+    rows: list[dict[str, Any]], names: dict[str, tuple[str, str]], now: int, span: str
+) -> str:
+    """What the owner sent agents through DuckTerm (inbox, @ asks and the duck
+    card). Text typed straight into a terminal is history (step 3)."""
+    if not rows:
+        return f"You sent no messages through DuckTerm {span}."
+    open_rows = [r for r in rows if r["status"] in ("queued", "accepted", "read")]
+    lines = [
+        f"{len(rows)} message(s) sent through DuckTerm {span}, {len(open_rows)} still unanswered, "
+        "newest first. Text typed straight into a terminal isn't included."
+    ]
+    for row in rows[:LIST_CAP]:
+        name, folder = names.get(row["recipient"], (row["recipient"][:8], ""))
+        status = row["status"]
+        answer = f": {clip(row['answer'], 160)}" if row.get("answer") else ""
+        lines.append(
+            f"- to {_who(name, folder)} · {_when(row['created_at'])} · {status}{answer}\n"
+            f"  “{clip(row['question'], 160)}”"
+        )
+    return "\n".join(lines)

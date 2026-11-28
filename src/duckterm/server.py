@@ -4439,6 +4439,10 @@ class Server:
                     "candidates": [self._oracle_agent(by_id[c]) for c in candidates],
                 }
             }
+        if kind in ask_intents.LIST_INTENTS:
+            answer = await self._ask_list(kind, intent, by_id)
+            exchange = oracle.append_chat(chat_path, question, answer, int(time.time() * 1000))
+            return {"answer": answer, "exchange": exchange, "sessions": [], "intent": kind}
         if kind not in ("ask.agent", "ask.fleet"):
             return None
         reading = agents
@@ -4468,6 +4472,69 @@ class Server:
             "backend": answered.backend,
             "intent": kind,
         }
+
+    async def _ask_list(
+        self, kind: str, intent: dict[str, Any], by_id: dict[str, dict[str, Any]]
+    ) -> str:
+        """Answers that are records: shown as they are, no answer call."""
+        now = int(time.time() * 1000)
+        span = ask_intents.time_range(intent)
+        if kind == "ask.needs_you":
+            return ask_intents.needs_you_list(self.relay.needs_you(), now)
+        if kind == "ask.artifacts":
+            words = ask_intents.artifact_words(intent)
+            rows = self.history.artifacts.find_titles(words)
+            _, mentioned = ask_intents.agents_named(intent, 0)
+            return ask_intents.artifacts_list(rows, words, [by_id[k] for k in mentioned])
+        if kind == "ask.work":
+            workspace = next(
+                (e["id"] for e in intent["entities"] if e["type"] == "workspace" and e["id"]),
+                None,
+            )
+            return ask_intents.work_list(self.history.folder_tasks.list_tasks(), now, workspace)
+        if kind == "ask.usage":
+            days = 7 if span is None else max(1, min(36500, -(-(now - span[0]) // 86_400_000)))
+            return ask_intents.usage_table(await self._token_report(days), days)
+        if kind == "ask.health":
+            from duckterm.core import checkpoint_health
+
+            sessions = self.history.sessions()
+            interrupted = [
+                r
+                for r in sessions
+                if r.get("state") == "interrupted"
+                and now - (r.get("updated_at") or 0) < ask_intents.RECENTLY_FINISHED_MS
+            ]
+            return ask_intents.health_list(
+                checkpoint_health.report(self.history._conn, now),
+                len(self.relay.needs_you()),
+                interrupted,
+                {str(r["session_key"]): str(r.get("grp") or "") for r in sessions},
+                now,
+            )
+        start, end = span or (now - 7 * 86_400_000, now)
+        rows = [
+            dict(r)
+            for r in self.history._conn.execute(
+                "SELECT recipient, question, status, answer, created_at FROM session_questions "
+                "WHERE sender = 'owner' AND created_at >= ? AND created_at <= ? "
+                "ORDER BY created_at DESC",
+                (start, end),
+            )
+        ]
+        names = {
+            str(r["session_key"]): (
+                str(r.get("name") or r["session_key"][:8]),
+                str(r.get("grp") or ""),
+            )
+            for r in self.history.sessions()
+        }
+        label = (
+            "in the last 7 days"
+            if span is None
+            else f"between {ask_intents._when(start)} and {ask_intents._when(end)}"
+        )
+        return ask_intents.sent_list(rows, names, now, label)
 
     @staticmethod
     def _oracle_agent(agent: dict[str, Any]) -> dict[str, str]:
@@ -5348,18 +5415,20 @@ class Server:
         except ValueError:
             await _write_json(writer, 400, {"error": "days must be 1..36500 or all"})
             return
+        result = await self._token_report(
+            days,
+            agent=params.get("agent", [""])[0],
+            folder=params.get("folder", [""])[0],
+            session=params.get("session", [""])[0],
+        )
+        await _write_json(writer, 200, result)
+
+    async def _token_report(self, days: int | None, **filters: str) -> dict[str, Any]:
         async with self._tokens_lock:
             identities = await asyncio.to_thread(self._token_identities)
-            result = await asyncio.to_thread(
-                self._tokens.analytics,
-                days,
-                time.time(),
-                identities,
-                agent=params.get("agent", [""])[0],
-                folder=params.get("folder", [""])[0],
-                session=params.get("session", [""])[0],
+            return await asyncio.to_thread(
+                lambda: self._tokens.analytics(days, time.time(), identities, **filters)
             )
-        await _write_json(writer, 200, result)
 
     async def _mail_analytics(
         self, writer: asyncio.StreamWriter, headers: dict[str, str], query: str

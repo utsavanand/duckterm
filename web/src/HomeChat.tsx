@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { api, OracleExchange } from "./api";
 import { useEdition } from "./edition";
-import { html } from "./render";
+import { modelHtml } from "./render";
 
 export type ChatSession = { key: string; name: string; folder?: string; state?: string };
 
@@ -112,7 +112,7 @@ export function HomeChat({ sessions, onOpenTerminal }: { sessions: ChatSession[]
       {log.length === 0 && pending === null && <p className="rd-home-chat-intro">Ask about anything your teams are doing: who is stuck, what each session is working on, what needs you.{messaging && " Start with @ to ask one session directly."}</p>}
       {log.map(exchange => <div key={exchange.at} className="rd-home-exchange">
         <div className="rd-home-q">{exchange.q}</div>
-        <div className="rd-home-a rd-msg-text" dangerouslySetInnerHTML={{ __html: withSessionChips(html(exchange.a), sessions) }} />
+        <div className="rd-home-a rd-msg-text" dangerouslySetInnerHTML={{ __html: withSessionChips(modelHtml(exchange.a), sessions) }} />
         {exchange.key && exchange.to && <Reply exchange={exchange} />}
       </div>)}
       {pending !== null && <div className="rd-home-exchange"><div className="rd-home-q">{pending}</div><div className="rd-home-thinking" role="status"><span className="rd-spinner" /> {pending.startsWith("@") && messaging ? "Sending…" : "Reading your sessions…"}</div></div>}
