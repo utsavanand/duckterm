@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api, type DiffFile, type DiffHunk, type ReviewDiff, type ReviewHeader } from "../../api";
-import { html } from "../../render";
+import { modelHtml } from "../../render";
 import { Code } from "../DiffPane";
 import { languageFor, splitRows, unifiedRows } from "../diffModel";
 import { fileKind, fileTree, treeOrder, type TreeNode } from "./tree";
@@ -223,7 +223,7 @@ function AskBox({ file, hunk, sel, header, onClose, onNote }: { file: DiffFile; 
       <button aria-pressed={mode === "ask"} onClick={() => setMode("ask")}>Ask</button>
       <button aria-pressed={mode === "note"} onClick={() => setMode("note")}>Note for the author</button>
     </span>
-    {answer && <div className="rv2-answer"><span className="q">{answer.q}</span><div dangerouslySetInnerHTML={{ __html: html(answer.a) }} />
+    {answer && <div className="rv2-answer"><span className="q">{answer.q}</span><div dangerouslySetInnerHTML={{ __html: modelHtml(answer.a) }} />
       {answer.citations.length > 0 && <span className="src">{answer.citations.map(c => `${c.path}:${c.line}`).join(" · ")}</span>}</div>}
     {saved && <div className="rv2-answer mine">{saved}<span className="src">Saved to your notes · sent with Request changes</span></div>}
     {error && <p className="rv2-note" role="alert">{error}</p>}

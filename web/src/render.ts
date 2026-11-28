@@ -68,3 +68,18 @@ export const highlighter = hljs;
 export function html(md: string): string {
   return DOMPurify.sanitize(marked.parse(md, { async: false }) as string);
 }
+
+// Text a model wrote about content someone else controls (a PR diff can carry
+// a prompt injection). Rendering it must not fetch anything: a remote image,
+// an <input type=image> or a style url() would carry what the model was told
+// to leak in its URL. An allowlist of what markdown produces, because a
+// denylist missed <input type=image> and <mglyph src> (security, QA on #509).
+const MODEL_TAGS = ["p", "br", "hr", "strong", "b", "em", "i", "del", "s", "code", "pre", "kbd", "sup", "sub", "blockquote",
+  "ul", "ol", "li", "a", "h1", "h2", "h3", "h4", "h5", "h6", "table", "thead", "tbody", "tr", "th", "td", "span", "div"];
+const MODEL_ATTRS = ["href", "title", "class", "start", "align"];
+
+export function modelHtml(md: string): string {
+  return DOMPurify.sanitize(marked.parse(md, { async: false }) as string, {
+    ALLOWED_TAGS: MODEL_TAGS, ALLOWED_ATTR: MODEL_ATTRS, ALLOW_DATA_ATTR: false,
+  });
+}

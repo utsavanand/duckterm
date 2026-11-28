@@ -7,6 +7,16 @@ no CI read "Ready to release" (main-qa-2 on #503). Evidence counts toward a
 pass only when it names what it tested. An unattributed log may still block on
 failure, but only CI on this head can make the row ready.
 
+## 2026-11-26 — Allow what you render, don't deny what you thought of
+
+modelHtml first stripped a list of tags that load things: img, video, iframe,
+style and so on. Security and QA still found <input type="image" src>, which
+fetches without a click, and mermaid copying injected themeCSS url() into the
+diagram's <style>. A real browser run of the old code made requests through
+both. Model text now keeps only the tags markdown produces, and review
+diagrams refuse styling directives before rendering and any non-# url() or
+outside href after.
+
 ## 2026-11-26 — Shown isn't counted
 
 The Release readiness tab listed a failed CI run and a failed gate as lines
