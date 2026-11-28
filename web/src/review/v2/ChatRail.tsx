@@ -68,7 +68,7 @@ function FixDraft({ header, row, onDone }: { header: ReviewHeader; row: ReadyRow
       <button type="button" className="x" aria-label="Discard draft" onClick={() => onDone(null)}>✕</button>
     </div>
     <p className="rv2-dim">{dest === "inbox" ? <>To <b>{header.session?.name}</b>, the session that opened this PR · {row.name}</> : <>Posted on <b>#{header.pr?.number}</b> on GitHub as you · {row.name}</>}</p>
-    <textarea ref={box} rows={7} aria-label="Fix request" value={text} onChange={event => setText(event.target.value)} />
+    <textarea ref={box} rows={5} aria-label="Fix request" value={text} onChange={event => setText(event.target.value)} />
     {error && <p className="rv2-note" role="alert">{error}</p>}
     <div className="rv2-fixactions"><button className="primary" disabled={busy || !text.trim()}>{busy ? "Sending…" : dest === "inbox" ? `Send to ${header.session?.name}` : "Post comment"}</button></div>
   </form>;

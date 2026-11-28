@@ -54,7 +54,7 @@
 .rv2-tabs small { margin-left: 6px; color: var(--m-faint); font-size: 11px; letter-spacing: 0; text-transform: none; }
 .rv2-tabs small.is-block { color: var(--m-bad); } .rv2-tabs small.is-part { color: var(--m-warn); }
 
-.rv2-body { flex: 1; min-height: 0; display: flex; }
+.rv2-body { flex: 1; min-height: 0; display: flex; position: relative; }
 .rv2-main { flex: 1; min-width: 0; display: flex; }
 .rv2-panel { flex: 1; min-width: 0; min-height: 0; display: flex; }
 .rv2-panel[hidden] { display: none; }
@@ -250,8 +250,13 @@
 .rv2-chattabs button + button[aria-pressed] { border-left: 0; }
 .rv2-chattabs button[aria-pressed="true"] { color: var(--m-fg); background: var(--m-raise); }
 .rv2-chattabs .x, .rv2-dest .x { border: 0 !important; padding: 0 4px !important; color: var(--m-faint); }
-.rv2-chatbody { flex: 1; min-height: 0; display: flex; flex-direction: column; }
-.rv2-chatbody > * { flex: 1; min-height: 0; }
+/* Only the conversation flexes. The suggestions and composer keep their size,
+   and the whole rail scrolls when a fix draft takes room, so nothing overlaps. */
+.rv2-chat { overflow-y: auto; }
+.rv2-chatbody { flex: 1 0 300px; display: flex; flex-direction: column; min-height: 300px; }
+.rv2-chatbody > * { flex: none; }
+.rv2-chatbody > .rd-review-chat-body { flex: 1 1 auto; min-height: 160px; }
+.rv2-chat .rd-review-chat-head { display: none; }
 .rv2-draft { display: flex; flex-direction: column; gap: 8px; padding: 10px; border-bottom: 1px solid var(--m-line); background: var(--m-raise); }
 .rv2-draft textarea { width: 100%; box-sizing: border-box; font: 13px/1.5 var(--m-ui); padding: 8px 10px; }
 .rv2-dest { display: flex; justify-content: space-between; align-items: center; }
@@ -263,6 +268,8 @@
 .rv2-noteloc:hover { color: var(--m-fg); }
 
 @container (max-width: 900px) {
+  /* A narrow window keeps the board its full width; chat opens over it. */
+  .rv2-chat { position: absolute; top: 0; right: 0; bottom: 0; width: min(380px, 100%); z-index: 5; box-shadow: -12px 0 24px rgba(0,0,0,.45); }
   .rv2-delta { grid-template-columns: minmax(0, 1fr); }
   .rv2-lede { grid-template-columns: minmax(0, 1fr); }
   .rv2-rrow { grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px; }
