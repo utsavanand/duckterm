@@ -55,6 +55,7 @@ beforeEach(() => {
       : path === "/folders" ? { folders: ["Team", "Docs"] }
       : method === "POST" && path === "/api/autopilot/autopilots" ? { id: "ap-2" }
       : path.startsWith("/api/autopilot/runs/") ? detail(path.split("/").pop()!)
+      : path.endsWith("/backlog") ? { issues: [7, 8] }
       : {};
     return new Response(JSON.stringify(body), { status: 200 });
   }));
@@ -104,6 +105,27 @@ it("takes issues from another repository and warns when another autopilot would 
   expect(screen.getByText("· issues from o/duckterm")).toBeInTheDocument();
   await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Turn on" })); });
   expect(sent.find(r => r.method === "POST")?.body).toMatchObject({ repo: "o/uv-suite", issue_repo: "o/duckterm" });
+});
+
+it("an edit that changes the labels asks whether open issues that now match should run", async () => {
+  overview.autopilots = [{ id: "ap-1", on: true, created_at: 0, flow: "autopilot/issue-to-merge", name: "kaho reports", repo: "o/duckterm",
+    workspace: "", triggers: { "github-issue": { labels: ["autopilot"] } }, approvals: { spec_on_visible: false, keep_merge_approval: false },
+    budget_m: 5, max_runs: 2, active: 0, watch: {} }];
+  await mount();
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Edit" })); });
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Next" })); });
+  expect(sent.some(r => r.path.endsWith("/backlog"))).toBe(false);
+  expect(screen.queryByText(/open issues/)).toBeNull();
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Back" })); });
+  fireEvent.change(screen.getByLabelText("Labels"), { target: { value: "autopilot, bug" } });
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Next" })); });
+  expect(sent.find(r => r.path.endsWith("/backlog"))?.body).toMatchObject({ triggers: { "github-issue": { labels: ["autopilot", "bug"] } } });
+  expect(screen.getByText("2 open issues in o/duckterm match the new settings")).toBeInTheDocument();
+  expect(screen.getByRole("radio", { name: /Only new ones/ })).toBeChecked();
+  fireEvent.click(screen.getByRole("radio", { name: /Run them/ }));
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Save" })); });
+  expect(sent.find(r => r.method === "PATCH")?.body).toMatchObject({ backlog: "run", triggers: { "github-issue": { labels: ["autopilot", "bug"] } } });
 });
 
 it("cannot go past triggers with none turned on", async () => {

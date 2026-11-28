@@ -144,8 +144,12 @@ export const autopilotApi = {
   summary: () => call<AutopilotSummary>("GET", "/api/autopilot/summary"),
   repositories: () => call<string[]>("GET", "/api/autopilot/repositories"),
   create: (draft: AutopilotDraft) => call<AutopilotEntry>("POST", "/api/autopilot/autopilots", draft),
-  update: (id: string, patch: Partial<AutopilotDraft> & { on?: boolean }) =>
+  // backlog: what happens to open issues an edit's new labels match ("new" by default).
+  update: (id: string, patch: Partial<AutopilotDraft> & { on?: boolean; backlog?: "run" | "new" }) =>
     call<AutopilotEntry>("PATCH", `/api/autopilot/autopilots/${encodeURIComponent(id)}`, patch),
+  // Open issues an edit's labels and issue repository would match that have not run.
+  backlog: (id: string, patch: Partial<AutopilotDraft>) =>
+    call<{ issues: number[] }>("POST", `/api/autopilot/autopilots/${encodeURIComponent(id)}/backlog`, patch),
   remove: (id: string) => call<{ ok: boolean }>("DELETE", `/api/autopilot/autopilots/${encodeURIComponent(id)}`),
   run: (id: string) => call<AutopilotRunDetail>("GET", `/api/autopilot/runs/${encodeURIComponent(id)}`),
   runOnce: (id: string, issue: number) =>

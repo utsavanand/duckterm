@@ -442,6 +442,9 @@ function SetupDialog({ overview, flow, editing, onClose, onSaved }: {
   const [labelsText, setLabelsText] = useState((editing?.triggers["github-issue"]?.labels ?? ["autopilot"]).join(", "));
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
+  // Open issues that the edited labels or issue repository newly match.
+  const [backlog, setBacklog] = useState<number[]>([]);
+  const [runBacklog, setRunBacklog] = useState(false);
 
   useEffect(() => {
     let stopped = false;
@@ -470,11 +473,32 @@ function SetupDialog({ overview, flow, editing, onClose, onSaved }: {
     setDraft({ ...draft, triggers });
   }
 
+  async function next() {
+    const watched = finished().triggers["github-issue"];
+    const before = editing?.triggers["github-issue"];
+    const moved = editing && watched && (!before || issueRepo(editing) !== (draft.issue_repo || draft.repo)
+      || before.labels.join("\n") !== watched.labels.join("\n"));
+    setError("");
+    if (moved) {
+      setBusy(true);
+      try {
+        setBacklog((await autopilotApi.backlog(editing.id, finished())).issues);
+      } catch (e) {
+        setError((e as Error).message);
+        setBusy(false);
+        return;
+      }
+      setBusy(false);
+    } else setBacklog([]);
+    setRunBacklog(false);
+    setStep("confirm");
+  }
+
   async function save() {
     setBusy(true);
     setError("");
     try {
-      if (editing) await autopilotApi.update(editing.id, finished());
+      if (editing) await autopilotApi.update(editing.id, { ...finished(), backlog: runBacklog ? "run" : "new" });
       else await autopilotApi.create(finished());
       onSaved();
     } catch (e) {
@@ -559,6 +583,11 @@ function SetupDialog({ overview, flow, editing, onClose, onSaved }: {
         <div className="ap-small ap-muted">Runs in Docker on this Mac, on your Claude subscription. Keep the Mac awake.</div>
         <div className="ap-small ap-muted ap-secrets">Issue text can steer what a run pushes, so keep secrets and write permissions out of {draft.repo || "repository"} workflows that run on <code>autopilot/**</code> branches.</div>
       </div>
+      {backlog.length > 0 && <fieldset className="ap-backlog">
+        <legend>{backlog.length === 1 ? "1 open issue" : `${backlog.length} open issues`} in {draft.issue_repo || draft.repo} {backlog.length === 1 ? "matches" : "match"} the new settings</legend>
+        <label><input type="radio" name="ap-backlog" checked={!runBacklog} onChange={() => setRunBacklog(false)} /> Only new ones<small>Run issues labelled from now on</small></label>
+        <label><input type="radio" name="ap-backlog" checked={runBacklog} onChange={() => setRunBacklog(true)} /> Run them<small>{backlog.map(n => `#${n}`).join(", ")}, {draft.max_runs} at a time, if a person with write access labelled them</small></label>
+      </fieldset>}
       <details className="ap-limits">
         <summary>Limits <span>{draft.budget_m}M tokens a run · {draft.max_runs} at once</span></summary>
         <div className="ap-row2">
@@ -579,7 +608,7 @@ function SetupDialog({ overview, flow, editing, onClose, onSaved }: {
       {step === "confirm"
         ? <Button variant="ghost" onClick={() => setStep("triggers")}>Back</Button>
         : <Button variant="ghost" onClick={onClose}>Cancel</Button>}
-      {step === "triggers" && <Button onClick={() => setStep("confirm")} disabled={!anyOn || !draft.repo}>Next</Button>}
+      {step === "triggers" && <Button onClick={() => void next()} disabled={!anyOn || !draft.repo || busy}>Next</Button>}
       {step === "confirm" && <Button onClick={() => void save()} disabled={busy}>{editing ? "Save" : "Turn on"}</Button>}
     </div>
   </Modal>;

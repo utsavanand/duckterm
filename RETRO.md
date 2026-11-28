@@ -1,3 +1,18 @@
+## 2026-11-27 — Changing an autopilot's labels quietly skipped every issue it matched
+
+The issue watcher treated any change of labels as a fresh start: the next poll
+recorded every open issue that matched and never ran them. Someone adding a
+label to an autopilot so that waiting issues would run got nothing, with no
+sign why. Found while working out why Kaho's reports were never picked up.
+
+Only an autopilot's first poll records what is already there now. An edit that
+changes the labels or the issue repository keeps the issues already started
+and asks, when open issues newly match, "Only new ones" or "Run them"; the
+answer is kept in the watcher's record. Saving also checks that the GitHub
+token can push to the code repository and read the issue repository, so a
+setup that could never run is refused when it is made. Lesson: a reset that
+runs silently on an edit is a decision made for the person; ask them.
+
 ## 2026-11-27 — An autopilot assumed issues live next to the code
 
 Kaho's "Report a Bug" button files issues in utsavanand/kaho-reports, a repository

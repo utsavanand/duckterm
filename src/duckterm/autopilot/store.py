@@ -51,7 +51,7 @@ def get(autopilot_id: str) -> dict[str, Any]:
 
 def create(body: dict[str, Any]) -> dict[str, Any]:
     base = {"id": "ap-" + uuid.uuid4().hex[:8], "on": True, "created_at": int(time.time() * 1000)}
-    entry = _validated(body, base)
+    entry = validated(body, base)
     with _LOCK:
         entries = load()
         entries.append(entry)
@@ -65,7 +65,7 @@ def update(autopilot_id: str, body: dict[str, Any]) -> dict[str, Any]:
         for i, entry in enumerate(entries):
             if entry["id"] == autopilot_id:
                 merged = {**entry, **body}
-                updated = _validated(merged, entry)
+                updated = validated(merged, entry)
                 if "on" in body:
                     updated["on"] = bool(body["on"])
                 entries[i] = updated
@@ -89,7 +89,7 @@ def issue_repo(entry: dict[str, Any]) -> str:
     return str(entry.get("issue_repo") or entry["repo"])
 
 
-def _validated(body: dict[str, Any], base: dict[str, Any]) -> dict[str, Any]:
+def validated(body: dict[str, Any], base: dict[str, Any]) -> dict[str, Any]:
     """The saved shape, from an untrusted request body. Raises ValueError with
     a message the app can show."""
     try:

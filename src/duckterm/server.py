@@ -447,6 +447,8 @@ _ROUTES: list[Route] = [
           lambda s, r, w, h, b, seg: s._autopilot(w, ap_api.create, body=b)),
     Route("POST", "", lambda s, r, w, h, b, seg: s._autopilot(w, ap_api.run_once, seg, body=b),
           **_mid("/api/autopilot/autopilots/", "/run")),
+    Route("POST", "", lambda s, r, w, h, b, seg: s._autopilot(w, ap_api.backlog, seg, body=b),
+          **_mid("/api/autopilot/autopilots/", "/backlog")),
     Route("PATCH", "", lambda s, r, w, h, b, seg: s._autopilot(w, ap_api.update, seg, body=b),
           prefix="/api/autopilot/autopilots/"),
     Route("DELETE", "", lambda s, r, w, h, b, seg: s._autopilot(w, ap_api.delete, seg),
