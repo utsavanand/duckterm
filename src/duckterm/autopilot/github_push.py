@@ -244,6 +244,12 @@ def around_first_error(text: str) -> str:
     return "\n".join(lines)[-JOB_LOG_TAIL:]
 
 
+def comment(repo: str, number: int, body: str, token: str) -> int:
+    """Comment on an issue; returns the comment id."""
+    made = _api(token, "POST", f"/repos/{repo}/issues/{number}/comments", {"body": body})
+    return int(made.get("id") or 0)
+
+
 def pull_head(repo: str, number: int, token: str) -> str:
     return str(_api(token, "GET", f"/repos/{repo}/pulls/{number}")["head"]["sha"])
 

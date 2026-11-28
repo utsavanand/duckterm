@@ -36,10 +36,14 @@ def wait_ci(
     *,
     sleep: Callable[[float], None] = time.sleep,
     now: Callable[[], float] = time.time,
+    stop: Callable[[], bool] = lambda: False,
 ) -> tuple[str, str]:
-    """("pass" | "fail" | "timeout" | "none", log) for CI on `head`."""
+    """("pass" | "fail" | "timeout" | "none" | "stopped", log) for CI on
+    `head`. `stop` is asked before each look; a cancelled run stops waiting."""
     started = now()
     while True:
+        if stop():
+            return "stopped", ""
         result, log = github_push.checks(repo, head, token)
         if result in ("pass", "fail"):
             return result, log

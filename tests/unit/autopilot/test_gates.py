@@ -37,6 +37,7 @@ class _Steps(runner.Executor):
     classification: dict[str, Any] = {}
     vary = True  # each spec attempt writes a different spec
     triage = "ready"
+    fail_step = ""  # a step whose process fails every attempt
     qa_fail_once = False
     diffs: list[bool] = []  # per review: the diff file matches its stated hash
 
@@ -89,6 +90,13 @@ class _Steps(runner.Executor):
             Path(argv[argv.index("-o") + 1]).write_text(json.dumps(structured))
             return runner.ProcessResult(0, "", "")
         body = {"type": "result", "subtype": "success", "structured_output": structured}
+        if self.fail_step == step:
+            body = {"type": "result", "subtype": "error", "is_error": True}
+            return runner.ProcessResult(1, json.dumps(body), "")
+        # stream-json: the tool calls first, the result object last
+        call = {"type": "tool_use", "name": "Bash", "input": {"command": f"run {step}"}}
+        said = {"type": "assistant", "message": {"content": [call]}}
+        return runner.ProcessResult(0, json.dumps(said) + "\n" + json.dumps(body), "")
         return runner.ProcessResult(0, json.dumps(body), "")
 
 
@@ -97,6 +105,9 @@ def _diff_matches(prompt: str, project: Path) -> bool:
     diff = inputs["diff"]
     data = (project / diff["path"]).read_bytes()
     return bool(data) and hashlib.sha256(data).hexdigest() == diff["sha256"]
+
+
+_comments: list[tuple[str, int, str]] = []
 
 
 class _Gateway:
@@ -122,7 +133,7 @@ class _Gateway:
 class _Box:
     live = 0
 
-    def __init__(self) -> None:
+    def __init__(self, *_: Any) -> None:
         self.name = "box"
 
     @classmethod
@@ -175,9 +186,15 @@ def published(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[str]:
     _Steps.calls, _Steps.prompts, _Gateway.minted, _Box.live = [], [], [], 0
     _Steps.vary, _Steps.triage, _Steps.qa_fail_once = True, "ready", False
     _Steps.diffs = []
+    _Steps.fail_step = ""
     _Steps.classification = {**ROUTINE, "security": {"level": "touches", "areas": ["auth"]}}
     out: list[str] = []
     monkeypatch.setattr(runs, "_publish", lambda root, meta, *_: out.append(meta["id"]))
+    # status comments go to a list, never to GitHub
+    _comments.clear()
+    monkeypatch.setattr(
+        github_push, "comment", lambda repo, n, body, token: _comments.append((repo, n, body)) or 1
+    )
     return out
 
 
@@ -335,13 +352,14 @@ def merging(published: list[str], monkeypatch: pytest.MonkeyPatch) -> _GitHub:
     def publish(root: Path, meta: dict[str, Any], *_: Any) -> None:
         published.append(meta["id"])
         runs._update(root, pushed=True, pr={"number": 5, "url": "u", "base": "main"})
+        runs._announce(root, "pr")
 
     def head(root: Path) -> str:
         return runs._git_out(root / "repo", "rev-parse", "HEAD")
 
     monkeypatch.setattr(runs, "_publish", publish)
     monkeypatch.setattr(github_projects, "local_token", lambda: ("gh-token", {}))
-    monkeypatch.setattr(delivery, "wait_ci", lambda repo, sha, token: gh.ci.pop(0))
+    monkeypatch.setattr(delivery, "wait_ci", lambda repo, sha, token, stop: gh.ci.pop(0))
     monkeypatch.setattr(github_push, "push", lambda *a: setattr(gh, "pushed", gh.pushed + 1))
     monkeypatch.setattr(
         github_push,
@@ -471,3 +489,108 @@ def test_with_auto_merge_on_a_routine_fix_merges_when_ci_passes(merging: _GitHub
     store.update(entry["id"], {"auto_merge": "on"})
     run = runs.get(runs.start(entry, "github-issue", {"number": 7, "title": "Row stuck"}))
     assert run["state"] == "merged" and merging.merged == [run["ci_head"]]
+
+
+def _kinds() -> list[str]:
+    """Which status each comment posted, by its first words."""
+    first = {
+        "Autopilot started": "started",
+        "Opened pull": "pr",
+        "Pull request": "merge-gate",
+        "Merged pull": "merged",
+        "The fix spec": "spec-gate",
+        "The run was cancelled": "cancelled",
+        "The run ended without": "failed",
+    }
+    return [next(k for p, k in first.items() if body.startswith(p)) for _, _, body in _comments]
+
+
+def test_the_issue_hears_each_status_once_and_never_an_error(merging: _GitHub) -> None:
+    entry = _autopilot()
+    run_id = runs.start(entry, "github-issue", {"number": 7, "title": "Row stuck"})
+    runs.get(run_id)
+    _approve(run_id)
+    assert _kinds() == ["started", "pr", "merge-gate", "merged"]
+    assert {(repo, n) for repo, n, _ in _comments} == {("o/r", 7)}
+
+
+def test_a_failed_run_says_so_without_the_error_text(
+    published: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from duckterm import github_projects
+
+    monkeypatch.setattr(github_projects, "local_token", lambda: ("t", {}))
+    _Steps.fail_step = "triage"
+    run_id = _start()
+    assert runs.get(run_id)["state"] == "failed"
+    assert _kinds() == ["started", "failed"]
+    reason = (runs._receipt(runs.runs_root() / run_id) or {})["failure"]["reason"]
+    assert reason and reason not in _comments[-1][2]
+
+
+def test_cancelling_a_run_waiting_for_its_spec_ends_it_and_tells_the_issue(
+    published: list[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from duckterm import github_projects
+
+    monkeypatch.setattr(github_projects, "local_token", lambda: ("t", {}))
+    run_id = _start()
+    runs.cancel(run_id, "cancelled by the owner")
+    run = runs.get(run_id)
+    assert (run["state"], run["cancel_reason"]) == ("cancelled", "cancelled by the owner")
+    assert _kinds()[-1] == "cancelled"
+    with pytest.raises(ValueError, match="already ended"):
+        runs.cancel(run_id)
+
+
+def test_removing_the_label_cancels_only_runs_the_label_started(published: list[str]) -> None:
+    by_label = runs.start(
+        {"id": "a1", "name": "x", "flow": "autopilot/issue-to-merge", "repo": "o/r", "budget_m": 5},
+        "github-issue",
+        {"number": 7, "title": "Row stuck", "started_by": "maintainer"},
+    )
+    by_hand = _start()
+    runs.cancel_unlabelled("a1", labelled={8})
+    assert runs.get(by_label)["state"] == "cancelled"
+    assert runs.get(by_label)["cancel_reason"] == "the label was removed"
+    assert runs.get(by_hand)["state"] == "waiting_gate"
+
+
+def test_a_cancelled_ci_wait_stops_and_merges_nothing(
+    merging: _GitHub, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def wait(repo: str, sha: str, token: str, stop: Any) -> tuple[str, str]:
+        runs.cancel(published_id(), "cancelled by the owner")
+        return ("stopped", "") if stop() else ("pass", "")
+
+    monkeypatch.setattr(delivery, "wait_ci", wait)
+    entry = _autopilot()
+    run = runs.get(runs.start(entry, "github-issue", {"number": 7, "title": "Row stuck"}))
+    assert run["state"] == "cancelled" and merging.merged == []
+
+
+def published_id() -> str:
+    return sorted(p.name for p in runs.runs_root().iterdir())[-1]
+
+
+def test_a_failed_run_runs_again_from_the_step_it_failed_at(published: list[str]) -> None:
+    _Steps.classification, _Steps.fail_step = ROUTINE, "build"
+    run_id = _start()
+    assert runs.get(run_id)["state"] == "failed"
+    with pytest.raises(ValueError, match="never reached"):
+        runs.rerun(run_id, {"step": "verdict"})
+    _Steps.fail_step = ""
+    runs.rerun(run_id, {"step": "build"})
+    run = runs.get(run_id)
+    assert run["state"] == "succeeded" and run["rerun_from"] == "build"
+    assert _Steps.calls.count("triage") == 1 and _Steps.calls.count("spec") == 1
+    assert published == [run_id]
+
+
+def test_a_steps_transcript_lists_what_it_ran(published: list[str]) -> None:
+    run_id = _start()
+    seen = runs.transcript(run_id, {"step": "spec", "attempt": 1})
+    assert seen["kept"] is True
+    assert seen["events"] == [{"kind": "tool", "name": "Bash", "text": "run spec", "error": False}]
+    with pytest.raises(ValueError):
+        runs.transcript(run_id, {"step": "../x", "attempt": 1})

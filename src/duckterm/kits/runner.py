@@ -459,6 +459,40 @@ def load_run(project: Path, run_id: str) -> Run:
     return Run(project, state, flow, skills)
 
 
+def rerun(
+    project: Path,
+    run_id: str,
+    step_id: str,
+    *,
+    executor: Executor | None = None,
+    limits: Limits | None = None,
+) -> Run:
+    """Run a run again from one of the steps it reached. Steps before it keep
+    their receipts; it and everything after run afresh on the worktree as it
+    is now, with fresh step and loop budgets. A gate still waiting is closed
+    unanswered, and a step left started by a process that died is marked
+    abandoned; a run another process is still driving holds the lock, so
+    this refuses it."""
+    run = load_run(project, run_id)
+    run.step(step_id)
+    if not any(a["step"] == step_id for a in run.state["attempts"]) and not any(
+        g["step"] == step_id for g in run.state["gates"]
+    ):
+        raise RunRefused(f"run {run_id} never reached {step_id!r}")
+    for a in run.state["attempts"]:
+        if a["status"] == "started":
+            a["status"] = "abandoned"
+            a["reason"] = "the run was run again from an earlier step"
+    for g in run.state["gates"]:
+        if g["response"] is None:
+            g["response"] = {"answer": None, "at": int(time.time()), "closed": "rerun"}
+    run.state.update(
+        state="running", failure=None, finished_at=None, steps_taken=0, loops={}, current=None
+    )
+    run.save()
+    return _drive(run, step_id, executor or Executor(), limits or Limits())
+
+
 def resume(
     project: Path,
     run_id: str,
@@ -1000,8 +1034,11 @@ def _harness(
             "claude",
             "-p",
             prompt,
+            # stream-json: every tool call, kept as the step's transcript; the
+            # last line is the same result object plain json gives
             "--output-format",
-            "json",
+            "stream-json",
+            "--verbose",
             "--json-schema",
             json.dumps(schema),
         ]
@@ -1009,6 +1046,7 @@ def _harness(
             ["--dangerously-skip-permissions"] if lim.yolo else ["--permission-mode", "acceptEdits"]
         )
         res = ex.run_process(argv, cwd=run.project, env=env, stdin="", timeout=timeout)
+        _keep_transcript(outdir, res.stdout)
         payload = _last_json(res.stdout)
         if isinstance(payload, dict) and "structured_output" in payload:
             payload = {**payload, "_structured": payload.get("structured_output")}
@@ -1023,6 +1061,7 @@ def _harness(
         "--skip-git-repo-check",
         "-C",
         str(run.project),
+        "--json",
         "--output-schema",
         str(schema_file),
         "-o",
@@ -1036,10 +1075,22 @@ def _harness(
     )
     argv.append(prompt)
     res = ex.run_process(argv, cwd=run.project, env=env, stdin="", timeout=timeout)
+    _keep_transcript(outdir, res.stdout)
     final = _last_json(last.read_text()) if last.is_file() else None
     if final is None:
         final = _last_json(res.stdout)
     return res.exit, {"_structured": final, "raw": res.stdout[-2000:]}, res.stderr
+
+
+TRANSCRIPT = "transcript.jsonl"
+TRANSCRIPT_CAP = 4_000_000
+
+
+def _keep_transcript(outdir: Path, stdout: str) -> None:
+    """The harness's event stream for this attempt (tool calls, messages), for
+    a person reading what a step did. The end is kept when it is too long."""
+    outdir.mkdir(parents=True, exist_ok=True)
+    (outdir / TRANSCRIPT).write_text(stdout[-TRANSCRIPT_CAP:])
 
 
 def _precheck(

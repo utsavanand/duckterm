@@ -55,6 +55,10 @@ beforeEach(() => {
       : path === "/folders" ? { folders: ["Team", "Docs"] }
       : method === "POST" && path === "/api/autopilot/autopilots" ? { id: "ap-2" }
       : path.endsWith("/merge/challenge") ? { payload: "duckterm-approve v1\nhead=abc" }
+      : path.endsWith("/transcript") ? { kept: true, events: [
+        { kind: "tool", name: "Bash", text: "pytest -q tests/test_row.py", error: false },
+        { kind: "result", name: "", text: "1 failed", error: true },
+        { kind: "message", name: "", text: "<img src=x onerror=alert(1)> Fixed it.", error: false }] }
       : path.startsWith("/api/autopilot/runs/") && method === "GET" ? detail(path.split("/").pop()!)
       : path.endsWith("/backlog") ? { issues: [7, 8] }
       : {};
@@ -318,6 +322,38 @@ it("in the Mac app, approving a merge signs the server's challenge with Touch ID
     ["/api/autopilot/runs/r4/merge/challenge", {}],
     ["/api/autopilot/runs/r4/merge/approve", { payload: "duckterm-approve v1\nhead=abc", signature: "sig-1" }],
   ]);
+});
+
+it("an ended run runs again from a step it reached and offers no cancel", async () => {
+  await mount();
+  const base = detail("r1");
+  vi.mocked(fetch).mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const path = String(input);
+    sent.push({ method: init?.method ?? "GET", path, body: init?.body ? JSON.parse(String(init.body)) : undefined });
+    const body = path === "/api/autopilot/runs/r1" ? { ...base, state: "failed", rerun_steps: ["triage", "spec", "build"] } : overview;
+    return new Response(JSON.stringify(body), { status: 200 });
+  });
+  await openRow("Inbox badge stays");
+  expect(screen.queryByRole("button", { name: "Cancel run" })).toBeNull();
+  fireEvent.click(screen.getByRole("button", { name: "Rerun from step…" }));
+  expect(screen.getByLabelText("Start again at")).toHaveValue("build");
+  fireEvent.change(screen.getByLabelText("Start again at"), { target: { value: "spec" } });
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Rerun" })); });
+  expect(sent.find(r => r.method === "POST")).toEqual({ method: "POST", path: "/api/autopilot/runs/r1/rerun", body: { step: "spec" } });
+});
+
+it("a step's full transcript shows its tool calls and the model's words as plain text", async () => {
+  await mount();
+  await openRow("Badge colour");
+  await act(async () => { fireEvent.click(screen.getByRole("button", { name: "Full transcript" })); });
+  await act(async () => { await new Promise(resolve => setTimeout(resolve, 10)); });
+  const lines = Array.from(document.querySelectorAll(".ap-transcript li")).map(li => [li.className, li.textContent]);
+  expect(lines).toEqual([
+    ["ap-tr-tool", "Bash pytest -q tests/test_row.py"],
+    ["ap-tr-result ap-tr-bad", "1 failed"],
+    ["ap-tr-message", "<img src=x onerror=alert(1)> Fixed it."],
+  ]);
+  expect(document.querySelector(".ap-transcript img")).toBeNull();
 });
 
 it("Read spec opens the run on its Spec tab", async () => {

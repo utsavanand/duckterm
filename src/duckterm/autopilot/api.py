@@ -136,6 +136,18 @@ def answer(run_id: str, body: dict[str, Any]) -> dict[str, Any]:
     return runs.answer(run_id, body)
 
 
+def cancel(run_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    return runs.cancel(run_id, "cancelled by the owner")
+
+
+def rerun(run_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    return runs.rerun(run_id, body)
+
+
+def transcript(run_id: str, body: dict[str, Any]) -> dict[str, Any]:
+    return runs.transcript(run_id, body)
+
+
 def merge_challenge(run_id: str, body: dict[str, Any]) -> dict[str, Any]:
     return runs.merge_challenge(run_id)
 
@@ -172,6 +184,10 @@ def tick() -> None:
             )
             for item in ready:
                 runs.start(entry, "github-issue", item)
+            labels = entry["triggers"]["github-issue"]["labels"]
+            if labels:
+                still = github_watch.labelled(get, store.issue_repo(entry), labels)
+                runs.cancel_unlabelled(entry["id"], still)
             _watch[entry["id"]] = {"checked_at": _now()}
         except Exception as exc:  # noqa: BLE001 — one repository's failure must not stop the rest
             _watch[entry["id"]] = {"checked_at": _now(), "error": str(exc)[:300]}

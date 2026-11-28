@@ -1,3 +1,15 @@
+## 2026-11-28 — A cancelled run could come back to life
+
+Adding Cancel to autopilot runs: the run's thread is still inside a step when
+the owner cancels, and when that step fails (its sandbox was removed) the
+thread writes "failed", and its CI wait would carry on to a merge gate. The
+run file now refuses any state change once a run is cancelled, the CI wait
+asks before each look whether to stop, and the merge checks again. First draft
+of the merge-reject path also called the settle step while holding the run
+file's lock, which takes the same lock: a deadlock the tests found at once.
+Lesson: a cancel is a race with whoever is still working; make the record
+refuse the loser rather than hoping the worker notices.
+
 ## 2026-11-27 — GitHub Actions leaves a failed check's summary empty
 
 Autopilot's merge stage sends a failed CI run's log to a fix step. Read from

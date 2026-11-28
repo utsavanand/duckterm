@@ -1,7 +1,7 @@
 import { ReactNode, useCallback, useEffect, useState } from "react";
 import {
   AutopilotAttempt, AutopilotChanges, AutopilotDraft, AutopilotEntry, AutopilotFlow, AutopilotOverview, AutopilotRun,
-  AutopilotRunDetail, AutopilotSummary, autopilotApi, Classification, TriggerType,
+  AutopilotRunDetail, AutopilotSummary, AutopilotTranscript, autopilotApi, Classification, TriggerType,
 } from "./autopilotApi";
 import { modelHtml } from "./render";
 import { api } from "./api";
@@ -441,6 +441,7 @@ function RunDetail({ id, tab: firstTab, back, onBack }: { id: string; tab?: RunT
   const [error, setError] = useState("");
   const [tab, setTab] = useState<RunTab>(firstTab ?? "steps");
   const [reload, setReload] = useState(0);
+  const [reading, setReading] = useState<AutopilotAttempt | null>(null);
   const [picked, setPicked] = useState<number | null>(null);
 
   useEffect(() => {
@@ -483,10 +484,12 @@ function RunDetail({ id, tab: firstTab, back, onBack }: { id: string; tab?: RunT
         Branch <code>{run.branch}</code> {run.pushed ? "on GitHub" : "on this Mac"}
       </div>
       <RiskChips c={run.classification} />
+      <RunControls run={run} onChanged={() => setReload(n => n + 1)} />
     </header>
 
     {run.error && <p className="ap-error" role="alert">{run.error}</p>}
-    {run.outcome && <p className="ap-warn">{run.state === "declined" ? "Declined at triage" : "The issue needs more information"}: {run.outcome}</p>}
+    {run.state === "cancelled" && <p className="ap-warn">Cancelled{run.cancel_reason ? `: ${run.cancel_reason}` : ""}. The branch{run.pr ? " and the pull request" : ""} stay.</p>}
+    {run.outcome && run.state !== "cancelled" && <p className="ap-warn">{run.state === "declined" ? "Declined at triage" : "The issue needs more information"}: {run.outcome}</p>}
     {run.pr_error && <p className="ap-error">Could not open the pull request: {run.pr_error}</p>}
     {run.pr_skipped && <p className="ap-warn">No pull request: {run.pr_skipped}.</p>}
     {run.gate && <section className="ap-gate">
@@ -541,7 +544,10 @@ function RunDetail({ id, tab: firstTab, back, onBack }: { id: string; tab?: RunT
           {attempt.reason
             ? <div className="ap-doc" dangerouslySetInnerHTML={{ __html: modelHtml(attempt.reason) }} />
             : <p className="ap-muted">{attempt.status === "started" ? "Still running." : "This step left no summary."}</p>}
+          {(attempt.kind === "run" || attempt.kind === "decide") && attempt.status !== "started" &&
+            <div><Button size="sm" variant="ghost" onClick={() => setReading(attempt)}>Full transcript</Button></div>}
         </section>}
+        {reading && <TranscriptDialog runId={run.id} attempt={reading} onClose={() => setReading(null)} />}
       </div>)}
 
     {tab === "spec" && (run.spec
@@ -557,6 +563,12 @@ function RunDetail({ id, tab: firstTab, back, onBack }: { id: string; tab?: RunT
         ? <div className="ap-doc" dangerouslySetInnerHTML={{ __html: modelHtml(run.issue_body) }} />
         : <p className="ap-muted">The issue has no description.</p>}
       {run.item.url && <p className="ap-small"><a href={run.item.url} target="_blank" rel="noreferrer">Open on GitHub</a></p>}
+      <h3>Posted on the issue</h3>
+      {Object.keys(run.comments ?? {}).length === 0
+        ? <p className="ap-muted">Nothing yet. The run comments when it starts, waits for you, opens or merges its pull request, and ends.</p>
+        : <ul className="ap-posted">{Object.entries(run.comments ?? {}).map(([kind, id]) => <li key={kind}>
+          {run.item.url && id ? <a href={`${run.item.url}#issuecomment-${id}`} target="_blank" rel="noreferrer">{COMMENT_LABEL[kind] ?? kind}</a> : COMMENT_LABEL[kind] ?? kind}
+        </li>)}</ul>}
     </div>}
   </div>;
 }
@@ -598,6 +610,85 @@ function GatesTab({ run }: { run: AutopilotRunDetail }) {
     </div>
     <p className="ap-muted ap-small">A script, not a model, decides these from the columns above and can only add an approval, never remove one. The issue text never reaches the path rules.</p>
   </div>;
+}
+
+const COMMENT_LABEL: Record<string, string> = {
+  started: "Started", "spec-gate": "Waiting for the spec approval", "merge-gate": "Waiting for the merge approval",
+  pr: "Opened the pull request", merged: "Merged", failed: "Ended without a fix", needs_info: "Asked for more information",
+  declined: "Declined the issue", rejected: "Spec rejected", ended: "Merge not approved", cancelled: "Cancelled",
+};
+
+// Cancel stops a run that is going or waiting; Rerun starts an ended one again
+// from a step it reached.
+function RunControls({ run, onChanged }: { run: AutopilotRunDetail; onChanged: () => void }) {
+  const [asking, setAsking] = useState<"cancel" | "rerun" | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const live = ["starting", "running", "waiting_gate"].includes(run.state);
+  const reached = run.rerun_steps ?? [];
+  const [step, setStep] = useState(reached[reached.length - 1] ?? "");
+  async function act(work: () => Promise<unknown>) {
+    setBusy(true);
+    setError("");
+    try {
+      await work();
+      setAsking(null);
+      onChanged();
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  const canRerun = (!live || run.state === "waiting_gate") && run.state !== "merged" && reached.length > 0;
+  const canCancel = live && run.stage !== "merging";
+  if (!canRerun && !canCancel) return null;
+  return <div className="ap-run-actions">
+    {canRerun && <Button size="sm" variant="ghost" onClick={() => setAsking("rerun")}>Rerun from step…</Button>}
+    {canCancel && <Button size="sm" variant="danger" onClick={() => setAsking("cancel")}>Cancel run</Button>}
+    {asking === "cancel" && <Modal title="Cancel this run?" onClose={() => setAsking(null)}>
+      <p className="ap-muted ap-lead">The current step stops and the sandbox is removed. The branch <code>{run.branch}</code>{run.pr ? ` and pull request #${run.pr.number}` : ""} stay.</p>
+      {error && <p className="ap-error-text">{error}</p>}
+      <div className="ap-foot">
+        <Button variant="ghost" onClick={() => setAsking(null)}>Keep running</Button>
+        <Button variant="danger" disabled={busy} onClick={() => void act(() => autopilotApi.cancel(run.id))}>Cancel run</Button>
+      </div>
+    </Modal>}
+    {asking === "rerun" && <Modal title="Rerun from a step" onClose={() => setAsking(null)}>
+      <p className="ap-muted ap-lead">Steps before it keep their outputs. A new sandbox starts from the branch as it is.</p>
+      <label className="ap-field"><span>Start again at</span>
+        <select style={inputStyle} value={step} onChange={e => setStep(e.target.value)}>
+          {reached.map(s => <option key={s} value={s}>{s}</option>)}
+        </select></label>
+      {error && <p className="ap-error-text">{error}</p>}
+      <div className="ap-foot">
+        <Button variant="ghost" onClick={() => setAsking(null)}>Cancel</Button>
+        <Button disabled={busy || !step} onClick={() => void act(() => autopilotApi.rerun(run.id, step))}>Rerun</Button>
+      </div>
+    </Modal>}
+  </div>;
+}
+
+// A step's tool calls and messages, as plain text: they are the model's and
+// the tools' words.
+function TranscriptDialog({ runId, attempt, onClose }: { runId: string; attempt: AutopilotAttempt; onClose: () => void }) {
+  const [seen, setSeen] = useState<AutopilotTranscript | null>(null);
+  const [error, setError] = useState("");
+  useEffect(() => {
+    autopilotApi.transcript(runId, attempt.step, attempt.attempt).then(setSeen).catch(e => setError((e as Error).message));
+  }, [runId, attempt.step, attempt.attempt]);
+  return <Modal title={`Transcript · ${attempt.step}${attempt.attempt > 1 ? ` · attempt ${attempt.attempt}` : ""}`} onClose={onClose} width={820}>
+    <p className="ap-muted ap-lead">Collected from the sandbox. Each step is a fresh {kindLabel(attempt).split(" ·")[0]} process with no memory of earlier steps.</p>
+    {error ? <p className="ap-error-text">{error}</p> : !seen ? <p className="ap-muted">Loading…</p>
+      : !seen.kept ? <p className="ap-muted">No transcript was kept for this step; runs from before transcripts were kept have none.</p>
+      : <ol className="ap-transcript">
+        {seen.cut && <li className="ap-tr-note">Earlier lines are not shown.</li>}
+        {seen.events.map((e, i) => <li key={i} className={`ap-tr-${e.kind}${e.error ? " ap-tr-bad" : ""}`}>
+          {e.kind === "tool" ? <><b>{e.name}</b> {e.text}</> : e.text}
+        </li>)}
+      </ol>}
+    <div className="ap-foot"><Button variant="ghost" onClick={onClose}>Close</Button></div>
+  </Modal>;
 }
 
 function firstLine(a: AutopilotAttempt): string {
