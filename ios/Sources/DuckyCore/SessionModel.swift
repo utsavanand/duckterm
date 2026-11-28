@@ -6,6 +6,7 @@ public protocol DuckyTransport: AnyObject {
     func claim(_ invitation: Invitation, name: String) async throws -> PairStatus
     func pairingStatus() async throws -> PairStatus
     func snapshot(cursor: String?) async throws -> HostSnapshot
+    func events(cursor: String) async throws -> EventsResult
     func conversation(sessionID: String) async throws -> ConversationSnapshot
     func send(_ message: OutgoingMessage) async throws -> MessageReceipt
     func receipt(requestID: String, sessionID: String) async throws -> MessageReceipt
@@ -15,6 +16,7 @@ public protocol DuckyTransport: AnyObject {
     func close()
 }
 public extension DuckyTransport {
+    func events(cursor: String) async throws -> EventsResult { throw DuckyError.unavailable(404) }
     func analysisContext(scope: AnalysisScope) async throws -> AnalysisContext { throw DuckyError.unavailable(404) }
     func askAnalysis(_ submission: AnalysisSubmission, scope: AnalysisScope) async throws -> AnalysisReceipt { throw DuckyError.unavailable(404) }
     func analysisReceipt(requestID: String, scope: AnalysisScope) async throws -> AnalysisReceipt { throw DuckyError.unavailable(404) }
@@ -102,6 +104,8 @@ public final class SessionModel: ObservableObject {
     private var tracker = NoticeTracker()
     private var cursor: String?
     private var poller: Task<Void, Never>?
+    // A Mac from before /v2/events answers 404; the poll loop then sleeps between reads instead.
+    private var eventsSupported = true
     // Every await checks this; forgetting or re-pairing makes older responses inert.
     private var generation = 0
     // Leaving or returning to the foreground invalidates refreshes but keeps the pairing.
@@ -272,13 +276,30 @@ public final class SessionModel: ObservableObject {
                 do {
                     if self.reconnecting { try await self.retryPause() }
                     else if self.statusFollowsReplies { try await self.conversationPause() }
-                    else { try await self.pause() }
+                    else { try await self.waitForChange() }
                 } catch { return }
             }
         }
     }
 
     static let quickRetries = 3
+
+    /// Returns as soon as the Mac reports a change, or after its own wait; the loop then reads
+    /// the snapshot either way. Without a live cursor, or on any failure, it sleeps as before.
+    private func waitForChange() async throws {
+        guard eventsSupported, phase == .live, let transport, let cursor else { try await pause(); return }
+        do {
+            _ = try await transport.events(cursor: cursor)
+        } catch DuckyError.unavailable(404) {
+            eventsSupported = false
+            try await pause()
+        } catch is CancellationError {
+            throw CancellationError()
+        } catch {
+            try Task.checkCancellation()
+            try await pause()
+        }
+    }
 
     /// While an open chat's agent is working or a send is unresolved, status follows the reply pace.
     private var statusFollowsReplies: Bool {
@@ -601,6 +622,7 @@ public final class SessionModel: ObservableObject {
         retryTask?.cancel(); retryTask = nil; retrying = false
         transport?.close()
         transport = nil
+        eventsSupported = true
         host = nil; deviceID = nil
         snapshot = nil; snapshotAt = nil
         notices = []; tracker = NoticeTracker(); cursor = nil

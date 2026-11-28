@@ -314,6 +314,81 @@ class Grants:
                     return
         raise Denied("Ducky device does not have this capability")
 
+    def claim_account(
+        self,
+        token: str,
+        claims: dict[str, Any],
+        code: str,
+        *,
+        now: int | None = None,
+    ) -> dict[str, Any]:
+        """A phone that proved it is on this Mac's account waits here for the owner.
+
+        The ticket only proves the account; the owner still approves on the Mac,
+        comparing `code` with the one the phone shows.
+        """
+        now = int(time.time()) if now is None else now
+        name = claims["phone_name"]
+        if not TOKEN.fullmatch(token):
+            raise Denied("Invalid pairing credential")
+        if not name.strip() or len(name) > 80 or any(ord(c) < 32 for c in name):
+            raise ValueError("Device name must be 1–80 printable characters")
+        with self.locked(write=True) as state:
+            token_hash = digest(token)
+            for identifier, device in state["devices"].items():
+                if secrets.compare_digest(device["token_hash"], token_hash):
+                    # A retried claim, or a phone that is already allowed.
+                    return {
+                        "id": identifier,
+                        "status": device["status"],
+                        "host_id": state["host_id"],
+                    }
+            state["devices"] = {
+                key: value
+                for key, value in state["devices"].items()
+                if value["status"] != "pending" or value["expires_at"] > now
+            }
+            spent = {
+                nonce: expires_at
+                for nonce, expires_at in state.get("spent_tickets", {}).items()
+                if expires_at > now
+            }
+            # Each ticket makes one claim, so a copied ticket can't come back
+            # after the owner removes the device it created.
+            if claims["nonce"] in spent:
+                raise Denied("Account ticket already used")
+            # One entry per signed-in phone, allowed or waiting: a leaked ticket
+            # can't add a second "Utsav's iPhone" for the owner to confuse with
+            # the real one.
+            if any(
+                value.get("account", {}).get("phone_id") == claims["phone_id"]
+                for value in state["devices"].values()
+            ):
+                raise Denied("This phone is already on this Mac")
+            waiting = [
+                value
+                for value in state["devices"].values()
+                if value.get("account") and value["status"] == "pending"
+            ]
+            if len(waiting) >= 4:
+                raise ValueError("Too many phones are waiting for approval on this Mac")
+            if len(state["devices"]) >= 32:
+                raise ValueError("Remove an old Ducky device before pairing another")
+            identifier = uuid.uuid4().hex
+            state["devices"][identifier] = {
+                "name": name.strip(),
+                "token_hash": token_hash,
+                "status": "pending",
+                "created_at": now,
+                "expires_at": now + 600,
+                "last_seen_at": None,
+                "account": {"login": claims["login"], "phone_id": claims["phone_id"]},
+                "code": code,
+            }
+            spent[claims["nonce"]] = claims["expires_at"]
+            state["spent_tickets"] = spent
+            return {"id": identifier, "status": "pending", "host_id": state["host_id"]}
+
     def devices(self) -> list[dict[str, Any]]:
         with self.locked() as state:
             return [
@@ -324,6 +399,13 @@ class Grants:
                         for field in ("name", "status", "created_at", "expires_at")
                     },
                     "last_seen_at": value.get("last_seen_at"),
+                    # Account claims: who signed in, and the code the owner compares.
+                    **({"account": value["account"]} if value.get("account") else {}),
+                    **(
+                        {"code": value["code"]}
+                        if value.get("code") and value["status"] == "pending"
+                        else {}
+                    ),
                     "capabilities": (
                         capabilities(value.get("capabilities"))
                         if value["status"] == "active"
