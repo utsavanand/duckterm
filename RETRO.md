@@ -1,3 +1,12 @@
+## 2026-11-27 — A run record that only the list reads hides what the run did
+
+Autopilot's runs list read the runner's receipt down to step names and exit
+codes, and the row opened to chips. The receipt already held each attempt's
+timing and summary, the spec path, and the clone held the diff. The owner's
+first real run had a pull request but no way to see why. Build the detail view
+from the files the run already writes before adding new ones, and record what
+a later view needs (the base commit) at the moment it is known.
+
 ## 2026-11-27 — Shared in-flight reads need a deadline through body decoding
 
 A Messages request that never settled remained in the shared pending map, so

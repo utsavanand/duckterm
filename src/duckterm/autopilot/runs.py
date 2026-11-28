@@ -8,6 +8,7 @@ reads those files; there is no table (spec §7.3).
 
 import json
 import os
+import stat
 import subprocess
 import threading
 import time
@@ -97,6 +98,7 @@ def _execute(autopilot: dict[str, Any], meta: dict[str, Any], item: dict[str, An
         flow = catalog.find(autopilot["flow"])
         dirs = prepare_github(autopilot["repo"], "", meta["branch"], root)
         base_sha = _git_out(dirs.project, "rev-parse", "HEAD")
+        _update(root, base_sha=base_sha)
         kit = kit_manifest.load(flow.kit_path)
         install.apply(plan.build(kit, dirs.project, [HARNESS]))
         executor.hide_install(dirs)
@@ -180,13 +182,8 @@ def pr_body(
 ) -> str:
     """The spec the run wrote, a closing reference to the issue, and where it
     came from. Draft until a person reviews it."""
-    parts = []
-    for attempt in state.get("attempts") or []:
-        spec = (attempt.get("outputs") or {}).get("spec")
-        if isinstance(spec, dict) and spec.get("path"):
-            path = project / str(spec["path"])
-            if path.is_file() and not path.is_symlink():
-                parts = [path.read_text(errors="replace")[:20000].strip()]
+    spec = spec_text(project, state)
+    parts = [spec[:20000].strip()] if spec else []
     if item.get("number"):
         parts.append(f"Closes #{item['number']}.")
     parts.append(
@@ -194,6 +191,102 @@ def pr_body(
         "Review it before merging."
     )
     return "\n\n".join(parts)
+
+
+def spec_text(project: Path, state: dict[str, Any]) -> str | None:
+    """The newest spec the run wrote. The path comes from the run's receipt,
+    which the sandbox could write, so a link or a path outside the clone is
+    not read."""
+    found = None
+    for attempt in state.get("attempts") or []:
+        spec = (attempt.get("outputs") or {}).get("spec")
+        if isinstance(spec, dict) and spec.get("path"):
+            found = str(spec["path"])
+    if not found or Path(found).is_absolute() or ".." in Path(found).parts:
+        return None
+    data = _read_capped(project, found, SPEC_CAP)
+    return None if data is None else data.decode(errors="replace")
+
+
+SPEC_CAP = 1_000_000
+RECEIPT_CAP = 1_000_000
+DIFF_CAP = 400_000
+
+
+def _read_capped(root: Path, rel: str, cap: int) -> bytes | None:
+    """At most cap bytes of root/rel, a file the sandbox may have written, or
+    None. Each folder is opened relative to the last with O_NOFOLLOW, so a link
+    anywhere on the path, even one swapped in by a live sandbox, is refused;
+    and only a regular file is read, since a FIFO would block the reading
+    thread for good."""
+    parts = Path(rel).parts
+    try:
+        fd = os.open(root, os.O_RDONLY | os.O_DIRECTORY)
+    except OSError:
+        return None
+    try:
+        for part in parts[:-1]:
+            child = os.open(part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+            os.close(fd)
+            fd = child
+        child = os.open(parts[-1], os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=fd)
+        os.close(fd)
+        fd = child
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None
+        with os.fdopen(fd, "rb") as f:
+            fd = -1
+            return f.read(cap)
+    except OSError:
+        return None
+    finally:
+        if fd >= 0:
+            os.close(fd)
+
+
+def changes(project: Path, base: str) -> dict[str, Any] | None:
+    """The run's change against the commit it started from: each file's line
+    counts and the patch, cut at DIFF_CAP bytes."""
+    try:
+        numstat, _ = _git_capped(project, DIFF_CAP, "--numstat", base)
+        files = []
+        for line in numstat.splitlines():
+            added, removed, path = line.split("\t", 2)
+            binary = added == "-"
+            files.append(
+                {
+                    "path": path,
+                    "added": 0 if binary else int(added),
+                    "removed": 0 if binary else int(removed),
+                    "binary": binary,
+                }
+            )
+        patch, cut = _git_capped(project, DIFF_CAP, "--no-color", base)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    return {"files": files, "patch": patch, "cut": cut}
+
+
+def _git_capped(project: Path, cap: int, *args: str) -> tuple[str, bool]:
+    """`git diff <args> HEAD`, read up to cap bytes and then stopped, and
+    whether it was cut. The clone's config is the sandbox's, so no external
+    diff driver, textconv or fsmonitor runs."""
+    argv = ["git", "-c", "core.fsmonitor=false", "-C", str(project), "diff", "--no-renames"]
+    argv += ["--no-ext-diff", "--no-textconv", *args[:-1], "--end-of-options", args[-1], "HEAD"]
+    with subprocess.Popen(argv, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL) as proc:
+        assert proc.stdout is not None
+        timer = threading.Timer(60, proc.kill)
+        timer.start()
+        try:
+            out = proc.stdout.read(cap + 1)
+        finally:
+            timer.cancel()
+        if len(out) > cap:
+            proc.kill()
+            return out[:cap].decode(errors="replace"), True
+        if proc.wait(timeout=60):
+            raise subprocess.CalledProcessError(proc.returncode, argv)
+    return out.decode(errors="replace").strip(), False
 
 
 def _git_out(project: Path, *args: str) -> str:
@@ -243,6 +336,53 @@ def get(run_id: str) -> dict[str, Any]:
     raise KeyError(run_id)
 
 
+def detail(run_id: str) -> dict[str, Any]:
+    """One run for its detail view: every attempt with its timing and the
+    line it ended on, the issue it started from, the spec it wrote and the
+    change on its branch."""
+    meta = get(run_id)
+    root = runs_root() / run_id
+    receipt = _receipt(root) or {}
+    project = root / "repo"
+    meta["attempts"] = [
+        {
+            key: a.get(key)
+            for key in (
+                "step",
+                "attempt",
+                "kind",
+                "status",
+                "exit",
+                "choice",
+                "reason",
+                "started_at",
+                "finished_at",
+            )
+        }
+        for a in receipt.get("attempts") or []
+    ]
+    meta["gates"] = receipt.get("gates") or []
+    meta["loops"] = receipt.get("loops") or {}
+    try:
+        issue = json.loads(next(iter((receipt.get("inputs") or {}).values()), "") or "{}")
+    except (TypeError, ValueError):
+        issue = {}
+    meta["issue_body"] = str(issue.get("body") or "") if isinstance(issue, dict) else ""
+    meta["spec"] = spec_text(project, receipt) if receipt else None
+    base = meta.get("base_sha") or _merge_base(project)
+    meta["changes"] = changes(project, base) if base else None
+    return meta
+
+
+def _merge_base(project: Path) -> str | None:
+    """Runs from before base_sha was recorded: the branch point from the
+    default branch."""
+    try:
+        return _git_out(project, "merge-base", "HEAD", "origin/HEAD") or None
+    except (OSError, subprocess.SubprocessError):
+        return None
+
+
 def active(autopilot_id: str) -> int:
     return sum(1 for m in list_runs() if m["autopilot"] == autopilot_id and m["state"] in ACTIVE)
 
@@ -263,7 +403,16 @@ def summary() -> dict[str, Any]:
 
 def _receipt(root: Path) -> dict[str, Any] | None:
     found = sorted((root / "repo" / runner.RUNS).glob("*/run.json"))
-    return json.loads(found[-1].read_text()) if found else None
+    if not found:
+        return None
+    raw = _read_capped(root, str(found[-1].relative_to(root)), RECEIPT_CAP + 1)
+    if raw is None or len(raw) > RECEIPT_CAP:
+        return None
+    try:
+        data = json.loads(raw)
+    except ValueError:
+        return None
+    return data if isinstance(data, dict) else None
 
 
 _META_LOCK = threading.Lock()
