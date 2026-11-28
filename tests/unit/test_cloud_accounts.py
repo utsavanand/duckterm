@@ -421,3 +421,54 @@ def test_connections_are_capped_and_counted_before_their_headers(cloud, monkeypa
             await listener.wait_closed()
 
     asyncio.run(run())
+
+
+def test_silent_tcp_is_capped_and_dropped_before_any_tls_handshake(cloud, tmp_path, monkeypatch):
+    service, _ = cloud
+    monkeypatch.setattr(service_module, "HEADER_SECONDS", 0.5)
+    monkeypatch.setattr(service_module, "CONNECTIONS_PER_PEER", 4)
+    configure(tmp_path, "127.0.0.1", 4430)
+    context = tls_context(
+        {
+            "DUCKY_CLOUD_CERT": str(tmp_path / "ducky-cert.pem"),
+            "DUCKY_CLOUD_KEY": str(tmp_path / "ducky-key.pem"),
+        }
+    )
+    client = ssl.create_default_context()
+    client.check_hostname = False
+    client.verify_mode = ssl.CERT_NONE
+
+    async def closed_within(reader, seconds):
+        try:
+            return await asyncio.wait_for(reader.read(), seconds) == b""
+        except ConnectionError:
+            return True
+
+    async def run():
+        listener = await serve(service, "127.0.0.1", 0, context)
+        port = listener.sockets[0].getsockname()[1]
+        try:
+            # A real TLS client still gets an answer.
+            reader, writer = await asyncio.open_connection("127.0.0.1", port, ssl=client)
+            writer.write(b"GET /v1/me HTTP/1.1\r\nHost: x\r\n\r\n")
+            assert (await reader.readline()).startswith(b"HTTP/1.1 401")
+            writer.close()
+            await asyncio.sleep(0.05)
+            # Plain TCP that never sends a ClientHello counts against the cap.
+            held = [await asyncio.open_connection("127.0.0.1", port) for _ in range(4)]
+            await asyncio.sleep(0.05)
+            assert service.open["127.0.0.1"] == 4
+            reader, writer = await asyncio.open_connection("127.0.0.1", port)
+            assert await closed_within(reader, 0.2)
+            writer.close()
+            # And loses the connection when the header budget runs out.
+            for held_reader, _ in held:
+                assert await closed_within(held_reader, 1.5)
+            assert not service.open
+            for _, held_writer in held:
+                held_writer.close()
+        finally:
+            listener.close()
+            await listener.wait_closed()
+
+    asyncio.run(run())
