@@ -2,23 +2,25 @@
    white-alpha text tiers, square corners, hairlines instead of cards, Geist
    with Geist Mono for labels and numbers, and color only where it means
    something: amber waits on the owner, red is conflict or failure, green is
-   safe or merged. The spec is dark; light mode is the same scale inverted. */
+   safe or merged. The spec is dark; light mode is the same scale inverted.
+   The greys carry a faint green cast (owner, 2026-11-27: "subtle"), kept low
+   so the meaning greens for safe and merged still stand out. */
 @font-face { font-family:"Geist"; src:url("./fonts/Geist-Variable.woff2") format("woff2"); font-weight:100 900; font-display:swap }
 @font-face { font-family:"Geist Mono"; src:url("./fonts/GeistMono-Variable.woff2") format("woff2"); font-weight:100 900; font-display:swap }
 
 /* The Needs you dialog is portalled to <body>, so it carries the tokens too. */
 .rd-home-layer, .rd-home-backdrop {
-  --m-bg:#0e0e0e; --m-panel:#141415; --m-raise:#1b1b1c;
-  --m-line:rgba(255,255,255,.12); --m-line-soft:rgba(255,255,255,.07);
-  --m-fg:#f4f4f4; --m-body:rgba(255,255,255,.74); --m-muted:rgba(255,255,255,.56); --m-faint:rgba(255,255,255,.34);
+  --m-bg:#0c100d; --m-panel:#121713; --m-raise:#182019;
+  --m-line:rgba(190,255,210,.12); --m-line-soft:rgba(190,255,210,.07);
+  --m-fg:#f1f6f2; --m-body:rgba(236,255,242,.74); --m-muted:rgba(222,250,230,.56); --m-faint:rgba(210,245,220,.34);
   --m-ok:#8fd19e; --m-danger:#f07167; --m-warn:#e0b45c;
   --m-ui:"Geist","Inter",-apple-system,system-ui,sans-serif; --m-mono:"Geist Mono",ui-monospace,"SF Mono",Menlo,monospace;
 }
 .rd-home-layer { position:absolute; inset:0; z-index:6; overflow-y:auto; background:var(--m-bg); color:var(--m-fg); font-family:var(--m-ui) }
 :root:not([data-theme="dark"]) .rd-home-layer, :root:not([data-theme="dark"]) .rd-home-backdrop {
-  --m-bg:#fafafa; --m-panel:#f2f2f2; --m-raise:#ebebeb;
-  --m-line:rgba(0,0,0,.12); --m-line-soft:rgba(0,0,0,.07);
-  --m-fg:#111111; --m-body:rgba(0,0,0,.74); --m-muted:rgba(0,0,0,.58); --m-faint:rgba(0,0,0,.5);
+  --m-bg:#f7faf7; --m-panel:#eef3ef; --m-raise:#e6ede7;
+  --m-line:rgba(0,40,12,.12); --m-line-soft:rgba(0,40,12,.07);
+  --m-fg:#0f1611; --m-body:rgba(0,24,8,.74); --m-muted:rgba(0,24,8,.58); --m-faint:rgba(0,24,8,.5);
   --m-ok:#2f7d43; --m-danger:#c8423a; --m-warn:#9a6700
 }
 /* Labels: mono, small, uppercase. Numbers: mono, tabular. */
